@@ -9,6 +9,9 @@ no commands to run until Phase 1 scaffolding lands. When code is added, update t
 actual build/lint/test commands (`cargo build`, `cargo test`, `cargo clippy`, `cargo audit`,
 `cargo deny`) per crate.
 
+The first concrete implementation step is SPEC.md's "Крок 0" (§"Фазований план"): the RFC-
+conformance test table, written before any resolver code exists.
+
 **`SPEC.md` is the source of truth for all design decisions.** Read it before proposing any
 architectural change — most non-obvious choices in this project are already deliberated there with
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
