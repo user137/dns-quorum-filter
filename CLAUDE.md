@@ -4,9 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Pre-implementation. The repository currently contains only `SPEC.md` (the full technical spec, in
-Ukrainian) — no Cargo workspace, no source code, no build/test tooling exists yet. There are no
-commands to run until Phase 1 scaffolding lands. When code is added, update this file with the
+Pre-implementation. No Cargo workspace, no source code, no build/test tooling exists yet. There are
+no commands to run until Phase 1 scaffolding lands. When code is added, update this file with the
 actual build/lint/test commands (`cargo build`, `cargo test`, `cargo clippy`, `cargo audit`,
 `cargo deny`) per crate.
 
@@ -14,6 +13,66 @@ actual build/lint/test commands (`cargo build`, `cargo test`, `cargo clippy`, `c
 architectural change — most non-obvious choices in this project are already deliberated there with
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
+
+## Documentation map — who owns what
+
+| File | Owns | Update when |
+|---|---|---|
+| `SPEC.md` | full design + reasoning: architecture, RFC table, phased plan, open questions | a design decision changes or a new one is made |
+| `CLAUDE.md` | agent-facing summary: commands, architecture at a glance, non-obvious gotchas | architecture/commands change |
+| `TASKS.md` | backlog — status only, no reasoning | a task starts/finishes/gets added |
+| `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |
+| `SECURITY.md` | threat model summary, hard security constraints, dependency-vetting table | threat model changes or a dependency is added |
+| `README.md` | human-facing project description | repo structure changes |
+
+Don't duplicate a fact across files — link to the owner instead. `SPEC.md` stays the deep source of
+truth; the other files summarize or track state, they don't re-derive it.
+
+## Development practices for this project
+
+(Adapted from a personal cross-project practices file — see it only if a point below turns out to
+need more detail than fits here.)
+
+- **Test-first, where a unit is isolatable.** SPEC.md §8.1 already instantiates this for the Tauri
+  IPC boundary specifically (smoke / exploit / misuse / fuzz, four categories, not one "smoke"
+  test) — apply the same discipline (write the failing test before the implementation) to the
+  resolver, cache, and override-list logic too, not just the UI channel. A bug fix gets a
+  regression test written first, reproducing the bug, before the fix.
+- **Три Б (three safety legs) — check all three, not just "is this correct."** This project already
+  embodies all three without naming them; naming them is useful as a completeness check when adding
+  new logic:
+  - *User safety* — does a failure mode leave the user worse off than no filtering at all, and will
+    they notice? (Already why silent DoH fallback bypassing quorum is flagged as an open risk in
+    SPEC.md, and why the watchdog "must **notify**, not silently self-heal.")
+  - *Software safety* — is the code safe against adversarial/malformed input, provably from the line
+    itself? Two concrete input boundaries in this project: DNS wire format from upstream providers
+    (why `hickory-dns`, not a hand-rolled parser) and the Tauri IPC channel from the webview
+    (SPEC.md §8.1's exploit/misuse/fuzz categories exist exactly for this leg).
+  - *Lower-layer safety* — every layer this project doesn't own and can't fix is untrusted: the OS
+    trust store, upstream DoH providers, the GeoIP/top-sites data feeds (why atomic-replace +
+    integrity check before swapping in a new file), and the browser's own DoH-fallback behavior
+    (open question 10 in SPEC.md).
+- **When SPEC.md is silent on a design question**, don't invent a solution silently — SPEC.md's own
+  rule ("RFC over intuition or a competitor's behavior," §"Наскрізні вимоги") is the domain-specific
+  version of this; for anything outside RFC's reach (UI/UX choices, non-protocol behavior), fall
+  back to: (1) current industry consensus for that class of problem, (2) the API shape of an
+  established, well-designed library in the same niche, (3) exposing only the safe/modern mode
+  externally, never a legacy/unsafe one as a public entry point. Flag the gap and the choice made,
+  don't silently pick one.
+- **Any spawned system process (installer invoking `certutil`/`security`, watchdog restarting
+  `dnsqb-service`) uses an absolute path, never PATH lookup** — same class of risk as an unquoted
+  autostart path; PATH is attacker-influenceable input, not a trusted constant.
+- **An empty/ignored `Result`/error branch (`let _ = ...`, `.ok()`, empty `Err(_) => {}`) needs a
+  one-line comment saying why it's safe to ignore** — same bar as any other comment (WHY, not WHAT),
+  applied to Rust's equivalent of an empty catch block.
+- **Before committing, check what's actually staged** (`git status` after `git add`) — don't trust a
+  filename alone to mean "no secrets in here."
+- **Diagram ground-truth ritual** (`~/.claude/diagram-ground-truth-ritual.md`) applies once
+  `diagrams/` actually has diagrams in it — copy that file's ritual into this one when that happens.
+  Not yet relevant; the folder is currently empty.
+- **Security-ops practices** (`~/.claude/security-ops-practices.md`, alert triage / log
+  investigation) apply once `dnsqb-service` is a running system with logs/telemetry to investigate —
+  not relevant pre-implementation.
 
 ## What this project is
 
