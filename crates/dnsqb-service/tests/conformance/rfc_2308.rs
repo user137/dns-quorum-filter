@@ -14,13 +14,11 @@ fn soa(minimum: u32) -> SOA {
 }
 
 #[test]
-#[ignore = "Крок 0 red until T-35 (Фаза 1)"]
 fn negative_ttl_comes_from_soa_minimum() {
     assert_eq!(negative_cache_ttl(&soa(300)), 300);
 }
 
 #[test]
-#[ignore = "Крок 0 red until T-35 (Фаза 1)"]
 fn negative_ttl_is_not_a_fixed_constant() {
     assert_ne!(negative_cache_ttl(&soa(60)), negative_cache_ttl(&soa(600)));
 }

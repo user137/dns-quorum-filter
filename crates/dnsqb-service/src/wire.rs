@@ -99,10 +99,13 @@ pub fn build_block_response(query: &Message, ttl: u32) -> Message {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_block_response, RecordType};
-    use hickory_proto::op::{Message, Query};
-    use hickory_proto::rr::RData;
+    use super::{build_block_response, decode_wire_message, encode_wire_message, RecordType};
+    use crate::min_rrset_ttl;
+    use hickory_proto::op::{Message, MessageType, Query};
+    use hickory_proto::rr::rdata::A;
+    use hickory_proto::rr::{Name, RData, Record};
     use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::str::FromStr;
 
     fn query_of_type(qtype: RecordType) -> Message {
         let mut question = Query::new();
@@ -146,5 +149,43 @@ mod tests {
             let response = build_block_response(&query_of_type(qtype), 60);
             assert!(!response.metadata.authentic_data);
         }
+    }
+
+    #[test]
+    fn hickory_proto_does_not_reconcile_rrset_ttls_on_decode() {
+        // T-33/RFC 2181 §5.2: same-name/same-type records may legitimately
+        // arrive with disagreeing TTLs (misconfiguration or manipulation) —
+        // this is this project's own responsibility to reconcile, not
+        // something `hickory-proto` normalizes for us during wire decode.
+        // Proven empirically, not assumed from reading the source.
+        let Ok(name) = Name::from_str("example.com.") else {
+            panic!("valid fixture name");
+        };
+        let mut message = Message::new(1, MessageType::Response, hickory_proto::op::OpCode::Query);
+        message.answers.push(Record::from_rdata(
+            name.clone(),
+            300,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        ));
+        message.answers.push(Record::from_rdata(
+            name,
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 35))),
+        ));
+
+        let Ok(bytes) = encode_wire_message(&message) else {
+            panic!("valid message encodes");
+        };
+        let Ok(decoded) = decode_wire_message(&bytes) else {
+            panic!("valid wire bytes decode");
+        };
+
+        let ttls: Vec<u32> = decoded.answers.iter().map(|r| r.ttl).collect();
+        assert_eq!(
+            ttls,
+            vec![300, 60],
+            "hickory-proto must not silently collapse disagreeing RRset TTLs on decode"
+        );
+        assert_eq!(min_rrset_ttl(&decoded.answers), Some(60));
     }
 }

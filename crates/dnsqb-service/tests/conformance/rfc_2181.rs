@@ -14,14 +14,12 @@ fn a_record(ttl: u32) -> Record {
 }
 
 #[test]
-#[ignore = "Крок 0 red until T-33/T-34 (Фаза 1)"]
 fn uses_minimum_ttl_when_rrset_ttls_disagree() {
     let records = vec![a_record(300), a_record(60), a_record(120)];
     assert_eq!(min_rrset_ttl(&records), Some(60));
 }
 
 #[test]
-#[ignore = "Крок 0 red until T-33/T-34 (Фаза 1)"]
 fn empty_rrset_has_no_ttl() {
     assert_eq!(min_rrset_ttl(&[]), None);
 }

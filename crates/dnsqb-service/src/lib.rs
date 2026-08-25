@@ -28,36 +28,52 @@ pub use wire::{
 };
 
 use hickory_proto::rr::rdata::SOA;
-use hickory_proto::rr::Record;
+use hickory_proto::rr::{Name, Record};
 use hickory_proto::ProtoError;
 
-/// RFC 2181 §5.2 (T-4): minimum TTL across one `RRset` — `None` for an empty set
-/// (SPEC.md §4.1, TASKS.md T-33/T-34).
+/// RFC 2181 §5.2 (T-33): minimum TTL across one `RRset` — `None` for an empty
+/// set (SPEC.md §4.1). `hickory-proto` does not itself enforce that same-name/
+/// same-type records share one TTL at decode time (verified empirically —
+/// `wire::tests::hickory_proto_does_not_reconcile_rrset_ttls_on_decode`), so
+/// this reconciliation is this project's own responsibility, not a passthrough
+/// to an existing guarantee.
 ///
-/// T-33 is a verification task ("чи це вже валідує `hickory-dns`") — this
-/// function may end up a thin passthrough to a `hickory-dns` guarantee rather
-/// than new clamping logic; T-34 (TTL clamping) is the task that definitely
-/// touches this code path either way.
+/// Callers must pass records already narrowed to one `(name, type)` `RRset` —
+/// this function itself does no grouping. For the whole-answer-section
+/// minimum (CNAME chain included), see `cache::chain_cache_ttl` (T-36)
+/// instead, which is deliberately a different function with a different
+/// precondition.
 #[must_use]
-pub fn min_rrset_ttl(_records: &[Record]) -> Option<u32> {
-    todo!("Фаза 1: T-33/T-34 — RRset TTL verification/clamping")
+pub fn min_rrset_ttl(records: &[Record]) -> Option<u32> {
+    records.iter().map(|r| r.ttl).min()
 }
 
-/// RFC 2308 (T-5): negative-caching TTL is bounded by the zone's SOA MINIMUM,
-/// not an arbitrary constant (SPEC.md §3.1, §4.1, TASKS.md T-35).
+/// RFC 2308 (T-35): negative-caching TTL is bounded by the zone's SOA MINIMUM,
+/// not an arbitrary constant (SPEC.md §3.1, §4.1).
 #[must_use]
-pub fn negative_cache_ttl(_soa: &SOA) -> u32 {
-    todo!("Фаза 1: T-35 — negative caching TTL")
+pub fn negative_cache_ttl(soa: &SOA) -> u32 {
+    soa.minimum
 }
 
-/// RFC 5891 IDNA2008 (T-6): normalize an override-list domain — lowercase,
-/// punycode, trailing dot trimmed (SPEC.md §5, TASKS.md T-38).
+/// RFC 5891 IDNA2008 (T-38): normalize an override-list/cache-key domain —
+/// lowercase, punycode, trailing dot trimmed (SPEC.md §5, §4).
+///
+/// Goes through `hickory_proto::rr::Name::from_utf8`/`to_ascii` — the exact
+/// `idna::uts46::Uts46` path (`AsciiDenyList::STD3`, `Hyphens::Allow`,
+/// `DnsLength::Ignore`) that `hickory-proto` itself uses to parse incoming
+/// query names — rather than a second, directly-depended-on `idna` call.
+/// Two independent IDNA code paths normalizing the same-looking domain
+/// differently would mean a domain occasionally doesn't match itself between
+/// override-list/cache lookups and incoming-query parsing; going through
+/// `Name` makes that desync impossible by construction instead of by
+/// version-pinning discipline.
 ///
 /// # Errors
 ///
 /// Returns `Err` if `input` is not a syntactically valid domain name.
-pub fn normalize_domain(_input: &str) -> Result<String, ProtoError> {
-    todo!("Фаза 1: T-38 — override-list domain normalization")
+pub fn normalize_domain(input: &str) -> Result<String, ProtoError> {
+    let ascii = Name::from_utf8(input)?.to_ascii().to_ascii_lowercase();
+    Ok(ascii.trim_end_matches('.').to_string())
 }
 
 /// RFC 8767 stale-if-error (T-10): serve a stale cache entry instead of a
