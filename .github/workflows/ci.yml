@@ -36,6 +36,19 @@ jobs:
       - run: cargo audit
       - run: cargo deny check
 
+  conformance:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Blocking: catches compile breaks and an accidentally-removed #[ignore]
+      # the same way any other test regression would (T-13).
+      - run: cargo test --test conformance -p dnsqb-service
+      # Informational red board, not a merge gate: every RFC requirement not
+      # yet implemented in Фаза 1 is `#[ignore]`d (DECISIONS.md, 2026-08-25) —
+      # this step is expected to fail until Фаза 1 removes each #[ignore].
+      - run: cargo test --test conformance -p dnsqb-service -- --ignored
+        continue-on-error: true
+
   coverage:
     runs-on: windows-latest
     continue-on-error: true # T-19: published as an artifact, non-blocking on MVP-stage

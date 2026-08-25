@@ -11,3 +11,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "dnsqb-service"
 path = "src/main.rs"
+
+[dependencies]
+hickory-proto = "0.26.1"

@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::pedantic)]
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 
 //! Watchdog process, mutual heartbeat with dnsqb-service (SPEC.md §7).
 //! Deferred to Фаза 3 (SPEC.md "Фазований план") — crate scaffolded now so

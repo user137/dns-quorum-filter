@@ -4,24 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Крок 0 in progress (SPEC.md §"Фазований план"): Rust workspace and CI scaffolded, no resolver
-logic yet — `dnsqb-service`/`dnsqb-watcher` are stub binaries (`todo!()` bodies). RFC-conformance
-tests (T-3–T-14) land in the next batch, `#[ignore]`d until the Phase 1 task that implements each
-one. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md itself left this open).
+Крок 0 done (SPEC.md §"Фазований план"): Rust workspace, CI, and the RFC-conformance test table
+(T-1–T-19) are in place. `dnsqb-service`/`dnsqb-watcher` are still stub binaries (`todo!()`
+bodies) — no resolver logic yet, that starts at Фаза 1 (TASKS.md). All 20 conformance tests are
+`#[ignore]`d, each citing the Фаза 1 task ID that removes its `#[ignore]`. Phase 1 target platform
+is Windows (DECISIONS.md, 2026-08-25 — SPEC.md itself left this open). `hickory-proto` is the only
+runtime dependency so far — its vetting row is in SECURITY.md.
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
-- `cargo test --workspace --lib` — unit tests.
-- `cargo test --test conformance -p dnsqb-service -- --ignored` — RFC-conformance tests (once the
-  `tests/conformance` target lands; intentionally red until each RFC requirement is implemented).
-- `cargo clippy --workspace --all-targets -- -D warnings` — lint gate, required, not advisory.
+- `cargo test --workspace --lib` — unit tests (none yet — pass trivially).
+- `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green (all 20 currently
+  `#[ignore]`d).
+- `cargo test --test conformance -p dnsqb-service -- --ignored` — the same tests without the
+  ignore filter; intentionally red until each cited Фаза 1 task lands (this is the informational
+  red-board step in CI, not a merge gate).
+- `cargo clippy --workspace --all-targets -- -D warnings` — lint gate, required, not advisory
+  (`dnsqb-service`'s `lib.rs`/`main.rs` and `dnsqb-watcher`'s `main.rs` also carry
+  `#![warn(clippy::pedantic)]` + `#![deny(clippy::unwrap_used, clippy::expect_used)]`, per
+  `~/.claude/rules/rust.md`).
 - `cargo fmt --all -- --check` — format gate.
-- `cargo audit` / `cargo deny check` — dependency vetting, required (SECURITY.md).
+- `cargo audit` / `cargo deny check` — dependency vetting, required (SECURITY.md, `deny.toml`).
 - `cargo llvm-cov --workspace --lib --lcov --output-path lcov.info` — coverage report, published as
   a CI artifact, non-blocking at the MVP stage (T-19).
 
-All of the above run in `.github/workflows/ci.yml` on every push/PR except `coverage`
-(`continue-on-error: true`).
+All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
+conformance step and `coverage` (both `continue-on-error: true`).
 
 **`SPEC.md` is the source of truth for all design decisions.** Read it before proposing any
 architectural change — most non-obvious choices in this project are already deliberated there with

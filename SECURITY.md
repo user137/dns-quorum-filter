@@ -44,7 +44,7 @@ row here **before merging**, not after:
 
 | Crate | Maintainer | Reproducible build? | Independent audit / reputation | CVE history | Notes |
 |---|---|---|---|---|---|
-| | | | | | |
+| `hickory-proto` 0.26.1 | `hickory-dns` project (formerly `trust-dns`); maintainers include Dirkjan Ochtman (also rustls, RustSec core team), divergentdave, marcus0x62 | Standard `cargo`/`crates.io` build, no vendored binaries | First formal security audit funded/performed by Ferrous Systems; production use includes Let's Encrypt's recursive resolver and (per public reporting) Google Pixel | Past DNSSEC-validation CVEs (e.g. CVE-2025-25188, unbounded-loop/memory-exhaustion class), fixed in later releases; `cargo audit` run clean against 0.26.1 at time of adding (2026-08-25) — re-verify on every `cargo audit` CI run, don't treat this row as a standing guarantee | Chosen per SPEC.md "Технічний стек" specifically to avoid hand-rolling a DNS wire-format parser (highest-CVE-density code class in C-based DNS software); only the `-proto` sub-crate is used in Крок 0 (wire-format types for conformance-test fixtures), not the full resolver |
 
 Planned crates and the reasoning for choosing each are listed in `SPEC.md` §"Технічний стек" and
 `CLAUDE.md` §"Planned stack" — that's a design-time rationale, not a substitute for this vetting
