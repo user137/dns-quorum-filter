@@ -29,8 +29,10 @@ Commands (from repo root):
 - `cargo build --workspace` — build both crates.
 - `cargo test --workspace --lib` — unit tests (`is_blocked`/quorum, T-61/T-62; `#[tokio::test]` for
   the async quorum cases).
-- `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green (all 20 currently
-  `#[ignore]`d).
+- `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green
+  (`#[ignore]`d ones stay green, un-`#[ignore]`d ones must actually pass; count of each changes as
+  Фаза 1 tasks land — check `TASKS.md` or run `-- --ignored` below for the current red-board size,
+  don't trust a hardcoded number here).
 - `cargo test --test conformance -p dnsqb-service -- --ignored` — the same tests without the
   ignore filter; intentionally red until each cited Фаза 1 task lands (this is the informational
   red-board step in CI, not a merge gate).
