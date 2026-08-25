@@ -8,27 +8,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
-Фаза 1, fourth slice done (T-37 — TASKS.md): override lists — allowlist/blocklist with suffix
-wildcard match. `dnsqb-service`'s `lib.rs` now re-exports from seven modules — `cache`
-(`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`, `chain_cache_ttl`,
-`is_cacheable`, T-32/T-34/T-36), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
-`OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37), `wire` (`DoH` wire codec,
-block/NODATA response construction, AD-bit passthrough), `upstream` (`Provider` enum, `DohClient`
-trait + `ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout` (`TimeoutMode`/
-`TimeoutConfig`, `VoterOutcome`, `query_with_timeout`, T-27), `quorum` (`is_blocked` per-provider
-signature table, `requires_quorum`, OR-logic `resolve()` with early-return/cancellation via
+Фаза 1, fifth slice done (T-39 — TASKS.md, two commits): end-to-end request pipeline —
+allowlist → blocklist → cache → quorum (SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now
+re-exports from eight modules — `cache` (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`,
+`clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, T-32/T-34/T-36), `overrides`
+(`OverrideLists::decision`/`conflicts`/`load`,
+`OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37), `pipeline`
+(`handle_query`/`PipelineOutcome`, T-39 — new this slice), `wire` (`DoH` wire codec, block/NODATA/
+SERVFAIL/direct-answer response construction, AD-bit passthrough), `upstream` (`Provider` enum,
+`DohClient` trait + `ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout`
+(`TimeoutMode`/`TimeoutConfig`, `VoterOutcome`, `query_with_timeout`, T-27), `quorum` (`is_blocked`
+per-provider signature table, `requires_quorum`, OR-logic `resolve()` returning `QuorumOutcome
+{verdict, answer}` — T-39 extended it to carry the real Allow answer, not just a verdict, SPEC.md
+§5 step 5's "get ALLOW + IP" bundled as one action — with early-return/cancellation via
 `FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only). `lib.rs`'s
 own `min_rrset_ttl`/`negative_cache_ttl`/`normalize_domain` are implemented (T-33/T-35/T-38, no
-longer `todo!()`) — `overrides.rs`'s `parse_pattern` is the second consumer of `normalize_domain`,
-after `cache.rs`'s `CacheKey`. `cache.rs` is **not yet wired to `resolve()`/the request pipeline** —
-building a `CacheEntry` from a live `QuorumVerdict` + `Message` needs to branch on positive-answer
-(`chain_cache_ttl`) vs. NXDOMAIN/NODATA (`negative_cache_ttl`, from an authority-section SOA
-nothing in the project extracts yet) — that's T-39/pipeline-wiring scope. `overrides.rs` is
-likewise **not wired to `resolve()`** (same T-39) and has **no file-write path** (`save()` —
-deliberately deferred to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований
-і вручну", manually text-edited, until then). No log wiring either, and no live `hyper`+TLS
-listener yet (`main.rs` is still a stub — that needs the self-signed cert, T-48) — those are later
-batches. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
+longer `todo!()`).
+
+`pipeline::handle_query` is the first real consumer of `cache.rs`/`overrides.rs`/`quorum.rs`
+together — it branches a `CacheEntry` between positive-answer (`chain_cache_ttl`) and genuine
+NXDOMAIN/NODATA (`negative_cache_ttl`, from an authority-section SOA `pipeline.rs`'s own
+`find_soa` now extracts) TTL sources. **Not yet in this slice**: voter scope (SPEC.md §5.3-конвеєр
+крок 4, top-N-per-country, Фаза 4) and GeoIP (крок 6, Фаза 2) — both later phases by design; cache
+invalidation on override-list change (T-40, next task); RFC 8767 stale-if-error wired into the live
+pipeline (`should_serve_stale` stays an unconsumed predicate — deferred per advisor review, see
+the gotchas section below for why); UI warning on an allowlist/blocklist conflict
+(`OverrideLists::conflicts()` is ready, no UI consumer yet — T-47/T-52); `overrides.rs` still has
+**no file-write path** (`save()` — deliberately deferred to T-46/T-47, when a UI writer exists;
+SPEC.md §5 calls the file "редагований і вручну", manually text-edited, until then). No log wiring
+either, and no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed
+cert, T-48) — `handle_query` is not called from anywhere yet, same pattern as every prior slice's
+modules before their own wiring task. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's
+Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
@@ -73,7 +84,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-37 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-39 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -155,6 +166,39 @@ decision from scratch).
   auditing every field of the type by hand. Proved with a dedicated test
   (`overrides::tests::invalid_entry_debug_output_never_contains_the_raw_pattern_text`) that formats
   `{entry:?}` and asserts the raw text is absent, not just reasoned about.
+- **A `Responded` voter outcome means the HTTP round-trip succeeded, not that the DNS answer is
+  usable.** A baseline `SERVFAIL`/`REFUSED` is still HTTP 200 with an rcode set, so it decodes as
+  `Responded` too. `quorum::representative_allow_answer` (T-39) first drafted "prefer baseline
+  unconditionally" — advisor review caught that a baseline SERVFAIL with two working filtering
+  voters would silently `forward_response` a failed resolution to the client. Fixed with
+  `is_usable_answer` (`response_code` is `NoError` or `NXDomain`), applied to all three fallback
+  candidates, not just baseline. **`combine()`'s `incomplete` flag still uses the old, weaker
+  standard** (`Responded` = complete) — this is a known, recorded gap for whenever RFC 8767
+  stale-if-error gets wired into `pipeline.rs`: `incomplete` won't fire on a SERVFAIL voter, exactly
+  the transient-upstream-trouble case stale-if-error exists for. Re-check `combine()` against
+  `is_usable_answer` before consuming `incomplete` as that trigger.
+- **`Name::to_ascii()`, not `.to_string()`/`Display`, when re-feeding a wire-decoded domain back
+  through `normalize_domain`** (`pipeline.rs`'s `handle_query`, T-39) — `to_ascii()` is the exact
+  transformation `normalize_domain` performs internally (`Name::from_utf8(...).to_ascii()`), so the
+  round trip has no extra punycode→Unicode→punycode detour `Display` would add. Verified
+  empirically (not assumed) that a label containing a literal dot (`Name::from_labels([b"a.b",
+  b"com"])`, only reachable from raw wire bytes, not text) escapes to `"a\\.b.com."` and
+  `Name::from_utf8` re-parses it back to one label, not two — a small standalone `cargo run`
+  scratch project, not a source-reading assumption.
+- **A cache-hit response must serve the entry's *remaining* TTL, not the full TTL it was inserted
+  with.** `entry.expires_at.saturating_duration_since(now)`, not `entry.ttl`, in
+  `pipeline::response_from_cache_entry` (T-39) — using the full TTL on every hit would mean a
+  60-second entry hands the browser a fresh 60s TTL on every read, and the effective cache lifetime
+  from the client's point of view would never actually expire. Caught by advisor review before
+  commit, not by any of T-33/T-34/T-36's own tests (they all test the *write* side of TTL
+  discipline, not a read-time reconstruction path that didn't exist yet).
+- **A mock `DohClient` used from an `async fn` generic over `C: DohClient + Sync` needs
+  `std::sync::atomic::AtomicU32`, not `std::cell::Cell<u32>`, for a call counter** — `Cell` isn't
+  `Sync`, so a struct containing one fails the bound at the `handle_query(...)` call site with an
+  error that points at the whole mock struct, not the `Cell` field specifically. `pipeline.rs`'s
+  tests (T-39) hit this immediately when adding a "prove no extra upstream call happened" counter to
+  the existing `MockClient` pattern from `quorum.rs`'s tests (which didn't need a counter, only
+  `Panic`-on-call).
 
 ## Documentation map — who owns what
 

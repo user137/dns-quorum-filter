@@ -212,6 +212,16 @@ impl OverrideLists {
         }
     }
 
+    /// Test-only constructor from already-built entries (T-39's
+    /// `pipeline.rs` tests need fixtures with specific entries, but
+    /// `entries` is otherwise private by design — no production code
+    /// constructs an `OverrideLists` any way other than `empty()`/`load()`).
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn from_entries_for_test(entries: Vec<OverrideEntry>) -> Self {
+        Self { entries }
+    }
+
     /// SPEC.md §5 steps 1-2, combined: `Allowlist` is checked first (and, on
     /// conflict, wins), then `Blocklist`. `domain` is normalized internally —
     /// callers pass a raw query domain, not a pre-normalized one.

@@ -1,0 +1,885 @@
+//! T-39: end-to-end request pipeline — allowlist → blocklist → cache →
+//! quorum (SPEC.md §5 steps 1-3+5). Voter scope (step 4, top-N per country)
+//! and `GeoIP` (step 6) aren't implemented yet — both are later phases (Фаза 4
+//! and Фаза 2 respectively), not this batch. Cache invalidation on
+//! override-list change (T-40) and RFC 8767 stale-if-error integration
+//! (`should_serve_stale` stays an unconsumed predicate here) are also
+//! deferred — see TASKS.md. Not wired to any network listener yet (T-48
+//! waits on the self-signed certificate).
+
+use crate::cache::{
+    chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
+};
+use crate::negative_cache_ttl;
+use crate::overrides::{ListKind, OverrideLists};
+use crate::quorum::{requires_quorum, resolve, QuorumVerdict};
+use crate::timeout::TimeoutConfig;
+use crate::upstream::{DohClient, BASELINE_DOH_URL};
+use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
+use hickory_proto::op::Message;
+use hickory_proto::rr::rdata::{A, AAAA, SOA};
+use hickory_proto::rr::{RData, Record};
+use std::net::IpAddr;
+use std::time::{Duration, Instant};
+
+/// The result of running a query through the pipeline.
+#[derive(Debug)]
+pub enum PipelineOutcome {
+    /// A fully resolved response, ready to send to the client.
+    ///
+    /// **Carries the query domain and its records** (SPEC.md, Наскрізні
+    /// вимоги: no domain names in service logs) — never pass this variant's
+    /// `Message` (or the whole `PipelineOutcome`, since it derives `Debug`)
+    /// to `tracing`/`{:?}` in a diagnostic-log context, same discipline as
+    /// `quorum::QuorumOutcome::answer` (T-39), `UpstreamError::error_kind()`
+    /// (T-29), and `overrides::InvalidReason` (T-37).
+    Response(Message),
+    /// Neither override list matched and `query`'s type doesn't go through
+    /// cache/quorum (RFC 9460 SVCB/HTTPS etc., T-25) — the caller must proxy
+    /// this query to a single upstream directly. That dispatch itself is a
+    /// deliberately separate, already-documented gap (TASKS.md T-21/T-25),
+    /// not this module's job: choosing *which* upstream to proxy an
+    /// arbitrary record type to is a type-dispatch decision, not a verdict
+    /// this pipeline computes.
+    ProxyToSingleUpstream,
+}
+
+/// SPEC.md §5: run `query` through allowlist → blocklist → cache → quorum,
+/// in that fixed order. Allowlist and blocklist apply regardless of query
+/// type (an MX/TXT domain can be overridden too); cache and quorum apply
+/// only to A/AAAA (`requires_quorum`).
+///
+/// # Panics
+///
+/// Never panics — see the individual step comments for how each fallible
+/// path (a malformed-per-`normalize_domain` domain, a missing SOA, an
+/// upstream error) degrades instead of unwrapping.
+pub async fn handle_query<C: DohClient + Sync>(
+    query: &Message,
+    client: &C,
+    overrides: &OverrideLists,
+    cache: &Cache,
+    cache_config: &CacheConfig,
+    timeout_config: &TimeoutConfig,
+) -> PipelineOutcome {
+    let Some(question) = query.queries.first() else {
+        return PipelineOutcome::ProxyToSingleUpstream;
+    };
+    // `Name::to_ascii()`, not `.to_string()`/`Display` — the same
+    // transformation `normalize_domain` itself performs internally
+    // (`Name::from_utf8(...).to_ascii()`), so this string round-trips
+    // through `overrides.decision`/`CacheKey::new` (both call
+    // `normalize_domain`) without an unnecessary punycode->Unicode->
+    // punycode detour. Empirically verified (not assumed) that a label
+    // containing a literal dot escapes and re-parses to one label, not two.
+    let domain = question.name().to_ascii();
+    let qtype = question.query_type();
+
+    // `Err` here means `domain` doesn't round-trip through
+    // `normalize_domain` — practically unreachable for a string sourced
+    // from an already wire-decoded `Name` (see the round-trip test below),
+    // but treated as "no override match" rather than propagated, so a
+    // theoretical edge case degrades safely instead of panicking.
+    match overrides.decision(&domain) {
+        Ok(Some(ListKind::Allowlist)) => {
+            return PipelineOutcome::Response(resolve_via_baseline(client, query).await);
+        }
+        Ok(Some(ListKind::Blocklist)) => {
+            let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
+            return PipelineOutcome::Response(build_block_response(query, ttl));
+        }
+        Ok(None) | Err(_) => {}
+    }
+
+    if !requires_quorum(qtype) {
+        return PipelineOutcome::ProxyToSingleUpstream;
+    }
+
+    let Ok(key) = CacheKey::new(&domain, qtype) else {
+        // Same practically-unreachable normalize_domain failure as the
+        // overrides.decision() branch above, but on the A/AAAA path -
+        // `ProxyToSingleUpstream` would be the wrong signal here (that
+        // variant means "this type doesn't go through cache/quorum at all,"
+        // not "an error occurred on the path that does"). An honest
+        // SERVFAIL, consistent with this module's other no-usable-data
+        // branches, not a routing decision that doesn't apply to A/AAAA.
+        return PipelineOutcome::Response(build_servfail_response(query));
+    };
+
+    let now = Instant::now();
+    if let Some(entry) = cache.get(&key).await {
+        if entry.is_fresh(now) {
+            return PipelineOutcome::Response(response_from_cache_entry(query, &entry, now));
+        }
+    }
+
+    let outcome = resolve(client, query, timeout_config).await;
+    match outcome.verdict {
+        QuorumVerdict::NotApplicable => PipelineOutcome::ProxyToSingleUpstream,
+        QuorumVerdict::Block => {
+            let ttl = cache_config.block_verdict_ttl;
+            cache
+                .insert(key, CacheEntry::new(Verdict::Block, ttl))
+                .await;
+            PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl)))
+        }
+        QuorumVerdict::Allow => PipelineOutcome::Response(
+            handle_allow(cache, key, cache_config, query, outcome.answer).await,
+        ),
+    }
+}
+
+/// SPEC.md §5 step 1: one direct query to the baseline resolver (T-22),
+/// forwarded as-is — an allowlisted domain never consults quorum, but the
+/// client still needs a real answer, not just a verdict.
+async fn resolve_via_baseline<C: DohClient + Sync>(client: &C, query: &Message) -> Message {
+    match client.query(BASELINE_DOH_URL, query).await {
+        Ok(response) => crate::wire::forward_response(query, &response),
+        // Три Б (user safety): an honest failure, not a silent block-shaped
+        // `0.0.0.0` on a domain the user just allowlisted.
+        Err(_) => build_servfail_response(query),
+    }
+}
+
+/// The `Allow`-verdict branch of `handle_query`'s quorum step — separated
+/// out only because `handle_query` was otherwise growing past a readable
+/// single function, not because this is reused elsewhere.
+async fn handle_allow(
+    cache: &Cache,
+    key: CacheKey,
+    cache_config: &CacheConfig,
+    query: &Message,
+    answer: Option<Message>,
+) -> Message {
+    let Some(message) = answer else {
+        // Every voter unresponsive under fail-open, or every Responded voter
+        // had an unusable answer (SERVFAIL/REFUSED - representative_allow_
+        // answer's is_usable_answer guard, quorum.rs, T-39) - either way, no
+        // real data to hand back. Три Б: an honest SERVFAIL, not a
+        // misleading empty NoError that a browser would read as "this
+        // domain has no record" (SPEC.md §3.2's own reasoning about
+        // misleading responses applies here too).
+        return build_servfail_response(query);
+    };
+
+    if message.answers.is_empty() {
+        // Genuine NXDOMAIN/NODATA (not a block - quorum already ruled that
+        // out). RFC 2308 negative-caching TTL comes from the authority
+        // section's SOA MINIMUM, not the same clamp source as a positive
+        // answer's chain TTL.
+        let ttl = match find_soa(&message.authorities) {
+            Some(soa) => clamp_ttl(negative_cache_ttl(soa), cache_config),
+            // No SOA to derive a negative TTL from - Три Б: don't guess one,
+            // just don't cache this answer.
+            None => Duration::ZERO,
+        };
+        if is_cacheable(ttl) {
+            cache
+                .insert(key, CacheEntry::new(Verdict::Allow(Vec::new()), ttl))
+                .await;
+        }
+    } else {
+        let ttl = match chain_cache_ttl(&message.answers) {
+            Some(secs) => clamp_ttl(secs, cache_config),
+            None => Duration::ZERO,
+        };
+        if is_cacheable(ttl) {
+            let ips = extract_ips(&message.answers);
+            cache
+                .insert(key, CacheEntry::new(Verdict::Allow(ips), ttl))
+                .await;
+        }
+    }
+
+    // The fresh path always forwards the real upstream response verbatim -
+    // including a genuine NXDOMAIN. SPEC.md §3.2 forbids only a
+    // *synthesized* BLOCK-NXDOMAIN, not forwarding a real one (this is the
+    // same `forward_response` the ordinary quorum-Allow path already uses).
+    // Cache-hit replay is the one place that collapses NXDOMAIN into
+    // NODATA-shaped (`response_from_cache_entry` below) - a deliberate,
+    // documented difference between the two paths, not an inconsistency.
+    crate::wire::forward_response(query, &message)
+}
+
+/// SOA record in `records` (RFC 2308, T-35's `negative_cache_ttl` input) —
+/// `message.authorities`, not `answers`, per DNS convention for a negative
+/// response.
+fn find_soa(records: &[Record]) -> Option<&SOA> {
+    records.iter().find_map(|record| match &record.data {
+        RData::SOA(soa) => Some(soa),
+        _ => None,
+    })
+}
+
+/// The A/AAAA addresses in `records` — CNAME hops and any other record type
+/// in the same answer section are skipped, not misinterpreted as an IP.
+fn extract_ips(records: &[Record]) -> Vec<IpAddr> {
+    records
+        .iter()
+        .filter_map(|record| match &record.data {
+            RData::A(A(ip)) => Some(IpAddr::V4(*ip)),
+            RData::AAAA(AAAA(ip)) => Some(IpAddr::V6(*ip)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Reconstruct a response directly from a cache hit — no upstream `Message`
+/// survives a cache round-trip, only [`Verdict`] and a TTL.
+///
+/// The served TTL is `entry.expires_at`'s **remaining** time as of `now`,
+/// never the full `entry.ttl` the entry was inserted with — otherwise every
+/// repeated hit would hand the client a freshly-extended TTL and the
+/// effective cache lifetime would never actually expire from the client's
+/// point of view (the exact discipline T-33/T-34/T-36 exist to enforce,
+/// just on the read side instead of the write side).
+fn response_from_cache_entry(query: &Message, entry: &CacheEntry, now: Instant) -> Message {
+    let remaining_ttl = duration_to_ttl_secs(entry.expires_at.saturating_duration_since(now));
+    match &entry.verdict {
+        Verdict::Block => build_block_response(query, remaining_ttl),
+        Verdict::Allow(ips) => {
+            let Some(question) = query.queries.first() else {
+                return build_answer_response(query, Vec::new());
+            };
+            let records = ips
+                .iter()
+                .map(|ip| {
+                    let rdata = match ip {
+                        IpAddr::V4(v4) => RData::A(A(*v4)),
+                        IpAddr::V6(v6) => RData::AAAA(AAAA(*v6)),
+                    };
+                    Record::from_rdata(question.name().clone(), remaining_ttl, rdata)
+                })
+                .collect();
+            // An empty `ips` (genuine NXDOMAIN/NODATA on the fresh path,
+            // SPEC.md §4's documented cache-hit compromise) naturally
+            // produces an empty `records` here - no separate branch needed,
+            // `build_answer_response` is already NODATA-shaped for that.
+            build_answer_response(query, records)
+        }
+    }
+}
+
+fn duration_to_ttl_secs(duration: Duration) -> u32 {
+    u32::try_from(duration.as_secs()).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handle_query, PipelineOutcome};
+    use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
+    use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
+    use crate::timeout::{TimeoutConfig, TimeoutMode};
+    use crate::upstream::{DohClient, Provider, UpstreamError};
+    use hickory_proto::op::{Message, Query, ResponseCode};
+    use hickory_proto::rr::rdata::{A, SOA};
+    use hickory_proto::rr::{Name, RData, Record, RecordType};
+    use std::net::Ipv4Addr;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{Duration, Instant};
+
+    fn query_for(domain: &str, qtype: RecordType) -> Message {
+        let Ok(name) = Name::from_str(domain) else {
+            panic!("valid fixture domain");
+        };
+        let mut question = Query::new();
+        question.set_name(name);
+        question.set_query_type(qtype);
+        let mut message = Message::query();
+        message.add_query(question);
+        message
+    }
+
+    fn allow_message_with_ip(ip: Ipv4Addr) -> Message {
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
+        message
+            .answers
+            .push(Record::from_rdata(Name::root(), 300, RData::A(A(ip))));
+        message
+    }
+
+    fn nxdomain_message_with_soa(minimum: u32) -> Message {
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
+        let soa = SOA::new(Name::root(), Name::root(), 1, 3600, 900, 604_800, minimum);
+        message
+            .authorities
+            .push(Record::from_rdata(Name::root(), minimum, RData::SOA(soa)));
+        message
+    }
+
+    fn nxdomain_message_without_soa() -> Message {
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NXDomain;
+        message
+    }
+
+    fn overrides_with(entries: Vec<OverrideEntry>) -> OverrideLists {
+        OverrideLists::from_entries_for_test(entries)
+    }
+
+    #[derive(Clone)]
+    enum MockResponse {
+        Instant(Message),
+        Error,
+        Panic,
+    }
+
+    struct MockClient {
+        quad9: MockResponse,
+        adguard: MockResponse,
+        baseline: MockResponse,
+        calls: AtomicU32,
+    }
+
+    impl MockClient {
+        fn all_panic() -> Self {
+            Self {
+                quad9: MockResponse::Panic,
+                adguard: MockResponse::Panic,
+                baseline: MockResponse::Panic,
+                calls: AtomicU32::new(0),
+            }
+        }
+    }
+
+    impl DohClient for MockClient {
+        fn query(
+            &self,
+            url: &str,
+            _query: &Message,
+        ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let response = if url == Provider::Quad9.doh_url() {
+                &self.quad9
+            } else if url == Provider::AdGuard.doh_url() {
+                &self.adguard
+            } else {
+                &self.baseline
+            };
+            let result = match response {
+                MockResponse::Instant(message) => Ok(message.clone()),
+                MockResponse::Error => Err(UpstreamError::Decode(
+                    "mock decode failure".to_string().into(),
+                )),
+                MockResponse::Panic => panic!("unexpected upstream call to {url}"),
+            };
+            std::future::ready(result)
+        }
+    }
+
+    struct PendingClient;
+
+    impl DohClient for PendingClient {
+        fn query(
+            &self,
+            _url: &str,
+            _query: &Message,
+        ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> {
+            std::future::pending()
+        }
+    }
+
+    fn cache_config() -> CacheConfig {
+        CacheConfig::default()
+    }
+
+    fn timeout_config() -> TimeoutConfig {
+        TimeoutConfig::default()
+    }
+
+    // Design decision 2 (plan): `Name::to_ascii()` round-trips a label
+    // containing a literal dot through `normalize_domain` without a false
+    // override match or a panic - empirically verified, not assumed.
+    #[tokio::test]
+    async fn label_with_a_literal_dot_does_not_panic_or_false_match() {
+        let Ok(odd_name) = Name::from_labels(vec![b"a.b".to_vec(), b"com".to_vec()]) else {
+            panic!("valid fixture labels");
+        };
+        let mut question = Query::new();
+        question.set_name(odd_name);
+        question.set_query_type(RecordType::A);
+        let mut query = Message::query();
+        query.add_query(question);
+
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "b.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query,
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        // Must not match the "b.com" blocklist entry - "a.b.com" (one label
+        // containing a literal dot, then "com") is not "b.com" nor a
+        // subdomain of it. A false match would produce a NULL-blocked
+        // (0.0.0.0) NoError answer, which is *also* NoError - so the
+        // discriminating assertion is the IP itself (the mock's real
+        // 1.1.1.1, not build_block_response's UNSPECIFIED), not the
+        // response code alone.
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected one A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::new(1, 1, 1, 1)));
+    }
+
+    #[tokio::test]
+    async fn allowlist_match_resolves_via_baseline_without_consulting_quorum() {
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.answers, allow_message_with_ip(baseline_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn blocklist_match_never_consults_baseline_or_quorum() {
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-blocked A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+    }
+
+    #[tokio::test]
+    async fn allowlist_wins_when_domain_is_in_both_lists() {
+        let overrides = overrides_with(vec![
+            OverrideEntry {
+                domain: "example.com".to_string(),
+                is_wildcard: false,
+                list: ListKind::Allowlist,
+            },
+            OverrideEntry {
+                domain: "example.com".to_string(),
+                is_wildcard: false,
+                list: ListKind::Blocklist,
+            },
+        ]);
+        let cache = Cache::new(&cache_config());
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.answers, allow_message_with_ip(baseline_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn non_a_aaaa_without_override_match_proxies_without_consulting_any_upstream() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::MX),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::ProxyToSingleUpstream));
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_hit_makes_no_network_call() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key,
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    Duration::from_secs(60),
+                ),
+            )
+            .await;
+        let client = MockClient::all_panic();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected one cached A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::new(1, 2, 3, 4)));
+    }
+
+    #[tokio::test]
+    async fn cache_hit_serves_remaining_ttl_not_the_full_inserted_ttl() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        // Struct literal, not `CacheEntry::new` - directly places `expires_at`
+        // ~30s in the future rather than relying on `tokio::time::advance`,
+        // which moves tokio's virtual clock, not the `std::time::Instant`
+        // `expires_at` is actually made of (advisor review: the paused-time
+        // version of this test passed, but only via `Duration::as_secs`
+        // sub-second truncation on an untouched ~60s value, not because 30s
+        // had actually elapsed).
+        cache
+            .insert(
+                key,
+                CacheEntry {
+                    verdict: Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    ttl: Duration::from_secs(60),
+                    expires_at: Instant::now() + Duration::from_secs(30),
+                },
+            )
+            .await;
+        let client = MockClient::all_panic();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected one cached A answer");
+        };
+        // Tight band around the ~30s remaining, not the full 60s inserted -
+        // proves "remaining", not just "less than the full TTL".
+        assert!(
+            (25..=30).contains(&answer.ttl),
+            "served TTL {} must reflect the ~30s remaining, not the full 60s entry.ttl",
+            answer.ttl
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_allow_with_records_is_cached_and_reused() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(ip)),
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected one A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == ip));
+        let calls_after_miss = client.calls.load(Ordering::SeqCst);
+        assert!(calls_after_miss > 0);
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        assert_eq!(
+            client.calls.load(Ordering::SeqCst),
+            calls_after_miss,
+            "second call must be a cache hit, no additional upstream calls"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_genuine_nxdomain_with_soa_is_cached_with_negative_ttl() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let response = nxdomain_message_with_soa(120);
+        let client = MockClient {
+            quad9: MockResponse::Instant(response.clone()),
+            adguard: MockResponse::Instant(response.clone()),
+            baseline: MockResponse::Instant(response),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        let calls_after_miss = client.calls.load(Ordering::SeqCst);
+
+        // Directly inspect the cached entry's TTL (not just "it got cached")
+        // - proves it came from the SOA's MINIMUM=120, not e.g. clamp_min's
+        // 30s default, which would also make the entry cacheable and pass a
+        // weaker assertion.
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Some(cached) = cache.get(&key).await else {
+            panic!("expected the negative answer to be cached");
+        };
+        assert_eq!(cached.ttl, Duration::from_secs(120));
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        assert_eq!(
+            client.calls.load(Ordering::SeqCst),
+            calls_after_miss,
+            "negative TTL from SOA must be enough to cache the entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_miss_genuine_nxdomain_without_soa_is_never_cached() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let response = nxdomain_message_without_soa();
+        let client = MockClient {
+            quad9: MockResponse::Instant(response.clone()),
+            adguard: MockResponse::Instant(response.clone()),
+            baseline: MockResponse::Instant(response),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(fresh_response) = outcome else {
+            panic!("expected a Response");
+        };
+        // Fresh path forwards the real upstream response verbatim, genuine
+        // NXDOMAIN included - only the cache-hit replay collapses to NODATA.
+        assert_eq!(
+            fresh_response.metadata.response_code,
+            ResponseCode::NXDomain
+        );
+        let calls_after_miss = client.calls.load(Ordering::SeqCst);
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        assert!(
+            client.calls.load(Ordering::SeqCst) > calls_after_miss,
+            "without a SOA there is nothing to cache - the second call must go to quorum again"
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_empty_allow_replays_as_nodata_not_literal_nxdomain() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key,
+                CacheEntry::new(Verdict::Allow(Vec::new()), Duration::from_secs(60)),
+            )
+            .await;
+        let client = MockClient::all_panic();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::NoError);
+        assert!(response.answers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn all_voters_unresponsive_yields_servfail_not_cached() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = PendingClient;
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &config,
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        assert!(cache.get(&key).await.is_none(), "must not be cached");
+    }
+
+    #[tokio::test]
+    async fn baseline_error_on_allowlist_path_yields_servfail() {
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Error,
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+    }
+}

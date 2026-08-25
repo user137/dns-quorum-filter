@@ -2,7 +2,7 @@
 //! RFC 6891 EDNS(0), T-7; RFC 4033-4035 AD-bit passthrough, T-12; block
 //! response format, SPEC.md §3.2, T-26).
 
-use hickory_proto::op::{Edns, Message, MessageType, Metadata};
+use hickory_proto::op::{Edns, Message, MessageType, Metadata, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
 use hickory_proto::ProtoError;
@@ -97,11 +97,48 @@ pub fn build_block_response(query: &Message, ttl: u32) -> Message {
     response
 }
 
+/// T-39: an honest "resolution failed" response — used when the pipeline has
+/// no usable data at all to answer with (every upstream unresponsive under
+/// fail-open, or a baseline-only lookup itself failed). Never NODATA/NoError
+/// in this case: an empty success answer reads to the browser as "this
+/// domain has no record," a silently wrong answer, not as "resolution
+/// failed" (SPEC.md §3.2's own reasoning about misleading responses applies
+/// here too, not only to the synthesized-block case). Same shell as
+/// [`build_block_response`], no answers, no AD bit — a synthesized response
+/// is never authenticated data.
+#[must_use]
+pub fn build_servfail_response(query: &Message) -> Message {
+    let mut response = response_shell(query);
+    response.metadata.authentic_data = false;
+    response.metadata.response_code = ResponseCode::ServFail;
+    response
+}
+
+/// T-39: a resolved answer built directly from `records`, not forwarded from
+/// an upstream `Message` — used to reconstruct a response from a cached
+/// `cache::Verdict::Allow` (no upstream `Message` survives a cache
+/// round-trip, only the IPs and a TTL already baked into `records`). An
+/// empty `records` produces a NODATA-shaped answer (`NoError`, no answers) —
+/// this is also how a cached genuine NXDOMAIN replays (SPEC.md §4: the cache
+/// doesn't preserve `response_code`, a deliberate, documented tradeoff).
+/// Never sets the AD bit, same principle as [`build_block_response`]: a
+/// reconstructed answer isn't authenticated data either.
+#[must_use]
+pub fn build_answer_response(query: &Message, records: Vec<Record>) -> Message {
+    let mut response = response_shell(query);
+    response.metadata.authentic_data = false;
+    response.answers = records;
+    response
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_block_response, decode_wire_message, encode_wire_message, RecordType};
+    use super::{
+        build_answer_response, build_block_response, build_servfail_response, decode_wire_message,
+        encode_wire_message, RecordType,
+    };
     use crate::min_rrset_ttl;
-    use hickory_proto::op::{Message, MessageType, Query};
+    use hickory_proto::op::{Message, MessageType, Query, ResponseCode};
     use hickory_proto::rr::rdata::A;
     use hickory_proto::rr::{Name, RData, Record};
     use std::net::{Ipv4Addr, Ipv6Addr};
@@ -149,6 +186,33 @@ mod tests {
             let response = build_block_response(&query_of_type(qtype), 60);
             assert!(!response.metadata.authentic_data);
         }
+    }
+
+    #[test]
+    fn servfail_response_has_no_answers_and_no_ad_bit() {
+        let response = build_servfail_response(&query_of_type(RecordType::A));
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+        assert!(response.answers.is_empty());
+        assert!(!response.metadata.authentic_data);
+    }
+
+    #[test]
+    fn answer_response_carries_the_given_records_and_no_ad_bit() {
+        let record = Record::from_rdata(
+            Name::root(),
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        );
+        let response = build_answer_response(&query_of_type(RecordType::A), vec![record]);
+        assert_eq!(response.answers.len(), 1);
+        assert!(!response.metadata.authentic_data);
+    }
+
+    #[test]
+    fn answer_response_with_no_records_is_nodata_shaped() {
+        let response = build_answer_response(&query_of_type(RecordType::A), Vec::new());
+        assert!(response.answers.is_empty());
+        assert_eq!(response.metadata.response_code, ResponseCode::NoError);
     }
 
     #[test]

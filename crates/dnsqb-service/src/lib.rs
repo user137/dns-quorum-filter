@@ -15,6 +15,7 @@
 mod cache;
 mod listener;
 mod overrides;
+mod pipeline;
 mod quorum;
 mod timeout;
 mod upstream;
@@ -27,6 +28,7 @@ pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
+pub use pipeline::{handle_query, PipelineOutcome};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{
