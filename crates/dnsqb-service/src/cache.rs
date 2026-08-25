@@ -215,6 +215,7 @@ impl Cache {
             .expire_after(CacheExpiry {
                 stale_grace: config.stale_grace,
             })
+            .support_invalidation_closures()
             .build();
         Self { inner }
     }
@@ -234,6 +235,52 @@ impl Cache {
             return;
         }
         self.inner.insert(key, entry).await;
+    }
+
+    /// SPEC.md §5 (T-40): invalidate every cached A/AAAA entry matching any
+    /// of `entries` — each `(domain, is_wildcard)` pair uses the same
+    /// suffix-match semantics as `overrides::rule_matches`: exact match
+    /// always, plus any subdomain when `is_wildcard`. Every `domain` must
+    /// already be normalized (same precondition as `CacheKey::new`).
+    ///
+    /// One `moka` predicate registration for the whole batch, not one per
+    /// entry — `moka` applies every live predicate on every `get()` until
+    /// its own maintenance task sweeps it away, so registering N separate
+    /// predicates for an N-domain override-list reload would put N closures
+    /// on the DNS read path. A single predicate closing over the whole list
+    /// keeps that cost at one, however many entries changed. No-op on an
+    /// empty `entries` — skips registering a predicate that could never
+    /// match anything.
+    pub fn invalidate_matching(&self, entries: Vec<(String, bool)>) {
+        if entries.is_empty() {
+            return;
+        }
+        let matchers: Vec<(String, Option<String>)> = entries
+            .into_iter()
+            .map(|(domain, is_wildcard)| {
+                let suffix = is_wildcard.then(|| format!(".{domain}"));
+                (domain, suffix)
+            })
+            .collect();
+        let matched = self.inner.invalidate_entries_if(move |key, _entry| {
+            matchers.iter().any(|(domain, suffix)| {
+                key.domain == *domain
+                    || suffix
+                        .as_ref()
+                        .is_some_and(|s| key.domain.ends_with(s.as_str()))
+            })
+        });
+        if matched.is_err() {
+            // The only failure mode is `PredicateError::InvalidationClosuresDisabled`
+            // (verified by reading moka 0.12.16's `common/error.rs` in full — it has
+            // exactly one variant) — unreachable here since `Cache::new` always calls
+            // `support_invalidation_closures()`. Warned, not silently swallowed: a
+            // future moka upgrade changing that invariant should be observable, not
+            // a cache that quietly stops honoring override-list changes.
+            tracing::warn!(
+                "override-list cache invalidation rejected: cache built without invalidation-closure support"
+            );
+        }
     }
 }
 
@@ -379,6 +426,141 @@ mod tests {
             expires_at,
         };
         assert!(!entry.is_fresh(Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn invalidate_matching_exact_removes_only_that_domain() {
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(target) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(other) = CacheKey::new("other.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                target.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+        cache
+            .insert(
+                other.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.invalidate_matching(vec![("example.com".to_string(), false)]);
+
+        assert!(cache.get(&target).await.is_none());
+        assert!(cache.get(&other).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn invalidate_matching_removes_both_a_and_aaaa_for_the_domain() {
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(a_key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(aaaa_key) = CacheKey::new("example.com", RecordType::AAAA) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                a_key.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+        cache
+            .insert(
+                aaaa_key.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.invalidate_matching(vec![("example.com".to_string(), false)]);
+
+        assert!(cache.get(&a_key).await.is_none());
+        assert!(cache.get(&aaaa_key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidate_matching_wildcard_true_also_removes_subdomains() {
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(apex) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(sub) = CacheKey::new("sub.example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                apex.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+        cache
+            .insert(
+                sub.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.invalidate_matching(vec![("example.com".to_string(), true)]);
+
+        assert!(cache.get(&apex).await.is_none());
+        assert!(cache.get(&sub).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidate_matching_wildcard_false_removes_exact_but_not_subdomain() {
+        // Discriminating test (advisor review, T-40): a test that only
+        // asserts the subdomain survives would pass identically if the
+        // predicate silently never matched anything at all. Asserting both
+        // halves in one test — exact gone, subdomain present — proves the
+        // `is_wildcard: false` branch actually distinguishes the two.
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(apex) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(sub) = CacheKey::new("sub.example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                apex.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+        cache
+            .insert(
+                sub.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.invalidate_matching(vec![("example.com".to_string(), false)]);
+
+        assert!(cache.get(&apex).await.is_none());
+        assert!(cache.get(&sub).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn invalidate_matching_with_empty_entries_is_a_noop() {
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.invalidate_matching(Vec::new());
+
+        assert!(cache.get(&key).await.is_some());
     }
 
     #[test]

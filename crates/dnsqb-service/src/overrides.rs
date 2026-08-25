@@ -324,11 +324,35 @@ impl OverrideLists {
     }
 }
 
+/// SPEC.md §5 (T-40): entries whose presence differs between `before` and
+/// `after` — added by a reload, removed by one, or moved between lists
+/// (`OverrideEntry`'s own `Eq` includes `list`, so a move shows up as one
+/// entry removed from its old list's set and a different-but-equal-looking
+/// one added to the new list's set). Both directions are returned, not only
+/// newly-added entries — see `pipeline::invalidate_changed`'s doc comment
+/// for why.
+///
+/// `pub(crate)`, not `pub`: its only caller is `pipeline::invalidate_changed`
+/// in this same crate — no reason to widen the public surface for a reader
+/// that doesn't exist yet (same restraint as `QuorumOutcome` omitting
+/// `incomplete` in T-39, and the two over-exposure corrections in T-37).
+pub(crate) fn changed_entries<'a>(
+    before: &'a OverrideLists,
+    after: &'a OverrideLists,
+) -> Vec<&'a OverrideEntry> {
+    before
+        .entries
+        .iter()
+        .filter(|e| !after.entries.contains(e))
+        .chain(after.entries.iter().filter(|e| !before.entries.contains(e)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_pattern, rule_matches, InvalidEntry, InvalidReason, ListKind, OverrideEntry,
-        OverrideError, OverrideLists,
+        changed_entries, parse_pattern, rule_matches, InvalidEntry, InvalidReason, ListKind,
+        OverrideEntry, OverrideError, OverrideLists,
     };
     use std::io::Write as _;
 
@@ -566,6 +590,63 @@ mod tests {
             !debug_output.contains(telltale),
             "Debug output must not contain the raw pattern text: {debug_output}"
         );
+    }
+
+    #[test]
+    fn changed_entries_of_identical_lists_is_empty() {
+        let lists = OverrideLists {
+            entries: vec![entry("example.com", false, ListKind::Blocklist)],
+        };
+        assert!(changed_entries(&lists, &lists).is_empty());
+    }
+
+    #[test]
+    fn changed_entries_detects_a_newly_added_entry() {
+        let before = OverrideLists { entries: vec![] };
+        let added = entry("example.com", false, ListKind::Blocklist);
+        let after = OverrideLists {
+            entries: vec![added.clone()],
+        };
+        assert_eq!(changed_entries(&before, &after), vec![&added]);
+    }
+
+    #[test]
+    fn changed_entries_detects_a_removed_entry() {
+        let removed = entry("example.com", false, ListKind::Blocklist);
+        let before = OverrideLists {
+            entries: vec![removed.clone()],
+        };
+        let after = OverrideLists { entries: vec![] };
+        assert_eq!(changed_entries(&before, &after), vec![&removed]);
+    }
+
+    #[test]
+    fn changed_entries_detects_an_entry_moved_between_lists() {
+        let before_entry = entry("example.com", false, ListKind::Blocklist);
+        let after_entry = entry("example.com", false, ListKind::Allowlist);
+        let before = OverrideLists {
+            entries: vec![before_entry.clone()],
+        };
+        let after = OverrideLists {
+            entries: vec![after_entry.clone()],
+        };
+        let mut result = changed_entries(&before, &after);
+        result.sort_by_key(|e| e.list == ListKind::Allowlist);
+        assert_eq!(result, vec![&before_entry, &after_entry]);
+    }
+
+    #[test]
+    fn changed_entries_ignores_entries_present_in_both() {
+        let kept = entry("kept.example.com", false, ListKind::Blocklist);
+        let removed = entry("removed.example.com", false, ListKind::Blocklist);
+        let added = entry("added.example.com", false, ListKind::Blocklist);
+        let before = OverrideLists {
+            entries: vec![kept.clone(), removed.clone()],
+        };
+        let after = OverrideLists {
+            entries: vec![kept, added.clone()],
+        };
+        assert_eq!(changed_entries(&before, &after), vec![&removed, &added]);
     }
 
     fn tempfile_with_contents(contents: &str) -> std::io::Result<tempfile::NamedTempFile> {

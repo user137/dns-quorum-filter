@@ -8,13 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
-Фаза 1, fifth slice done (T-39 — TASKS.md, two commits): end-to-end request pipeline —
-allowlist → blocklist → cache → quorum (SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now
-re-exports from eight modules — `cache` (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`,
-`clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, T-32/T-34/T-36), `overrides`
-(`OverrideLists::decision`/`conflicts`/`load`,
-`OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37), `pipeline`
-(`handle_query`/`PipelineOutcome`, T-39 — new this slice), `wire` (`DoH` wire codec, block/NODATA/
+Фаза 1, sixth slice done (T-40 — TASKS.md, one commit): cache invalidation on an override-list
+reload, on top of the fifth slice's (T-39) end-to-end request pipeline — allowlist → blocklist →
+cache → quorum (SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from eight
+modules — `cache` (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`,
+`chain_cache_ttl`, `is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching` new this slice —
+one `moka` `invalidate_entries_if` predicate per whole batch of changed domains, not one per
+domain, since `moka` re-applies every live predicate on every `get()` until its own maintenance
+task sweeps it away), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
+`OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37;
+`changed_entries` new this slice — `pub(crate)`, symmetric diff between two `OverrideLists`
+snapshots, no reader outside `pipeline::invalidate_changed` yet), `pipeline`
+(`handle_query`/`PipelineOutcome`, T-39; `invalidate_changed` new this slice — the reload-event
+counterpart to `handle_query`'s per-query flow), `wire` (`DoH` wire codec, block/NODATA/
 SERVFAIL/direct-answer response construction, AD-bit passthrough), `upstream` (`Provider` enum,
 `DohClient` trait + `ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout`
 (`TimeoutMode`/`TimeoutConfig`, `VoterOutcome`, `query_with_timeout`, T-27), `quorum` (`is_blocked`
@@ -28,18 +34,24 @@ longer `todo!()`).
 `pipeline::handle_query` is the first real consumer of `cache.rs`/`overrides.rs`/`quorum.rs`
 together — it branches a `CacheEntry` between positive-answer (`chain_cache_ttl`) and genuine
 NXDOMAIN/NODATA (`negative_cache_ttl`, from an authority-section SOA `pipeline.rs`'s own
-`find_soa` now extracts) TTL sources. **Not yet in this slice**: voter scope (SPEC.md §5.3-конвеєр
-крок 4, top-N-per-country, Фаза 4) and GeoIP (крок 6, Фаза 2) — both later phases by design; cache
-invalidation on override-list change (T-40, next task); RFC 8767 stale-if-error wired into the live
-pipeline (`should_serve_stale` stays an unconsumed predicate — deferred per advisor review, see
-the gotchas section below for why); UI warning on an allowlist/blocklist conflict
-(`OverrideLists::conflicts()` is ready, no UI consumer yet — T-47/T-52); `overrides.rs` still has
-**no file-write path** (`save()` — deliberately deferred to T-46/T-47, when a UI writer exists;
-SPEC.md §5 calls the file "редагований і вручну", manually text-edited, until then). No log wiring
-either, and no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed
-cert, T-48) — `handle_query` is not called from anywhere yet, same pattern as every prior slice's
-modules before their own wiring task. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's
-Фаза 3 scope (SPEC.md §7).
+`find_soa` now extracts) TTL sources. `pipeline::invalidate_changed(before, after)` (T-40) is a
+second, separate entry point — not per-query, but per override-list reload: it diffs two
+`OverrideLists` snapshots (`overrides::changed_entries`) and evicts every affected domain's cache
+entries in one `Cache::invalidate_matching` call. Needed because `handle_query`'s fixed
+overrides-before-cache order means a domain under an active override rule can never get a *new*
+cache entry — the only entry that can go stale is one written *before* the rule existed, so
+invalidating at rule-*add* time (not just removal) is what actually closes the gap; see
+`invalidate_changed`'s own doc comment for the full argument. **Not yet in this slice**: voter
+scope (SPEC.md §5.3-конвеєр крок 4, top-N-per-country, Фаза 4) and GeoIP (крок 6, Фаза 2) — both
+later phases by design; RFC 8767 stale-if-error wired into the live pipeline (`should_serve_stale`
+stays an unconsumed predicate — deferred per advisor review, see the gotchas section below for
+why); UI warning on an allowlist/blocklist conflict (`OverrideLists::conflicts()` is ready, no UI
+consumer yet — T-47/T-52); `overrides.rs` still has **no file-write path** (`save()` — deliberately
+deferred to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований і вручну",
+manually text-edited, until then) — so nothing calls `invalidate_changed` yet either, same pattern
+as `handle_query` itself before T-48's listener wiring. No log wiring either, and no live
+`hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert, T-48).
+`dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
@@ -84,7 +96,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-39 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-40 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -199,6 +211,20 @@ decision from scratch).
   tests (T-39) hit this immediately when adding a "prove no extra upstream call happened" counter to
   the existing `MockClient` pattern from `quorum.rs`'s tests (which didn't need a counter, only
   `Panic`-on-call).
+- **`moka::future::Cache::invalidate_entries_if` needs `.support_invalidation_closures()` on the
+  builder** — without it the call returns `Err(PredicateError::InvalidationClosuresDisabled)`
+  instead of invalidating anything; `Cache::new` (T-40) now always calls it. **One predicate
+  registration per whole batch of changed domains, not one per domain** — `moka` re-applies every
+  currently-registered predicate on every `get()` until its own maintenance task sweeps an expired
+  one away, so N separate `invalidate_entries_if` calls for an N-domain override-list reload would
+  put N closures on the live DNS read path; `Cache::invalidate_matching` (T-40) takes the whole
+  changed-domain list and builds one closure over it instead. Caught by advisor review before
+  implementing, not by any test — the naive one-call-per-entry version would have passed every
+  test in the plan, since none of them exercised a multi-entry reload. Before writing the
+  "unreachable, safe to ignore" comment on `invalidate_entries_if`'s `Err` branch, read
+  `PredicateError`'s definition in full (`moka-0.12.16/src/common/error.rs`) rather than trusting a
+  grep filtered to the one call site already found — a second variant would have made the comment
+  false and the swallowed error a silent regression of the exact bug T-40 exists to fix.
 
 ## Documentation map — who owns what
 

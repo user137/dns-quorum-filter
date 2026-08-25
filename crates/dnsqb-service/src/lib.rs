@@ -3,14 +3,16 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, четвертий
-//! зріз (T-37): allowlist/blocklist override lists with suffix wildcard
-//! match, on top of the second/third slices' timeout-mode-aware OR-logic
-//! quorum with early return/cancellation, `DoH` wire codec,
-//! baseline/upstream client with HTTP/2 keep-alive, and `moka`-backed cache.
-//! Override lists are **not yet wired to `resolve()`/the request pipeline**
-//! (T-39), and have no file-write path (`save()` — T-46/T-47, when a UI
-//! writer exists). Log and Tauri UI are later batches — see TASKS.md.
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, шостий
+//! зріз (T-40): `pipeline::invalidate_changed` evicts cache entries affected
+//! by an override-list reload, on top of the fifth slice's (T-39) end-to-end
+//! `pipeline::handle_query` (allowlist → blocklist → cache → quorum) and the
+//! earlier slices' timeout-mode-aware OR-logic quorum with early
+//! return/cancellation, `DoH` wire codec, baseline/upstream client with
+//! HTTP/2 keep-alive, and `moka`-backed cache. Override lists have no
+//! file-write path yet (`save()` — T-46/T-47, when a UI writer exists), so
+//! nothing calls `invalidate_changed` yet either. Log and Tauri UI are later
+//! batches — see TASKS.md.
 
 mod cache;
 mod listener;
@@ -28,7 +30,7 @@ pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
-pub use pipeline::{handle_query, PipelineOutcome};
+pub use pipeline::{handle_query, invalidate_changed, PipelineOutcome};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{

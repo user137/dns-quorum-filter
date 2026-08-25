@@ -1,17 +1,20 @@
 //! T-39: end-to-end request pipeline — allowlist → blocklist → cache →
 //! quorum (SPEC.md §5 steps 1-3+5). Voter scope (step 4, top-N per country)
 //! and `GeoIP` (step 6) aren't implemented yet — both are later phases (Фаза 4
-//! and Фаза 2 respectively), not this batch. Cache invalidation on
-//! override-list change (T-40) and RFC 8767 stale-if-error integration
-//! (`should_serve_stale` stays an unconsumed predicate here) are also
-//! deferred — see TASKS.md. Not wired to any network listener yet (T-48
-//! waits on the self-signed certificate).
+//! and Фаза 2 respectively), not this batch. RFC 8767 stale-if-error
+//! integration (`should_serve_stale` stays an unconsumed predicate here) is
+//! also deferred — see TASKS.md. Not wired to any network listener yet
+//! (T-48 waits on the self-signed certificate).
+//!
+//! T-40 adds a second, non-`handle_query` entry point: [`invalidate_changed`]
+//! is the reload-event counterpart, called whenever the override lists
+//! change rather than once per query — see its own doc comment.
 
 use crate::cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
 use crate::negative_cache_ttl;
-use crate::overrides::{ListKind, OverrideLists};
+use crate::overrides::{self, ListKind, OverrideLists};
 use crate::quorum::{requires_quorum, resolve, QuorumVerdict};
 use crate::timeout::TimeoutConfig;
 use crate::upstream::{DohClient, BASELINE_DOH_URL};
@@ -201,6 +204,34 @@ async fn handle_allow(
     crate::wire::forward_response(query, &message)
 }
 
+/// SPEC.md §5 (T-40): apply the `Cache` invalidation implied by an
+/// override-list reload. `before`/`after` are two `OverrideLists` snapshots
+/// — the one a caller was using, and the one `OverrideLists::load` just
+/// produced. **Why this is needed at all, given `handle_query` always checks
+/// overrides *before* cache:** while an override rule is active, no query
+/// for a domain it covers can ever produce a new cache entry (the pipeline
+/// short-circuits before touching the cache), so the only entry that can go
+/// stale is one written *before* the rule existed. Invalidating at the
+/// moment a rule is *added* clears that leftover immediately, so a later
+/// removal of the same rule can't resurrect it from a still-fresh TTL.
+/// Invalidation runs in both directions (added and removed entries alike),
+/// not only newly-added ones — that doesn't rely on every prior reload
+/// having gone through this exact path (e.g. the first reload after this
+/// function existed, or a list edited by hand outside any diffing tool).
+///
+/// Not yet called from anywhere: no live file-watcher or UI writer exists
+/// yet to trigger a reload in the first place (`overrides::OverrideLists`
+/// itself has no file-write path — deferred to T-46/T-47) — same
+/// "module ready, wiring task still pending" pattern as every prior slice's
+/// modules before their own wiring task.
+pub fn invalidate_changed(cache: &Cache, before: &OverrideLists, after: &OverrideLists) {
+    let entries: Vec<(String, bool)> = overrides::changed_entries(before, after)
+        .into_iter()
+        .map(|entry| (entry.domain.clone(), entry.is_wildcard))
+        .collect();
+    cache.invalidate_matching(entries);
+}
+
 /// SOA record in `records` (RFC 2308, T-35's `negative_cache_ttl` input) —
 /// `message.authorities`, not `answers`, per DNS convention for a negative
 /// response.
@@ -266,7 +297,7 @@ fn duration_to_ttl_secs(duration: Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_query, PipelineOutcome};
+    use super::{handle_query, invalidate_changed, PipelineOutcome};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::timeout::{TimeoutConfig, TimeoutMode};
@@ -881,5 +912,152 @@ mod tests {
             panic!("expected a Response");
         };
         assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+    }
+
+    #[tokio::test]
+    async fn invalidate_changed_evicts_a_cache_entry_for_a_newly_blocklisted_domain() {
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        // Simulates a pre-override quorum result already sitting in the
+        // cache when the reload happens.
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    Duration::from_secs(300),
+                ),
+            )
+            .await;
+
+        let before = OverrideLists::empty();
+        let after = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+
+        invalidate_changed(&cache, &before, &after);
+
+        assert!(cache.get(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidate_changed_wildcard_entry_evicts_a_subdomain_cache_entry() {
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("sub.example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    Duration::from_secs(300),
+                ),
+            )
+            .await;
+
+        let before = OverrideLists::empty();
+        let after = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: true,
+            list: ListKind::Blocklist,
+        }]);
+
+        invalidate_changed(&cache, &before, &after);
+
+        assert!(cache.get(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidate_changed_handles_a_multi_entry_reload_in_one_predicate() {
+        // Discriminating test (advisor review, T-40): every other test in
+        // this module diffs to exactly 0 or 1 changed entries, so a wrong
+        // quantifier in `Cache::invalidate_matching`'s `matchers.iter().any`
+        // loop (e.g. `.all()`, or an early return after the first match)
+        // would pass every one of them. Three cache entries, two changed
+        // override entries (one exact, one wildcard), one entry that must
+        // survive - this can't pass if the batch collapses to
+        // first-entry-only, last-entry-only, or all-entries.
+        let cache = Cache::new(&cache_config());
+        let Ok(exact_key) = CacheKey::new("a.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(wildcard_sub_key) = CacheKey::new("sub.b.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(keep_key) = CacheKey::new("keep.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        for key in [&exact_key, &wildcard_sub_key, &keep_key] {
+            cache
+                .insert(
+                    key.clone(),
+                    CacheEntry::new(
+                        Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                        Duration::from_secs(300),
+                    ),
+                )
+                .await;
+        }
+
+        let before = OverrideLists::empty();
+        let after = overrides_with(vec![
+            OverrideEntry {
+                domain: "a.com".to_string(),
+                is_wildcard: false,
+                list: ListKind::Blocklist,
+            },
+            OverrideEntry {
+                domain: "b.com".to_string(),
+                is_wildcard: true,
+                list: ListKind::Blocklist,
+            },
+        ]);
+
+        invalidate_changed(&cache, &before, &after);
+
+        assert!(cache.get(&exact_key).await.is_none(), "a.com must be gone");
+        assert!(
+            cache.get(&wildcard_sub_key).await.is_none(),
+            "sub.b.com must be gone (matches the *.b.com wildcard entry)"
+        );
+        assert!(
+            cache.get(&keep_key).await.is_some(),
+            "keep.com must survive - it matches neither changed entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalidate_changed_is_a_noop_when_lists_are_unchanged() {
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    Duration::from_secs(300),
+                ),
+            )
+            .await;
+
+        let lists = overrides_with(vec![OverrideEntry {
+            domain: "other.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+
+        invalidate_changed(&cache, &lists, &lists);
+
+        assert!(
+            cache.get(&key).await.is_some(),
+            "a reload diffing to no changes must not wipe unrelated cache entries"
+        );
     }
 }
