@@ -10,6 +10,22 @@ use hickory_proto::op::Message;
 use hickory_proto::rr::rdata::opt::EdnsOption;
 use hickory_proto::ProtoError;
 use std::future::Future;
+use std::time::Duration;
+
+/// SPEC.md §3.6 (T-31): idle HTTP/2 connections to an upstream are dropped
+/// after this long. Short relative to `reqwest`'s 90s default — a `DoH`
+/// resolver is bursty (a page load fires many lookups, then goes quiet for
+/// a while), so holding idle connections open past a browsing pause just
+/// wastes upstream-side resources without saving a meaningful number of
+/// handshakes.
+const UPSTREAM_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Interval between HTTP/2 keepalive pings on idle upstream connections, and
+/// how long to wait for a pong before treating the connection as dead
+/// (SPEC.md §3.6, T-31) — keeps NAT/firewall state alive between bursts of
+/// queries without waiting for a full new TLS handshake on the next one.
+const UPSTREAM_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const UPSTREAM_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// RFC 8484 §4.1.1 (T-9): `application/dns-message` GET-request URL —
 /// unpadded base64url `dns=` parameter (SPEC.md §1, §3).
@@ -93,13 +109,21 @@ pub struct ReqwestDohClient {
 
 impl ReqwestDohClient {
     /// Build a client with the `rustls`/HTTP-2 backend (SPEC.md "Технічний
-    /// стек" — TLS only via `rustls`).
+    /// стек" — TLS only via `rustls`) and per-upstream HTTP/2 keep-alive
+    /// (SPEC.md §3.6, T-31). Callers must reuse a single instance across
+    /// queries — reconstructing one per query defeats the connection
+    /// pooling configured here.
     ///
     /// # Errors
     ///
     /// Returns `Err` if the underlying TLS backend fails to initialize.
     pub fn new() -> Result<Self, reqwest::Error> {
-        let http = reqwest::Client::builder().build()?;
+        let http = reqwest::Client::builder()
+            .pool_idle_timeout(UPSTREAM_POOL_IDLE_TIMEOUT)
+            .http2_keep_alive_interval(UPSTREAM_KEEP_ALIVE_INTERVAL)
+            .http2_keep_alive_timeout(UPSTREAM_KEEP_ALIVE_TIMEOUT)
+            .http2_keep_alive_while_idle(true)
+            .build()?;
         Ok(Self { http })
     }
 }
@@ -130,6 +154,17 @@ mod tests {
     use hickory_proto::op::{Message, Query};
     use hickory_proto::rr::{DNSClass, Name, RecordType};
     use std::str::FromStr;
+
+    // T-31: proves the keep-alive/pool builder options are accepted by the
+    // `rustls`/HTTP-2 backend. Doesn't prove connection reuse actually
+    // happens across queries - that needs a live network test, out of scope
+    // for unit coverage (TASKS.md T-31 notes this as partial coverage).
+    #[test]
+    fn client_with_keep_alive_settings_builds() {
+        if let Err(err) = ReqwestDohClient::new() {
+            panic!("client construction with keep-alive settings must not fail: {err}");
+        }
+    }
 
     // Live network check - not run in CI (Відкрите питання п.2, ToS on
     // automated upstream queries is still unverified; see DECISIONS.md

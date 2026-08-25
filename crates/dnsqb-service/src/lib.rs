@@ -58,13 +58,14 @@ pub fn normalize_domain(_input: &str) -> Result<String, ProtoError> {
 }
 
 /// RFC 8767 stale-if-error (T-10): serve a stale cache entry instead of a
-/// fresh upstream error, layered on top of (not instead of) `fail-open`
-/// (SPEC.md §3.3, §4.1, TASKS.md T-28).
+/// fresh upstream error, layered on top of (not instead of) `fail-open` —
+/// `fail-closed`/`degraded` don't get this fallback (SPEC.md §3.3, §4.1,
+/// TASKS.md T-28).
 #[must_use]
 pub fn should_serve_stale(
-    _fail_open: bool,
-    _cache_entry_expired: bool,
-    _upstream_failed: bool,
+    fail_open: bool,
+    cache_entry_expired: bool,
+    upstream_failed: bool,
 ) -> bool {
-    todo!("Фаза 1: T-28 — stale-if-error over fail-open")
+    fail_open && cache_entry_expired && upstream_failed
 }
