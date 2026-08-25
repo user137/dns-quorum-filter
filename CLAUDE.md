@@ -22,6 +22,8 @@ decision from scratch).
 | File | Owns | Update when |
 |---|---|---|
 | `SPEC.md` | full design + reasoning: architecture, RFC table, phased plan, open questions | a design decision changes or a new one is made |
+| `UI-SPEC.md` | GUI: screen inventory, per-screen field/type tables, Tauri command allowlist draft — no rationale, links back to SPEC.md §8 by section number | a screen, field, or DTO changes; rationale changes go in SPEC.md instead |
+| `diagrams/` | architecture + UI diagrams, each anchored to a SOURCES section list; ground-truth ritual in `diagrams/README.md` applies from here on | a diagrammed state/flow/DTO changes — see the ritual's trigger list |
 | `CLAUDE.md` | agent-facing summary: commands, architecture at a glance, non-obvious gotchas | architecture/commands change |
 | `TASKS.md` | backlog — status only, no reasoning | a task starts/finishes/gets added |
 | `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |
@@ -70,9 +72,9 @@ need more detail than fits here.)
   applied to Rust's equivalent of an empty catch block.
 - **Before committing, check what's actually staged** (`git status` after `git add`) — don't trust a
   filename alone to mean "no secrets in here."
-- **Diagram ground-truth ritual** (`~/.claude/diagram-ground-truth-ritual.md`) applies once
-  `diagrams/` actually has diagrams in it — copy that file's ritual into this one when that happens.
-  Not yet relevant; the folder is currently empty.
+- **Diagram ground-truth ritual** (`~/.claude/diagram-ground-truth-ritual.md`) — now in effect,
+  copied into `diagrams/README.md` once the first diagrams (`ui-*.md`) landed. Check the SOURCES
+  block of any diagram you touch, and run the sync checklist before calling doc changes done.
 - **Security-ops practices** (`~/.claude/security-ops-practices.md`, alert triage / log
   investigation) apply once `dnsqb-service` is a running system with logs/telemetry to investigate —
   not relevant pre-implementation.
