@@ -97,6 +97,17 @@ decision from scratch).
   waiting) needs the default current-thread runtime — never add `flavor = "multi_thread"` to a
   paused-time test, it panics at runtime (`rt-multi-thread` being enabled for `main.rs`'s own needs
   doesn't carry over to test attributes, which pick their flavor independently).
+- **Proving an async cancellation/early-return actually happened, not just that the final verdict
+  matches:** a mock future that never resolves on its own (`std::future::pending()`) only proves
+  the caller didn't *need* the answer — it doesn't prove the caller *dropped* the future instead of
+  waiting out its own `tokio::time::timeout` before falling through to a slower-but-still-correct
+  path. Pair the never-resolving mock with `#[tokio::test(start_paused = true)]` and assert
+  `tokio::time::Instant::now()` elapsed stays near-zero (well under the configured timeout) — under
+  paused time this is deterministic, no real waiting. Caught by advisor review on T-30's tests,
+  which passed either way before this fix.
+- Constructing a `hickory_proto::ProtoError` for a test-only error fixture: `ProtoError` implements
+  `From<String>` — `"description".to_string().into()` is enough, no need to reach for an internal
+  `ProtoErrorKind` variant.
 
 ## Documentation map — who owns what
 
