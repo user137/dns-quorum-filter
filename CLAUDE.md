@@ -51,6 +51,29 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
+## Rust/tooling gotchas (learned by doing, T-20–T-26 batch)
+
+- `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
+  `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
+  compiler's "field, not a method" hint before assuming a method exists.
+- `Message` is `#[non_exhaustive]` — build via `Message::new`/`::query`/`::response`, then mutate
+  public fields; no struct-literal construction from outside the crate. `Metadata::
+  response_from_request(&query.metadata)` is the documented way to derive a response header.
+- `#![deny(clippy::unwrap_used, clippy::expect_used)]` in `lib.rs` applies to inline
+  `#[cfg(test)] mod tests` too (same crate) — only the separate `tests/` integration binary is
+  exempt. Use `panic!(...)` (via `let-else` or `match`) in inline unit tests instead.
+- Async trait methods called via `tokio::join!` need `fn foo(&self, ...) -> impl Future<Output =
+  T> + Send`, not `async fn foo`, or `-D warnings` fails on `async_fn_in_trait`'s missing Send
+  bound. A mock impl with no `.await` inside needs `std::future::ready(...)` instead of `async fn`
+  to satisfy `clippy::unused_async_trait_impl`.
+- Windows: the bundled `curl.exe` (Schannel libcurl) has no `--http2` — use PowerShell's
+  `Invoke-WebRequest -HttpVersion 2.0` for HTTP/2 (relevant here: `dns.quad9.net` requires it).
+- The PowerShell tool's working directory doesn't reliably persist between separate tool calls in
+  this environment — `cd` inside the same command string, don't rely on a prior call's `cd`.
+- Adding any `rustls`-backed dependency tends to surface new `cargo deny` license entries (seen:
+  `ISC` for `aws-lc-rs`/`rustls-webpki`, `CDLA-Permissive-2.0` for `webpki-root-certs`) — expect
+  and vet each one in `deny.toml`, don't reflexively widen the allowlist.
+
 ## Documentation map — who owns what
 
 | File | Owns | Update when |
