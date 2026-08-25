@@ -3,18 +3,21 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, перший
-//! зріз (T-20–T-26): live-verified block signatures, `DoH` wire codec,
-//! baseline/upstream client, OR-logic quorum. Cache, override lists, log,
-//! Tauri UI, and the self-signed cert are later batches — see TASKS.md.
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, другий
+//! зріз (T-27–T-31): timeout-mode-aware OR-logic quorum with early
+//! return/cancellation, `DoH` wire codec, baseline/upstream client with
+//! HTTP/2 keep-alive. Cache, override lists, log, Tauri UI, and the
+//! self-signed cert are later batches — see TASKS.md.
 
 mod listener;
 mod quorum;
+mod timeout;
 mod upstream;
 mod wire;
 
 pub use listener::{bind_listener, BindError};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumVerdict};
+pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{
     doh_get_url, ecs_option_for_upstream, DohClient, Provider, ReqwestDohClient, UpstreamError,
     BASELINE_DOH_URL,

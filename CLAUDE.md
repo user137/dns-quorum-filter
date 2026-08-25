@@ -8,22 +8,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
-Фаза 1, first slice done (T-20–T-26, T-61, T-62 — TASKS.md; DECISIONS.md 2026-08-25 for the T-20
-live-verification writeup): the quorum-resolver core. `dnsqb-service`'s `lib.rs` now re-exports
-from four modules — `wire` (`DoH` wire codec, block/NODATA response construction, AD-bit
-passthrough), `upstream` (`Provider` enum, `DohClient` trait + `ReqwestDohClient`, per-provider
-`DoH` URLs), `quorum` (`is_blocked` per-provider signature table, `requires_quorum`, OR-logic
-`resolve()`), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only). No early-return/
-cancellation (T-30), no timeout-mode handling (T-27/T-28), no cache/override-list/log wiring, and
-no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert,
-T-48) — those are later batches. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's
-Фаза 3 scope (SPEC.md §7).
+Фаза 1, second slice done (T-27–T-31 — TASKS.md): timeout-mode-aware, cancellable quorum.
+`dnsqb-service`'s `lib.rs` now re-exports from five modules — `wire` (`DoH` wire codec,
+block/NODATA response construction, AD-bit passthrough), `upstream` (`Provider` enum, `DohClient`
+trait + `ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout` (`TimeoutMode`/
+`TimeoutConfig`, `VoterOutcome`, `query_with_timeout`, T-27), `quorum` (`is_blocked` per-provider
+signature table, `requires_quorum`, OR-logic `resolve()` with early-return/cancellation via
+`FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only).
+`resolve()`'s signature changed from `Result<QuorumVerdict, UpstreamError>` to plain
+`QuorumVerdict` — an unresponsive/failing voter is now interpreted per `TimeoutConfig::mode`
+(SPEC.md §3.3) instead of propagating as an error. Still no cache/override-list/log wiring, and no
+live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert, T-48) —
+those are later batches. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope
+(SPEC.md §7).
 
-Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`), `reqwest`
-(`default-features = false`, `rustls`/`http2` only — no `native-tls`), `thiserror`, `base64` —
-vetting rows for each are in SECURITY.md. `deny.toml`'s license allowlist also covers
+Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
+in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
+(`default-features = false`, `rustls`/`http2` only — no `native-tls`), `thiserror`, `base64`,
+`futures-util` (`FuturesUnordered`/`StreamExt` only, not the full `futures` crate — T-30), `tracing`
+(diagnostic logging, T-29; `SPEC.md`'s "Технічний стек" table doesn't name a logging crate, `tracing`
+is the tokio-ecosystem de-facto default — no subscriber wired yet, that's T-48/real-listener scope)
+— vetting rows for each are in SECURITY.md. `deny.toml`'s license allowlist also covers
 `CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and
-`rustls-webpki`), both added with this batch.
+`rustls-webpki`), both added in the previous batch; `futures-util`/`tracing` didn't need new
+allowlist entries.
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
@@ -53,7 +61,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-26 batch)
+## Rust/tooling gotchas (learned by doing, T-20–T-31 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -75,6 +83,20 @@ decision from scratch).
 - Adding any `rustls`-backed dependency tends to surface new `cargo deny` license entries (seen:
   `ISC` for `aws-lc-rs`/`rustls-webpki`, `CDLA-Permissive-2.0` for `webpki-root-certs`) — expect
   and vet each one in `deny.toml`, don't reflexively widen the allowlist.
+- **`reqwest::Error`'s `Display` includes the failed request URL** — for this project's DoH GET
+  requests, that URL embeds the base64url-encoded query, i.e. the domain name. Never log an
+  `UpstreamError::Http`'s message text directly in a diagnostic-log context (SPEC.md, Наскрізні
+  вимоги: no domain names in service logs) — log a coarse error-kind label instead (`quorum.rs`'s
+  `error_kind()`). Caught in self-review while writing T-29's logging, not by any lint.
+- Boxing differently-shaped `async move { ... }` blocks into one `FuturesUnordered<Pin<Box<dyn
+  Future<Output = T> + Send + 'a>>>` (T-30's tagged-future pattern) needs the borrowed generic
+  type param itself bound `Sync`, not just `Send` — `&C` across an `.await` inside the box requires
+  `C: Sync` or the compiler rejects the `Send`-future cast with a non-obvious error pointing at the
+  `&` reference, not at `C`.
+- `#[tokio::test(start_paused = true)]` (deterministic `tokio::time::sleep`/`timeout` tests, no real
+  waiting) needs the default current-thread runtime — never add `flavor = "multi_thread"` to a
+  paused-time test, it panics at runtime (`rt-multi-thread` being enabled for `main.rs`'s own needs
+  doesn't carry over to test attributes, which pick their flavor independently).
 
 ## Documentation map — who owns what
 
