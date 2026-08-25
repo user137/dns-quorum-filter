@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+# No explicit toolchain-install step: windows-latest ships rustup pre-installed,
+# and every job's first `cargo`/`rustup` invocation reads rust-toolchain.toml and
+# installs that exact pinned version + its declared components. Keeping the pin
+# in one file (not duplicated as action inputs) avoids the two configs disagreeing.
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --workspace
+      - run: cargo test --workspace --lib
+
+  lint:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all -- --check
+
+  audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-audit
+      - uses: taiki-e/install-action@cargo-deny
+      - run: cargo audit
+      - run: cargo deny check
+
+  coverage:
+    runs-on: windows-latest
+    continue-on-error: true # T-19: published as an artifact, non-blocking on MVP-stage
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info

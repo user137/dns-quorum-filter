@@ -4,13 +4,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Pre-implementation. No Cargo workspace, no source code, no build/test tooling exists yet. There are
-no commands to run until Phase 1 scaffolding lands. When code is added, update this file with the
-actual build/lint/test commands (`cargo build`, `cargo test`, `cargo clippy`, `cargo audit`,
-`cargo deny`) per crate.
+Крок 0 in progress (SPEC.md §"Фазований план"): Rust workspace and CI scaffolded, no resolver
+logic yet — `dnsqb-service`/`dnsqb-watcher` are stub binaries (`todo!()` bodies). RFC-conformance
+tests (T-3–T-14) land in the next batch, `#[ignore]`d until the Phase 1 task that implements each
+one. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md itself left this open).
 
-The first concrete implementation step is SPEC.md's "Крок 0" (§"Фазований план"): the RFC-
-conformance test table, written before any resolver code exists.
+Commands (from repo root):
+- `cargo build --workspace` — build both crates.
+- `cargo test --workspace --lib` — unit tests.
+- `cargo test --test conformance -p dnsqb-service -- --ignored` — RFC-conformance tests (once the
+  `tests/conformance` target lands; intentionally red until each RFC requirement is implemented).
+- `cargo clippy --workspace --all-targets -- -D warnings` — lint gate, required, not advisory.
+- `cargo fmt --all -- --check` — format gate.
+- `cargo audit` / `cargo deny check` — dependency vetting, required (SECURITY.md).
+- `cargo llvm-cov --workspace --lib --lcov --output-path lcov.info` — coverage report, published as
+  a CI artifact, non-blocking at the MVP stage (T-19).
+
+All of the above run in `.github/workflows/ci.yml` on every push/PR except `coverage`
+(`continue-on-error: true`).
 
 **`SPEC.md` is the source of truth for all design decisions.** Read it before proposing any
 architectural change — most non-obvious choices in this project are already deliberated there with

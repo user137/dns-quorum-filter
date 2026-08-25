@@ -14,9 +14,21 @@ threat-intelligence замість одного провайдера.
 
 ## Статус
 
-Pre-implementation. Повна технічна специфікація — у [`SPEC.md`](SPEC.md).
-Коду ще немає; поточний фазований план реалізації описаний у SPEC.md
-(розділ "Фазований план").
+Крок 0 (SPEC.md, розділ "Фазований план") у процесі: Rust workspace і CI
+розгорнуті, резолвер ще не реалізований — `crates/dnsqb-service` і
+`crates/dnsqb-watcher` наразі заглушки. Повна технічна специфікація — у
+[`SPEC.md`](SPEC.md), поточний фазований план — там само.
+
+## Workspace
+
+```
+crates/
+  dnsqb-service/   # DoH-сервер + quorum-резолвер (Фаза 1)
+  dnsqb-watcher/   # watchdog, взаємний heartbeat (Фаза 3, заглушка)
+```
+
+`cargo build --workspace` / `cargo test --workspace --lib` з кореня репо;
+повний список команд — CLAUDE.md, розділ "Project state".
 
 ## Документація
 
