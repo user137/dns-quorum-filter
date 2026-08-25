@@ -3,14 +3,18 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, другий
-//! зріз (T-27–T-31): timeout-mode-aware OR-logic quorum with early
-//! return/cancellation, `DoH` wire codec, baseline/upstream client with
-//! HTTP/2 keep-alive. Cache, override lists, log, Tauri UI, and the
-//! self-signed cert are later batches — see TASKS.md.
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, четвертий
+//! зріз (T-37): allowlist/blocklist override lists with suffix wildcard
+//! match, on top of the second/third slices' timeout-mode-aware OR-logic
+//! quorum with early return/cancellation, `DoH` wire codec,
+//! baseline/upstream client with HTTP/2 keep-alive, and `moka`-backed cache.
+//! Override lists are **not yet wired to `resolve()`/the request pipeline**
+//! (T-39), and have no file-write path (`save()` — T-46/T-47, when a UI
+//! writer exists). Log and Tauri UI are later batches — see TASKS.md.
 
 mod cache;
 mod listener;
+mod overrides;
 mod quorum;
 mod timeout;
 mod upstream;
@@ -20,6 +24,9 @@ pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
 pub use listener::{bind_listener, BindError};
+pub use overrides::{
+    InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
+};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{

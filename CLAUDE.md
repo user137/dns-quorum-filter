@@ -8,24 +8,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
-Фаза 1, third slice done (T-32–T-36, T-38 — TASKS.md): `moka`-backed quorum-verdict cache with
-clamped, per-entry TTL, plus the shared domain-normalization function the cache and the (still
-unbuilt) override lists both depend on. `dnsqb-service`'s `lib.rs` now re-exports from six
-modules — `cache` (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`,
-`chain_cache_ttl`, `is_cacheable`, T-32/T-34/T-36), `wire` (`DoH` wire codec, block/NODATA
-response construction, AD-bit passthrough), `upstream` (`Provider` enum, `DohClient` trait +
-`ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout` (`TimeoutMode`/
+Фаза 1, fourth slice done (T-37 — TASKS.md): override lists — allowlist/blocklist with suffix
+wildcard match. `dnsqb-service`'s `lib.rs` now re-exports from seven modules — `cache`
+(`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`, `chain_cache_ttl`,
+`is_cacheable`, T-32/T-34/T-36), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
+`OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37), `wire` (`DoH` wire codec,
+block/NODATA response construction, AD-bit passthrough), `upstream` (`Provider` enum, `DohClient`
+trait + `ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout` (`TimeoutMode`/
 `TimeoutConfig`, `VoterOutcome`, `query_with_timeout`, T-27), `quorum` (`is_blocked` per-provider
 signature table, `requires_quorum`, OR-logic `resolve()` with early-return/cancellation via
 `FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only). `lib.rs`'s
 own `min_rrset_ttl`/`negative_cache_ttl`/`normalize_domain` are implemented (T-33/T-35/T-38, no
-longer `todo!()`). `cache.rs` is **not yet wired to `resolve()`/the request pipeline** — building
-a `CacheEntry` from a live `QuorumVerdict` + `Message` needs to branch on positive-answer
+longer `todo!()`) — `overrides.rs`'s `parse_pattern` is the second consumer of `normalize_domain`,
+after `cache.rs`'s `CacheKey`. `cache.rs` is **not yet wired to `resolve()`/the request pipeline** —
+building a `CacheEntry` from a live `QuorumVerdict` + `Message` needs to branch on positive-answer
 (`chain_cache_ttl`) vs. NXDOMAIN/NODATA (`negative_cache_ttl`, from an authority-section SOA
-nothing in the project extracts yet) — that's T-39/pipeline-wiring scope. No override-list/log
-wiring either, and no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the
-self-signed cert, T-48) — those are later batches. `dnsqb-watcher` is still a stub binary
-(`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
+nothing in the project extracts yet) — that's T-39/pipeline-wiring scope. `overrides.rs` is
+likewise **not wired to `resolve()`** (same T-39) and has **no file-write path** (`save()` —
+deliberately deferred to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований
+і вручну", manually text-edited, until then). No log wiring either, and no live `hyper`+TLS
+listener yet (`main.rs` is still a stub — that needs the self-signed cert, T-48) — those are later
+batches. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
@@ -33,11 +36,14 @@ in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `r
 `futures-util` (`FuturesUnordered`/`StreamExt` only, not the full `futures` crate — T-30), `tracing`
 (diagnostic logging, T-29; `SPEC.md`'s "Технічний стек" table doesn't name a logging crate, `tracing`
 is the tokio-ecosystem de-facto default — no subscriber wired yet, that's T-48/real-listener scope),
-`moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32)
-— vetting rows for each are in SECURITY.md. `deny.toml`'s license allowlist also covers
-`CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and
-`rustls-webpki`), both added two batches ago; `futures-util`/`tracing`/`moka` didn't need new
-allowlist entries.
+`moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32),
+`serde` (`derive` feature) + `serde_json` (override-list file's on-disk JSON shape, T-37; also the
+dependency T-53's Tauri DTO layer will need regardless — introduced now for that long-term purpose,
+not as a one-off parser) — vetting rows for each are in SECURITY.md. `[dev-dependencies]` also gained
+`tempfile` (T-37, `overrides.rs`'s `load()` tests only — never shipped in a binary). `deny.toml`'s
+license allowlist also covers `CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC`
+(rustls' crypto backend and `rustls-webpki`), both added several batches ago; `futures-util`/
+`tracing`/`moka`/`serde`/`serde_json`/`tempfile` didn't need new allowlist entries.
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
@@ -67,7 +73,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-38 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-37 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -129,6 +135,26 @@ decision from scratch).
   tests the caller's code, not `moka`'s internal removal timing. For that one assertion, a short
   real `tokio::time::sleep` is the right tool, not a `#[tokio::test(start_paused = true)]` violation
   of the usual "avoid real waits" preference.
+- **`hickory_proto::rr::Name::from_utf8` silently accepts inputs that look malformed at first
+  glance — verify empirically, don't assume a rejection.** `Label::from_utf8` (vendored `label.rs`,
+  0.26.1) special-cases a label equal to exactly `"*"` as the legal RFC 1034 wildcard-RR label and
+  accepts it without going through the normal IDNA/`Uts46` character check — so a domain like
+  `"*.example.com"` parses and "normalizes" successfully, producing a string that still contains a
+  literal `*` and can never match a real query domain. `overrides.rs`'s `parse_pattern` (T-37) had
+  to add its own explicit `body.contains('*')` guard *before* calling `normalize_domain`, rather
+  than trust IDNA to reject it — same for an empty-string domain (`Name::from_utf8("")` normalizes
+  to the DNS root, not an error). Both were caught by writing the test first and watching it fail,
+  not by reading the source and assuming.
+- **Redacting one field of a "no domain names in logs" type doesn't close the leak if a sibling
+  field can carry the same text.** `overrides::InvalidEntry`'s first draft (T-37) hand-wrote
+  `Debug` to redact its `raw` field, but kept `reason: ProtoError` unredacted — `ProtoError`'s own
+  message (and `hickory-proto`'s `Label::from_ascii`, which formats a decode failure as
+  `"Malformed label: {s}"`) still carried the domain straight through. Caught by advisor review
+  before commit, fixed by making `reason` a coarse, closed enum (`InvalidReason`) with fixed
+  per-variant `#[error(...)]` strings — structurally incapable of carrying the domain — rather than
+  auditing every field of the type by hand. Proved with a dedicated test
+  (`overrides::tests::invalid_entry_debug_output_never_contains_the_raw_pattern_text`) that formats
+  `{entry:?}` and asserts the raw text is absent, not just reasoned about.
 
 ## Documentation map — who owns what
 
