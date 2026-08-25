@@ -9,12 +9,16 @@
 //! HTTP/2 keep-alive. Cache, override lists, log, Tauri UI, and the
 //! self-signed cert are later batches — see TASKS.md.
 
+mod cache;
 mod listener;
 mod quorum;
 mod timeout;
 mod upstream;
 mod wire;
 
+pub use cache::{
+    chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
+};
 pub use listener::{bind_listener, BindError};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
