@@ -243,7 +243,9 @@ Two long-running processes:
 3. ccTLD block (5.2)→ BLOCK on domain-suffix match, no network call
 4. Cache            → cached quorum verdict, if present
 5. Rating filter (5.3, opt-in) → BLOCK if domain outside allowed zones (only blocks, never force-ALLOWs)
-6. Voter scope (5.1)→ top-N-per-country domains get Security-tier voters only; others get all enabled categories
+6. Voter scope (5.1)→ top-N-per-country domains get Security-tier voters only (5.1.1: a personal
+                       locally-learned frequent/daily-visit list is a second, opt-in, default-off
+                       source for the same exemption, Фаза 4+, T-138); others get all enabled categories
 7. Quorum           → query the resolved voter set, OR-logic
 8. GeoIP (3.5)      → applied live to cached or fresh ALLOW responses, never cached itself
 ```
