@@ -13,4 +13,8 @@ name = "dnsqb-service"
 path = "src/main.rs"
 
 [dependencies]
+base64 = "0.23.1"
 hickory-proto = "0.26.1"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2"] }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "time"] }

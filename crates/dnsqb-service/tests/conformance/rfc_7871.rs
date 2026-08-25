@@ -6,14 +6,14 @@ use dnsqb_service::ecs_option_for_upstream;
 use hickory_proto::rr::rdata::opt::EdnsOption;
 
 #[test]
-#[ignore = "Крок 0 red until T-24 (Фаза 1)"]
+#[ignore = "Крок 0 red until T-73 (Фаза 2) — ECS-enabled upstream preset not wired at T-24"]
 fn ecs_variant_upstream_gets_a_subnet_option() {
     let option = ecs_option_for_upstream("quad9-ecs");
     assert!(matches!(option, Some(EdnsOption::Subnet(_))));
 }
 
 #[test]
-#[ignore = "Крок 0 red until T-24 (Фаза 1)"]
+#[ignore = "Крок 0 red until T-73 (Фаза 2) — ECS-enabled upstream preset not wired at T-24"]
 fn default_upstream_gets_no_ecs_option() {
     assert_eq!(ecs_option_for_upstream("quad9-filtered"), None);
 }

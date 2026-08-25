@@ -7,7 +7,23 @@ confidence-threshold = 0.93
 # Unicode-3.0: OSI-approved, pulled in transitively by idna's ICU4X-based
 # Unicode-normalization crates (icu_collections, icu_normalizer, ...) via
 # hickory-proto -> idna (added Крок 0 batch 2).
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]
+# CDLA-Permissive-2.0: Linux Foundation data license, "similar to permissive
+# open source licenses such as MIT" (no restrictions beyond keeping the
+# license text with the data) - covers the CA root cert data itself, not
+# code. Pulled in by webpki-root-certs via rustls-platform-verifier ->
+# reqwest's rustls TLS backend (added Фаза 1, T-20-T-26 batch).
+# ISC: OSI-approved, functionally equivalent to MIT/BSD-2-Clause (simpler
+# wording, same permissions). Pulled in by aws-lc-rs/aws-lc-sys (rustls'
+# crypto backend) and rustls-webpki/untrusted (same TLS stack) - reqwest's
+# rustls feature (Фаза 1, T-20-T-26 batch).
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+]
 
 [bans]
 multiple-versions = "warn"

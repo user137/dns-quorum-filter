@@ -5,7 +5,6 @@
 use dnsqb_service::doh_get_url;
 
 #[test]
-#[ignore = "Крок 0 red until T-24 (Фаза 1)"]
 fn get_url_uses_unpadded_base64url_dns_parameter() {
     let message_bytes = b"\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00";
     let url = doh_get_url("https://dns.quad9.net/dns-query", message_bytes);

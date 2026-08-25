@@ -5,15 +5,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project state
 
 Крок 0 done (SPEC.md §"Фазований план"): Rust workspace, CI, and the RFC-conformance test table
-(T-1–T-19) are in place. `dnsqb-service`/`dnsqb-watcher` are still stub binaries (`todo!()`
-bodies) — no resolver logic yet, that starts at Фаза 1 (TASKS.md). All 20 conformance tests are
-`#[ignore]`d, each citing the Фаза 1 task ID that removes its `#[ignore]`. Phase 1 target platform
-is Windows (DECISIONS.md, 2026-08-25 — SPEC.md itself left this open). `hickory-proto` is the only
-runtime dependency so far — its vetting row is in SECURITY.md.
+(T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
+itself left this open).
+
+Фаза 1, first slice done (T-20–T-26, T-61, T-62 — TASKS.md; DECISIONS.md 2026-08-25 for the T-20
+live-verification writeup): the quorum-resolver core. `dnsqb-service`'s `lib.rs` now re-exports
+from four modules — `wire` (`DoH` wire codec, block/NODATA response construction, AD-bit
+passthrough), `upstream` (`Provider` enum, `DohClient` trait + `ReqwestDohClient`, per-provider
+`DoH` URLs), `quorum` (`is_blocked` per-provider signature table, `requires_quorum`, OR-logic
+`resolve()`), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only). No early-return/
+cancellation (T-30), no timeout-mode handling (T-27/T-28), no cache/override-list/log wiring, and
+no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert,
+T-48) — those are later batches. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's
+Фаза 3 scope (SPEC.md §7).
+
+Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`), `reqwest`
+(`default-features = false`, `rustls`/`http2` only — no `native-tls`), `thiserror`, `base64` —
+vetting rows for each are in SECURITY.md. `deny.toml`'s license allowlist also covers
+`CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and
+`rustls-webpki`), both added with this batch.
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
-- `cargo test --workspace --lib` — unit tests (none yet — pass trivially).
+- `cargo test --workspace --lib` — unit tests (`is_blocked`/quorum, T-61/T-62; `#[tokio::test]` for
+  the async quorum cases).
 - `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green (all 20 currently
   `#[ignore]`d).
 - `cargo test --test conformance -p dnsqb-service -- --ignored` — the same tests without the

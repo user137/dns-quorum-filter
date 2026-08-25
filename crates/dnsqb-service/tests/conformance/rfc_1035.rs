@@ -8,7 +8,6 @@ use hickory_proto::rr::{DNSClass, Name, RecordType};
 use std::str::FromStr;
 
 #[test]
-#[ignore = "Крок 0 red until T-21 (Фаза 1)"]
 fn decodes_basic_a_query_without_mangling_it() {
     let name = Name::from_str("example.com.").expect("valid fixture name");
     let mut query = Query::new();
