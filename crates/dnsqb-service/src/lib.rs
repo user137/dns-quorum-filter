@@ -27,7 +27,7 @@ pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
-pub use quorum::{is_blocked, requires_quorum, resolve, QuorumVerdict};
+pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{
     doh_get_url, ecs_option_for_upstream, DohClient, Provider, ReqwestDohClient, UpstreamError,

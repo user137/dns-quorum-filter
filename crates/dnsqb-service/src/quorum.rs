@@ -149,6 +149,92 @@ pub enum QuorumVerdict {
     NotApplicable,
 }
 
+/// [`resolve`]'s full result (T-39): the verdict plus, when it's `Allow`, the
+/// actual upstream data a caller needs to answer the client (SPEC.md §5 step
+/// 5 bundles "get ALLOW + IP" as one action — a bare [`QuorumVerdict`] can't
+/// carry the IP half).
+#[derive(Debug, Clone)]
+pub struct QuorumOutcome {
+    /// The OR-logic verdict.
+    pub verdict: QuorumVerdict,
+    /// A representative real answer, present only when `verdict ==
+    /// QuorumVerdict::Allow` — see [`representative_allow_answer`]. `None`
+    /// under `Allow` means no voter had a usable answer (deeply degraded
+    /// fail-open case); a `Block` or `NotApplicable` verdict never carries
+    /// upstream data (a block response is always synthesized, never sourced
+    /// from an upstream `Message` — same principle as
+    /// `wire::build_block_response`).
+    ///
+    /// **Carries the query domain and its records** (SPEC.md, Наскрізні
+    /// вимоги: no domain names in service logs) — never pass `QuorumOutcome`
+    /// or this field to `tracing`/`{:?}` in a diagnostic-log context, same
+    /// discipline as `UpstreamError`'s `error_kind()` (T-29) and
+    /// `overrides::InvalidReason` (T-37).
+    pub answer: Option<Message>,
+}
+
+/// A `Responded` voter's message actually represents a resolved DNS answer
+/// (`NoError` or a genuine `NXDomain`) — not merely that the HTTP round-trip
+/// succeeded. A baseline `SERVFAIL`/`REFUSED` is still HTTP 200 with an rcode
+/// set, so it decodes as `Responded` too; without this check
+/// [`representative_allow_answer`] would hand a failed resolution back to
+/// the caller as if it were real data. Advisor review, not a test, caught
+/// this — the fixtures didn't happen to exercise a non-`NoError`/`NXDomain`
+/// `Responded` message.
+fn is_usable_answer(message: &Message) -> bool {
+    matches!(
+        message.metadata.response_code,
+        ResponseCode::NoError | ResponseCode::NXDomain
+    )
+}
+
+/// SPEC.md §5 step 5 (T-39): which voter's `Message` a caller should treat as
+/// the real answer when the verdict is `Allow`. Preference order: baseline
+/// (canonical, unfiltered) → Quad9 → `AdGuard` — all three gated on
+/// [`is_usable_answer`], and the latter two additionally only when their own
+/// signal is definitively [`Signal::NotBlocked`] (a filtering resolver
+/// returns real, unmodified records when it isn't blocking — for `AdGuard`
+/// that includes a genuine NXDOMAIN, itself valid data for negative
+/// caching, not an error; Quad9's own NXDOMAIN is excluded from this
+/// fallback entirely, see below).
+///
+/// Quad9's [`Signal::NeedsBaseline`] (its own NXDOMAIN) is deliberately
+/// **excluded** here, not just its (unreachable) `Blocked` — `evaluate`
+/// never actually returns `Signal::Blocked` for Quad9 (its `evaluate()` only
+/// distinguishes `NeedsBaseline`/`NotBlocked`), so guarding on `Blocked`
+/// alone would treat an *unconfirmed* Quad9 NXDOMAIN as trustworthy real
+/// data whenever baseline itself didn't respond (fail-open's undecidable
+/// case, `unresponsive_signal` in `resolve_needs_baseline`) — silently
+/// caching a domain that might actually be Quad9-blocked as genuinely
+/// nonexistent. Caught in self-review while writing this function, not by a
+/// test.
+fn representative_allow_answer(
+    quad9: &VoterOutcome,
+    adguard: &VoterOutcome,
+    baseline: &VoterOutcome,
+) -> Option<Message> {
+    if let VoterOutcome::Responded(message) = baseline {
+        if is_usable_answer(message) {
+            return Some(message.clone());
+        }
+    }
+    if let VoterOutcome::Responded(message) = quad9 {
+        if matches!(evaluate(Provider::Quad9, message), Signal::NotBlocked)
+            && is_usable_answer(message)
+        {
+            return Some(message.clone());
+        }
+    }
+    if let VoterOutcome::Responded(message) = adguard {
+        if matches!(evaluate(Provider::AdGuard, message), Signal::NotBlocked)
+            && is_usable_answer(message)
+        {
+            return Some(message.clone());
+        }
+    }
+    None
+}
+
 /// Combine three completed voter outcomes into a verdict (SPEC.md §3, §3.3)
 /// — pure and synchronous, deliberately separate from the async/timeout
 /// machinery in `resolve` so the timeout-mode policy is unit-testable
@@ -258,7 +344,7 @@ fn tagged_query<'a, C: DohClient + Sync>(
 ///
 /// Refuses to run quorum at all when [`requires_quorum`] says `query`'s type
 /// shouldn't go through it (T-25) — returns [`QuorumVerdict::NotApplicable`]
-/// without making any upstream call.
+/// (with `answer: None`) without making any upstream call.
 ///
 /// Never returns an error: an unresponsive or failing voter is interpreted
 /// per `config.mode` rather than propagated (SPEC.md §3.3) — see `combine`.
@@ -266,13 +352,16 @@ pub async fn resolve<C: DohClient + Sync>(
     client: &C,
     query: &Message,
     config: &TimeoutConfig,
-) -> QuorumVerdict {
+) -> QuorumOutcome {
     let applies = query
         .queries
         .first()
         .is_some_and(|question| requires_quorum(question.query_type()));
     if !applies {
-        return QuorumVerdict::NotApplicable;
+        return QuorumOutcome {
+            verdict: QuorumVerdict::NotApplicable,
+            answer: None,
+        };
     }
 
     let mut futures: FuturesUnordered<TaggedFuture<'_>> = FuturesUnordered::new();
@@ -339,7 +428,10 @@ pub async fn resolve<C: DohClient + Sync>(
             if baseline.is_none() {
                 log_canceled(Slot::Baseline);
             }
-            return QuorumVerdict::Block;
+            return QuorumOutcome {
+                verdict: QuorumVerdict::Block,
+                answer: None,
+            };
         }
     }
 
@@ -351,7 +443,12 @@ pub async fn resolve<C: DohClient + Sync>(
     if config.mode == TimeoutMode::Degraded && incomplete {
         tracing::warn!("quorum verdict computed from an incomplete voter set (degraded mode)");
     }
-    verdict
+    let answer = if verdict == QuorumVerdict::Allow {
+        representative_allow_answer(&quad9, &adguard, &baseline)
+    } else {
+        None
+    };
+    QuorumOutcome { verdict, answer }
 }
 
 #[cfg(test)]
@@ -374,19 +471,27 @@ mod tests {
     }
 
     fn allow_message() -> Message {
+        allow_message_with_ip(Ipv4Addr::new(93, 184, 216, 34))
+    }
+
+    fn allow_message_with_ip(ip: Ipv4Addr) -> Message {
         let mut message = Message::query();
         message.metadata.response_code = ResponseCode::NoError;
-        message.answers.push(Record::from_rdata(
-            Name::root(),
-            60,
-            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
-        ));
+        message
+            .answers
+            .push(Record::from_rdata(Name::root(), 60, RData::A(A(ip))));
         message
     }
 
     fn nxdomain_message() -> Message {
         let mut message = Message::query();
         message.metadata.response_code = ResponseCode::NXDomain;
+        message
+    }
+
+    fn servfail_message() -> Message {
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::ServFail;
         message
     }
 
@@ -595,13 +700,13 @@ mod tests {
             adguard: MockResponse::Instant(allow_message()),
             baseline: MockResponse::Instant(allow_message()),
         };
-        let verdict = resolve(
+        let outcome = resolve(
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
         )
         .await;
-        assert!(matches!(verdict, QuorumVerdict::Allow));
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
     }
 
     #[tokio::test]
@@ -611,13 +716,13 @@ mod tests {
             adguard: MockResponse::Instant(allow_message()),
             baseline: MockResponse::Instant(allow_message()),
         };
-        let verdict = resolve(
+        let outcome = resolve(
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
         )
         .await;
-        assert!(matches!(verdict, QuorumVerdict::Block));
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
     }
 
     #[tokio::test]
@@ -627,13 +732,13 @@ mod tests {
             adguard: MockResponse::Instant(null_ip_message()),
             baseline: MockResponse::Instant(allow_message()),
         };
-        let verdict = resolve(
+        let outcome = resolve(
             &client,
             &query_of_type(RecordType::AAAA),
             &TimeoutConfig::default(),
         )
         .await;
-        assert!(matches!(verdict, QuorumVerdict::Block));
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
     }
 
     #[tokio::test]
@@ -643,13 +748,14 @@ mod tests {
             adguard: MockResponse::Instant(null_ip_message()),
             baseline: MockResponse::Instant(allow_message()),
         };
-        let verdict = resolve(
+        let outcome = resolve(
             &client,
             &query_of_type(RecordType::HTTPS),
             &TimeoutConfig::default(),
         )
         .await;
-        assert!(matches!(verdict, QuorumVerdict::NotApplicable));
+        assert!(matches!(outcome.verdict, QuorumVerdict::NotApplicable));
+        assert!(outcome.answer.is_none());
     }
 
     // T-30: early return actually cancels the still-pending calls, rather
@@ -674,8 +780,11 @@ mod tests {
         };
         let config = TimeoutConfig::default();
         let started = tokio::time::Instant::now();
-        let verdict = resolve(&client, &query_of_type(RecordType::A), &config).await;
-        assert!(matches!(verdict, QuorumVerdict::Block));
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
+        // T-39: an early-return Block never carries an `answer` - a block
+        // response is always synthesized, never sourced from upstream data.
+        assert!(outcome.answer.is_none());
         assert!(
             started.elapsed() < config.duration,
             "resolve() waited out the pending voters' timeout instead of canceling them"
@@ -691,12 +800,12 @@ mod tests {
         };
         let config = TimeoutConfig::default();
         let started = tokio::time::Instant::now();
-        let verdict = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
         assert!(
             started.elapsed() < config.duration,
             "resolve() waited out the pending AdGuard voter's timeout instead of canceling it"
         );
-        assert!(matches!(verdict, QuorumVerdict::Block));
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
     }
 
     // T-27 end-to-end: a real (short) timeout propagates through resolve()
@@ -709,8 +818,8 @@ mod tests {
             mode: TimeoutMode::FailOpen,
             duration: Duration::from_millis(5),
         };
-        let verdict = resolve(&client, &query_of_type(RecordType::A), &config).await;
-        assert!(matches!(verdict, QuorumVerdict::Allow));
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
     }
 
     #[tokio::test]
@@ -720,8 +829,8 @@ mod tests {
             mode: TimeoutMode::FailClosed,
             duration: Duration::from_millis(5),
         };
-        let verdict = resolve(&client, &query_of_type(RecordType::A), &config).await;
-        assert!(matches!(verdict, QuorumVerdict::Block));
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
     }
 
     struct SlowAdGuardClient;
@@ -767,8 +876,9 @@ mod tests {
             duration: Duration::from_secs(2),
         };
         let started = tokio::time::Instant::now();
-        let verdict = resolve(&client, &query_of_type(RecordType::A), &config).await;
-        assert!(matches!(verdict, QuorumVerdict::Block));
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
+        assert!(outcome.answer.is_none());
         // AdGuard's error resolves instantly (no timeout involved) - Quad9
         // and baseline both answer NoError immediately too, so if the loop
         // recognizes the unresponsive-under-fail-closed signal itself
@@ -777,5 +887,95 @@ mod tests {
         // the verdict, not the timing - kept for symmetry with the other
         // T-30 tests.
         assert!(started.elapsed() < config.duration);
+    }
+
+    // T-39: QuorumOutcome.answer - the actual data a caller needs to answer
+    // an Allow verdict (SPEC.md §5 step 5's "get ALLOW + IP").
+
+    #[tokio::test]
+    async fn resolve_allow_carries_baseline_answer_when_baseline_responded() {
+        let baseline_ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockDohClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(94, 140, 14, 14))),
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &TimeoutConfig::default(),
+        )
+        .await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+        let Some(answer) = outcome.answer else {
+            panic!("expected an answer when baseline responded");
+        };
+        // Baseline, Quad9, and AdGuard carry distinguishable IPs - proves
+        // baseline specifically won the preference order, not merely that
+        // some voter's answer came through.
+        assert_eq!(answer.answers, allow_message_with_ip(baseline_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn resolve_allow_falls_back_to_quad9_answer_when_baseline_timed_out() {
+        let quad9_ip = Ipv4Addr::new(9, 9, 9, 9);
+        let client = MockDohClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(quad9_ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(94, 140, 14, 14))),
+            baseline: MockResponse::Pending,
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+        let Some(answer) = outcome.answer else {
+            panic!("expected a Quad9-sourced answer when baseline never responded");
+        };
+        assert_eq!(answer.answers, allow_message_with_ip(quad9_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn resolve_allow_skips_baseline_servfail_and_falls_back_to_quad9() {
+        // Baseline itself succeeded as an HTTP round-trip (Responded), but
+        // its DNS answer is a failure code, not real data - representative_
+        // allow_answer must not treat that as usable just because the voter
+        // responded (advisor-review regression, T-39).
+        let quad9_ip = Ipv4Addr::new(9, 9, 9, 9);
+        let client = MockDohClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(quad9_ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(94, 140, 14, 14))),
+            baseline: MockResponse::Instant(servfail_message()),
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &TimeoutConfig::default(),
+        )
+        .await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+        let Some(answer) = outcome.answer else {
+            panic!("expected a Quad9-sourced answer when baseline returned SERVFAIL");
+        };
+        assert_eq!(answer.answers, allow_message_with_ip(quad9_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn resolve_allow_answer_is_none_when_all_three_voters_unresponsive() {
+        // Fail-open with every voter dead still yields Allow (nothing
+        // confirmed a block) - but there is no real data to hand back.
+        let client = MockDohClient {
+            quad9: MockResponse::Pending,
+            adguard: MockResponse::Pending,
+            baseline: MockResponse::Pending,
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+        assert!(outcome.answer.is_none());
     }
 }
