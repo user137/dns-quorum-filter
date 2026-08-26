@@ -3,15 +3,27 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, восьмий
-//! зріз (T-137): `Cache::clear()` — manual one-click full-cache clear,
-//! wrapping `moka::future::Cache::invalidate_all` directly (no predicate
-//! needed, unlike `invalidate_matching`) — on top of the seventh slice's
-//! (T-41) `pipeline::handle_query`'s `Voters` parameter (every provider
-//! disabled is an explicit pass-through via the baseline resolver, not
-//! `fail-closed` and not a silent no-op, SPEC.md §3, §8.1), the sixth
-//! slice's (T-40) `pipeline::invalidate_changed` (cache eviction on an
-//! override-list reload), and the fifth slice's (T-39) end-to-end
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, дев'ятий
+//! зріз (T-42, T-43): `query_log` — the in-memory ring buffer query log
+//! (SPEC.md §6, §6.1), a `VecDeque<LogEntry>` behind `parking_lot::RwLock`
+//! bounded independently by entry count (evict-oldest-on-insert) and age
+//! (`retain`-on-read). `LogEntry` here is the internal backend record, only
+//! the four `decision_source` values Phase 1 can produce — narrower than
+//! the eventual Tauri DTO of the same name (see `query_log`'s own module
+//! doc comment for the full reasoning, including why `voters` carries only
+//! `Provider`'s two filtering-voter variants, not baseline). No producer
+//! yet (nothing in `pipeline::handle_query` builds or pushes a `LogEntry`),
+//! same "module ready, wiring later" pattern as every prior slice's modules
+//! before their own wiring task.
+//!
+//! On top of the eighth slice's (T-137) `Cache::clear()` — manual
+//! one-click full-cache clear, wrapping `moka::future::Cache::invalidate_all`
+//! directly (no predicate needed, unlike `invalidate_matching`) — the
+//! seventh slice's (T-41) `pipeline::handle_query`'s `Voters` parameter
+//! (every provider disabled is an explicit pass-through via the baseline
+//! resolver, not `fail-closed` and not a silent no-op, SPEC.md §3, §8.1),
+//! the sixth slice's (T-40) `pipeline::invalidate_changed` (cache eviction
+//! on an override-list reload), and the fifth slice's (T-39) end-to-end
 //! `pipeline::handle_query` (allowlist → blocklist → cache → quorum) and the
 //! earlier slices' timeout-mode-aware OR-logic quorum with early
 //! return/cancellation, `DoH` wire codec, baseline/upstream client with
@@ -21,13 +33,14 @@
 //! file-write path yet (`save()` — T-46/T-47, when a UI writer exists), so
 //! nothing calls `invalidate_changed` yet either; likewise no real
 //! per-provider toggle config exists yet (T-52), so nothing calls
-//! `handle_query` with `Voters::Disabled` yet either. Log and Tauri UI are
-//! later batches — see TASKS.md.
+//! `handle_query` with `Voters::Disabled` yet either. Tauri UI is a later
+//! batch — see TASKS.md.
 
 mod cache;
 mod listener;
 mod overrides;
 mod pipeline;
+mod query_log;
 mod quorum;
 mod timeout;
 mod upstream;
@@ -41,6 +54,7 @@ pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
 pub use pipeline::{handle_query, invalidate_changed, PipelineOutcome, Voters};
+pub use query_log::{Decision, DecisionSource, LogEntry, QueryLog, VoterRecord, VoterVerdict};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{

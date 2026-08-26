@@ -206,6 +206,7 @@ dependencies = [
  "futures-util",
  "hickory-proto",
  "moka",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",

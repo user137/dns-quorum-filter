@@ -9,8 +9,6 @@ UI-задачі нижче (T-47, T-52 та ін.) мають детальні �
 
 ## Фаза 1 — Proof of concept
 
-- [ ] T-42 — Ring buffer логу: `VecDeque` за `parking_lot::RwLock`, межа 1000 записів або 24 год (що настане раніше) (6, 6.1)
-- [ ] T-43 — Структура запису логу (6): timestamp, domain, qtype, decision, decision_source (значення Фази 1 — `ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`), voters, latency_ms; поля `voter_scope` і `geoip_country` додаються відповідно у Фазі 4 і Фазі 2
 - [ ] T-44 — Кнопка/команда очищення логу (6)
 - [ ] T-45 — Пошук по логу: підрядковий фільтр по domain + фасети (заблоковані/дозволені/за voter'ом) (6)
 - [ ] T-46 — Дія в один клік "додати в allowlist / в blocklist" з рядка логу (6)

@@ -8,6 +8,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, ninth slice done (T-42/T-43 — TASKS.md, one commit): `query_log::QueryLog` — the in-memory
+ring buffer query log (SPEC.md §6, §6.1), a `VecDeque<LogEntry>` behind `parking_lot::RwLock` (new
+direct dependency, SECURITY.md), bounded independently by entry count (evict-oldest-after-push,
+provable post-condition per global CLAUDE.md's bounds-safety rule — not an `if len >= max` guard
+before push) and age (`retain`-on-read, no background sweep task, per SPEC.md §6.1). `LogEntry` is
+the internal backend record — narrower than the eventual Tauri DTO of the same name
+(`diagrams/ui-dto-model.md`, `UI-SPEC.md`): only the four `decision_source` values Phase 1 can
+actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`), no `voter_scope`/`geoip_country` field
+at all (those are T-109/T-79, later phases) — the DTO widening is T-53/T-54 scope, not this
+module's. `voters: Vec<VoterRecord>` deliberately carries only `Provider`'s two filtering-voter
+variants, not `quorum::Slot`'s three (baseline never casts an OR-logic vote, SPEC.md §3.1) — a
+SPEC-silent choice, flagged in the module's own doc comment rather than picked silently. No live
+producer yet either (nothing in `pipeline::handle_query` builds/pushes a `LogEntry`), same
+"backend primitive ready, wiring later" pattern as every module below.
+
 Фаза 1, eighth slice done (T-137 — TASKS.md, one commit): `Cache::clear()` — manual one-click
 full-cache clear (SPEC.md §4, analogous to T-44's planned log-clear button), a thin wrapper over
 `moka::future::Cache::invalidate_all` (no predicate needed, unlike `invalidate_matching` — `moka`
@@ -19,7 +34,7 @@ command exists — T-53), same "backend primitive ready, UI wiring later" patter
 `Voters` parameter — SPEC.md §3/§8.1's explicit pass-through when the user has disabled every
 quorum provider, on top of the sixth slice's (T-40) cache invalidation on an override-list reload
 and the fifth slice's (T-39) end-to-end request pipeline — allowlist → blocklist → cache → quorum
-(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from eight modules — `cache`
+(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from nine modules — `cache`
 (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`, `chain_cache_ttl`,
 `is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching`, T-40 — one `moka`
 `invalidate_entries_if` predicate per whole batch of changed domains, not one per domain, since
@@ -37,9 +52,10 @@ SERVFAIL/direct-answer response construction, AD-bit passthrough), `upstream` (`
 per-provider signature table, `requires_quorum`, OR-logic `resolve()` returning `QuorumOutcome
 {verdict, answer}` — T-39 extended it to carry the real Allow answer, not just a verdict, SPEC.md
 §5 step 5's "get ALLOW + IP" bundled as one action — with early-return/cancellation via
-`FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only). `lib.rs`'s
-own `min_rrset_ttl`/`negative_cache_ttl`/`normalize_domain` are implemented (T-33/T-35/T-38, no
-longer `todo!()`).
+`FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only), `query_log`
+(`QueryLog`/`LogEntry`/`Decision`/`DecisionSource`/`VoterRecord`/`VoterVerdict`, T-42/T-43 — see
+the ninth-slice paragraph above). `lib.rs`'s own `min_rrset_ttl`/`negative_cache_ttl`/
+`normalize_domain` are implemented (T-33/T-35/T-38, no longer `todo!()`).
 
 `pipeline::handle_query` is the first real consumer of `cache.rs`/`overrides.rs`/`quorum.rs`
 together — it branches a `CacheEntry` between positive-answer (`chain_cache_ttl`) and genuine
@@ -66,9 +82,11 @@ yet — T-47/T-52); `overrides.rs` still has **no file-write path** (`save()` �
 to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований і вручну", manually
 text-edited, until then) — so nothing calls `invalidate_changed` yet either, same pattern as
 `handle_query` itself before T-48's listener wiring; no real per-provider toggle config exists yet
-either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. No log wiring either,
-and no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert,
-T-48). `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
+either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. `query_log::QueryLog`
+(T-42/T-43) exists but has no live producer either — `handle_query` doesn't build or push a
+`LogEntry` yet, that wiring is a later task. No live `hyper`+TLS listener yet (`main.rs` is still a
+stub — that needs the self-signed cert, T-48). `dnsqb-watcher` is still a stub binary (`todo!()`
+body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
@@ -79,11 +97,13 @@ is the tokio-ecosystem de-facto default — no subscriber wired yet, that's T-48
 `moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32),
 `serde` (`derive` feature) + `serde_json` (override-list file's on-disk JSON shape, T-37; also the
 dependency T-53's Tauri DTO layer will need regardless — introduced now for that long-term purpose,
-not as a one-off parser) — vetting rows for each are in SECURITY.md. `[dev-dependencies]` also gained
+not as a one-off parser), `parking_lot` (`query_log.rs`'s ring buffer lock, T-42 — SPEC.md §6.1's
+explicit choice over `tokio::sync::RwLock`, since no critical section here ever holds the lock
+across an `.await`) — vetting rows for each are in SECURITY.md. `[dev-dependencies]` also gained
 `tempfile` (T-37, `overrides.rs`'s `load()` tests only — never shipped in a binary). `deny.toml`'s
 license allowlist also covers `CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC`
 (rustls' crypto backend and `rustls-webpki`), both added several batches ago; `futures-util`/
-`tracing`/`moka`/`serde`/`serde_json`/`tempfile` didn't need new allowlist entries.
+`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/`parking_lot` didn't need new allowlist entries.
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
