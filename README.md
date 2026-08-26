@@ -75,8 +75,9 @@ cargo build --workspace
 cargo run -p dnsqb-service
 ```
 
-Сервіс підніме `https://127.0.0.1:8443/dns-query` (порт — з `resolver_config.toml`, дефолт
-`8443`) і згенерує self-signed сертифікат при першому запуску. Довірений сертифікат вручну
+Сервіс підніме `https://127.0.0.1:<port>/dns-query` (порт і дефолт —
+[`CONFIGURATION.md`](CONFIGURATION.md)) і згенерує self-signed сертифікат при першому запуску.
+Довірений сертифікат вручну
 потрібно імпортувати у профіль браузера самостійно — автоматичного кроку ще немає (T-49).
 Повний опис обох бінарників, їх поведінки при старті й логів — [`SERVICES.md`](SERVICES.md);
 формат обох конфігураційних TOML-файлів — [`CONFIGURATION.md`](CONFIGURATION.md).
