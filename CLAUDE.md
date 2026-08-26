@@ -503,6 +503,11 @@ Commands (from repo root):
   (this crate is never published, its docs are always built with `--document-private-items`, and
   its doc comments routinely cross-reference private helpers on purpose) — don't add a second
   one-off `#[allow(...)]` next to a broken link instead of fixing the link itself.
+- `cargo test --workspace --doc` — doctest gate, also required. As of this check-in there are
+  **zero** doctests anywhere in the workspace (confirmed via `grep -rn '/// *```' crates`, 0
+  hits) — `~/.claude/rules/rust.md`'s "key functions must include code examples" is not yet met
+  anywhere; this step exists so the day the first doctest is added, it's actually run, not just
+  compiled by the `docs` step above.
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`).
@@ -874,7 +879,7 @@ decision from scratch).
 | `TASKS-DONE.md` | completed tasks, moved out of `TASKS.md` on finish, same format + a one-line implementation note per task | a task finishes |
 | `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |
 | `SECURITY.md` | threat model summary, hard security constraints, dependency-vetting table | threat model changes or a dependency is added |
-| `README.md` | human-facing project description | repo structure changes |
+| `README.md` | human-facing project description | repo structure changes, or the project's phase/status badge changes |
 | `CONFIGURATION.md` | operator-facing reference for both TOML config files (`resolver_config.toml`, `overrides.toml`) — fields, defaults, validation, examples | a config field is added, changed, or removed |
 | `SERVICES.md` | what each binary does, how to run it, its logs and startup behavior | a binary's runtime behavior, ports, or file I/O changes |
 
