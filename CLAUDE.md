@@ -8,6 +8,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, tenth slice done (T-48 — TASKS.md, one commit): `cert::generate_self_signed_cert` — the
+local `DoH` listener's self-signed leaf certificate (SPEC.md §2), generation only. SAN
+`IP:127.0.0.1`, `IP:::1`, `DNS:localhost` via `rcgen::CertificateParams::new` (the same
+classification `generate_simple_self_signed` uses internally — verified empirically via a scratch
+probe, not assumed from docs, that IP literals become typed `GeneralName::IPAddress` entries, not
+`DNSName` strings). Not a CA via `IsCa::ExplicitNoCa`, not the plain `NoCa` default — advisor
+review of the diff caught that `NoCa` omits the `BasicConstraints` extension entirely, so a test
+asserting "not a CA" against it would pass regardless of this cert's actual bytes;
+`ExplicitNoCa` encodes `cA=FALSE` explicitly, and the test now asserts that field, not just
+`x509_parser`'s no-extension-means-false default. Explicit `DistinguishedName` (CN =
+`"dns-quorum-filter local DoH"`) instead of rcgen's placeholder CN — same review pass: T-49's
+manual trust-store import and T-69/T-70's find-and-remove-on-rotation/uninstall all need a human
+(or future automation) to recognize this cert in the OS store, which a placeholder CN wouldn't
+support. Explicit 100-year validity window (`2020-01-01`..`2120-01-01`), overriding rcgen's own
+unexamined raw default (`1975`..`4096`) — absolute dates chosen deliberately (not
+`SystemTime::now()`, though that would work without any new dependency — also verified
+empirically) so this module's own tests assert an exact timestamp; stated as provisional pending
+T-51's empirical Chrome/Firefox CT-policy check, not a settled number. **Not yet in this slice**
+(same "primitive ready, wiring later" pattern as every prior module): writing the cert/key to disk
+(T-50, explicit private-key-file tech debt), trust-store installation (T-49, manual/human step),
+certificate rotation (T-69, Фаза 3), or wiring into a real `hyper` + TLS listener (`main.rs` is
+still a stub).
+
 Фаза 1, ninth slice done (T-42/T-43 — TASKS.md, one commit): `query_log::QueryLog` — the in-memory
 ring buffer query log (SPEC.md §6, §6.1), a `VecDeque<LogEntry>` behind `parking_lot::RwLock` (new
 direct dependency, SECURITY.md), bounded independently by entry count (evict-oldest-after-push,
@@ -34,7 +57,7 @@ command exists — T-53), same "backend primitive ready, UI wiring later" patter
 `Voters` parameter — SPEC.md §3/§8.1's explicit pass-through when the user has disabled every
 quorum provider, on top of the sixth slice's (T-40) cache invalidation on an override-list reload
 and the fifth slice's (T-39) end-to-end request pipeline — allowlist → blocklist → cache → quorum
-(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from nine modules — `cache`
+(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from ten modules — `cache`
 (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`, `chain_cache_ttl`,
 `is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching`, T-40 — one `moka`
 `invalidate_entries_if` predicate per whole batch of changed domains, not one per domain, since
@@ -54,7 +77,8 @@ per-provider signature table, `requires_quorum`, OR-logic `resolve()` returning 
 §5 step 5's "get ALLOW + IP" bundled as one action — with early-return/cancellation via
 `FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only), `query_log`
 (`QueryLog`/`LogEntry`/`Decision`/`DecisionSource`/`VoterRecord`/`VoterVerdict`, T-42/T-43 — see
-the ninth-slice paragraph above). `lib.rs`'s own `min_rrset_ttl`/`negative_cache_ttl`/
+the ninth-slice paragraph above), `cert` (`generate_self_signed_cert`/`CertError`, T-48 — see the
+tenth-slice paragraph above). `lib.rs`'s own `min_rrset_ttl`/`negative_cache_ttl`/
 `normalize_domain` are implemented (T-33/T-35/T-38, no longer `todo!()`).
 
 `pipeline::handle_query` is the first real consumer of `cache.rs`/`overrides.rs`/`quorum.rs`
@@ -81,29 +105,36 @@ warning on an allowlist/blocklist conflict (`OverrideLists::conflicts()` is read
 yet — T-47/T-52); `overrides.rs` still has **no file-write path** (`save()` — deliberately deferred
 to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований і вручну", manually
 text-edited, until then) — so nothing calls `invalidate_changed` yet either, same pattern as
-`handle_query` itself before T-48's listener wiring; no real per-provider toggle config exists yet
-either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. `query_log::QueryLog`
+`handle_query` itself before the real listener exists; no real per-provider toggle config exists
+yet either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. `query_log::QueryLog`
 (T-42/T-43) exists but has no live producer either — `handle_query` doesn't build or push a
 `LogEntry` yet, that wiring is a later task. No live `hyper`+TLS listener yet (`main.rs` is still a
-stub — that needs the self-signed cert, T-48). `dnsqb-watcher` is still a stub binary (`todo!()`
-body); it's Фаза 3 scope (SPEC.md §7).
+stub) — the self-signed leaf certificate itself now exists (`cert::generate_self_signed_cert`,
+T-48), but writing it to disk (T-50), trust-store install (T-49), and the actual listener wiring
+are still open. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope
+(SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
 (`default-features = false`, `rustls`/`http2` only — no `native-tls`), `thiserror`, `base64`,
 `futures-util` (`FuturesUnordered`/`StreamExt` only, not the full `futures` crate — T-30), `tracing`
 (diagnostic logging, T-29; `SPEC.md`'s "Технічний стек" table doesn't name a logging crate, `tracing`
-is the tokio-ecosystem de-facto default — no subscriber wired yet, that's T-48/real-listener scope),
+is the tokio-ecosystem de-facto default — no subscriber wired yet, that's the real-listener scope),
 `moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32),
 `serde` (`derive` feature) + `serde_json` (override-list file's on-disk JSON shape, T-37; also the
 dependency T-53's Tauri DTO layer will need regardless — introduced now for that long-term purpose,
 not as a one-off parser), `parking_lot` (`query_log.rs`'s ring buffer lock, T-42 — SPEC.md §6.1's
 explicit choice over `tokio::sync::RwLock`, since no critical section here ever holds the lock
-across an `.await`) — vetting rows for each are in SECURITY.md. `[dev-dependencies]` also gained
-`tempfile` (T-37, `overrides.rs`'s `load()` tests only — never shipped in a binary). `deny.toml`'s
-license allowlist also covers `CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC`
-(rustls' crypto backend and `rustls-webpki`), both added several batches ago; `futures-util`/
-`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/`parking_lot` didn't need new allowlist entries.
+across an `.await`), `rcgen` (`default-features = false`, feature `aws_lc_rs` — not the default
+`ring`, to match `reqwest`/`rustls`'s already-chosen crypto backend; SPEC.md §2's self-signed leaf
+certificate, T-48) — vetting rows for each are in SECURITY.md. `[dev-dependencies]` also gained
+`tempfile` (T-37, `overrides.rs`'s `load()` tests only — never shipped in a binary) and
+`x509-parser` (T-48, `cert.rs`'s tests only — decodes the real DER `rcgen` produces to assert SAN/
+`is_ca`/validity empirically rather than trusting `rcgen`'s docs). `deny.toml`'s license allowlist
+also covers `CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto
+backend and `rustls-webpki`), both added several batches ago; `futures-util`/`tracing`/`moka`/
+`serde`/`serde_json`/`tempfile`/`parking_lot`/`rcgen`/`x509-parser` didn't need new allowlist
+entries (`rcgen`/`x509-parser` are both `MIT OR Apache-2.0`, already allowed).
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
@@ -133,7 +164,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-41 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-48 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -285,6 +316,33 @@ decision from scratch).
   near-zero against a client that never resolves — the same technique T-30's cancellation tests use
   (a passing "eventually returns SERVFAIL" assertion alone wouldn't distinguish "timed out
   correctly" from "waited out a much longer real-world hang before some other mechanism gave up").
+- **`rcgen` 0.14's `zeroize` feature only adds a manual `Zeroize` impl, not `ZeroizeOnDrop`** —
+  confirmed by reading the feature-gated `impl zeroize::Zeroize for KeyPair` in `rcgen`'s own
+  source (0.14.9) before enabling anything: it requires an explicit `.zeroize()` call, so enabling
+  the feature alone buys no automatic on-drop protection. Real Drop-based zeroization needs
+  wrapping the key in `zeroize::Zeroizing<KeyPair>` (a second dependency) at the point the key gets
+  a real owner — `cert.rs` (T-48) deliberately doesn't enable the feature yet for exactly this
+  reason, deferred to T-50 where that owner/lifecycle actually exists.
+- **`rcgen::CertificateParams::new`/`generate_simple_self_signed` classify each input string as
+  `SanType::IpAddress` or `SanType::DnsName` correctly (`"127.0.0.1"`/`"::1"` → typed IP SANs,
+  `"localhost"` → a `DnsName`)** — verified empirically with a scratch `cargo run` probe against
+  real `rcgen` + `x509-parser` output (not assumed from docs) before relying on it in `cert.rs`
+  (T-48), since a `DNSName` SAN containing the text `"127.0.0.1"` would satisfy a naive
+  string-contains test while failing real TLS validation. `rcgen`'s own default validity
+  (`not_before`/`not_after`) is `1975-01-01`/`4096-01-01` — an unexamined library default, not a
+  considered choice; `cert.rs` overrides both explicitly rather than using them as-is.
+- **`x509-parser` 0.18's `ASN1Time` has no public `to_datetime()`/year accessor** — its only public
+  time accessor is `.timestamp()` (`i64` Unix seconds). To assert an expected calendar date in a
+  test, compare against `rcgen::date_time_ymd(y, m, d).unix_timestamp()` rather than trying to
+  extract a year/month/day from the parsed certificate directly.
+- **`rcgen::IsCa::NoCa` (the default) omits the `BasicConstraints` extension entirely rather than
+  encoding `cA=FALSE`** — confirmed empirically by dumping a generated cert's parsed extensions
+  (only `SubjectAlternativeName` was present). A test asserting `!cert.is_ca()` against a `NoCa`
+  cert passes because `x509-parser` treats a missing extension as "not a CA," not because the
+  cert's bytes say so — indistinguishable from a cert that never considered the question. Use
+  `IsCa::ExplicitNoCa` when the "never a CA" property needs to be provably encoded, not just
+  assumed by omission (`cert.rs`, T-48 — caught by advisor review of the diff, not by the tests as
+  first written, which passed either way).
 
 ## Documentation map — who owns what
 

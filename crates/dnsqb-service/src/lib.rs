@@ -3,8 +3,14 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, дев'ятий
-//! зріз (T-42, T-43): `query_log` — the in-memory ring buffer query log
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, десятий
+//! зріз (T-48): `cert::generate_self_signed_cert` — the local listener's
+//! self-signed leaf certificate (SPEC.md §2), SAN `IP:127.0.0.1`, `IP:::1`,
+//! `DNS:localhost`, explicit 100-year validity window (not rcgen's raw
+//! default), never a CA. Generation only — no file persistence (T-50), no
+//! trust-store install (T-49), no TLS listener wiring yet (see `cert`'s own
+//! module doc comment). On top of the ninth slice's (T-42, T-43) `query_log`
+//! — the in-memory ring buffer query log
 //! (SPEC.md §6, §6.1), a `VecDeque<LogEntry>` behind `parking_lot::RwLock`
 //! bounded independently by entry count (evict-oldest-on-insert) and age
 //! (`retain`-on-read). `LogEntry` here is the internal backend record, only
@@ -37,6 +43,7 @@
 //! batch — see TASKS.md.
 
 mod cache;
+mod cert;
 mod listener;
 mod overrides;
 mod pipeline;
@@ -49,6 +56,7 @@ mod wire;
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
+pub use cert::{generate_self_signed_cert, CertError};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
