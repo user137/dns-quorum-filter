@@ -8,6 +8,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Поза фазами, T-141 done (TASKS-DONE.md, one commit, docs only — no code): investigated whether
+HTTP/3 upstream support is worth building now, same "research, not implementation" precedent as
+T-14 (ECH). Client-side stack is the decisive blocker: `reqwest` 0.13.4's `http3` feature is
+explicitly unstable (`compile_error!` unless `RUSTFLAGS='--cfg reqwest_unstable'` is set — confirmed
+by reading `reqwest-0.13.4/src/lib.rs:252`, not assumed), and pulls in `h3` 0.0.8/`h3-quinn` 0.0.10
+(both pre-1.0); `RUSTFLAGS` isn't a local build quirk here — it's process-wide, would need setting in
+every `.github/workflows/ci.yml` job. Provider side (checked via live `WebSearch`/`WebFetch`, not
+training-data memory — 2026 currency isn't otherwise verifiable): Quad9 enabled DoH3/DoQ in March
+2026 on the same `dns.quad9.net/dns-query` endpoint, coexisting with HTTP/2 (not replacing it,
+negotiated via `Alt-Svc`/DDR/SVCB) — doesn't disturb this project's existing strict-HTTP/2
+requirement for Quad9 (gotchas below); AdGuard modernized similarly; Cloudflare (this project's
+baseline resolver) had no confirmed public DoH3 data found this pass. Deliberately **not**
+re-checked a second time: Cloudflare specifically and AdGuard's current DoH3 (not just DoQ) status —
+the client-side gate decides the outcome either way, so that second check is deferred to whenever
+`reqwest` drops the `reqwest_unstable` gate. Decision: don't implement now; the future feature's
+shape (per-upstream try-HTTP/3-then-fall-back-to-HTTP/2, decided per resolver) is named in one
+sentence in SPEC.md §3.6, not designed — no speculative design for a feature that can't compile
+today. New SPEC.md §3.6 paragraph, no DECISIONS.md entry (SPEC.md never previously claimed anything
+about HTTP/3, so there's nothing to reverse).
+
 Фаза 1, sixteenth slice done (T-44 + T-45 — TASKS-DONE.md, **one commit for both** — both tasks
 touch only `query_log.rs`, no interactive staging to split them after the fact, and the user asked
 this session to batch a few small tasks under a single plan+advisor review pass rather than one
