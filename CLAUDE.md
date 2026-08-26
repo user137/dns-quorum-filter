@@ -8,6 +8,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, eleventh slice done (T-50 — TASKS.md, one commit): `cert::write_cert_and_key_to_app_data`
+— disk persistence for T-48's cert/key, SPEC.md §2's explicitly named MVP fallback ("якщо secure
+storage складно — файл з правами `600`, зафіксований як технічний борг"). Writes `cert.pem`/
+`key.pem` to `%LOCALAPPDATA%\dns-quorum-filter\` (new `paths.rs` module, `pub(crate)`, split into a
+pure `resolve_app_data_dir` and a thin `app_data_dir` wrapper so the LOCALAPPDATA-missing case is
+unit-testable without mutating the real process environment — `std::env::set_var` is `unsafe fn`
+on this toolchain regardless of edition, which would conflict with `#![forbid(unsafe_code)]`).
+`key.pem`'s ACL is restricted to the current user only via `icacls.exe`, spawned by absolute path
+(`%SystemRoot%\System32\icacls.exe`) with a bare `%USERNAME%` grant — confirmed empirically (not
+assumed) that `icacls` resolves an unqualified account name against the local machine first, so no
+`%USERDOMAIN%` lookup is needed. Advisor review of the plan caught a real TOCTOU gap in the first
+draft (write key bytes, then restrict the ACL) — fixed to create the file empty, restrict its ACL,
+*then* write the key bytes, so the private key is never on disk under the parent directory's wider
+inherited ACL even briefly; confirmed empirically that a truncate-in-place write preserves an
+already-set ACL rather than resetting it. The derived PEM text is wrapped in `zeroize::Zeroizing`
+and the source `KeyPair` gets an explicit `.zeroize()` call after writing (new direct `zeroize`
+dependency; `rcgen`'s own `zeroize` feature, now enabled, only wipes the `KeyPair`'s internal DER
+bytes, not a PEM `String` derived from it) — documented as best-effort in-memory hygiene, not a
+guarantee, with no test claiming to prove memory was wiped (advisor review: the only observable
+effect would prove `rcgen`'s implementation, not this module's code). The function unconditionally
+overwrites both files on every call — deciding whether to load an existing cert instead is left to
+the future listener-wiring caller, stated explicitly rather than silently assumed. **Not yet in
+this slice**: trust-store installation (T-49), certificate rotation (T-69), platform secure storage
+(T-67, Фаза 2), and the load-existing-vs-regenerate decision itself (real `main.rs` listener
+wiring, still a stub).
+
 Фаза 1, tenth slice done (T-48 — TASKS.md, one commit): `cert::generate_self_signed_cert` — the
 local `DoH` listener's self-signed leaf certificate (SPEC.md §2), generation only. SAN
 `IP:127.0.0.1`, `IP:::1`, `DNS:localhost` via `rcgen::CertificateParams::new` (the same
@@ -57,7 +83,8 @@ command exists — T-53), same "backend primitive ready, UI wiring later" patter
 `Voters` parameter — SPEC.md §3/§8.1's explicit pass-through when the user has disabled every
 quorum provider, on top of the sixth slice's (T-40) cache invalidation on an override-list reload
 and the fifth slice's (T-39) end-to-end request pipeline — allowlist → blocklist → cache → quorum
-(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from ten modules — `cache`
+(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from ten of its eleven
+modules — `cache`
 (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`, `chain_cache_ttl`,
 `is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching`, T-40 — one `moka`
 `invalidate_entries_if` predicate per whole batch of changed domains, not one per domain, since
@@ -77,8 +104,10 @@ per-provider signature table, `requires_quorum`, OR-logic `resolve()` returning 
 §5 step 5's "get ALLOW + IP" bundled as one action — with early-return/cancellation via
 `FuturesUnordered`, T-30), `listener` (`bind_listener`/`BindError`, `127.0.0.1`-only), `query_log`
 (`QueryLog`/`LogEntry`/`Decision`/`DecisionSource`/`VoterRecord`/`VoterVerdict`, T-42/T-43 — see
-the ninth-slice paragraph above), `cert` (`generate_self_signed_cert`/`CertError`, T-48 — see the
-tenth-slice paragraph above). `lib.rs`'s own `min_rrset_ttl`/`negative_cache_ttl`/
+the ninth-slice paragraph above), `cert` (`generate_self_signed_cert`/`CertError`, T-48;
+`write_cert_and_key_to_app_data`/`CertFiles`, T-50 — see the tenth/eleventh-slice paragraphs
+above). The eleventh module, `paths` (T-50), stays crate-private — `pub(crate)`, no `pub use` —
+since only `cert.rs` needs it so far. `lib.rs`'s own `min_rrset_ttl`/`negative_cache_ttl`/
 `normalize_domain` are implemented (T-33/T-35/T-38, no longer `todo!()`).
 
 `pipeline::handle_query` is the first real consumer of `cache.rs`/`overrides.rs`/`quorum.rs`
@@ -109,10 +138,11 @@ text-edited, until then) — so nothing calls `invalidate_changed` yet either, s
 yet either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. `query_log::QueryLog`
 (T-42/T-43) exists but has no live producer either — `handle_query` doesn't build or push a
 `LogEntry` yet, that wiring is a later task. No live `hyper`+TLS listener yet (`main.rs` is still a
-stub) — the self-signed leaf certificate itself now exists (`cert::generate_self_signed_cert`,
-T-48), but writing it to disk (T-50), trust-store install (T-49), and the actual listener wiring
-are still open. `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope
-(SPEC.md §7).
+stub) — the self-signed leaf certificate now exists and is persisted to disk
+(`cert::generate_self_signed_cert` + `write_cert_and_key_to_app_data`, T-48/T-50), but trust-store
+install (T-49) and the actual listener wiring (including the load-existing-vs-regenerate decision
+`write_cert_and_key_to_app_data` deliberately leaves open) are still open. `dnsqb-watcher` is still
+a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
@@ -125,16 +155,20 @@ is the tokio-ecosystem de-facto default — no subscriber wired yet, that's the 
 dependency T-53's Tauri DTO layer will need regardless — introduced now for that long-term purpose,
 not as a one-off parser), `parking_lot` (`query_log.rs`'s ring buffer lock, T-42 — SPEC.md §6.1's
 explicit choice over `tokio::sync::RwLock`, since no critical section here ever holds the lock
-across an `.await`), `rcgen` (`default-features = false`, feature `aws_lc_rs` — not the default
-`ring`, to match `reqwest`/`rustls`'s already-chosen crypto backend; SPEC.md §2's self-signed leaf
-certificate, T-48) — vetting rows for each are in SECURITY.md. `[dev-dependencies]` also gained
-`tempfile` (T-37, `overrides.rs`'s `load()` tests only — never shipped in a binary) and
-`x509-parser` (T-48, `cert.rs`'s tests only — decodes the real DER `rcgen` produces to assert SAN/
-`is_ca`/validity empirically rather than trusting `rcgen`'s docs). `deny.toml`'s license allowlist
-also covers `CDLA-Permissive-2.0` (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto
-backend and `rustls-webpki`), both added several batches ago; `futures-util`/`tracing`/`moka`/
-`serde`/`serde_json`/`tempfile`/`parking_lot`/`rcgen`/`x509-parser` didn't need new allowlist
-entries (`rcgen`/`x509-parser` are both `MIT OR Apache-2.0`, already allowed).
+across an `.await`), `rcgen` (`default-features = false`, features `aws_lc_rs`/`pem`/`zeroize` —
+not the default `ring`, to match `reqwest`/`rustls`'s already-chosen crypto backend; SPEC.md §2's
+self-signed leaf certificate, T-48; `pem`/`zeroize` added at T-50 for PEM encoding and key-wipe
+support), `zeroize` (T-50 — wraps the derived private-key PEM text in `Zeroizing<String>` and
+zeroizes the source `KeyPair` after writing; default features only, `alloc` not `std`) — vetting
+rows for each are in SECURITY.md. `[dev-dependencies]` also gained `tempfile` (T-37, `overrides.rs`'s
+`load()` tests only — never shipped in a binary) and `x509-parser` (T-48, `cert.rs`'s tests only —
+decodes the real DER `rcgen` produces to assert SAN/`is_ca`/validity empirically rather than
+trusting `rcgen`'s docs; T-50 also uses its `pem` module to prove `Certificate::pem()` round-trips
+to the same DER). `deny.toml`'s license allowlist also covers `CDLA-Permissive-2.0`
+(webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and `rustls-webpki`), both
+added several batches ago; `futures-util`/`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/
+`parking_lot`/`rcgen`/`x509-parser`/`zeroize` didn't need new allowlist entries (`rcgen`/
+`x509-parser`/`zeroize` are all `MIT OR Apache-2.0`, already allowed).
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
@@ -164,7 +198,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-48 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-50 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -343,6 +377,37 @@ decision from scratch).
   `IsCa::ExplicitNoCa` when the "never a CA" property needs to be provably encoded, not just
   assumed by omission (`cert.rs`, T-48 — caught by advisor review of the diff, not by the tests as
   first written, which passed either way).
+- **A `pub` error enum can't directly wrap a `pub(crate)` error type via `#[from]`** — `rustc`'s
+  `private_interfaces` lint fires because external consumers of the outer type can observe the
+  field exists (e.g. via `Debug`/pattern matching) but can never name the inner type. `cert.rs`'s
+  first draft had `CertError::AppDataDir(#[from] paths::PathsError)`; fixed by dropping the
+  `#[from]`/source-chain and using a flat `CertError::MissingLocalAppData` variant instead, the
+  same shape as the enum's other single-cause env-var-missing variants (`cert.rs`, T-50).
+- **`icacls` resolves a bare, unqualified `%USERNAME%` against the local machine first** —
+  confirmed empirically (`icacls <path> /grant:r <name>:F` with no domain/computer prefix), not
+  assumed from docs. No need to build a `%USERDOMAIN%\%USERNAME%` principal string, which the
+  first draft of T-50's plan carried "just in case" — advisor review flagged that `USERDOMAIN` can
+  diverge from what `icacls` actually resolves on some account types, and the empirical check
+  showed the bare form works and echoes back as `<computer>\<user>:(F)`, so the domain lookup (and
+  its own failure mode) was dropped entirely rather than kept unused.
+- **A truncate-in-place file write (`fs::write`/shell `>` redirection to an existing path)
+  preserves that file's ACL** — it does not delete-and-recreate the file, so restricting an ACL on
+  an empty file *before* writing its real contents (rather than after) actually works, and isn't
+  undone by the subsequent write. Confirmed empirically with a scratch probe before relying on it
+  in `cert::write_key_file` (T-50) — the create-then-restrict-then-write ordering exists
+  specifically to avoid a TOCTOU window where the private key sits on disk under a wider,
+  inherited ACL even briefly (advisor review of the plan caught the first draft's
+  write-then-restrict ordering as exactly that gap).
+- **A substring denylist (`!stdout.contains("SYSTEM")`, `!stdout.contains("Everyone")`, ...) is
+  not proof that an ACL restriction actually narrowed anything** — it can't distinguish "no
+  residual grant" from "that word just doesn't happen to appear," and it can false-fail on a
+  machine whose hostname/account name happens to contain one of the denied words. For `icacls`
+  output specifically, count non-blank, non-summary lines instead and assert there's exactly one
+  — a direct structural proof of "exactly one ACE," matching the real output shape confirmed by an
+  actual restricted-file probe, not a shape assumed from docs (`cert.rs`'s
+  `write_key_file_creates_a_file_restricted_to_the_current_user_only` test, T-50 — caught by
+  advisor review of the diff before commit, the same "test that passes without proving the
+  property" shape as the `IsCa::NoCa` gotcha above).
 
 ## Documentation map — who owns what
 

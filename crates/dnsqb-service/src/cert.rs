@@ -1,11 +1,22 @@
-//! Self-signed leaf certificate generation for the local `DoH` listener
-//! (SPEC.md §2, T-48) — **generation only**. This module deliberately does
-//! not: write the cert/key to disk (T-50 — private-key file permissions is
-//! its own tracked technical debt), install the cert into an OS trust store
-//! (T-49 — a manual, human step at this phase), or wire a real `hyper` + TLS
-//! listener (later `main.rs` work, unblocked by this module but not done by
-//! it). Same "backend primitive ready, wiring later" pattern as every prior
-//! module in this crate.
+//! Self-signed leaf certificate generation (SPEC.md §2, T-48) and disk
+//! persistence (T-50) for the local `DoH` listener. This module deliberately
+//! does not: install the cert into an OS trust store (T-49 — a manual, human
+//! step at this phase), rotate an existing cert (T-69), decide whether to
+//! load a previously-persisted cert instead of regenerating one (a future
+//! `main.rs` listener-wiring decision), or store the private key in a
+//! platform secure-storage API (T-67, Фаза 2 — DPAPI/Keychain/Secret
+//! Service). Same "backend primitive ready, wiring later" pattern as every
+//! prior module in this crate.
+//!
+//! **Private key storage is SPEC.md §2's explicitly named MVP fallback, not
+//! its intended end state:** "якщо на MVP-етапі \[secure storage\] складно —
+//! файл із правами `600` у app data, але це технічний борг, зафіксований
+//! явно." [`write_cert_and_key_to_app_data`] writes a plaintext PEM file, but
+//! restricts the private-key file's ACL to the current user only via
+//! `icacls.exe` — the Windows equivalent of Unix `600` — rather than leaving
+//! it at whatever the parent app-data directory's inherited ACL happens to
+//! be. T-67 (Фаза 2) is the tracked resolution of this tech debt, not a
+//! silent permanent default.
 //!
 //! **Leaf, never a CA** (SPEC.md §2's largest stated attack-surface
 //! decision): a compromised private key for this cert can only spoof
@@ -33,7 +44,17 @@
 //! generation-relative window would become worth it, since each rotation
 //! calls this function fresh.
 
+use std::env;
+use std::ffi::OsStr;
+use std::fs::{self, File};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
 use rcgen::{CertificateParams, CertifiedKey, DistinguishedName, DnType, IsCa, KeyPair};
+use zeroize::{Zeroize, Zeroizing};
+
+use crate::paths;
 
 /// Errors generating the self-signed leaf certificate.
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +62,29 @@ pub enum CertError {
     /// Underlying `rcgen` failure (key generation or certificate signing).
     #[error("failed to generate self-signed certificate: {0}")]
     Generation(#[from] rcgen::Error),
+    /// `%LOCALAPPDATA%` is not set — can't resolve the app-data directory to
+    /// write the cert/key into. Not `#[from] paths::PathsError` — that type
+    /// is `pub(crate)` (the `paths` module is private, T-50), and wrapping it
+    /// directly in this `pub` enum would leak a private type through a
+    /// public API (`private_interfaces` lint).
+    #[error("%LOCALAPPDATA% environment variable is not set")]
+    MissingLocalAppData,
+    /// Failed to create the app-data directory or write the cert/key files.
+    #[error("failed to write certificate files: {0}")]
+    Io(#[source] io::Error),
+    /// `%SystemRoot%` is not set — can't locate `icacls.exe` by absolute path.
+    #[error("%SystemRoot% environment variable is not set")]
+    MissingSystemRoot,
+    /// `%USERNAME%` is not set — can't name the ACL grant target.
+    #[error("%USERNAME% environment variable is not set")]
+    MissingUserIdentity,
+    /// Failed to spawn `icacls.exe` to restrict the private-key file's ACL.
+    #[error("failed to spawn icacls to restrict the private key file: {0}")]
+    IcaclsSpawn(#[source] io::Error),
+    /// `icacls.exe` ran but reported failure restricting the private-key
+    /// file's ACL.
+    #[error("icacls failed to restrict the private key file (exit code {0:?})")]
+    IcaclsFailed(Option<i32>),
 }
 
 /// Generate the local `DoH` listener's self-signed leaf certificate
@@ -70,6 +114,108 @@ pub fn generate_self_signed_cert() -> Result<CertifiedKey<KeyPair>, CertError> {
     let signing_key = KeyPair::generate()?;
     let cert = params.self_signed(&signing_key)?;
     Ok(CertifiedKey { cert, signing_key })
+}
+
+/// Paths of the cert/key files written by [`write_cert_and_key_to_app_data`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertFiles {
+    /// Path to the PEM-encoded certificate (public — no restricted ACL).
+    pub cert_path: PathBuf,
+    /// Path to the PEM-encoded private key (ACL-restricted to this user).
+    pub key_path: PathBuf,
+}
+
+/// Write a generated cert/key to `%LOCALAPPDATA%\dns-quorum-filter\` as
+/// `cert.pem`/`key.pem` (SPEC.md §2's MVP fallback — see this module's own
+/// documentation for the full DPAPI-vs-plaintext-file reasoning; DPAPI itself
+/// is T-67, Фаза 2). Takes `certified_key` **by value**: this function is
+/// where the key's storage/zeroize lifecycle starts and ends. After the key
+/// bytes are written, this makes a best-effort attempt to clear the
+/// in-memory copies — `signing_key.zeroize()` (rcgen's `zeroize` feature,
+/// which wipes only the `KeyPair`'s internal DER bytes) and dropping the PEM
+/// text via [`Zeroizing`] — but this is in-memory hygiene, not a guarantee:
+/// by the time these calls run, the bytes have already been handed to the OS
+/// write path (page cache, possibly swap).
+///
+/// **Unconditionally overwrites** any existing `cert.pem`/`key.pem` on every
+/// call. Deciding whether to load an existing cert instead of regenerating
+/// one (so a user's manual trust-store install at T-49 isn't silently
+/// invalidated on every service restart) is the future listener-wiring
+/// caller's job, not this function's.
+///
+/// # Errors
+///
+/// Returns [`CertError`] if the app-data directory can't be resolved or
+/// created, if writing either file fails, or if restricting the private-key
+/// file's ACL to the current user fails.
+pub fn write_cert_and_key_to_app_data(
+    certified_key: CertifiedKey<KeyPair>,
+) -> Result<CertFiles, CertError> {
+    let CertifiedKey {
+        cert,
+        mut signing_key,
+    } = certified_key;
+
+    let dir = paths::app_data_dir().map_err(|_| CertError::MissingLocalAppData)?;
+    fs::create_dir_all(&dir).map_err(CertError::Io)?;
+
+    let cert_path = dir.join("cert.pem");
+    fs::write(&cert_path, cert.pem()).map_err(CertError::Io)?;
+
+    let key_path = dir.join("key.pem");
+    let key_pem = Zeroizing::new(signing_key.serialize_pem());
+    write_key_file(&key_path, key_pem.as_bytes())?;
+    signing_key.zeroize();
+
+    Ok(CertFiles {
+        cert_path,
+        key_path,
+    })
+}
+
+/// Create `path` empty, restrict its ACL to the current user, then write
+/// `contents` — in that order, never write-then-restrict. Writing first would
+/// leave a window where the private key sits on disk under the parent
+/// directory's inherited ACL rather than the restricted one.
+fn write_key_file(path: &Path, contents: &[u8]) -> Result<(), CertError> {
+    // The handle itself is unused — this call exists only to make `path`
+    // exist as an empty file for `restrict_to_current_user` to ACL, before
+    // any key bytes are written to it.
+    File::create(path).map_err(CertError::Io)?;
+    restrict_to_current_user(path)?;
+    fs::write(path, contents).map_err(CertError::Io)
+}
+
+/// Restrict `path`'s ACL to Full Control for the current user only, via
+/// `icacls.exe` — not the Windows ACL `WinAPI` directly, which is `unsafe` FFI
+/// and this crate is `#![forbid(unsafe_code)]`. `icacls.exe` is located by
+/// absolute path (`%SystemRoot%\System32\icacls.exe`), never a bare `PATH`
+/// lookup, per this project's standing convention for spawned system
+/// processes. The grant target is the bare `%USERNAME%` — confirmed
+/// empirically (not assumed) that `icacls` resolves an unqualified account
+/// name against the local machine first, so no `%USERDOMAIN%` lookup (and no
+/// second failure mode for it) is needed.
+fn restrict_to_current_user(path: &Path) -> Result<(), CertError> {
+    let system_root = env::var_os("SystemRoot").ok_or(CertError::MissingSystemRoot)?;
+    let icacls = Path::new(&system_root).join("System32").join("icacls.exe");
+    let user = env::var("USERNAME").map_err(|_| CertError::MissingUserIdentity)?;
+    let grant = format!("{user}:F");
+
+    let status = Command::new(icacls)
+        .args([
+            path.as_os_str(),
+            OsStr::new("/inheritance:r"),
+            OsStr::new("/grant:r"),
+            OsStr::new(&grant),
+        ])
+        .status()
+        .map_err(CertError::IcaclsSpawn)?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(CertError::IcaclsFailed(status.code()))
+    }
 }
 
 #[cfg(test)]
@@ -204,6 +350,80 @@ mod tests {
             validity.not_after.timestamp(),
             rcgen::date_time_ymd(2120, 1, 1).unix_timestamp(),
             "not_after must be the stated 2120-01-01 anchor, not rcgen's raw 4096 default"
+        );
+    }
+
+    #[test]
+    fn cert_pem_decodes_to_the_same_certificate_as_the_der_it_was_derived_from() {
+        let certified_key = match generate_self_signed_cert() {
+            Ok(ck) => ck,
+            Err(err) => panic!("generation must succeed: {err}"),
+        };
+
+        let pem_text = certified_key.cert.pem();
+        let (_, pem) = match x509_parser::pem::parse_x509_pem(pem_text.as_bytes()) {
+            Ok(parsed) => parsed,
+            Err(err) => panic!("cert.pem() must produce a valid PEM block: {err}"),
+        };
+
+        assert_eq!(
+            pem.contents,
+            certified_key.cert.der().as_ref(),
+            "PEM-decoded DER must match cert.der() byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn write_key_file_creates_a_file_restricted_to_the_current_user_only() {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("must be able to create a temp dir: {err}"),
+        };
+        let key_path = dir.path().join("key.pem");
+
+        if let Err(err) = super::write_key_file(&key_path, b"placeholder-key-bytes") {
+            panic!("write_key_file must succeed: {err}");
+        }
+
+        match std::fs::read(&key_path) {
+            Ok(contents) => assert_eq!(contents, b"placeholder-key-bytes"),
+            Err(err) => panic!("written key file must be readable back: {err}"),
+        }
+
+        // Real `icacls` read-back, not a trust-the-call-succeeded assertion —
+        // same standard the SAN/`IsCa` tests hold `rcgen` to.
+        let output = match std::process::Command::new("icacls").arg(&key_path).output() {
+            Ok(output) => output,
+            Err(err) => panic!("icacls must be runnable to verify the ACL: {err}"),
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let username = match std::env::var("USERNAME") {
+            Ok(name) => name,
+            Err(err) => panic!("USERNAME must be set on Windows: {err}"),
+        };
+
+        // Structural check, not a substring denylist: a denylist of group
+        // names (`"SYSTEM"`, `"Everyone"`, ...) can't distinguish "no
+        // residual grant" from "the string just doesn't happen to appear",
+        // and would false-fail on a machine whose hostname/account name
+        // happens to contain one of those words. `icacls`'s own output shape
+        // (confirmed empirically against a real restricted file) is: one ACE
+        // line per grant, a blank line, then a "Successfully processed..."
+        // summary — so counting non-blank, non-summary lines is a direct
+        // proof of "exactly one grant," which a substring check is not.
+        let ace_lines: Vec<&str> = stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.contains("Successfully processed"))
+            .collect();
+        assert_eq!(
+            ace_lines.len(),
+            1,
+            "expected exactly one ACE after restriction, got: {stdout}"
+        );
+        assert!(
+            ace_lines[0].contains(&format!("{username}:(F)")),
+            "expected the sole ACE to grant the current user Full Control, got: {stdout}"
         );
     }
 }

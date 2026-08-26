@@ -46,6 +46,7 @@ mod cache;
 mod cert;
 mod listener;
 mod overrides;
+mod paths;
 mod pipeline;
 mod query_log;
 mod quorum;
@@ -56,7 +57,7 @@ mod wire;
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
-pub use cert::{generate_self_signed_cert, CertError};
+pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
