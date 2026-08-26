@@ -10,9 +10,11 @@
 //! is the reload-event counterpart, called whenever the override lists
 //! change rather than once per query — see its own doc comment.
 //!
-//! T-41 adds [`Voters`]: SPEC.md §3/§8.1's explicit pass-through when the
-//! user has disabled every quorum provider — see `handle_query`'s
-//! `Voters::Disabled` branch.
+//! T-41 added a pass-through for SPEC.md §3/§8.1's "every quorum provider
+//! disabled" case (originally a 2-variant `Voters` enum); T-148 replaced
+//! that all-or-nothing switch with [`crate::quorum::EnabledProviders`], a
+//! real per-provider toggle — see `handle_query`'s `enabled.any_enabled()`
+//! branch.
 
 use crate::cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
@@ -20,7 +22,7 @@ use crate::cache::{
 use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
 use crate::query_log::{Decision, DecisionSource};
-use crate::quorum::{requires_quorum, resolve, QuorumVerdict, VoterRecord};
+use crate::quorum::{requires_quorum, resolve, EnabledProviders, QuorumVerdict, VoterRecord};
 use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
 use crate::upstream::{DohClient, BASELINE_DOH_URL};
 use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
@@ -76,7 +78,7 @@ pub struct QueryLogMeta {
 
 /// `Decision::Allowed` vs `Decision::Failed` from a resolved [`Message`] —
 /// only valid where `Decision::Blocked` isn't a reachable outcome of the
-/// branch calling it (allowlist pass-through, `Voters::Disabled`
+/// branch calling it (allowlist pass-through, every-provider-disabled
 /// pass-through, quorum `Allow`): each of those three shapes is either a
 /// real/forwarded answer or a synthesized/forwarded SERVFAIL, never a block
 /// response — `build_block_response`/cache-replayed blocks never reach this
@@ -89,32 +91,8 @@ fn decision_from_response(message: &Message) -> Decision {
     }
 }
 
-/// SPEC.md §3, §8.1 (T-41): whether any quorum voter is enabled at all.
-///
-/// Not `&[Provider]` — a slice whose only check is `.is_empty()` would let a
-/// caller pass a *partial* subset (e.g. only Quad9, `AdGuard` disabled) and
-/// silently get both providers queried anyway, since nothing downstream
-/// reads which providers are actually in the list. That's exactly the
-/// "мовчазна поведінка «як є»" (silent as-is behavior) SPEC.md §3 forbids —
-/// just scoped to one provider instead of all. This two-variant type makes
-/// the unsupported partial case unrepresentable instead of silently
-/// mishandled (rust.md "Make Illegal States Unrepresentable").
-///
-/// Phase 1 only distinguishes "some" from "none" — a genuine per-provider
-/// subset is T-52 scope, once a real toggle config exists to drive it; that
-/// task replaces this type (and the compiler enumerates every call site), a
-/// deliberate breaking change rather than a silently wrong default today.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Voters {
-    /// Run quorum over both Phase-1 providers, as usual.
-    Enabled,
-    /// Every provider disabled by the user — SPEC.md §3's explicit
-    /// pass-through case.
-    Disabled,
-}
-
 /// Shared shape of `handle_query`'s two baseline-pass-through branches
-/// (allowlist match, `Voters::Disabled`): resolve unfiltered via
+/// (allowlist match, every provider disabled): resolve unfiltered via
 /// [`resolve_via_baseline`], then pair the result with `QueryLogMeta` —
 /// `voters` is always empty here, nothing was actually consulted for either
 /// caller. Pulled out purely to keep `handle_query` itself readable, not
@@ -201,7 +179,7 @@ pub async fn handle_query<C: DohClient + Sync>(
     query: &Message,
     client: &C,
     overrides: &OverrideLists,
-    voters: Voters,
+    enabled: EnabledProviders,
     cache: &Cache,
     cache_config: &CacheConfig,
     timeout_config: &TimeoutConfig,
@@ -252,13 +230,13 @@ pub async fn handle_query<C: DohClient + Sync>(
         return (PipelineOutcome::ProxyToSingleUpstream, None);
     }
 
-    if voters == Voters::Disabled {
+    if !enabled.any_enabled() {
         // SPEC.md §3, §8.1: explicit pass-through, not fail-closed, not a
         // silent no-op — OR-logic over an empty voter set is semantically
         // undefined, so resolution goes through the baseline resolver with
         // no filtering at all, the same path the allowlist branch above
         // already uses. A blocklist match still short-circuited above this
-        // check regardless of `voters` - disabling third-party voters does
+        // check regardless of `enabled` - disabling third-party voters does
         // not disable the user's own override rules, that's the pipeline's
         // fixed step order, not an inconsistency to "fix" later.
         //
@@ -313,7 +291,7 @@ pub async fn handle_query<C: DohClient + Sync>(
         }
     }
 
-    let outcome = resolve(client, query, timeout_config).await;
+    let outcome = resolve(client, query, timeout_config, enabled).await;
     match outcome.verdict {
         QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
@@ -351,7 +329,7 @@ pub async fn handle_query<C: DohClient + Sync>(
 /// SPEC.md §5 step 1: one direct query to the baseline resolver (T-22),
 /// forwarded as-is — used both by the allowlist branch (an allowlisted
 /// domain never consults quorum, but the client still needs a real answer,
-/// not just a verdict) and by T-41's `Voters::Disabled` pass-through, where
+/// not just a verdict) and by the every-provider-disabled pass-through, where
 /// this is the entire resolution path for *every* A/AAAA query while
 /// filtering is off.
 ///
@@ -378,7 +356,7 @@ async fn resolve_via_baseline<C: DohClient + Sync>(
 
 /// T-25's call-site half of [`PipelineOutcome::ProxyToSingleUpstream`] — proxies `query` to the
 /// baseline resolver, unfiltered, via the same bounded path `handle_query`'s own allowlist and
-/// `Voters::Disabled` branches already use ([`resolve_via_baseline`]). A separate `pub` name
+/// every-provider-disabled branches already use ([`resolve_via_baseline`]). A separate `pub` name
 /// rather than exposing `resolve_via_baseline` itself: this function's contract to callers is
 /// "the non-A/AAAA proxy step," not "the allowlist helper" — the two happen to share an
 /// implementation because SPEC.md §5 step 1 is genuinely the same action in both cases.
@@ -543,10 +521,11 @@ fn duration_to_ttl_secs(duration: Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_query, invalidate_changed, PipelineOutcome, Voters};
+    use super::{handle_query, invalidate_changed, PipelineOutcome};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{Decision, DecisionSource};
+    use crate::quorum::{EnabledProviders, VoterVerdict};
     use crate::timeout::{TimeoutConfig, TimeoutMode};
     use crate::upstream::{DohClient, Provider, UpstreamError};
     use hickory_proto::op::{Message, Query, ResponseCode};
@@ -699,7 +678,7 @@ mod tests {
             &query,
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -741,7 +720,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -767,7 +746,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -809,7 +788,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -831,7 +810,7 @@ mod tests {
             &query_for("example.com.", RecordType::MX),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -862,7 +841,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -907,7 +886,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -944,7 +923,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -964,7 +943,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -994,7 +973,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1019,7 +998,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1049,7 +1028,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1070,7 +1049,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1102,7 +1081,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1129,7 +1108,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &config,
@@ -1165,7 +1144,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1340,7 +1319,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1367,7 +1349,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1400,7 +1385,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1438,7 +1426,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &config,
@@ -1481,7 +1472,7 @@ mod tests {
 
     #[tokio::test]
     async fn voters_disabled_skips_a_stale_ready_block_cache_entry() {
-        // Advisor-review regression: Voters::Disabled is checked *before*
+        // Advisor-review regression: every-provider-disabled is checked *before*
         // the cache lookup, not just before the cache write - a BLOCK
         // verdict cached while voters were still enabled must not be
         // served here either, or disabling every provider would silently
@@ -1514,7 +1505,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1536,7 +1530,7 @@ mod tests {
     async fn voters_disabled_still_honors_blocklist() {
         // Disabling third-party voters does not disable the user's own
         // override rules - blocklist must still short-circuit above the
-        // Voters::Disabled branch, and baseline must never be consulted for
+        // every-provider-disabled branch, and baseline must never be consulted for
         // a blocked domain regardless of voter state.
         let overrides = overrides_with(vec![OverrideEntry {
             domain: "example.com".to_string(),
@@ -1550,7 +1544,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1587,7 +1584,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1621,7 +1618,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1652,7 +1649,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1697,7 +1694,7 @@ mod tests {
             &query_for("blocked.example.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1713,7 +1710,7 @@ mod tests {
             &query_for("allowed.example.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1741,7 +1738,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1775,7 +1772,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1808,7 +1805,10 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            Voters::Disabled,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1822,6 +1822,53 @@ mod tests {
         assert!(meta.voters.is_empty());
     }
 
+    // T-148: disabling a single provider must still run real quorum over
+    // whichever provider(s) remain enabled - it's not the every-provider-
+    // disabled pass-through, and the disabled provider must never actually
+    // be queried (MockClient::Panic on its URL would fail the test if it
+    // were).
+    #[tokio::test]
+    async fn single_provider_disabled_still_runs_quorum_not_passthrough() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            calls: AtomicU32::new(0),
+        };
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        // Real quorum ran (not the every-provider-disabled pass-through,
+        // which always logs an empty voters list) - and the disabled
+        // provider's own entry actually carries VoterVerdict::Disabled, not
+        // just "the list happens to have 2 entries" (a count-only assertion
+        // would pass even if handle_query silently dropped the verdict on
+        // its way from QuorumOutcome into QueryLogMeta).
+        assert_eq!(meta.voters.len(), 2);
+        let Some(quad9) = meta.voters.iter().find(|v| v.provider == Provider::Quad9) else {
+            panic!("expected a Quad9 voter record");
+        };
+        assert_eq!(quad9.verdict, VoterVerdict::Disabled);
+    }
+
     #[tokio::test]
     async fn non_a_aaaa_query_produces_no_log_metadata() {
         let overrides = OverrideLists::empty();
@@ -1832,7 +1879,7 @@ mod tests {
             &query_for("example.com.", RecordType::MX),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1851,7 +1898,7 @@ mod tests {
             &Message::query(),
             &client,
             &overrides,
-            Voters::Enabled,
+            EnabledProviders::default(),
             &cache,
             &cache_config(),
             &timeout_config(),

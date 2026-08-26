@@ -45,6 +45,74 @@ fields), not a lint workaround. **Not in this slice**: the non-A/AAAA proxy path
 (named gap above); T-148 (real per-provider config) and T-52 (Tauri UI) are separate, still-open
 tasks — T-52 remains blocked on T-148.
 
+Фаза 1, eighteenth slice done (T-148 — TASKS-DONE.md, one commit): replaced `pipeline::Voters`
+(the T-41 all-or-nothing switch) with `quorum::EnabledProviders { quad9: bool, adguard: bool }` — a
+real per-provider toggle `quorum::resolve` actually honors, the exact gap `config.rs`'s own doc
+comment had named since T-144 ("persisting a per-provider toggle the resolver can't yet act on
+would repeat T-41's own `Voters` design note"). This is what unblocked T-52. `EnabledProviders`
+lives in `quorum.rs` (which providers vote is quorum's domain, T-147 precedent) and
+`config::ResolverConfig` reuses it directly as `providers` (nested `[providers]` TOML table) rather
+than a parallel config-only copy — a second type could drift from what `resolve()` actually
+honors, T-41's lesson applied to itself. **Advisor-caught trap before implementation, not a
+test**: naively defaulting a disabled provider's missing outcome to `VoterOutcome::TimedOut` (the
+existing "never arrived" fallback) would make `fail_closed` mode treat "administratively disabled"
+the same as "unresponsive" and silently BLOCK every query the moment one provider is turned off —
+worse than no filtering at all (Три Б, user safety). Fixed by keeping a disabled provider's
+outcome `None` all the way through `resolve()` (no future is even pushed for it into the
+`FuturesUnordered`; the `.unwrap_or(TimedOut)` collapse only applies when that provider is
+enabled) — `combine`/`representative_allow_answer`/`voter_records` all take `Option<&VoterOutcome>`
+for quad9/adguard and treat `None` as "doesn't participate", reusing `known_signal`'s existing
+`outcome?` early-return with no new special-casing. New `VoterVerdict::Disabled` — distinct from
+`Canceled` (still eligible, just not waited on) and `Timeout` (asked, never answered);
+`voter_record()` checks `enabled` before any outcome logic so the two never collapse. **Second real
+bug, also advisor-caught before implementation**: `query_log::LogFilter::voter`'s existing filter
+checked only provider *presence* in `voters`, not verdict — once `Disabled` became a possible
+value, filtering by voter would start matching entries where that provider never actually voted,
+contradicting the facet's own documented "participation" intent. Fixed by excluding
+`VoterVerdict::Disabled` explicitly in `matches_filter`, new test mirroring the existing
+`search_voter_facet_excludes_entries_with_no_voters_even_if_that_provider_would_have_blocked`.
+`resolve()` tripped `clippy::too_many_lines` (114/100) after the new branches; fixed by extracting
+`finalize_outcome` (the post-loop verdict/answer/voters assembly), not `#[allow(...)]`, same
+precedent as T-147's helper extraction. Hard cutover in `resolver_config.toml`, no dual-field
+shim — a file still using the old flat `voters_enabled` key now fails to parse
+(`ConfigError::Toml`, unknown field), same precedent as T-145's TOML migration; no `DECISIONS.md`
+entry needed (SPEC.md never committed to this field's exact shape, nothing to reverse). Manually
+confirmed on the running binary: `resolver_config.toml` with `[providers]\nquad9 = false\nadguard =
+true` starts the service and a real DoH GET for `example.com` returns 200 (resolved via AdGuard +
+baseline, Quad9 never queried). New tests: `quorum.rs` — a disabled provider's URL is never
+queried (panics if it is), the fail-closed regression named above (Quad9 disabled, AdGuard +
+baseline both `Allow` → verdict must stay `Allow`, not falsely `Block`), and
+`representative_allow_answer` with a disabled provider and no usable answer elsewhere;
+`pipeline.rs` — one provider disabled still runs real quorum, not the every-provider-disabled
+pass-through; `config.rs` — partial `[providers]` table, a typo'd nested key, the old flat
+`voters_enabled` key now a loud error; `query_log.rs` — the new voter-facet regression test.
+Closing advisor review caught two more real gaps before commit: (1) `pipeline.rs`'s new
+single-provider-disabled test only asserted `meta.voters.len() == 2`, which would pass even if
+`handle_query` silently dropped `Disabled` on the way from `QuorumOutcome` into `QueryLogMeta` —
+strengthened to assert Quad9's own record actually carries `VoterVerdict::Disabled` (grepped every
+`.voters` reader in the crate first to confirm `query_log.rs`'s `matches_filter` is the only
+participation-counting one, so nothing else double-counts). (2) `resolve()` is `pub`, and nothing
+at the type level stops a caller from passing `EnabledProviders { quad9: false, adguard: false }`
+directly to it — it would return a well-formed `Allow` sourced from baseline with both voters
+`Disabled`, indistinguishable from a real filtered `Allow` and cacheable, the T-41 lesson recurring
+one level up. The one shipped caller (`handle_query`) never reaches this (its own `any_enabled()`
+gate runs first), so this is documented as a real but unenforced precondition on `resolve()`'s own
+doc comment, not fixed with a newtype — over-engineering for two providers. Checked before
+committing, not skipped: `grep`'d SPEC.md/UI-SPEC.md for `voters_enabled`/prior committed
+per-provider config shape — no hit, so unlike T-145 this isn't a SPEC.md reversal (T-144's own doc
+comment named the gap as future work, never a settled shape); SPEC.md §3.4's "checkbox per
+category, not per provider" line is about the *future Ads/Adult category UI*, not Phase 1's single
+Security category's two providers, so it doesn't conflict with a per-provider backend toggle for
+those two. Діаграма ground-truth ritual run (triggered — `VoterVerdict` gained an enum variant):
+`diagrams/ui-dto-model.md`'s `VoterStatus` DTO union updated with the new `Disabled` variant and a
+new resolved-discrepancy paragraph (its existing `ProviderConfig.enabled: bool` field already
+anticipated this exact toggle, so no conflict found) — `ui-navigation.md`/`ui-status-indicator.md`
+checked, not affected. Звірка діаграм: прогнано, зачеплено 1 діаграму (`ui-dto-model.md`), оновлено
+1, GAP: 0.
+**Not in this slice**: category toggling beyond the two Phase-1 providers (Ads/Adult etc.,
+UI-SPEC.md §3.4) — needs upstream presets `upstream::Provider` doesn't have; the Tauri UI itself
+(T-52), now genuinely unblocked but still not built.
+
 Поза фазами, T-141 done (TASKS-DONE.md, one commit, docs only — no code): investigated whether
 HTTP/3 upstream support is worth building now, same "research, not implementation" precedent as
 T-14 (ECH). Client-side stack is the decisive blocker: `reqwest` 0.13.4's `http3` feature is

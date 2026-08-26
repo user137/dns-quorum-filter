@@ -12,7 +12,7 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, OverrideLists, QueryLog, ReqwestDohClient, ResolverConfig, TimeoutConfig, Voters,
+    CacheConfig, OverrideLists, QueryLog, ReqwestDohClient, ResolverConfig, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -70,11 +70,7 @@ async fn main() {
 
     let overrides = load_overrides(app_data.as_deref());
 
-    let voters = if resolver_config.voters_enabled {
-        Voters::Enabled
-    } else {
-        Voters::Disabled
-    };
+    let voters = resolver_config.providers;
     let timeout_config = TimeoutConfig {
         mode: resolver_config.timeout_mode,
         duration: Duration::from_millis(resolver_config.timeout_ms.into()),

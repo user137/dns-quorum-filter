@@ -16,8 +16,9 @@
 
 use crate::cache::{Cache, CacheConfig};
 use crate::overrides::OverrideLists;
-use crate::pipeline::{handle_query, proxy_to_single_upstream, PipelineOutcome, Voters};
+use crate::pipeline::{handle_query, proxy_to_single_upstream, PipelineOutcome};
 use crate::query_log::{LogEntry, QueryLog};
+use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutConfig;
 use crate::upstream::DohClient;
 use crate::wire::{decode_wire_message, encode_wire_message};
@@ -173,7 +174,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
 pub struct AppState<C: DohClient + Sync> {
     client: C,
     overrides: OverrideLists,
-    voters: Voters,
+    voters: EnabledProviders,
     cache: Cache,
     cache_config: CacheConfig,
     timeout_config: TimeoutConfig,
@@ -187,7 +188,7 @@ impl<C: DohClient + Sync> AppState<C> {
     pub fn new(
         client: C,
         overrides: OverrideLists,
-        voters: Voters,
+        voters: EnabledProviders,
         cache: Cache,
         cache_config: CacheConfig,
         timeout_config: TimeoutConfig,
@@ -305,8 +306,8 @@ mod tests {
     };
     use crate::cache::{Cache, CacheConfig};
     use crate::overrides::OverrideLists;
-    use crate::pipeline::Voters;
     use crate::query_log::QueryLog;
+    use crate::quorum::EnabledProviders;
     use crate::timeout::TimeoutConfig;
     use crate::upstream::{doh_get_url, DohClient, UpstreamError};
     use bytes::Bytes;
@@ -542,7 +543,7 @@ mod tests {
         Arc::new(AppState::new(
             client,
             OverrideLists::empty(),
-            Voters::Enabled,
+            EnabledProviders::default(),
             Cache::new(&CacheConfig::default()),
             CacheConfig::default(),
             TimeoutConfig::default(),

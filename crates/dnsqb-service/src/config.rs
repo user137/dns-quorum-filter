@@ -11,15 +11,14 @@
 //! snippet of the offending input line, confirmed empirically via a scratch
 //! probe) are a genuine UX win here with no privacy cost.
 //!
-//! Deliberately **not** a per-provider/category config — `quorum::resolve`
-//! hardcodes querying both `Provider::Quad9` and `Provider::AdGuard`
-//! unconditionally, with no parameter anywhere for "which providers to
-//! query." Persisting a per-provider toggle the resolver can't yet act on
-//! would be the same footgun T-41's own `Voters` design note already
-//! flagged (a config subset that isn't honored downstream) — so this module
-//! persists only the one toggle already wired end to end since T-41,
-//! `voters_enabled`. Per-provider/category toggling (UI-SPEC.md §3.4) stays
-//! an open gap for whoever scopes T-52's config surface for real.
+//! Per-provider toggling (T-148) reuses `quorum::EnabledProviders` directly
+//! as this struct's `providers` field, rather than a parallel config-only
+//! copy — a second type here could drift from what `quorum::resolve`
+//! actually honors, the exact footgun T-41's own `Voters` design note
+//! originally flagged (a config subset nothing downstream reads). Category
+//! toggling (UI-SPEC.md §3.4, beyond the two Phase-1 providers) stays a
+//! later-phase gap — this module only persists what `resolve()` can act on
+//! today.
 //!
 //! No `save()` either — same "no file-write path yet" precedent as
 //! `overrides.rs` before T-46/T-47's UI writer existed. No live-reload:
@@ -33,6 +32,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutMode;
 
 /// Errors loading the resolver config.
@@ -78,10 +78,10 @@ pub struct ResolverConfig {
     pub timeout_mode: TimeoutMode,
     /// Per-query timeout, in milliseconds.
     pub timeout_ms: u32,
-    /// Whether quorum voters are enabled at all — `false` is SPEC.md §3/
-    /// §8.1's explicit pass-through case ([`crate::Voters::Disabled`]), not
-    /// fail-closed and not a silent no-op.
-    pub voters_enabled: bool,
+    /// Which quorum providers are enabled (T-148) — [`EnabledProviders::
+    /// any_enabled`] being `false` is SPEC.md §3/§8.1's explicit
+    /// pass-through case, not fail-closed and not a silent no-op.
+    pub providers: EnabledProviders,
 }
 
 impl Default for ResolverConfig {
@@ -91,7 +91,7 @@ impl Default for ResolverConfig {
             port: 8443,
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,
-            voters_enabled: true,
+            providers: EnabledProviders::default(),
         }
     }
 }
@@ -137,7 +137,7 @@ impl ResolverConfig {
             port: file.port,
             timeout_mode: file.timeout_mode,
             timeout_ms: file.timeout_ms,
-            voters_enabled: file.voters_enabled,
+            providers: file.providers,
         })
     }
 }
@@ -154,7 +154,7 @@ struct ResolverConfigFile {
     port: u16,
     timeout_mode: TimeoutMode,
     timeout_ms: u32,
-    voters_enabled: bool,
+    providers: EnabledProviders,
 }
 
 impl Default for ResolverConfigFile {
@@ -164,7 +164,7 @@ impl Default for ResolverConfigFile {
             port: defaults.port,
             timeout_mode: defaults.timeout_mode,
             timeout_ms: defaults.timeout_ms,
-            voters_enabled: defaults.voters_enabled,
+            providers: defaults.providers,
         }
     }
 }
@@ -172,6 +172,7 @@ impl Default for ResolverConfigFile {
 #[cfg(test)]
 mod tests {
     use super::{ConfigError, ResolverConfig};
+    use crate::quorum::EnabledProviders;
     use crate::timeout::TimeoutMode;
     use std::fs;
 
@@ -197,7 +198,7 @@ mod tests {
     #[test]
     fn load_of_a_fully_specified_file_returns_exactly_those_values() {
         let (_dir, path) = temp_config_path();
-        let toml = "port = 9000\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 5000\nvoters_enabled = false\n";
+        let toml = "port = 9000\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 5000\n\n[providers]\nquad9 = false\nadguard = false\n";
         if let Err(err) = fs::write(&path, toml) {
             panic!("must be able to write the fixture file: {err}");
         }
@@ -211,9 +212,65 @@ mod tests {
                 port: 9000,
                 timeout_mode: TimeoutMode::FailClosed,
                 timeout_ms: 5000,
-                voters_enabled: false,
+                providers: EnabledProviders {
+                    quad9: false,
+                    adguard: false,
+                },
             }
         );
+    }
+
+    // T-148: EnabledProviders is a nested TOML table, not a flat field -
+    // confirmed empirically (not assumed) that struct-level
+    // #[serde(default, deny_unknown_fields)] composes the same way one level
+    // deep inside a [providers] table as it does at the top level of the
+    // file (CLAUDE.md's own T-144 gotcha only verified the top-level case).
+
+    #[test]
+    fn load_of_a_partial_providers_table_fills_the_other_provider_from_default() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[providers]\nquad9 = false\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a partial [providers] table must still load: {err}"),
+        };
+        assert_eq!(
+            config.providers,
+            EnabledProviders {
+                quad9: false,
+                adguard: true,
+            }
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_key_inside_the_providers_table() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[providers]\nadgaurd = false\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    // T-148: hard cutover, no dual-field migration shim - an old file still
+    // using the pre-T-148 flat `voters_enabled` key is now a loud parse
+    // error, not silently accepted (same "malformed file is fatal" rule
+    // this file already applies to every other unknown key).
+    #[test]
+    fn load_rejects_the_old_flat_voters_enabled_key_as_unknown() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "voters_enabled = false\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
     }
 
     #[test]

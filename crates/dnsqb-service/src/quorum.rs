@@ -10,9 +10,52 @@ use futures_util::StreamExt;
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
+use serde::Deserialize;
 use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
+
+/// Which Phase-1 providers actually get queried (T-148) — replaces the old
+/// all-or-nothing `pipeline::Voters` switch with a real per-provider toggle.
+/// Lives here, not in `config.rs`: which providers vote is quorum's own
+/// domain, not the config file's (same precedent T-147 already set for
+/// [`VoterVerdict`]/[`VoterRecord`]). `config::ResolverConfig` reuses this
+/// type directly as its `providers` field rather than a parallel
+/// config-only copy — a second type here could drift from what [`resolve`]
+/// actually honors, the literal T-41 lesson this type exists to fix, applied
+/// to itself. `Deserialize` (`#[serde(default, deny_unknown_fields)]`, same
+/// split as every other on-disk shape in this crate) is derived directly on
+/// this type rather than a config-only wrapper, mirroring how
+/// `timeout::TimeoutMode` gained `Serialize`/`Deserialize` directly at T-144.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EnabledProviders {
+    /// Whether Quad9 is queried at all.
+    pub quad9: bool,
+    /// Whether `AdGuard` is queried at all.
+    pub adguard: bool,
+}
+
+impl Default for EnabledProviders {
+    /// The MVP default (both on) — same value `pipeline::Voters::Enabled`
+    /// represented before T-148.
+    fn default() -> Self {
+        Self {
+            quad9: true,
+            adguard: true,
+        }
+    }
+}
+
+impl EnabledProviders {
+    /// Whether at least one provider is enabled. `false` is SPEC.md §3/
+    /// §8.1's explicit pass-through case — resolution goes through the
+    /// unfiltered baseline resolver instead of calling [`resolve`] at all.
+    #[must_use]
+    pub fn any_enabled(&self) -> bool {
+        self.quad9 || self.adguard
+    }
+}
 
 /// SPEC.md §6 `voters` column, per-voter value — five variants, matching
 /// SPEC.md §6's own list exactly (`Pending` in the Tauri DTO's `VoterStatus`
@@ -36,6 +79,15 @@ pub enum VoterVerdict {
     /// (`voter_record`'s own doc comment) — either way, the system never
     /// reached a final classification for this voter.
     Canceled,
+    /// This provider was never queried at all — the user administratively
+    /// disabled it (T-148, [`EnabledProviders`]). Deliberately distinct from
+    /// `Canceled` (which was at least *eligible* to be asked) and `Timeout`
+    /// (which was asked and never answered) — collapsing "disabled" into
+    /// either of those would make a disabled provider indistinguishable in
+    /// the log from a real upstream problem, and would be actively unsafe if
+    /// collapsed into `Timeout` specifically (see [`resolve`]'s own doc
+    /// comment on why a disabled voter must never be treated as timed out).
+    Disabled,
 }
 
 /// One provider's contribution to a completed query, for the log's `voters`
@@ -179,12 +231,25 @@ fn known_signal(
 /// "Panic-Free Production Code") — if `known_signal` ever changed shape and
 /// this arm became reachable, `Canceled` is still the correct answer for
 /// "never reached a final classification".
+///
+/// `enabled` is checked *first*, before any outcome-based logic (T-148) — a
+/// disabled provider's `outcome` is always `None` for the same reason a
+/// not-yet-arrived one is, but the two must never collapse into the same
+/// verdict: `Disabled` is administrative, `Canceled` means the provider was
+/// at least eligible to be asked.
 fn voter_record(
     provider: Provider,
+    enabled: bool,
     outcome: Option<&VoterOutcome>,
     baseline: Option<&VoterOutcome>,
     mode: TimeoutMode,
 ) -> VoterRecord {
+    if !enabled {
+        return VoterRecord {
+            provider,
+            verdict: VoterVerdict::Disabled,
+        };
+    }
     let verdict = match outcome {
         None => VoterVerdict::Canceled,
         Some(VoterOutcome::TimedOut) => VoterVerdict::Timeout,
@@ -199,16 +264,20 @@ fn voter_record(
 }
 
 /// Both Phase-1 voters' [`VoterRecord`]s (T-147) — never baseline, see
-/// [`VoterRecord`]'s own doc comment.
+/// [`VoterRecord`]'s own doc comment. Always exactly two entries regardless
+/// of `enabled` (T-148) — a disabled provider still gets a record, just with
+/// [`VoterVerdict::Disabled`], preserving the documented invariant on
+/// [`QuorumOutcome::voters`].
 fn voter_records(
+    enabled: EnabledProviders,
     quad9: Option<&VoterOutcome>,
     adguard: Option<&VoterOutcome>,
     baseline: Option<&VoterOutcome>,
     mode: TimeoutMode,
 ) -> Vec<VoterRecord> {
     vec![
-        voter_record(Provider::Quad9, quad9, baseline, mode),
-        voter_record(Provider::AdGuard, adguard, baseline, mode),
+        voter_record(Provider::Quad9, enabled.quad9, quad9, baseline, mode),
+        voter_record(Provider::AdGuard, enabled.adguard, adguard, baseline, mode),
     ]
 }
 
@@ -275,6 +344,8 @@ pub struct QuorumOutcome {
     /// Both Phase-1 voters' per-provider verdicts (T-147) — `vec![]` under
     /// [`QuorumVerdict::NotApplicable`] (never queried), otherwise always
     /// exactly two entries (Quad9, `AdGuard`), regardless of verdict.
+    /// [`VoterVerdict::Disabled`] (T-148) means that provider was
+    /// administratively turned off, not queried at all this round.
     pub voters: Vec<VoterRecord>,
 }
 
@@ -313,9 +384,14 @@ fn is_usable_answer(message: &Message) -> bool {
 /// caching a domain that might actually be Quad9-blocked as genuinely
 /// nonexistent. Caught in self-review while writing this function, not by a
 /// test.
+///
+/// `quad9`/`adguard` are `Option` (T-148) — `None` means that provider is
+/// disabled this round, simply skipped as a candidate rather than treated as
+/// an unusable answer; the preference order still falls through to whichever
+/// of the remaining candidates has real data.
 fn representative_allow_answer(
-    quad9: &VoterOutcome,
-    adguard: &VoterOutcome,
+    quad9: Option<&VoterOutcome>,
+    adguard: Option<&VoterOutcome>,
     baseline: &VoterOutcome,
 ) -> Option<Message> {
     if let VoterOutcome::Responded(message) = baseline {
@@ -323,14 +399,14 @@ fn representative_allow_answer(
             return Some(message.clone());
         }
     }
-    if let VoterOutcome::Responded(message) = quad9 {
+    if let Some(VoterOutcome::Responded(message)) = quad9 {
         if matches!(evaluate(Provider::Quad9, message), Signal::NotBlocked)
             && is_usable_answer(message)
         {
             return Some(message.clone());
         }
     }
-    if let VoterOutcome::Responded(message) = adguard {
+    if let Some(VoterOutcome::Responded(message)) = adguard {
         if matches!(evaluate(Provider::AdGuard, message), Signal::NotBlocked)
             && is_usable_answer(message)
         {
@@ -344,28 +420,31 @@ fn representative_allow_answer(
 /// — pure and synchronous, deliberately separate from the async/timeout
 /// machinery in `resolve` so the timeout-mode policy is unit-testable
 /// without any timing involved. Returns whether the verdict was computed
-/// from a complete voter set — `true` (incomplete) as soon as any of the
-/// three isn't [`VoterOutcome::Responded`], independent of `mode`: T-29
+/// from a complete voter set — `true` (incomplete) as soon as any *enabled*
+/// voter isn't [`VoterOutcome::Responded`], independent of `mode`: T-29
 /// logs every timeout regardless of mode, and a future UI indicator (T-56)
 /// needs the fact of incompleteness, not which mode produced it.
+///
+/// `quad9`/`adguard` are `Option` (T-148) — `None` means that provider is
+/// disabled this round: it must never count toward `incomplete` (turning a
+/// provider off on purpose isn't a degraded state) and must never contribute
+/// a block signal (`known_signal`'s existing `outcome?` early return already
+/// makes a `None` outcome yield `None`/no signal, which the fold below
+/// already treats as `NotBlocked` — no new special-casing needed here).
 fn combine(
-    quad9: &VoterOutcome,
-    adguard: &VoterOutcome,
+    quad9: Option<&VoterOutcome>,
+    adguard: Option<&VoterOutcome>,
     baseline: &VoterOutcome,
     mode: TimeoutMode,
 ) -> (QuorumVerdict, bool) {
-    let incomplete = !matches!(quad9, VoterOutcome::Responded(_))
-        || !matches!(adguard, VoterOutcome::Responded(_))
+    let incomplete = quad9.is_some_and(|o| !matches!(o, VoterOutcome::Responded(_)))
+        || adguard.is_some_and(|o| !matches!(o, VoterOutcome::Responded(_)))
         || !matches!(baseline, VoterOutcome::Responded(_));
 
-    // Both outcomes are always `Some` at this call site (all three voters
-    // have settled by the time `combine` runs), so `known_signal` never
-    // actually returns `None` here - `unwrap_or` is just satisfying the
-    // `Option` the shared-with-the-loop signature requires.
-    let adguard_signal = known_signal(Provider::AdGuard, Some(adguard), Some(baseline), mode)
+    let adguard_signal = known_signal(Provider::AdGuard, adguard, Some(baseline), mode)
         .unwrap_or(Signal::NotBlocked);
-    let quad9_signal = known_signal(Provider::Quad9, Some(quad9), Some(baseline), mode)
-        .unwrap_or(Signal::NotBlocked);
+    let quad9_signal =
+        known_signal(Provider::Quad9, quad9, Some(baseline), mode).unwrap_or(Signal::NotBlocked);
 
     let blocked =
         matches!(adguard_signal, Signal::Blocked) || matches!(quad9_signal, Signal::Blocked);
@@ -441,11 +520,40 @@ fn tagged_query<'a, C: DohClient + Sync>(
     Box::pin(async move { (slot, query_with_timeout(client, url, query, duration).await) })
 }
 
-/// SPEC.md §3, §3.3, §3.6 (T-24, T-27, T-30): OR-logic quorum across the two
-/// fixed Phase-1 upstreams. Queries both providers and the baseline resolver
-/// concurrently through a `FuturesUnordered` (SPEC.md §3.6) with a per-query
-/// timeout (SPEC.md §3.3); returns as soon as a `Block` verdict is
-/// confirmed, dropping (canceling) whichever calls haven't completed yet.
+/// SPEC.md §3, §3.3, §3.6 (T-24, T-27, T-30): OR-logic quorum across whichever
+/// Phase-1 upstreams [`EnabledProviders`] (T-148) has turned on, plus the
+/// baseline resolver — concurrently through a `FuturesUnordered` (SPEC.md
+/// §3.6) with a per-query timeout (SPEC.md §3.3); returns as soon as a
+/// `Block` verdict is confirmed, dropping (canceling) whichever calls
+/// haven't completed yet.
+///
+/// Baseline is **always** queried regardless of `enabled` — it's still
+/// needed to resolve Quad9's NXDOMAIN-needs-baseline signal when Quad9 is
+/// on, and it's still the preferred source of real answer data on `Allow`
+/// even when only one filtering voter is enabled. Callers must not call this
+/// with `enabled.any_enabled() == false` — SPEC.md §3/§8.1's pass-through
+/// case is handled entirely by the caller (`pipeline::handle_query`), not
+/// here; this function has no meaningful "zero voters" behavior of its own.
+/// **This precondition is documented, not type-enforced** — `EnabledProviders`
+/// permits `{ quad9: false, adguard: false }` here too, and this function
+/// would still return a well-formed `QuorumOutcome` for it (`Allow`, sourced
+/// entirely from baseline, both `voters` entries `Disabled`) rather than
+/// erroring — indistinguishable from a legitimate filtered `Allow` to any
+/// caller that isn't inspecting individual verdicts, and `handle_query` would
+/// cache it. The one shipped caller (`pipeline::handle_query`) never reaches
+/// this state (its own `any_enabled()` gate runs first), so this is a
+/// latent, not exercised, gap — not a newtype to close it: the shape of a
+/// dedicated "at least one enabled" type would be over-engineering for two
+/// providers, same reasoning as [`EnabledProviders`] staying two plain
+/// `bool`s instead of a richer type.
+///
+/// A disabled provider's outcome is never coerced into
+/// [`VoterOutcome::TimedOut`] — doing so would make `fail_closed` mode treat
+/// "administratively disabled" the same as "timed out" and silently BLOCK
+/// every query the moment a provider is turned off, worse than no filtering
+/// at all (Три Б, user safety). Disabled providers stay `None` all the way
+/// through to `combine`/`voter_records`, which both already treat `None` as
+/// "contributes nothing" rather than "unresponsive".
 ///
 /// Refuses to run quorum at all when [`requires_quorum`] says `query`'s type
 /// shouldn't go through it (T-25) — returns [`QuorumVerdict::NotApplicable`]
@@ -457,6 +565,7 @@ pub async fn resolve<C: DohClient + Sync>(
     client: &C,
     query: &Message,
     config: &TimeoutConfig,
+    enabled: EnabledProviders,
 ) -> QuorumOutcome {
     let applies = query
         .queries
@@ -471,20 +580,24 @@ pub async fn resolve<C: DohClient + Sync>(
     }
 
     let mut futures: FuturesUnordered<TaggedFuture<'_>> = FuturesUnordered::new();
-    futures.push(tagged_query(
-        Slot::Quad9,
-        client,
-        Provider::Quad9.doh_url(),
-        query,
-        config.duration,
-    ));
-    futures.push(tagged_query(
-        Slot::AdGuard,
-        client,
-        Provider::AdGuard.doh_url(),
-        query,
-        config.duration,
-    ));
+    if enabled.quad9 {
+        futures.push(tagged_query(
+            Slot::Quad9,
+            client,
+            Provider::Quad9.doh_url(),
+            query,
+            config.duration,
+        ));
+    }
+    if enabled.adguard {
+        futures.push(tagged_query(
+            Slot::AdGuard,
+            client,
+            Provider::AdGuard.doh_url(),
+            query,
+            config.duration,
+        ));
+    }
     futures.push(tagged_query(
         Slot::Baseline,
         client,
@@ -508,7 +621,10 @@ pub async fn resolve<C: DohClient + Sync>(
         // Same `known_signal` predicate `combine` uses at the end - an
         // unresponsive voter under `fail-closed` is just as much an early
         // "Block" here as a responded one, not only a case `combine`
-        // happens to catch once the loop runs out of voters to wait on.
+        // happens to catch once the loop runs out of voters to wait on. A
+        // disabled provider's local var never gets set (no future was ever
+        // pushed for it), so `known_signal` sees `None` and naturally
+        // contributes no signal here, with no extra check needed.
         let adguard_signal = known_signal(
             Provider::AdGuard,
             adguard.as_ref(),
@@ -525,10 +641,13 @@ pub async fn resolve<C: DohClient + Sync>(
         if matches!(adguard_signal, Some(Signal::Blocked))
             || matches!(quad9_signal, Some(Signal::Blocked))
         {
-            if quad9.is_none() {
+            // Only log "canceled" for a provider that was actually eligible
+            // to be asked - a disabled provider was never asked, so it was
+            // never canceled either.
+            if enabled.quad9 && quad9.is_none() {
                 log_canceled(Slot::Quad9);
             }
-            if adguard.is_none() {
+            if enabled.adguard && adguard.is_none() {
                 log_canceled(Slot::AdGuard);
             }
             if baseline.is_none() {
@@ -538,6 +657,7 @@ pub async fn resolve<C: DohClient + Sync>(
                 verdict: QuorumVerdict::Block,
                 answer: None,
                 voters: voter_records(
+                    enabled,
                     quad9.as_ref(),
                     adguard.as_ref(),
                     baseline.as_ref(),
@@ -547,20 +667,46 @@ pub async fn resolve<C: DohClient + Sync>(
         }
     }
 
-    let quad9 = quad9.unwrap_or(VoterOutcome::TimedOut);
-    let adguard = adguard.unwrap_or(VoterOutcome::TimedOut);
+    finalize_outcome(enabled, quad9, adguard, baseline, config)
+}
+
+/// Builds the final [`QuorumOutcome`] once `resolve`'s loop has run to
+/// completion without an early Block return — pulled out purely to keep
+/// `resolve` itself under `clippy::too_many_lines`, not reused elsewhere.
+/// A disabled provider's outcome stays `None` here (never coerced into
+/// [`VoterOutcome::TimedOut`]) — see `resolve`'s own doc comment for why
+/// that distinction is safety-critical under fail-closed.
+fn finalize_outcome(
+    enabled: EnabledProviders,
+    quad9: Option<VoterOutcome>,
+    adguard: Option<VoterOutcome>,
+    baseline: Option<VoterOutcome>,
+    config: &TimeoutConfig,
+) -> QuorumOutcome {
+    let quad9 = enabled
+        .quad9
+        .then(|| quad9.unwrap_or(VoterOutcome::TimedOut));
+    let adguard = enabled
+        .adguard
+        .then(|| adguard.unwrap_or(VoterOutcome::TimedOut));
     let baseline = baseline.unwrap_or(VoterOutcome::TimedOut);
 
-    let (verdict, incomplete) = combine(&quad9, &adguard, &baseline, config.mode);
+    let (verdict, incomplete) = combine(quad9.as_ref(), adguard.as_ref(), &baseline, config.mode);
     if config.mode == TimeoutMode::Degraded && incomplete {
         tracing::warn!("quorum verdict computed from an incomplete voter set (degraded mode)");
     }
     let answer = if verdict == QuorumVerdict::Allow {
-        representative_allow_answer(&quad9, &adguard, &baseline)
+        representative_allow_answer(quad9.as_ref(), adguard.as_ref(), &baseline)
     } else {
         None
     };
-    let voters = voter_records(Some(&quad9), Some(&adguard), Some(&baseline), config.mode);
+    let voters = voter_records(
+        enabled,
+        quad9.as_ref(),
+        adguard.as_ref(),
+        Some(&baseline),
+        config.mode,
+    );
     QuorumOutcome {
         verdict,
         answer,
@@ -571,7 +717,8 @@ pub async fn resolve<C: DohClient + Sync>(
 #[cfg(test)]
 mod tests {
     use super::{
-        combine, is_blocked, requires_quorum, resolve, Provider, QuorumVerdict, VoterVerdict,
+        combine, is_blocked, requires_quorum, resolve, EnabledProviders, Provider, QuorumVerdict,
+        VoterVerdict,
     };
     use crate::timeout::{TimeoutConfig, TimeoutMode, VoterOutcome};
     use crate::upstream::{DohClient, UpstreamError};
@@ -685,8 +832,8 @@ mod tests {
     #[test]
     fn combine_both_allow_is_allow_and_complete() {
         let (verdict, incomplete) = combine(
-            &VoterOutcome::Responded(allow_message()),
-            &VoterOutcome::Responded(allow_message()),
+            Some(&VoterOutcome::Responded(allow_message())),
+            Some(&VoterOutcome::Responded(allow_message())),
             &VoterOutcome::Responded(allow_message()),
             TimeoutMode::FailOpen,
         );
@@ -698,8 +845,8 @@ mod tests {
     fn combine_adguard_block_is_self_sufficient() {
         // Baseline itself timed out - AdGuard's null-IP signature doesn't need it.
         let (verdict, _) = combine(
-            &VoterOutcome::Responded(allow_message()),
-            &VoterOutcome::Responded(null_ip_message()),
+            Some(&VoterOutcome::Responded(allow_message())),
+            Some(&VoterOutcome::Responded(null_ip_message())),
             &VoterOutcome::TimedOut,
             TimeoutMode::FailOpen,
         );
@@ -709,8 +856,8 @@ mod tests {
     #[test]
     fn combine_quad9_nxdomain_with_resolving_baseline_is_block() {
         let (verdict, incomplete) = combine(
-            &VoterOutcome::Responded(nxdomain_message()),
-            &VoterOutcome::Responded(allow_message()),
+            Some(&VoterOutcome::Responded(nxdomain_message())),
+            Some(&VoterOutcome::Responded(allow_message())),
             &VoterOutcome::Responded(allow_message()),
             TimeoutMode::FailOpen,
         );
@@ -722,8 +869,8 @@ mod tests {
     fn combine_quad9_nxdomain_with_baseline_timeout_under_fail_open_is_allow() {
         // Undecidable (SPEC.md §3.3 addendum) - fail-open can't confirm, so it doesn't block.
         let (verdict, incomplete) = combine(
-            &VoterOutcome::Responded(nxdomain_message()),
-            &VoterOutcome::Responded(allow_message()),
+            Some(&VoterOutcome::Responded(nxdomain_message())),
+            Some(&VoterOutcome::Responded(allow_message())),
             &VoterOutcome::TimedOut,
             TimeoutMode::FailOpen,
         );
@@ -734,8 +881,8 @@ mod tests {
     #[test]
     fn combine_quad9_nxdomain_with_baseline_timeout_under_fail_closed_is_block() {
         let (verdict, incomplete) = combine(
-            &VoterOutcome::Responded(nxdomain_message()),
-            &VoterOutcome::Responded(allow_message()),
+            Some(&VoterOutcome::Responded(nxdomain_message())),
+            Some(&VoterOutcome::Responded(allow_message())),
             &VoterOutcome::TimedOut,
             TimeoutMode::FailClosed,
         );
@@ -746,8 +893,8 @@ mod tests {
     #[test]
     fn combine_adguard_timeout_under_fail_open_is_allow() {
         let (verdict, incomplete) = combine(
-            &VoterOutcome::Responded(allow_message()),
-            &VoterOutcome::TimedOut,
+            Some(&VoterOutcome::Responded(allow_message())),
+            Some(&VoterOutcome::TimedOut),
             &VoterOutcome::Responded(allow_message()),
             TimeoutMode::FailOpen,
         );
@@ -758,8 +905,8 @@ mod tests {
     #[test]
     fn combine_adguard_timeout_under_fail_closed_is_block() {
         let (verdict, incomplete) = combine(
-            &VoterOutcome::Responded(allow_message()),
-            &VoterOutcome::TimedOut,
+            Some(&VoterOutcome::Responded(allow_message())),
+            Some(&VoterOutcome::TimedOut),
             &VoterOutcome::Responded(allow_message()),
             TimeoutMode::FailClosed,
         );
@@ -774,10 +921,18 @@ mod tests {
             VoterOutcome::Responded(allow_message()),
             VoterOutcome::TimedOut,
         );
-        let (fail_open_verdict, _) =
-            combine(&inputs.0, &inputs.1, &inputs.2, TimeoutMode::FailOpen);
-        let (degraded_verdict, degraded_incomplete) =
-            combine(&inputs.0, &inputs.1, &inputs.2, TimeoutMode::Degraded);
+        let (fail_open_verdict, _) = combine(
+            Some(&inputs.0),
+            Some(&inputs.1),
+            &inputs.2,
+            TimeoutMode::FailOpen,
+        );
+        let (degraded_verdict, degraded_incomplete) = combine(
+            Some(&inputs.0),
+            Some(&inputs.1),
+            &inputs.2,
+            TimeoutMode::Degraded,
+        );
         assert_eq!(fail_open_verdict, degraded_verdict);
         assert!(degraded_incomplete);
     }
@@ -823,6 +978,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -839,6 +995,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -855,6 +1012,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::AAAA),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -871,6 +1029,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::HTTPS),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::NotApplicable));
@@ -899,7 +1058,13 @@ mod tests {
         };
         let config = TimeoutConfig::default();
         let started = tokio::time::Instant::now();
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
         // T-39: an early-return Block never carries an `answer` - a block
         // response is always synthesized, never sourced from upstream data.
@@ -925,6 +1090,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -956,7 +1122,13 @@ mod tests {
         };
         let config = TimeoutConfig::default();
         let started = tokio::time::Instant::now();
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
         assert!(
             started.elapsed() < config.duration,
             "resolve() waited out the pending AdGuard voter's timeout instead of canceling it"
@@ -974,7 +1146,13 @@ mod tests {
             mode: TimeoutMode::FailOpen,
             duration: Duration::from_millis(5),
         };
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
     }
 
@@ -985,7 +1163,13 @@ mod tests {
             mode: TimeoutMode::FailClosed,
             duration: Duration::from_millis(5),
         };
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
     }
 
@@ -1032,7 +1216,13 @@ mod tests {
             duration: Duration::from_secs(2),
         };
         let started = tokio::time::Instant::now();
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
         assert!(outcome.answer.is_none());
         // AdGuard's error resolves instantly (no timeout involved) - Quad9
@@ -1060,6 +1250,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1084,7 +1275,13 @@ mod tests {
             mode: TimeoutMode::FailOpen,
             duration: Duration::from_millis(5),
         };
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
         let Some(answer) = outcome.answer else {
             panic!("expected a Quad9-sourced answer when baseline never responded");
@@ -1108,6 +1305,7 @@ mod tests {
             &client,
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
+            EnabledProviders::default(),
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1130,7 +1328,128 @@ mod tests {
             mode: TimeoutMode::FailOpen,
             duration: Duration::from_millis(5),
         };
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            EnabledProviders::default(),
+        )
+        .await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+        assert!(outcome.answer.is_none());
+    }
+
+    // T-148: EnabledProviders - a per-provider toggle the resolver actually
+    // honors, not just an all-or-nothing switch.
+
+    struct PanicsIfQueriedClient {
+        forbidden_url: &'static str,
+        quad9: MockResponse,
+        adguard: MockResponse,
+        baseline: MockResponse,
+    }
+
+    impl DohClient for PanicsIfQueriedClient {
+        async fn query(&self, url: &str, _query: &Message) -> Result<Message, UpstreamError> {
+            assert!(
+                url != self.forbidden_url,
+                "disabled provider must never be queried, but {url} was"
+            );
+            let response = if url == Provider::Quad9.doh_url() {
+                &self.quad9
+            } else if url == Provider::AdGuard.doh_url() {
+                &self.adguard
+            } else {
+                &self.baseline
+            };
+            match response {
+                MockResponse::Instant(message) => Ok(message.clone()),
+                MockResponse::Pending => std::future::pending().await,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn quad9_disabled_still_runs_real_quorum_over_adguard_and_never_queries_quad9() {
+        let client = PanicsIfQueriedClient {
+            forbidden_url: Provider::Quad9.doh_url(),
+            quad9: MockResponse::Instant(allow_message()),
+            adguard: MockResponse::Instant(null_ip_message()),
+            baseline: MockResponse::Instant(allow_message()),
+        };
+        let enabled = EnabledProviders {
+            quad9: false,
+            adguard: true,
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &TimeoutConfig::default(),
+            enabled,
+        )
+        .await;
+        // AdGuard's own null-IP signature still blocks - disabling Quad9
+        // doesn't turn off quorum entirely, just that one voter.
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
+        assert_eq!(outcome.voters.len(), 2);
+        let Some(quad9) = outcome
+            .voters
+            .iter()
+            .find(|v| v.provider == Provider::Quad9)
+        else {
+            panic!("expected a Quad9 voter record");
+        };
+        assert_eq!(quad9.verdict, VoterVerdict::Disabled);
+    }
+
+    // Advisor-caught regression: a disabled provider's outcome must never be
+    // coerced into VoterOutcome::TimedOut internally, or fail_closed mode
+    // would treat "administratively disabled" the same as "timed out" and
+    // silently BLOCK every query the moment one provider is turned off -
+    // worse than no filtering at all (Три Б, user safety). This test would
+    // fail if resolve() ever regressed to defaulting a disabled provider's
+    // missing outcome to TimedOut.
+    #[tokio::test]
+    async fn quad9_disabled_under_fail_closed_is_still_allow_not_falsely_blocked() {
+        let client = PanicsIfQueriedClient {
+            forbidden_url: Provider::Quad9.doh_url(),
+            quad9: MockResponse::Instant(allow_message()),
+            adguard: MockResponse::Instant(allow_message()),
+            baseline: MockResponse::Instant(allow_message()),
+        };
+        let enabled = EnabledProviders {
+            quad9: false,
+            adguard: true,
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailClosed,
+            duration: Duration::from_secs(2),
+        };
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config, enabled).await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+    }
+
+    #[tokio::test]
+    async fn quad9_disabled_answer_is_none_when_adguard_and_baseline_both_unresponsive() {
+        // representative_allow_answer must skip a disabled provider as a
+        // candidate (not treat it as an unusable-but-present one) and still
+        // correctly fall through to "no usable data" when nothing else has
+        // an answer either.
+        let client = PanicsIfQueriedClient {
+            forbidden_url: Provider::Quad9.doh_url(),
+            quad9: MockResponse::Instant(allow_message()),
+            adguard: MockResponse::Pending,
+            baseline: MockResponse::Pending,
+        };
+        let enabled = EnabledProviders {
+            quad9: false,
+            adguard: true,
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+        let outcome = resolve(&client, &query_of_type(RecordType::A), &config, enabled).await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
         assert!(outcome.answer.is_none());
     }

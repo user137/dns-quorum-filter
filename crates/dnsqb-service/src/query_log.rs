@@ -33,7 +33,7 @@
 //! do (and don't yet — non-A/AAAA proxied queries are a named, still-open
 //! gap).
 
-use crate::quorum::VoterRecord;
+use crate::quorum::{VoterRecord, VoterVerdict};
 use crate::upstream::Provider;
 use hickory_proto::rr::RecordType;
 use parking_lot::RwLock;
@@ -224,13 +224,18 @@ pub struct LogFilter<'a> {
     /// Restrict to this decision only (`UI-SPEC.md`'s `ALL/BLOCKED/ALLOWED`
     /// facet — `None` here is that facet's `ALL`).
     pub decision: Option<Decision>,
-    /// Restrict to entries where this provider *appears* in `voters`,
-    /// regardless of that voter's individual verdict — SPEC.md §6/
-    /// `UI-SPEC.md` §3.2 name this facet "за конкретним voter'ом" (by a
-    /// specific voter), not "blocked by voter X"; this crate has no
-    /// per-verdict facet requirement to model, so participation is the
-    /// SPEC-silent choice made here (flagged per this project's own rule for
-    /// filling such gaps, same as `VoterRecord`'s own doc comment above).
+    /// Restrict to entries where this provider *appears* in `voters` and was
+    /// actually eligible to vote — regardless of that voter's individual
+    /// Block/Allow/Timeout/Error/Canceled verdict — SPEC.md §6/`UI-SPEC.md`
+    /// §3.2 name this facet "за конкретним voter'ом" (by a specific voter),
+    /// not "blocked by voter X"; this crate has no per-verdict facet
+    /// requirement to model, so participation is the SPEC-silent choice made
+    /// here (flagged per this project's own rule for filling such gaps, same
+    /// as `VoterRecord`'s own doc comment above). `VoterVerdict::Disabled`
+    /// (T-148) is explicitly excluded from "participation" — a provider the
+    /// user administratively turned off was never asked to vote, so matching
+    /// it here would contradict the facet's own "did this provider
+    /// participate" intent.
     ///
     /// `voters` is empty for every non-`Quorum` `decision_source`
     /// (`ALLOWLIST`/`BLOCKLIST`/`CACHE` never populate it — see this
@@ -264,7 +269,14 @@ fn matches_filter(
         }
     }
     if let Some(provider) = filter.voter {
-        if !entry.voters.iter().any(|v| v.provider == provider) {
+        // T-148: Disabled excluded explicitly - that provider was never
+        // asked to vote, so it must not count as "participated" (see
+        // LogFilter::voter's own doc comment).
+        if !entry
+            .voters
+            .iter()
+            .any(|v| v.provider == provider && v.verdict != VoterVerdict::Disabled)
+        {
             return false;
         }
     }
@@ -552,6 +564,40 @@ mod tests {
         cached.decision_source = DecisionSource::Cache;
         cached.voters = Vec::new();
         log.push(cached);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                voter: Some(Provider::Quad9),
+                ..LogFilter::default()
+            },
+        );
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_voter_facet_excludes_entries_where_that_provider_was_administratively_disabled() {
+        // T-148: VoterVerdict::Disabled means the provider was turned off,
+        // never actually asked to vote - matching it here would contradict
+        // the facet's own documented "did this provider participate" intent
+        // (same class of gap as the no-voters test above, pinned with its
+        // own dedicated test rather than left implicit).
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut disabled_entry = entry_at(now);
+        disabled_entry.domain = "quad9-disabled.example".to_string();
+        disabled_entry.voters = vec![
+            VoterRecord {
+                provider: Provider::Quad9,
+                verdict: VoterVerdict::Disabled,
+            },
+            VoterRecord {
+                provider: Provider::AdGuard,
+                verdict: VoterVerdict::Allow,
+            },
+        ];
+        log.push(disabled_entry);
 
         let results = log.search(
             now,

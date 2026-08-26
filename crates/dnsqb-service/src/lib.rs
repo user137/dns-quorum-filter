@@ -108,6 +108,16 @@
 //! per-provider toggle config exists yet (T-52), so nothing calls
 //! `handle_query` with `Voters::Disabled` yet either. Tauri UI is a later
 //! batch — see TASKS.md.
+//!
+//! T-148 replaced the seventh slice's `pipeline::Voters` (all-or-nothing)
+//! with `quorum::EnabledProviders` — a real per-provider toggle
+//! `quorum::resolve` actually honors (only pushes a query for a provider
+//! that's enabled; a disabled provider's outcome is never coerced into
+//! `TimedOut`, or `fail_closed` mode would treat "disabled" the same as
+//! "unresponsive" and silently block every query). `config::ResolverConfig`
+//! reuses the same type directly as its `providers` field (nested
+//! `[providers]` TOML table) rather than a parallel config-only copy. Still
+//! not wired to any UI (T-52, no longer blocked on this task).
 
 mod cache;
 mod cert;
@@ -137,11 +147,11 @@ pub use overrides::{
 pub use paths::{app_data_dir, PathsError};
 pub use pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome, QueryLogMeta,
-    Voters,
 };
 pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
 pub use quorum::{
-    is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict, VoterRecord, VoterVerdict,
+    is_blocked, requires_quorum, resolve, EnabledProviders, QuorumOutcome, QuorumVerdict,
+    VoterRecord, VoterVerdict,
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};

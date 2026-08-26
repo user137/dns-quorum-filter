@@ -58,6 +58,7 @@ classDiagram
         Timeout
         Error(message: String)
         Canceled
+        Disabled
     }
 
     class OverrideEntry {
@@ -137,6 +138,16 @@ SPEC.md §6 (структура запису логу) перелічує зна
 `LogEntry` після того, як таймаут (§3.3) стався. Тобто повна об'єднана множина —
 **шість** варіантів: `Pending, Block, Allow(ip_count), Timeout, Error(message),
 Canceled`, а не п'ять з жодного зі списків окремо.
+
+**Сьомий варіант, `Disabled` (T-148, код, не SPEC.md)**: `crates/dnsqb-service/src/quorum.rs`'s
+`VoterVerdict` виріс до шести бекенд-варіантів (`Block/Allow/Timeout/Error/Canceled/Disabled`) —
+`Disabled` означає "провайдер адміністративно вимкнений цього разу, взагалі не опитувався"
+(`quorum::EnabledProviders`), відмінний і від `Canceled` (був придатний, просто не дочекались), і
+від `Timeout` (питали, не відповів). На відміну від `Pending`, тут нема зворотної асиметрії —
+`Disabled` термінальний в обох напрямках (бекенд і DTO), додано в `VoterStatus` вище напряму, без
+окремого пояснення-мапінгу. `ProviderConfig.enabled: bool` (DTO вище) вже передбачав саме цей
+перемикач для майбутнього UI (T-52/T-53) — нова backend-можливість узгоджується з уже
+запланованою формою DTO, не суперечить їй.
 
 Це узгоджується з рештою §3.3 (три режими таймауту — там `TIMEOUT` явно
 згадується як результат) і з §3.6 (`CANCELED` явно відрізняється від `TIMEOUT`
