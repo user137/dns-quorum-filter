@@ -12,7 +12,7 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, OverrideLists, ReqwestDohClient, ResolverConfig, TimeoutConfig, Voters,
+    CacheConfig, OverrideLists, QueryLog, ReqwestDohClient, ResolverConfig, TimeoutConfig, Voters,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -80,6 +80,8 @@ async fn main() {
         duration: Duration::from_millis(resolver_config.timeout_ms.into()),
     };
 
+    // No persistence, no config-driven sizing yet - T-146 (SPEC.md §6's own
+    // stated defaults: 1000 entries or 24 hours).
     let state = Arc::new(AppState::new(
         client,
         overrides,
@@ -87,6 +89,7 @@ async fn main() {
         Cache::new(&CacheConfig::default()),
         CacheConfig::default(),
         timeout_config,
+        QueryLog::default(),
     ));
 
     let port = resolver_config.port;

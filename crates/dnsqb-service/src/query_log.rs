@@ -20,22 +20,20 @@
 //! phase can't produce — stay unrepresentable here instead of being carried
 //! as a dead enum variant).
 //!
-//! [`VoterRecord`] deliberately carries [`crate::upstream::Provider`] (two
-//! variants: Quad9, `AdGuard`), not `quorum::Slot`'s three (which also
-//! includes `Baseline`) — SPEC.md §3.1 only calls Quad9/`AdGuard` "voters";
-//! baseline exists to break Quad9's NXDOMAIN tie and to source real answer
-//! data, it never casts an OR-logic block/allow vote itself. Excluding it
-//! from `voters` is a SPEC-silent choice made here, not a documented
-//! requirement — flagged per this project's own rule for filling such gaps.
+//! [`VoterRecord`]/`VoterVerdict` moved to `quorum.rs` at T-147 — which
+//! providers cast a vote and what their outcome means is quorum's own
+//! domain, not the log's; this module just records it. See `quorum.rs`'s own
+//! doc comment for why `VoterRecord` carries [`crate::upstream::Provider`]
+//! (two variants) rather than `quorum::Slot`'s three (baseline never casts an
+//! OR-logic vote).
 //!
-//! **No producer yet.** `quorum::resolve` returns `QuorumOutcome { verdict,
-//! answer }` only; the per-slot `VoterOutcome`s that would populate a
-//! `LogEntry.voters` list are local to `resolve`'s loop and never leave it
-//! (`log_canceled`'s `tracing::debug!` is the only trace of a canceled
-//! voter today). Wiring `pipeline::handle_query` to build and push a
-//! `LogEntry` per query is a later task — same "module ready, wiring later"
-//! pattern as `cache.rs`/`overrides.rs` before T-39/T-40.
+//! **Producer since T-147**: `dispatch::resolve_doh_request` builds and
+//! pushes a [`LogEntry`] after every `pipeline::handle_query` call that
+//! returns `Some(QueryLogMeta)` — see that module for exactly which branches
+//! do (and don't yet — non-A/AAAA proxied queries are a named, still-open
+//! gap).
 
+use crate::quorum::VoterRecord;
 use crate::upstream::Provider;
 use hickory_proto::rr::RecordType;
 use parking_lot::RwLock;
@@ -57,6 +55,12 @@ pub enum Decision {
     /// The query was blocked (NULL-answered for A/AAAA, NODATA otherwise —
     /// see `wire::build_block_response`).
     Blocked,
+    /// Resolution failed (SERVFAIL) — no filtering decision was actually
+    /// made (T-147, DECISIONS.md: SPEC.md/`UI-SPEC.md` originally fixed this
+    /// field at two values, added before `handle_query`'s several genuine
+    /// SERVFAIL paths — baseline timeout/error, every voter unresponsive —
+    /// were ever checked against it).
+    Failed,
 }
 
 /// SPEC.md §6 `decision_source` column — Phase 1's four producible values
@@ -72,37 +76,6 @@ pub enum DecisionSource {
     Cache,
     /// Decided by a fresh quorum resolution.
     Quorum,
-}
-
-/// SPEC.md §6 `voters` column, per-voter value — five variants, matching
-/// SPEC.md §6's own list exactly (`Pending` in the Tauri DTO's `VoterStatus`
-/// is a live-update-only transit state, per `diagrams/ui-dto-model.md`'s
-/// resolved source discrepancy — it can never appear in an already-completed
-/// backend `LogEntry`, so this internal type omits it, not just the DTO's
-/// naming choice of `Timeout` over `TIMEOUT`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VoterVerdict {
-    /// This voter's block signature matched.
-    Block,
-    /// This voter did not block.
-    Allow,
-    /// This voter did not respond within the configured timeout.
-    Timeout,
-    /// This voter's query failed (transport/decode error).
-    Error,
-    /// Not waited on — the decision was already reached before this voter
-    /// settled (SPEC.md §3.6 early return).
-    Canceled,
-}
-
-/// One provider's contribution to a completed query, for the log's `voters`
-/// column.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VoterRecord {
-    /// Which provider this result belongs to.
-    pub provider: Provider,
-    /// That provider's outcome.
-    pub verdict: VoterVerdict,
 }
 
 /// One query-log record (SPEC.md §6's field table minus the two fields this
@@ -308,7 +281,7 @@ impl Default for QueryLog {
 #[cfg(test)]
 mod tests {
     use super::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
-    use crate::query_log::{VoterRecord, VoterVerdict};
+    use crate::quorum::{VoterRecord, VoterVerdict};
     use crate::upstream::Provider;
     use hickory_proto::rr::RecordType;
     use std::time::{Duration, SystemTime};

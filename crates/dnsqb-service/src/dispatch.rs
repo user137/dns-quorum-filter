@@ -17,6 +17,7 @@
 use crate::cache::{Cache, CacheConfig};
 use crate::overrides::OverrideLists;
 use crate::pipeline::{handle_query, proxy_to_single_upstream, PipelineOutcome, Voters};
+use crate::query_log::{LogEntry, QueryLog};
 use crate::timeout::TimeoutConfig;
 use crate::upstream::DohClient;
 use crate::wire::{decode_wire_message, encode_wire_message};
@@ -29,6 +30,7 @@ use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Body;
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::{Instant, SystemTime};
 
 /// The largest a DNS wire message is allowed to be, GET or POST alike — the
 /// classic DNS-over-TCP 2-byte length prefix this project doesn't use still
@@ -106,6 +108,11 @@ pub(crate) fn content_type_is_dns_message(content_type: Option<&str>) -> bool {
 /// types) is handled here, not left to the caller: this is the one place
 /// that actually has an upstream `client` to proxy through.
 ///
+/// Takes `&AppState<C>` rather than its seven fields as separate parameters
+/// (T-147 added the seventh, `query_log`, tripping `clippy::too_many_arguments`)
+/// — every one of those fields already lives in `state`, and this function
+/// only ever runs against the shared per-service state `serve` already holds.
+///
 /// # Errors
 ///
 /// Returns `Err` if `wire_bytes` doesn't decode as a DNS message, or if
@@ -113,28 +120,46 @@ pub(crate) fn content_type_is_dns_message(content_type: Option<&str>) -> bool {
 /// re-encode.
 pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     wire_bytes: &[u8],
-    client: &C,
-    overrides: &OverrideLists,
-    voters: Voters,
-    cache: &Cache,
-    cache_config: &CacheConfig,
-    timeout_config: &TimeoutConfig,
+    state: &AppState<C>,
 ) -> Result<Vec<u8>, ProtoError> {
     let query = decode_wire_message(wire_bytes)?;
+    let started = Instant::now();
     let response = match handle_query(
         &query,
-        client,
-        overrides,
-        voters,
-        cache,
-        cache_config,
-        timeout_config,
+        &state.client,
+        &state.overrides,
+        state.voters,
+        &state.cache,
+        &state.cache_config,
+        &state.timeout_config,
     )
     .await
     {
-        PipelineOutcome::Response(message) => message,
-        PipelineOutcome::ProxyToSingleUpstream => {
-            proxy_to_single_upstream(client, &query, timeout_config).await
+        (PipelineOutcome::Response(message), meta) => {
+            // T-147: the one place both the Response and proxy paths are
+            // visible, and the natural point to bracket total latency - see
+            // `pipeline::QueryLogMeta`'s own doc comment for why the push
+            // isn't inside `handle_query` itself.
+            if let Some(meta) = meta {
+                let latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+                state.query_log.push(LogEntry {
+                    timestamp: SystemTime::now(),
+                    domain: meta.domain,
+                    qtype: meta.qtype,
+                    decision: meta.decision,
+                    decision_source: meta.decision_source,
+                    voters: meta.voters,
+                    latency_ms,
+                });
+            }
+            message
+        }
+        // Non-A/AAAA proxy path: not logged this slice - handle_query never
+        // sees the actual proxied response, and none of the four Ф1
+        // decision_source values describe a proxy pass-through (T-147, named
+        // gap, not silently dropped).
+        (PipelineOutcome::ProxyToSingleUpstream, _) => {
+            proxy_to_single_upstream(&state.client, &query, &state.timeout_config).await
         }
     };
     encode_wire_message(&response)
@@ -152,6 +177,7 @@ pub struct AppState<C: DohClient + Sync> {
     cache: Cache,
     cache_config: CacheConfig,
     timeout_config: TimeoutConfig,
+    query_log: QueryLog,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
@@ -165,6 +191,7 @@ impl<C: DohClient + Sync> AppState<C> {
         cache: Cache,
         cache_config: CacheConfig,
         timeout_config: TimeoutConfig,
+        query_log: QueryLog,
     ) -> Self {
         Self {
             client,
@@ -173,6 +200,7 @@ impl<C: DohClient + Sync> AppState<C> {
             cache,
             cache_config,
             timeout_config,
+            query_log,
         }
     }
 }
@@ -257,16 +285,7 @@ where
         Err(_) => return Ok(status_response(StatusCode::BAD_REQUEST)),
     };
 
-    let resolved = resolve_doh_request(
-        &wire_bytes,
-        &state.client,
-        &state.overrides,
-        state.voters,
-        &state.cache,
-        &state.cache_config,
-        &state.timeout_config,
-    )
-    .await;
+    let resolved = resolve_doh_request(&wire_bytes, &state).await;
 
     match resolved {
         Ok(bytes) => Ok(Response::builder()
@@ -287,6 +306,7 @@ mod tests {
     use crate::cache::{Cache, CacheConfig};
     use crate::overrides::OverrideLists;
     use crate::pipeline::Voters;
+    use crate::query_log::QueryLog;
     use crate::timeout::TimeoutConfig;
     use crate::upstream::{doh_get_url, DohClient, UpstreamError};
     use bytes::Bytes;
@@ -438,18 +458,9 @@ mod tests {
             calls: AtomicU32::new(0),
         };
         let wire_bytes = query_bytes("example.com.", RecordType::A);
+        let state = state_with(client);
 
-        let response_bytes = match resolve_doh_request(
-            &wire_bytes,
-            &client,
-            &OverrideLists::empty(),
-            Voters::Enabled,
-            &Cache::new(&CacheConfig::default()),
-            &CacheConfig::default(),
-            &TimeoutConfig::default(),
-        )
-        .await
-        {
+        let response_bytes = match resolve_doh_request(&wire_bytes, &state).await {
             Ok(bytes) => bytes,
             Err(err) => panic!("must resolve: {err}"),
         };
@@ -457,6 +468,55 @@ mod tests {
             panic!("response must decode");
         };
         assert_eq!(decoded.metadata.response_code, ResponseCode::NoError);
+    }
+
+    // T-147: resolve_doh_request is the one place that pushes a LogEntry -
+    // a test at pipeline.rs's level can prove the metadata is computed
+    // correctly, but only this layer can prove it actually reaches the log.
+    #[tokio::test]
+    async fn resolve_doh_request_pushes_a_log_entry_for_a_resolved_a_query() {
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let wire_bytes = query_bytes("example.com.", RecordType::A);
+        let state = state_with(client);
+
+        if let Err(err) = resolve_doh_request(&wire_bytes, &state).await {
+            panic!("must resolve: {err}");
+        }
+
+        let entries = state.query_log.snapshot(std::time::SystemTime::now());
+        assert_eq!(entries.len(), 1, "exactly one query must have been logged");
+        assert_eq!(entries[0].domain, "example.com");
+        assert_eq!(entries[0].decision, crate::query_log::Decision::Allowed);
+        assert_eq!(
+            entries[0].decision_source,
+            crate::query_log::DecisionSource::Quorum
+        );
+    }
+
+    // T-147: the proxy path is a named, still-open gap - not logged yet.
+    #[tokio::test]
+    async fn resolve_doh_request_does_not_log_a_proxied_non_a_aaaa_query() {
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
+            quorum: MockResponse::Panic,
+            calls: AtomicU32::new(0),
+        };
+        let wire_bytes = query_bytes("example.com.", RecordType::TXT);
+        let state = state_with(client);
+
+        if let Err(err) = resolve_doh_request(&wire_bytes, &state).await {
+            panic!("must resolve: {err}");
+        }
+
+        assert!(state
+            .query_log
+            .snapshot(std::time::SystemTime::now())
+            .is_empty());
     }
 
     #[tokio::test]
@@ -470,21 +530,12 @@ mod tests {
             calls: AtomicU32::new(0),
         };
         let wire_bytes = query_bytes("example.com.", RecordType::TXT);
+        let state = state_with(client);
 
-        if let Err(err) = resolve_doh_request(
-            &wire_bytes,
-            &client,
-            &OverrideLists::empty(),
-            Voters::Enabled,
-            &Cache::new(&CacheConfig::default()),
-            &CacheConfig::default(),
-            &TimeoutConfig::default(),
-        )
-        .await
-        {
+        if let Err(err) = resolve_doh_request(&wire_bytes, &state).await {
             panic!("must resolve: {err}");
         }
-        assert_eq!(client.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.client.calls.load(Ordering::SeqCst), 1);
     }
 
     fn state_with(client: MockClient) -> Arc<AppState<MockClient>> {
@@ -495,6 +546,7 @@ mod tests {
             Cache::new(&CacheConfig::default()),
             CacheConfig::default(),
             TimeoutConfig::default(),
+            QueryLog::default(),
         ))
     }
 

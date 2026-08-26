@@ -8,6 +8,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, seventeenth slice done (T-147 — TASKS-DONE.md, one commit): `query_log::QueryLog` finally
+has a producer — `dispatch::resolve_doh_request` pushes a `LogEntry` after every `pipeline::
+handle_query` call that returns a decision (allowlist/blocklist/cache-hit/quorum). Found while
+scoping T-52: the dashboard stat and T-44/T-45/T-46 all needed real log data that didn't exist yet.
+Turned out bigger than "call `push()`" — four real design gaps, three resolved by reasoned default
+and documented, one (a documented-DTO reversal) put to the user: (1) **`Decision::Failed`** — a
+third variant, since `handle_query` demonstrably produces SERVFAIL on several paths and the old
+2-value enum would have logged those as `Allowed`; user chose to add it over silently skipping those
+paths (DECISIONS.md, same reversal class as T-145). (2) An early-return `Block` can leave one voter
+`Responded` but undecidable (its signal needed baseline, baseline got canceled too) — logged as
+`Canceled`, documented on `quorum::voter_record`. (3) Non-A/AAAA proxied queries aren't logged this
+slice — `handle_query` never sees the actual proxied response, named as an open gap. (4)
+`VoterVerdict`/`VoterRecord` moved from `query_log.rs` to `quorum.rs` — which providers vote is
+quorum's domain, not the log's; `query_log.rs`'s own comment about excluding `quorum::Slot::Baseline`
+moved with the types, re-exported from `lib.rs` either way. `QuorumOutcome` gained `voters:
+Vec<VoterRecord>`, computed via new `quorum::voter_record`/`voter_records` reusing `known_signal`
+(same "one predicate, no drift" discipline already documented there) — a compiler-required
+`Some(Signal::NeedsBaseline)` match arm (never actually reachable at runtime, but `known_signal`'s
+declared return type doesn't rule it out) folds into `Canceled` too, commented as such rather than
+`unreachable!()` (forbidden, rust.md). `pipeline::handle_query` now returns `(PipelineOutcome,
+Option<QueryLogMeta>)` — deliberately not a new `&QueryLog` parameter threaded through every one of
+its ~9 return points (advisor-caught: a forgotten future return point would silently drop a log
+entry); `dispatch::resolve_doh_request` is the single push site, already bracketing the whole request
+for timing and already seeing both the `Response` and proxy paths. `QueryLogMeta.domain` is a
+separately normalized copy (`trim_end_matches('.').to_ascii_lowercase()`), not the same `domain`
+`handle_query` itself uses for `overrides.decision`/`CacheKey::new` (that one is deliberately the
+untransformed `to_ascii()` form, to round-trip cleanly through those calls' own internal
+`normalize_domain`) — a test caught this mismatch (expected "example.com", got "example.com.")
+before the closing review did. `handle_query` tripped `clippy::too_many_lines` (109/100) after the
+new branches; fixed by extracting three small pure helpers (`baseline_passthrough_with_meta`,
+`blocklist_response_with_meta`, `cache_hit_response_with_meta`), not `#[allow(...)]`.
+`resolve_doh_request` tripped `clippy::too_many_arguments` (8/7); fixed by taking `&AppState<C>`
+instead of its seven individual fields — a genuine simplification (all seven were already `AppState`
+fields), not a lint workaround. **Not in this slice**: the non-A/AAAA proxy path stays unlogged
+(named gap above); T-148 (real per-provider config) and T-52 (Tauri UI) are separate, still-open
+tasks — T-52 remains blocked on T-148.
+
 Поза фазами, T-141 done (TASKS-DONE.md, one commit, docs only — no code): investigated whether
 HTTP/3 upstream support is worth building now, same "research, not implementation" precedent as
 T-14 (ECH). Client-side stack is the decisive blocker: `reqwest` 0.13.4's `http3` feature is
@@ -477,8 +514,18 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-145 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-147 batches)
 
+- **A `match` arm required only because a helper's *declared* return type is wider than what it
+  *actually* returns is a real compile error, not a false positive — and the fix is a documented
+  catch-all arm, never `unreachable!()`** (forbidden in this crate, rust.md "Panic-Free Production
+  Code"). `quorum::known_signal` returns `Option<Signal>` (3-variant `Signal`), but its own body
+  always resolves `Signal::NeedsBaseline` down to `Blocked`/`NotBlocked`/`None` before returning —
+  `Some(Signal::NeedsBaseline)` can never actually come back. `quorum::voter_record` (T-147) still
+  had to name that arm for exhaustiveness (E0004 without it); folded into the same `VoterVerdict::
+  Canceled` case as the genuinely-reachable `None`, with a comment explaining the arm exists for the
+  compiler's benefit, not because it's reachable — caught immediately by `cargo build`, not assumed
+  from reading `known_signal`'s body alone.
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
   compiler's "field, not a method" hint before assuming a method exists.

@@ -14,6 +14,50 @@ use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 
+/// SPEC.md §6 `voters` column, per-voter value — five variants, matching
+/// SPEC.md §6's own list exactly (`Pending` in the Tauri DTO's `VoterStatus`
+/// is a live-update-only transit state, per `diagrams/ui-dto-model.md`'s
+/// resolved source discrepancy — it can never appear in an already-completed
+/// backend `LogEntry`, so this internal type omits it, not just the DTO's
+/// naming choice of `Timeout` over `TIMEOUT`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoterVerdict {
+    /// This voter's block signature matched.
+    Block,
+    /// This voter did not block.
+    Allow,
+    /// This voter did not respond within the configured timeout.
+    Timeout,
+    /// This voter's query failed (transport/decode error).
+    Error,
+    /// Not waited on — the decision was already reached before this voter
+    /// settled (SPEC.md §3.6 early return), **or** it did respond but its
+    /// signal needed baseline and baseline itself got canceled first
+    /// (`voter_record`'s own doc comment) — either way, the system never
+    /// reached a final classification for this voter.
+    Canceled,
+}
+
+/// One provider's contribution to a completed query, for the log's `voters`
+/// column (T-147: moved here from `query_log.rs` — which providers cast a
+/// vote and what their outcome means is quorum's own domain, not the log's;
+/// `query_log.rs` just records it).
+///
+/// Deliberately carries [`Provider`] (two variants: Quad9, `AdGuard`), not
+/// [`Slot`]'s three (which also includes `Baseline`) — SPEC.md §3.1 only
+/// calls Quad9/`AdGuard` "voters"; baseline exists to break Quad9's NXDOMAIN
+/// tie and to source real answer data, it never casts an OR-logic block/allow
+/// vote itself. Excluding it from `voters` is a SPEC-silent choice made here,
+/// not a documented requirement — flagged per this project's own rule for
+/// filling such gaps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoterRecord {
+    /// Which provider this result belongs to.
+    pub provider: Provider,
+    /// That provider's outcome.
+    pub verdict: VoterVerdict,
+}
+
 fn is_null_ip(record: &Record) -> bool {
     match &record.data {
         RData::A(A(ip)) => *ip == Ipv4Addr::UNSPECIFIED,
@@ -111,6 +155,63 @@ fn known_signal(
     }
 }
 
+/// One provider's [`VoterRecord`] for the query log (T-147). `outcome` is
+/// `Option` for the same reason `known_signal`'s is: at an early return, a
+/// slot that hadn't arrived yet is `None`, not a stand-in `TimedOut`.
+///
+/// Reuses `known_signal` for the `Responded` case rather than a parallel
+/// classification — same "one predicate, no drift" discipline `known_signal`
+/// itself documents. `known_signal` can return `None` here in exactly one
+/// *runtime* case: `outcome` is `Responded` with a signal that needed
+/// baseline ([`Signal::NeedsBaseline`]), and `baseline` is itself `None` —
+/// i.e. this voter's own HTTP round-trip completed, but baseline got
+/// canceled by the same early return before the classification could
+/// finish. The system never reached a final Block/Allow verdict for that
+/// response, so this counts it as `Canceled` too, not a guess.
+///
+/// `Some(Signal::NeedsBaseline)` itself can never actually come back from
+/// `known_signal` (its own body always resolves that case down to
+/// `Some(Blocked)`/`Some(NotBlocked)`/`None` before returning) — but
+/// `known_signal`'s declared return type is the shared, 3-variant `Signal`,
+/// so the match below still has to name that arm for the compiler's
+/// exhaustiveness check to pass. Folded into the same `Canceled` case as
+/// `None` rather than `unreachable!()` (forbidden in this crate, rust.md
+/// "Panic-Free Production Code") — if `known_signal` ever changed shape and
+/// this arm became reachable, `Canceled` is still the correct answer for
+/// "never reached a final classification".
+fn voter_record(
+    provider: Provider,
+    outcome: Option<&VoterOutcome>,
+    baseline: Option<&VoterOutcome>,
+    mode: TimeoutMode,
+) -> VoterRecord {
+    let verdict = match outcome {
+        None => VoterVerdict::Canceled,
+        Some(VoterOutcome::TimedOut) => VoterVerdict::Timeout,
+        Some(VoterOutcome::Errored(_)) => VoterVerdict::Error,
+        Some(VoterOutcome::Responded(_)) => match known_signal(provider, outcome, baseline, mode) {
+            Some(Signal::Blocked) => VoterVerdict::Block,
+            Some(Signal::NotBlocked) => VoterVerdict::Allow,
+            None | Some(Signal::NeedsBaseline) => VoterVerdict::Canceled,
+        },
+    };
+    VoterRecord { provider, verdict }
+}
+
+/// Both Phase-1 voters' [`VoterRecord`]s (T-147) — never baseline, see
+/// [`VoterRecord`]'s own doc comment.
+fn voter_records(
+    quad9: Option<&VoterOutcome>,
+    adguard: Option<&VoterOutcome>,
+    baseline: Option<&VoterOutcome>,
+    mode: TimeoutMode,
+) -> Vec<VoterRecord> {
+    vec![
+        voter_record(Provider::Quad9, quad9, baseline, mode),
+        voter_record(Provider::AdGuard, adguard, baseline, mode),
+    ]
+}
+
 /// SPEC.md §3.1 (T-23): public per-provider block predicate — always has a
 /// concrete baseline `Message` (unlike [`resolve_needs_baseline`], which
 /// also has to handle a baseline that never answered; `resolve` is the only
@@ -171,6 +272,10 @@ pub struct QuorumOutcome {
     /// discipline as `UpstreamError`'s `error_kind()` (T-29) and
     /// `overrides::InvalidReason` (T-37).
     pub answer: Option<Message>,
+    /// Both Phase-1 voters' per-provider verdicts (T-147) — `vec![]` under
+    /// [`QuorumVerdict::NotApplicable`] (never queried), otherwise always
+    /// exactly two entries (Quad9, `AdGuard`), regardless of verdict.
+    pub voters: Vec<VoterRecord>,
 }
 
 /// A `Responded` voter's message actually represents a resolved DNS answer
@@ -361,6 +466,7 @@ pub async fn resolve<C: DohClient + Sync>(
         return QuorumOutcome {
             verdict: QuorumVerdict::NotApplicable,
             answer: None,
+            voters: Vec::new(),
         };
     }
 
@@ -431,6 +537,12 @@ pub async fn resolve<C: DohClient + Sync>(
             return QuorumOutcome {
                 verdict: QuorumVerdict::Block,
                 answer: None,
+                voters: voter_records(
+                    quad9.as_ref(),
+                    adguard.as_ref(),
+                    baseline.as_ref(),
+                    config.mode,
+                ),
             };
         }
     }
@@ -448,12 +560,19 @@ pub async fn resolve<C: DohClient + Sync>(
     } else {
         None
     };
-    QuorumOutcome { verdict, answer }
+    let voters = voter_records(Some(&quad9), Some(&adguard), Some(&baseline), config.mode);
+    QuorumOutcome {
+        verdict,
+        answer,
+        voters,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{combine, is_blocked, requires_quorum, resolve, Provider, QuorumVerdict};
+    use super::{
+        combine, is_blocked, requires_quorum, resolve, Provider, QuorumVerdict, VoterVerdict,
+    };
     use crate::timeout::{TimeoutConfig, TimeoutMode, VoterOutcome};
     use crate::upstream::{DohClient, UpstreamError};
     use hickory_proto::op::{Message, Query, ResponseCode};
@@ -789,6 +908,43 @@ mod tests {
             started.elapsed() < config.duration,
             "resolve() waited out the pending voters' timeout instead of canceling them"
         );
+    }
+
+    // T-147: the query log needs the *per-voter* breakdown, not just the
+    // final verdict - a test asserting only `outcome.verdict == Block` would
+    // pass even if `voters` wrongly marked the canceled voter as `Allow` or
+    // omitted it entirely.
+    #[tokio::test(start_paused = true)]
+    async fn adguard_self_sufficient_block_records_adguard_block_and_quad9_canceled() {
+        let client = MockDohClient {
+            quad9: MockResponse::Pending,
+            adguard: MockResponse::Instant(null_ip_message()),
+            baseline: MockResponse::Pending,
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &TimeoutConfig::default(),
+        )
+        .await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
+        assert_eq!(outcome.voters.len(), 2);
+        let Some(adguard) = outcome
+            .voters
+            .iter()
+            .find(|v| v.provider == Provider::AdGuard)
+        else {
+            panic!("expected an AdGuard voter record");
+        };
+        assert_eq!(adguard.verdict, VoterVerdict::Block);
+        let Some(quad9) = outcome
+            .voters
+            .iter()
+            .find(|v| v.provider == Provider::Quad9)
+        else {
+            panic!("expected a Quad9 voter record");
+        };
+        assert_eq!(quad9.verdict, VoterVerdict::Canceled);
     }
 
     #[tokio::test(start_paused = true)]

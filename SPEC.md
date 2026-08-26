@@ -932,7 +932,7 @@ User-allowlist (крок 1) — явний запобіжник від надт�
 | `timestamp`      | Час запиту |
 | `domain`         | Запитаний домен (нормалізований) |
 | `qtype`          | Тип запису (A / AAAA / HTTPS / …) |
-| `decision`       | `ALLOWED` / `BLOCKED` |
+| `decision`       | `ALLOWED` / `BLOCKED` / `FAILED` (SERVFAIL — resolution failed, no filtering decision was actually made; added T-147, DECISIONS.md) |
 | `decision_source`| `ALLOWLIST` / `BLOCKLIST` / `CCTLD_BLOCK` / `CACHE` / `RATING_FILTER` / `QUORUM` / `GEOIP` |
 | `voter_scope`    | `FULL` / `SECURITY_ONLY` — чи домен потрапив у топ-N поточної країни (5.1) і тому опитувались лише Security-tier voters |
 | `voters`         | Список апстрімів із вердиктом кожного: `BLOCK` / `ALLOW` / `TIMEOUT` / `ERROR` / `CANCELED` (не дочекано через early return після першого `BLOCK`, 3.6) |

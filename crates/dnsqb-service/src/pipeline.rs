@@ -19,13 +19,14 @@ use crate::cache::{
 };
 use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
-use crate::quorum::{requires_quorum, resolve, QuorumVerdict};
+use crate::query_log::{Decision, DecisionSource};
+use crate::quorum::{requires_quorum, resolve, QuorumVerdict, VoterRecord};
 use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
 use crate::upstream::{DohClient, BASELINE_DOH_URL};
 use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
-use hickory_proto::op::Message;
+use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, SOA};
-use hickory_proto::rr::{RData, Record};
+use hickory_proto::rr::{RData, Record, RecordType};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
@@ -49,6 +50,43 @@ pub enum PipelineOutcome {
     /// arbitrary record type to is a type-dispatch decision, not a verdict
     /// this pipeline computes.
     ProxyToSingleUpstream,
+}
+
+/// Enough information to build a `query_log::LogEntry` for a completed
+/// `handle_query` call (T-147) — kept separate from `PipelineOutcome` rather
+/// than folded into its `Response` variant, so a caller that only wants the
+/// response (every existing test, before this task) doesn't have to
+/// destructure it, and so `ProxyToSingleUpstream`'s lack of metadata is
+/// explicit (`None`) rather than a caller inventing a placeholder.
+#[derive(Debug)]
+pub struct QueryLogMeta {
+    /// The normalized query domain (same string `handle_query` itself uses
+    /// for the overrides/cache lookups).
+    pub domain: String,
+    /// The query's record type.
+    pub qtype: RecordType,
+    /// Allowed, blocked, or failed to resolve.
+    pub decision: Decision,
+    /// Which pipeline step produced `decision`.
+    pub decision_source: DecisionSource,
+    /// Always empty except for `DecisionSource::Quorum` — matches
+    /// `LogEntry.voters`'s own documented rule.
+    pub voters: Vec<VoterRecord>,
+}
+
+/// `Decision::Allowed` vs `Decision::Failed` from a resolved [`Message`] —
+/// only valid where `Decision::Blocked` isn't a reachable outcome of the
+/// branch calling it (allowlist pass-through, `Voters::Disabled`
+/// pass-through, quorum `Allow`): each of those three shapes is either a
+/// real/forwarded answer or a synthesized/forwarded SERVFAIL, never a block
+/// response — `build_block_response`/cache-replayed blocks never reach this
+/// helper.
+fn decision_from_response(message: &Message) -> Decision {
+    if message.metadata.response_code == ResponseCode::ServFail {
+        Decision::Failed
+    } else {
+        Decision::Allowed
+    }
 }
 
 /// SPEC.md §3, §8.1 (T-41): whether any quorum voter is enabled at all.
@@ -75,6 +113,80 @@ pub enum Voters {
     Disabled,
 }
 
+/// Shared shape of `handle_query`'s two baseline-pass-through branches
+/// (allowlist match, `Voters::Disabled`): resolve unfiltered via
+/// [`resolve_via_baseline`], then pair the result with `QueryLogMeta` —
+/// `voters` is always empty here, nothing was actually consulted for either
+/// caller. Pulled out purely to keep `handle_query` itself readable, not
+/// reused for any other reason.
+async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
+    client: &C,
+    query: &Message,
+    timeout_config: &TimeoutConfig,
+    domain: String,
+    qtype: RecordType,
+    decision_source: DecisionSource,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let message = resolve_via_baseline(client, query, timeout_config).await;
+    let meta = QueryLogMeta {
+        domain,
+        qtype,
+        decision: decision_from_response(&message),
+        decision_source,
+        voters: Vec::new(),
+    };
+    (PipelineOutcome::Response(message), Some(meta))
+}
+
+/// A blocklist match's response + metadata (T-147) — pulled out for the same
+/// reason as [`baseline_passthrough_with_meta`]: keeping `handle_query`
+/// itself short enough to read in one pass.
+fn blocklist_response_with_meta(
+    query: &Message,
+    cache_config: &CacheConfig,
+    domain: String,
+    qtype: RecordType,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
+    let meta = QueryLogMeta {
+        domain,
+        qtype,
+        decision: Decision::Blocked,
+        decision_source: DecisionSource::Blocklist,
+        voters: Vec::new(),
+    };
+    (
+        PipelineOutcome::Response(build_block_response(query, ttl)),
+        Some(meta),
+    )
+}
+
+/// A fresh cache hit's response + metadata (T-147) — same reason as
+/// [`blocklist_response_with_meta`].
+fn cache_hit_response_with_meta(
+    query: &Message,
+    entry: &CacheEntry,
+    now: Instant,
+    domain: String,
+    qtype: RecordType,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let decision = match entry.verdict {
+        Verdict::Block => Decision::Blocked,
+        Verdict::Allow(_) => Decision::Allowed,
+    };
+    let meta = QueryLogMeta {
+        domain,
+        qtype,
+        decision,
+        decision_source: DecisionSource::Cache,
+        voters: Vec::new(),
+    };
+    (
+        PipelineOutcome::Response(response_from_cache_entry(query, entry, now)),
+        Some(meta),
+    )
+}
+
 /// SPEC.md §5: run `query` through allowlist → blocklist → cache → quorum,
 /// in that fixed order. Allowlist and blocklist apply regardless of query
 /// type (an MX/TXT domain can be overridden too); cache and quorum apply
@@ -93,9 +205,9 @@ pub async fn handle_query<C: DohClient + Sync>(
     cache: &Cache,
     cache_config: &CacheConfig,
     timeout_config: &TimeoutConfig,
-) -> PipelineOutcome {
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
     let Some(question) = query.queries.first() else {
-        return PipelineOutcome::ProxyToSingleUpstream;
+        return (PipelineOutcome::ProxyToSingleUpstream, None);
     };
     // `Name::to_ascii()`, not `.to_string()`/`Display` — the same
     // transformation `normalize_domain` itself performs internally
@@ -106,6 +218,12 @@ pub async fn handle_query<C: DohClient + Sync>(
     // containing a literal dot escapes and re-parses to one label, not two.
     let domain = question.name().to_ascii();
     let qtype = question.query_type();
+    // `LogEntry.domain`'s documented invariant is `normalize_domain`'s output
+    // (lowercase, no trailing dot) - `domain` above is deliberately the
+    // to_ascii() intermediate form instead (see the comment on it), so the
+    // log gets its own, separately normalized copy rather than the two
+    // uses drifting apart.
+    let log_domain = domain.trim_end_matches('.').to_ascii_lowercase();
 
     // `Err` here means `domain` doesn't round-trip through
     // `normalize_domain` — practically unreachable for a string sourced
@@ -114,19 +232,24 @@ pub async fn handle_query<C: DohClient + Sync>(
     // theoretical edge case degrades safely instead of panicking.
     match overrides.decision(&domain) {
         Ok(Some(ListKind::Allowlist)) => {
-            return PipelineOutcome::Response(
-                resolve_via_baseline(client, query, timeout_config).await,
-            );
+            return baseline_passthrough_with_meta(
+                client,
+                query,
+                timeout_config,
+                log_domain.clone(),
+                qtype,
+                DecisionSource::Allowlist,
+            )
+            .await;
         }
         Ok(Some(ListKind::Blocklist)) => {
-            let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
-            return PipelineOutcome::Response(build_block_response(query, ttl));
+            return blocklist_response_with_meta(query, cache_config, log_domain.clone(), qtype);
         }
         Ok(None) | Err(_) => {}
     }
 
     if !requires_quorum(qtype) {
-        return PipelineOutcome::ProxyToSingleUpstream;
+        return (PipelineOutcome::ProxyToSingleUpstream, None);
     }
 
     if voters == Voters::Disabled {
@@ -149,9 +272,21 @@ pub async fn handle_query<C: DohClient + Sync>(
         // through one) would be indistinguishable from a genuinely-
         // filtered verdict once the user re-enables a provider and the
         // cache is later replayed.
-        return PipelineOutcome::Response(
-            resolve_via_baseline(client, query, timeout_config).await,
-        );
+        // SPEC-silent choice (T-147): none of the four Ф1 decision_source
+        // values name "voters globally disabled" - `Quorum` is the closest
+        // ("what quorum produces over zero active voters"), and `voters:
+        // vec![]` (built by the shared helper below) makes clear nothing
+        // was actually consulted, distinguishing this from a real quorum
+        // resolution at a glance.
+        return baseline_passthrough_with_meta(
+            client,
+            query,
+            timeout_config,
+            log_domain.clone(),
+            qtype,
+            DecisionSource::Quorum,
+        )
+        .await;
     }
 
     let Ok(key) = CacheKey::new(&domain, qtype) else {
@@ -162,29 +297,54 @@ pub async fn handle_query<C: DohClient + Sync>(
         // not "an error occurred on the path that does"). An honest
         // SERVFAIL, consistent with this module's other no-usable-data
         // branches, not a routing decision that doesn't apply to A/AAAA.
-        return PipelineOutcome::Response(build_servfail_response(query));
+        // Not logged (`None`): no decision_source value describes a
+        // never-actually-attempted resolution, and this path is already
+        // documented as practically unreachable.
+        return (
+            PipelineOutcome::Response(build_servfail_response(query)),
+            None,
+        );
     };
 
     let now = Instant::now();
     if let Some(entry) = cache.get(&key).await {
         if entry.is_fresh(now) {
-            return PipelineOutcome::Response(response_from_cache_entry(query, &entry, now));
+            return cache_hit_response_with_meta(query, &entry, now, log_domain.clone(), qtype);
         }
     }
 
     let outcome = resolve(client, query, timeout_config).await;
     match outcome.verdict {
-        QuorumVerdict::NotApplicable => PipelineOutcome::ProxyToSingleUpstream,
+        QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
             let ttl = cache_config.block_verdict_ttl;
             cache
                 .insert(key, CacheEntry::new(Verdict::Block, ttl))
                 .await;
-            PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl)))
+            let meta = QueryLogMeta {
+                domain: log_domain.clone(),
+                qtype,
+                decision: Decision::Blocked,
+                decision_source: DecisionSource::Quorum,
+                voters: outcome.voters,
+            };
+            (
+                PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl))),
+                Some(meta),
+            )
         }
-        QuorumVerdict::Allow => PipelineOutcome::Response(
-            handle_allow(cache, key, cache_config, query, outcome.answer).await,
-        ),
+        QuorumVerdict::Allow => {
+            let voters = outcome.voters;
+            let message = handle_allow(cache, key, cache_config, query, outcome.answer).await;
+            let meta = QueryLogMeta {
+                domain: log_domain,
+                qtype,
+                decision: decision_from_response(&message),
+                decision_source: DecisionSource::Quorum,
+                voters,
+            };
+            (PipelineOutcome::Response(message), Some(meta))
+        }
     }
 }
 
@@ -386,6 +546,7 @@ mod tests {
     use super::{handle_query, invalidate_changed, PipelineOutcome, Voters};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
+    use crate::query_log::{Decision, DecisionSource};
     use crate::timeout::{TimeoutConfig, TimeoutMode};
     use crate::upstream::{DohClient, Provider, UpstreamError};
     use hickory_proto::op::{Message, Query, ResponseCode};
@@ -534,7 +695,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query,
             &client,
             &overrides,
@@ -576,7 +737,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -602,7 +763,7 @@ mod tests {
         let cache = Cache::new(&cache_config());
         let client = MockClient::all_panic();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -644,7 +805,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -666,7 +827,7 @@ mod tests {
         let cache = Cache::new(&cache_config());
         let client = MockClient::all_panic();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::MX),
             &client,
             &overrides,
@@ -697,7 +858,7 @@ mod tests {
             .await;
         let client = MockClient::all_panic();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -742,7 +903,7 @@ mod tests {
             .await;
         let client = MockClient::all_panic();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -779,7 +940,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -799,7 +960,7 @@ mod tests {
         let calls_after_miss = client.calls.load(Ordering::SeqCst);
         assert!(calls_after_miss > 0);
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -829,7 +990,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -854,7 +1015,7 @@ mod tests {
         };
         assert_eq!(cached.ttl, Duration::from_secs(120));
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -884,7 +1045,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -905,7 +1066,7 @@ mod tests {
         );
         let calls_after_miss = client.calls.load(Ordering::SeqCst);
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -937,7 +1098,7 @@ mod tests {
             .await;
         let client = MockClient::all_panic();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -964,7 +1125,7 @@ mod tests {
             duration: Duration::from_millis(5),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1000,7 +1161,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1175,7 +1336,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1202,7 +1363,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1235,7 +1396,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1273,7 +1434,7 @@ mod tests {
         };
         let started = tokio::time::Instant::now();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1349,7 +1510,7 @@ mod tests {
             calls: AtomicU32::new(0),
         };
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1385,7 +1546,7 @@ mod tests {
         let cache = Cache::new(&cache_config());
         let client = MockClient::all_panic();
 
-        let outcome = handle_query(
+        let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -1402,5 +1563,300 @@ mod tests {
             panic!("expected a NULL-blocked A answer");
         };
         assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+    }
+
+    // T-147: QueryLogMeta - one test per branch that produces Some(meta),
+    // plus the two branches that deliberately produce None.
+
+    #[tokio::test]
+    async fn allowlist_match_logs_allowed_via_allowlist_with_no_voters() {
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            calls: AtomicU32::new(0),
+        };
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.domain, "example.com");
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Allowlist);
+        assert!(meta.voters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn baseline_error_on_allowlist_path_logs_failed_decision() {
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Error,
+            calls: AtomicU32::new(0),
+        };
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(
+            meta.decision,
+            Decision::Failed,
+            "a SERVFAIL result must not be logged as Allowed"
+        );
+        assert_eq!(meta.decision_source, DecisionSource::Allowlist);
+    }
+
+    #[tokio::test]
+    async fn blocklist_match_logs_blocked_via_blocklist_with_no_voters() {
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Blocked);
+        assert_eq!(meta.decision_source, DecisionSource::Blocklist);
+        assert!(meta.voters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cache_hit_logs_the_cached_verdicts_decision_via_cache() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let Ok(block_key) = CacheKey::new("blocked.example", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                block_key,
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+        let Ok(allow_key) = CacheKey::new("allowed.example", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                allow_key,
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    Duration::from_secs(60),
+                ),
+            )
+            .await;
+        let client = MockClient::all_panic();
+
+        let (_outcome, meta) = handle_query(
+            &query_for("blocked.example.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Blocked);
+        assert_eq!(meta.decision_source, DecisionSource::Cache);
+
+        let (_outcome, meta) = handle_query(
+            &query_for("allowed.example.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Cache);
+    }
+
+    #[tokio::test]
+    async fn quorum_block_logs_blocked_via_quorum_with_the_blocking_voter() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Instant(nxdomain_message_with_soa(120)),
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            calls: AtomicU32::new(0),
+        };
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Blocked);
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        assert_eq!(
+            meta.voters.len(),
+            2,
+            "both Phase-1 providers must have a record, blocking or not"
+        );
+    }
+
+    #[tokio::test]
+    async fn quorum_allow_logs_allowed_via_quorum_with_both_voters() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(ip)),
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        assert_eq!(meta.voters.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_logs_via_quorum_with_no_voters_consulted() {
+        // SPEC-silent choice, documented in handle_query itself: no Ф1
+        // decision_source value names "voters globally disabled", so this
+        // uses Quorum with an empty voters list - distinguishable from a
+        // real quorum resolution by the empty list, not by decision_source.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            calls: AtomicU32::new(0),
+        };
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        assert!(meta.voters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn non_a_aaaa_query_produces_no_log_metadata() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::MX),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(meta.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_query_with_no_question_produces_no_log_metadata() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let (_outcome, meta) = handle_query(
+            &Message::query(),
+            &client,
+            &overrides,
+            Voters::Enabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(meta.is_none());
     }
 }

@@ -131,12 +131,13 @@ pub use overrides::{
 };
 pub use paths::{app_data_dir, PathsError};
 pub use pipeline::{
-    handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome, Voters,
+    handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome, QueryLogMeta,
+    Voters,
 };
-pub use query_log::{
-    Decision, DecisionSource, LogEntry, LogFilter, QueryLog, VoterRecord, VoterVerdict,
+pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
+pub use quorum::{
+    is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict, VoterRecord, VoterVerdict,
 };
-pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
 pub use upstream::{
