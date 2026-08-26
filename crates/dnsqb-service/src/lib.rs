@@ -3,16 +3,21 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, сьомий
-//! зріз (T-41): `pipeline::handle_query` gains a `Voters` parameter — every
-//! provider disabled is an explicit pass-through via the baseline resolver,
-//! not `fail-closed` and not a silent no-op (SPEC.md §3, §8.1) — on top of
-//! the sixth slice's (T-40) `pipeline::invalidate_changed` (cache eviction
-//! on an override-list reload) and the fifth slice's (T-39) end-to-end
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, восьмий
+//! зріз (T-137): `Cache::clear()` — manual one-click full-cache clear,
+//! wrapping `moka::future::Cache::invalidate_all` directly (no predicate
+//! needed, unlike `invalidate_matching`) — on top of the seventh slice's
+//! (T-41) `pipeline::handle_query`'s `Voters` parameter (every provider
+//! disabled is an explicit pass-through via the baseline resolver, not
+//! `fail-closed` and not a silent no-op, SPEC.md §3, §8.1), the sixth
+//! slice's (T-40) `pipeline::invalidate_changed` (cache eviction on an
+//! override-list reload), and the fifth slice's (T-39) end-to-end
 //! `pipeline::handle_query` (allowlist → blocklist → cache → quorum) and the
 //! earlier slices' timeout-mode-aware OR-logic quorum with early
 //! return/cancellation, `DoH` wire codec, baseline/upstream client with
-//! HTTP/2 keep-alive, and `moka`-backed cache. Override lists have no
+//! HTTP/2 keep-alive, and `moka`-backed cache. `Cache::clear()` has no live
+//! caller yet either (no Tauri command exists — T-53), same pattern as
+//! `invalidate_matching`/`invalidate_changed`. Override lists have no
 //! file-write path yet (`save()` — T-46/T-47, when a UI writer exists), so
 //! nothing calls `invalidate_changed` yet either; likewise no real
 //! per-provider toggle config exists yet (T-52), so nothing calls

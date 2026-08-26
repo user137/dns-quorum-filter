@@ -282,6 +282,19 @@ impl Cache {
             );
         }
     }
+
+    /// T-137: manual full-cache clear, exposed as a one-click UI action —
+    /// unlike [`Self::invalidate_matching`], this doesn't need a predicate
+    /// (`moka`'s own `invalidate_all` marks every current entry stale as of
+    /// now, no `support_invalidation_closures` involved). `moka`'s own docs
+    /// say retrieval won't return entries inserted "before or at" the
+    /// invalidation time — read alone that's ambiguous about whether a
+    /// same-tick re-insert of a just-cleared key would also be swallowed;
+    /// verified empirically, not just by reading the doc, that it isn't
+    /// (`tests::clear_does_not_block_a_re_insert_of_the_same_key_afterward`).
+    pub fn clear(&self) {
+        self.inner.invalidate_all();
+    }
 }
 
 #[cfg(test)]
@@ -561,6 +574,74 @@ mod tests {
         cache.invalidate_matching(Vec::new());
 
         assert!(cache.get(&key).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn clear_removes_every_previously_inserted_entry() {
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(a) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Ok(b) = CacheKey::new("other.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                a.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+        cache
+            .insert(
+                b.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.clear();
+
+        assert!(cache.get(&a).await.is_none());
+        assert!(cache.get(&b).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn clear_does_not_block_a_re_insert_of_the_same_key_afterward() {
+        // The production sequence: user clicks clear, the next DNS query for
+        // the same domain resolves and re-inserts the same key. `moka`'s own
+        // `invalidate_all` doc says retrieval won't return entries inserted
+        // "before or at" the invalidation time — an inclusive cutoff — so
+        // this can't be assumed safe from a doc read alone (advisor review:
+        // a test that clears an *empty* cache before inserting proves
+        // nothing about a real `clear()` call, since it'd pass even against
+        // an empty-body no-op). This exercises the real insert-clear-insert
+        // order and must observe the second insert surviving.
+        let cache = Cache::new(&CacheConfig::default());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(Verdict::Block, Duration::from_secs(60)),
+            )
+            .await;
+
+        cache.clear();
+
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(93, 184, 216, 34).into()]),
+                    Duration::from_secs(60),
+                ),
+            )
+            .await;
+
+        let Some(fetched) = cache.get(&key).await else {
+            panic!("re-insert after clear must be observable, not swallowed by an inclusive invalidation cutoff");
+        };
+        assert!(matches!(fetched.verdict, Verdict::Allow(_)));
     }
 
     #[test]

@@ -8,6 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, eighth slice done (T-137 — TASKS.md, one commit): `Cache::clear()` — manual one-click
+full-cache clear (SPEC.md §4, analogous to T-44's planned log-clear button), a thin wrapper over
+`moka::future::Cache::invalidate_all` (no predicate needed, unlike `invalidate_matching` — `moka`
+just stamps the current time as the invalidation cutoff). No live caller yet either (no Tauri
+command exists — T-53), same "backend primitive ready, UI wiring later" pattern as T-40's
+`invalidate_matching`/`invalidate_changed`.
+
 Фаза 1, seventh slice done (T-41 — TASKS.md, one commit): `pipeline::handle_query` gains a
 `Voters` parameter — SPEC.md §3/§8.1's explicit pass-through when the user has disabled every
 quorum provider, on top of the sixth slice's (T-40) cache invalidation on an override-list reload
@@ -17,7 +24,7 @@ and the fifth slice's (T-39) end-to-end request pipeline — allowlist → block
 `is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching`, T-40 — one `moka`
 `invalidate_entries_if` predicate per whole batch of changed domains, not one per domain, since
 `moka` re-applies every live predicate on every `get()` until its own maintenance task sweeps it
-away), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
+away; `Cache::clear`, T-137), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
 `OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37;
 `changed_entries`, T-40 — `pub(crate)`, symmetric diff between two `OverrideLists` snapshots, no
 reader outside `pipeline::invalidate_changed` yet), `pipeline` (`handle_query`/`PipelineOutcome`,
