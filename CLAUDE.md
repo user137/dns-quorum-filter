@@ -40,6 +40,47 @@ this slice**: `query_log::LogEntry` still has no producer; graceful shutdown/sig
 watcher yet, Фаза 3); T-49 (manual trust-store install) and T-51 (empirical CT-policy check) are
 now genuinely unblocked (a real listener exists to connect to) but not themselves done.
 
+Фаза 1, T-66 done (TASKS-DONE.md, one commit): the phased-plan's own named Фаза 1 validation
+deliverable — measuring whether "quorum beats a single provider" actually holds, plus a cache
+latency sanity check — is done as a standalone `examples/phase1_metrics.rs` benchmark, not a change
+to any production code path. Malicious-domain source (decided with the user, not invented from
+training-data memory of what's "currently" on a blocklist, which would be unverifiable and possibly
+stale): the live abuse.ch URLhaus recent-URLs CSV feed, no Auth-Key needed. Two real findings from
+an actual run, not fabricated: (1) a real methodology bug caught by advisor review of the plan
+before writing code — a fixed well-known-domain list (`example.com` etc.) would have been useless
+for latency measurement, since those domains are so heavily cached *upstream* that a "cold" query
+would still land in ~10ms regardless of this service's own cache state; fixed by reusing the same
+URLhaus-derived sample for both halves of the benchmark (genuinely uncached anywhere, differs every
+run) and relabeling the buckets honestly as "local cache miss"/"local cache hit", not "cold"/"warm".
+(2) A real bug in the benchmark tool itself, caught empirically during the actual run (not by any
+static check): `hickory_proto::op::Message::query()` leaves `recursion_desired` at its default
+`false`, which made Cloudflare's baseline resolver SERVFAIL on 39/40 sampled domains — looked at
+first like "most of these fresh malware domains are already dead," until a debug trace showed
+definitely-live domains failing identically; root-caused by reading `hickory-proto`'s own source,
+fixed by setting `message.metadata.recursion_desired = true` explicitly (CLAUDE.md gotchas has the
+full writeup, including why this never affected any shipped code path — confirmed by reading
+`pipeline::resolve_via_baseline`/`quorum::resolve`, which always forward the original incoming query
+object, never build a fresh one for an outgoing upstream call). A closing advisor review of the diff
+caught a third thing before commit: an AdGuard 0% rate is ambiguous by response code alone —
+AdGuard's own block signal is an explicit `0.0.0.0`/`::` *answer*, still rcode `NoError`, so "AdGuard
+blocked nothing" and "AdGuard blocked everything but `is_blocked` missed it" look identical in an
+rcode-only trace. Checked with a one-off run logging raw AdGuard answer records: every one of the 38
+carried genuine, routable IPs, no null-IP anywhere — confirming the 0% figure is a real finding, not
+a masked bug in the shipped `is_blocked`/`evaluate` logic. Real numbers from the corrected run (one
+sample, one point in time — not a controlled multi-run study): 38/40 domains resolvable (baseline
+`NoError`); Quad9 alone caught 22/38 (57.9%, via NXDOMAIN — an upper bound under `is_blocked`'s
+`NeedsBaseline` semantic, not an unambiguous explicit signal, per the example's own module doc
+comment); AdGuard alone caught 0/38 in this sample (verified, not assumed); quorum (OR) therefore
+matched Quad9's
+own rate exactly, and the "exactly one provider blocked" count was 22/38 — meaning this particular
+sample didn't demonstrate AdGuard adding incremental catches over Quad9 alone, an honest finding
+worth recording as-is rather than silently omitted for looking unflattering to the two-provider
+design; local cache hit vs miss showed the expected two-orders-of-magnitude win (mean ~2.9ms hit vs
+~156ms miss), directly validating SPEC.md §4's caching rationale. The tool is deliberately **not**
+wired into CI (non-deterministic live-threat-feed content and live third-party calls, same
+"manual, not automated" precedent as the existing `#[ignore]`d live-Quad9 test) and the fetched
+domain list itself is never committed anywhere in this repo — only these interpreted numbers are.
+
 Фаза 1, fifteenth slice done (T-145 — TASKS-DONE.md, one commit): config-file format switched
 from JSON to TOML for both `config.rs`'s `ResolverConfig` (T-144) and `overrides.rs`'s
 `OverrideLists` (T-37) — user asked, mid-session, for a hand-editable format "like `ssh_config`/
@@ -685,6 +726,23 @@ decision from scratch).
   not four small `default_port()`/`default_timeout_mode()`/... functions — simpler, and confirmed
   (not assumed) to still reject a typo'd key. Advisor review of the plan caught the first draft
   reaching for the per-field function-path form before there was any code to test against.
+- **`hickory_proto::op::Message::query()` leaves `recursion_desired` at its default (`false`) —
+  a hand-built outgoing query needs `message.metadata.recursion_desired = true;` set explicitly, or
+  a strict resolver can return SERVFAIL for anything not already edge-cached, masquerading as "the
+  domain doesn't resolve."** Hit building `phase1_metrics.rs` (T-66): a first run against
+  `BASELINE_DOH_URL` (Cloudflare) showed 39/40 sampled domains SERVFAILing, which looked at first
+  like "URLhaus's fresh malware domains are mostly already dead" — plausible on its face — until a
+  debug trace showed well-known, definitely-live domains (`res.cloudinary.com`, `filedn.com`)
+  failing identically. Root cause confirmed by reading `hickory-proto` 0.26.1's own
+  `Header::new`/`Message::query()` source, not guessed: `recursion_desired: false` is the hardcoded
+  default, and `Message::query()` never sets it. **Does not affect any shipped production code
+  path** — `pipeline::resolve_via_baseline`/`quorum::resolve` always forward the *original* decoded
+  incoming query object to upstreams (confirmed by reading both call sites), never construct a fresh
+  `Message::query()` for an outgoing upstream call, so a real browser's own RD bit (virtually always
+  `true`) always survives to Quad9/AdGuard/baseline. The existing `#[ignore]`d live-Quad9 test
+  (`upstream.rs`) also doesn't set it explicitly and still passes — Quad9 evidently tolerates
+  `RD=0` where Cloudflare's public resolver does not, which is itself a useful fact about the two
+  services' differing behavior, not a contradiction of this gotcha.
 - **`toml::de::Error`'s `Display` *and* `Debug` both render an annotated snippet of the offending
   input line** (`TOML parse error at line N, column M\n  |\nN | <the actual line>\n  |  ^\n<message>`)
   — unlike `serde_json::Error`'s generic "expected value at line N column M", which never echoes the
