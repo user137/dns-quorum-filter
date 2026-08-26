@@ -187,6 +187,37 @@ impl QueryLog {
     /// dropped here, not just excluded from this call's return value.
     #[must_use]
     pub fn snapshot(&self, now: SystemTime) -> Vec<LogEntry> {
+        self.age_filtered_entries(now, |_| true)
+    }
+
+    /// [`Self::snapshot`], narrowed to entries matching every facet `filter`
+    /// sets (T-45, SPEC.md §6: "простий підрядковий фільтр по domain плюс
+    /// фасети: тільки заблоковані / тільки дозволені / за конкретним
+    /// voter'ом"). Applies the same age bound as `snapshot` — an entry that
+    /// ages out is dropped from the buffer here too, filter or no filter.
+    #[must_use]
+    pub fn search(&self, now: SystemTime, filter: &LogFilter<'_>) -> Vec<LogEntry> {
+        let needle = filter.domain_contains.map(str::to_ascii_lowercase);
+        self.age_filtered_entries(now, |entry| {
+            matches_filter(entry, filter, needle.as_deref())
+        })
+    }
+
+    /// Empties the log immediately (SPEC.md §6's manual clear action, T-44 —
+    /// same pattern as `Cache::clear`, T-137).
+    pub fn clear(&self) {
+        self.entries.write().clear();
+    }
+
+    /// Shared implementation behind [`Self::snapshot`]/[`Self::search`]: one
+    /// age-eviction pass under one write-lock acquisition, then `predicate`
+    /// narrows what gets cloned into the returned `Vec` — the age bound is
+    /// enforced in exactly one place regardless of which public method a
+    /// caller uses.
+    fn age_filtered_entries<F>(&self, now: SystemTime, mut predicate: F) -> Vec<LogEntry>
+    where
+        F: FnMut(&LogEntry) -> bool,
+    {
         let mut guard = self.entries.write();
         guard.retain(|entry| {
             // `Err` means `entry.timestamp` is after `now` (clock skew, not
@@ -196,8 +227,75 @@ impl QueryLog {
             now.duration_since(entry.timestamp)
                 .map_or(true, |age| age <= self.max_age)
         });
-        guard.iter().cloned().collect()
+        guard
+            .iter()
+            .filter(|entry| predicate(entry))
+            .cloned()
+            .collect()
     }
+}
+
+/// T-45 search/filter criteria for [`QueryLog::search`]. Every field is
+/// independently optional and combined with AND — `None` means "don't
+/// filter on this facet" (SPEC.md §6/`UI-SPEC.md` §3.2 name a substring
+/// search box, a `{ALL,BLOCKED,ALLOWED}` segmented control, and a provider
+/// dropdown — three independent controls, not one combined enum).
+#[derive(Debug, Clone, Default)]
+pub struct LogFilter<'a> {
+    /// Case-insensitive substring match against `domain`. Compared via
+    /// `to_ascii_lowercase` on both sides, not full Unicode case-folding —
+    /// consistent with this crate's own `normalize_domain`, which stores
+    /// `domain` as ASCII/punycode already; a Unicode needle still won't
+    /// match its `xn--` stored spelling.
+    pub domain_contains: Option<&'a str>,
+    /// Restrict to this decision only (`UI-SPEC.md`'s `ALL/BLOCKED/ALLOWED`
+    /// facet — `None` here is that facet's `ALL`).
+    pub decision: Option<Decision>,
+    /// Restrict to entries where this provider *appears* in `voters`,
+    /// regardless of that voter's individual verdict — SPEC.md §6/
+    /// `UI-SPEC.md` §3.2 name this facet "за конкретним voter'ом" (by a
+    /// specific voter), not "blocked by voter X"; this crate has no
+    /// per-verdict facet requirement to model, so participation is the
+    /// SPEC-silent choice made here (flagged per this project's own rule for
+    /// filling such gaps, same as `VoterRecord`'s own doc comment above).
+    ///
+    /// `voters` is empty for every non-`Quorum` `decision_source`
+    /// (`ALLOWLIST`/`BLOCKLIST`/`CACHE` never populate it — see this
+    /// module's own doc comment) — filtering by voter therefore only ever
+    /// surfaces entries decided by a *fresh* quorum resolution. A domain
+    /// this provider blocked that's now served from cache won't appear;
+    /// that's the same "an aggregate rate looks lower than what the
+    /// provider actually caught" ambiguity this project's T-66 benchmark
+    /// entry already recorded for a different reason, not a bug in this
+    /// filter.
+    pub voter: Option<Provider>,
+}
+
+/// `lowercased_needle` is `filter.domain_contains`, already lowercased once
+/// by the caller ([`QueryLog::search`]) — `filter.domain_contains` itself is
+/// deliberately unused below, don't read the un-lowered field here by
+/// mistake.
+fn matches_filter(
+    entry: &LogEntry,
+    filter: &LogFilter<'_>,
+    lowercased_needle: Option<&str>,
+) -> bool {
+    if let Some(needle) = lowercased_needle {
+        if !entry.domain.to_ascii_lowercase().contains(needle) {
+            return false;
+        }
+    }
+    if let Some(decision) = filter.decision {
+        if entry.decision != decision {
+            return false;
+        }
+    }
+    if let Some(provider) = filter.voter {
+        if !entry.voters.iter().any(|v| v.provider == provider) {
+            return false;
+        }
+    }
+    true
 }
 
 impl Default for QueryLog {
@@ -209,7 +307,9 @@ impl Default for QueryLog {
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, DecisionSource, LogEntry, QueryLog, DEFAULT_MAX_ENTRIES};
+    use super::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
+    use crate::query_log::{VoterRecord, VoterVerdict};
+    use crate::upstream::Provider;
     use hickory_proto::rr::RecordType;
     use std::time::{Duration, SystemTime};
 
@@ -326,5 +426,237 @@ mod tests {
         let log = QueryLog::default();
         assert_eq!(log.max_entries, DEFAULT_MAX_ENTRIES);
         assert_eq!(log.max_age, Duration::from_hours(24));
+    }
+
+    #[test]
+    fn clear_empties_the_log() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        log.push(entry_at(now));
+        log.push(entry_at(now));
+
+        log.clear();
+
+        assert!(log.snapshot(now).is_empty());
+    }
+
+    #[test]
+    fn search_domain_substring_matches_mid_string_against_a_normalized_domain() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut match_entry = entry_at(now);
+        match_entry.domain = "sub.exampledomain.com".to_string();
+        log.push(match_entry);
+        let mut other = entry_at(now);
+        other.domain = "unrelated.example".to_string();
+        log.push(other);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                domain_contains: Some("exampledomain"),
+                ..LogFilter::default()
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].domain, "sub.exampledomain.com");
+    }
+
+    #[test]
+    fn search_domain_substring_is_case_insensitive_on_a_mixed_case_needle() {
+        // The real-world direction (UI-SPEC.md §3.2): a user types whatever
+        // case they like into the search box against an already-normalized
+        // (lowercase) stored `domain`.
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut match_entry = entry_at(now);
+        match_entry.domain = "sub.exampledomain.com".to_string();
+        log.push(match_entry);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                domain_contains: Some("ExampleDomain"),
+                ..LogFilter::default()
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_domain_substring_still_matches_a_non_normalized_stored_domain() {
+        // Defensive case: LogEntry has no producer yet (this module's own
+        // doc comment), so "domain is always normalized/lowercase" is a
+        // convention, not a type-level guarantee. matches_filter lowercases
+        // both sides specifically so a future producer bug (a mixed-case
+        // domain reaching the buffer) doesn't also break search.
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut match_entry = entry_at(now);
+        match_entry.domain = "sub.ExampleDomain.com".to_string();
+        log.push(match_entry);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                domain_contains: Some("exampledomain"),
+                ..LogFilter::default()
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_decision_facet_narrows_to_only_that_decision() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut blocked = entry_at(now);
+        blocked.domain = "blocked.example".to_string();
+        blocked.decision = Decision::Blocked;
+        log.push(blocked);
+        let mut allowed = entry_at(now);
+        allowed.domain = "allowed.example".to_string();
+        allowed.decision = Decision::Allowed;
+        log.push(allowed);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                decision: Some(Decision::Blocked),
+                ..LogFilter::default()
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].domain, "blocked.example");
+    }
+
+    #[test]
+    fn search_voter_facet_narrows_to_entries_that_provider_participated_in() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut quad9_entry = entry_at(now);
+        quad9_entry.domain = "quad9-voted.example".to_string();
+        quad9_entry.voters = vec![VoterRecord {
+            provider: Provider::Quad9,
+            verdict: VoterVerdict::Allow,
+        }];
+        log.push(quad9_entry);
+        let mut adguard_entry = entry_at(now);
+        adguard_entry.domain = "adguard-voted.example".to_string();
+        adguard_entry.voters = vec![VoterRecord {
+            provider: Provider::AdGuard,
+            verdict: VoterVerdict::Allow,
+        }];
+        log.push(adguard_entry);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                voter: Some(Provider::Quad9),
+                ..LogFilter::default()
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].domain, "quad9-voted.example");
+    }
+
+    #[test]
+    fn search_voter_facet_excludes_entries_with_no_voters_even_if_that_provider_would_have_blocked()
+    {
+        // Pins the documented LogFilter::voter semantic: a cache/allowlist/
+        // blocklist decision never has voters, so filtering by voter can
+        // never surface it - not an accident, see LogFilter's own doc
+        // comment.
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut cached = entry_at(now);
+        cached.domain = "cached.example".to_string();
+        cached.decision_source = DecisionSource::Cache;
+        cached.voters = Vec::new();
+        log.push(cached);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                voter: Some(Provider::Quad9),
+                ..LogFilter::default()
+            },
+        );
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_combines_facets_with_and_not_or() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        // Matches the domain substring but not the decision facet.
+        let mut wrong_decision = entry_at(now);
+        wrong_decision.domain = "target.example".to_string();
+        wrong_decision.decision = Decision::Allowed;
+        log.push(wrong_decision);
+        // Matches the decision facet but not the domain substring.
+        let mut wrong_domain = entry_at(now);
+        wrong_domain.domain = "other.example".to_string();
+        wrong_domain.decision = Decision::Blocked;
+        log.push(wrong_domain);
+        // Matches both.
+        let mut both = entry_at(now);
+        both.domain = "target.example".to_string();
+        both.decision = Decision::Blocked;
+        log.push(both);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                domain_contains: Some("target"),
+                decision: Some(Decision::Blocked),
+                ..LogFilter::default()
+            },
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].decision, Decision::Blocked);
+        assert_eq!(results[0].domain, "target.example");
+    }
+
+    #[test]
+    fn search_with_default_filter_matches_everything_snapshot_would() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        log.push(entry_at(now));
+        log.push(entry_at(now));
+
+        assert_eq!(
+            log.search(now, &LogFilter::default()).len(),
+            log.snapshot(now).len()
+        );
+    }
+
+    #[test]
+    fn search_still_respects_the_age_bound() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let Some(stale_timestamp) = now.checked_sub(Duration::from_hours(25)) else {
+            panic!("valid fixture timestamp");
+        };
+        let mut stale = entry_at(stale_timestamp);
+        stale.domain = "stale.example".to_string();
+        log.push(stale);
+
+        let results = log.search(
+            now,
+            &LogFilter {
+                domain_contains: Some("stale"),
+                ..LogFilter::default()
+            },
+        );
+
+        assert!(results.is_empty());
     }
 }

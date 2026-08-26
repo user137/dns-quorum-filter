@@ -8,6 +8,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, sixteenth slice done (T-44 + T-45 — TASKS-DONE.md, **one commit for both** — both tasks
+touch only `query_log.rs`, no interactive staging to split them after the fact, and the user asked
+this session to batch a few small tasks under a single plan+advisor review pass rather than one
+review cycle per task). `QueryLog::clear()` (T-44) — a one-line wrapper over
+`entries.write().clear()`, same pattern as `Cache::clear` (T-137). `QueryLog::search(now,
+&LogFilter)` (T-45) — new `LogFilter<'a>` with three independently-optional fields
+(`domain_contains`, `decision`, `voter`), combined with AND, not a bespoke enum per facet
+combination (rust.md "Make Illegal States Unrepresentable"); facet semantics were checked against
+SPEC.md §6 (lines 923-925) and `UI-SPEC.md` §3.2 (lines 77-79) *before* implementing, not invented
+from TASKS.md's one-line parenthetical alone — both sources independently confirm a case-insensitive
+domain substring filter plus an `{ALL,BLOCKED,ALLOWED}` facet, and the already-drafted Tauri command
+signatures (`UI-SPEC.md` lines 182-183, `clear_log()`/`get_log(filter)`) line up with this shape
+one-to-one, no contradiction found. `search`/`snapshot` now share one private `age_filtered_entries`
+helper (one `retain` pass under one write-lock acquisition, then `filter().cloned()`) — the age bound
+is enforced in exactly one place regardless of which public method a caller uses (advisor-caught on
+closing review: the naive `search` calling `snapshot` then filtering would clone the whole buffer and
+discard most of it). The `voter` facet is deliberately about provider *participation* in `voters`,
+not verdict ("blocked by X") — a SPEC-silent choice, documented in `LogFilter`'s own doc comment,
+same pattern as `VoterRecord`'s own note — with a **documented consequence** (advisor-caught on plan
+review): `voters` is empty for every non-`Quorum` `decision_source`, so filtering by voter can never
+surface a domain that provider once blocked but is now cache-served — the same ambiguity class
+already recorded in T-66's entry for AdGuard, pinned here with its own dedicated unit test
+(`search_voter_facet_excludes_entries_with_no_voters_even_if_that_provider_would_have_blocked`)
+rather than left implicit. Substring matching lowercases **both** sides (`to_ascii_lowercase()`, not
+just the needle) — the first draft lowered only the needle, relying on the convention that
+`normalize_domain` always lowercases stored domains before they reach the log, a convention no type
+or producer actually enforces yet (`LogEntry` still has no live producer) — caught immediately by the
+test itself, not by review. `diagrams/ui-dto-model.md` was checked (ground-truth ritual) — `LogFilter`
+is a backend query parameter, not a `LogEntry` DTO field, so the diagram needs no change. No Tauri
+command consumer yet (T-53 doesn't exist) — same "module ready, wiring later" pattern as every prior
+slice.
+
 Фаза 1, thirteenth slice done (T-143 — TASKS-DONE.md, one commit): `main.rs` is no longer a
 stub — a real `hyper` TCP accept loop + `rustls`/`tokio-rustls` TLS termination + `DoH` GET/POST →
 `pipeline::handle_query` request dispatch (plus T-25's non-A/AAAA proxying) now resolves queries
