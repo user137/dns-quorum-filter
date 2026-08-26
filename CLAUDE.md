@@ -8,6 +8,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twelfth slice done (T-142 — TASKS.md, one commit): `tls::load_or_generate_server_config`
+— builds a `rustls::ServerConfig` from the cert/key T-48/T-50 generate and persist, making the
+"load-existing-vs-regenerate" decision T-50 explicitly left open for "the future listener-wiring
+caller." New `tls.rs` module, three functions layered the same way every prior slice in this crate
+has been: `server_config_from_certified_key` (pure, builds from an in-memory freshly-generated
+`CertifiedKey`, no filesystem), `load_server_config_from_dir` (pure, parameterized by directory —
+mirrors `paths.rs`'s own pure/impure split for testability), and the real `pub`
+`load_or_generate_server_config` orchestrator (tries the load path first, falls back to
+generate+persist on any failure, `tracing::warn!`s specifically when an *existing* cert couldn't be
+used — as opposed to `tracing::info!` on an ordinary first run — since silently replacing a corrupt
+cert could invalidate a user's T-49 manual trust-store install without them noticing). Not directly
+unit-tested itself — same "hardcoded real app-data path, untested by design" precedent as
+`paths::app_data_dir`/`cert::write_cert_and_key_to_app_data`; the two pure functions above carry
+the actual coverage, including a deliberately-mismatched-cert-and-key negative test proving
+`rustls`'s `SubjectPublicKeyInfo` check is actually exercised, not just "the happy path returns
+`Ok`." New direct dependencies: `rustls` 0.23 only (`default-features = false, features =
+["aws_lc_rs", "std", "tls12"]` — confirmed via `cargo tree -f "{p} {f}" -p rustls` that this is the
+*exact* feature set `reqwest` already activates, adding nothing new to the build). Deliberately
+**not** `pem` as a second new dependency — `rustls::pki_types::pem::PemObject::from_pem_slice` (via
+the `rustls::pki_types` re-export, confirmed in `rustls`'s own `lib.rs`) reads the PEM tag itself
+(`"PRIVATE KEY"`/`"RSA PRIVATE KEY"`/`"EC PRIVATE KEY"` → the correctly tagged `PrivateKeyDer`
+variant) rather than this project assuming a fixed encoding, and it's already available given
+`rustls`'s `std` feature — one fewer dependency, one fewer place two PEM parsers could disagree.
+Every `ServerConfig` is built via `ServerConfig::builder_with_provider(aws_lc_rs::
+default_provider())`, never the plain `ServerConfig::builder()` — see the gotchas section below,
+this was a real correction during the closing advisor review, not a first-draft decision. `main.rs`
+is still an untouched stub — the actual `hyper` TCP accept loop, TLS termination, and DoH
+GET/POST → `pipeline::handle_query` request dispatch (plus T-25's non-A/AAAA passthrough) are a
+separate, larger, not-yet-numbered next task.
+
 Фаза 1, eleventh slice done (T-50 — TASKS.md, one commit): `cert::write_cert_and_key_to_app_data`
 — disk persistence for T-48's cert/key, SPEC.md §2's explicitly named MVP fallback ("якщо secure
 storage складно — файл з правами `600`, зафіксований як технічний борг"). Writes `cert.pem`/
@@ -142,9 +172,11 @@ yet either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. 
 (T-42/T-43) exists but has no live producer either — `handle_query` doesn't build or push a
 `LogEntry` yet, that wiring is a later task. No live `hyper`+TLS listener yet (`main.rs` is still a
 stub) — the self-signed leaf certificate now exists and is persisted to disk
-(`cert::generate_self_signed_cert` + `write_cert_and_key_to_app_data`, T-48/T-50), but trust-store
-install (T-49) and the actual listener wiring (including the load-existing-vs-regenerate decision
-`write_cert_and_key_to_app_data` deliberately leaves open) are still open. `dnsqb-watcher` is still
+(`cert::generate_self_signed_cert` + `write_cert_and_key_to_app_data`, T-48/T-50), and the
+load-existing-vs-regenerate decision those left open is now made
+(`tls::load_or_generate_server_config`, T-142, produces a real `rustls::ServerConfig`) — but
+trust-store install (T-49) and the actual `hyper` TCP accept loop + request dispatch are still
+open. `dnsqb-watcher` is still
 a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
@@ -162,7 +194,12 @@ across an `.await`), `rcgen` (`default-features = false`, features `aws_lc_rs`/`
 not the default `ring`, to match `reqwest`/`rustls`'s already-chosen crypto backend; SPEC.md §2's
 self-signed leaf certificate, T-48; `pem`/`zeroize` added at T-50 for PEM encoding and key-wipe
 support), `zeroize` (T-50 — wraps the derived private-key PEM text in `Zeroizing<String>` and
-zeroizes the source `KeyPair` after writing; default features only, `alloc` not `std`) — vetting
+zeroizes the source `KeyPair` after writing; default features only, `alloc` not `std`), `rustls`
+(T-142 — `default-features = false`, features `aws_lc_rs`/`std`/`tls12` only, confirmed via `cargo
+tree -f "{p} {f}" -p rustls` to be the exact feature set `reqwest` already activates; builds the
+local `DoH` listener's `rustls::ServerConfig` in `tls::load_or_generate_server_config`, always via
+`builder_with_provider(aws_lc_rs::default_provider())`, never the plain `ServerConfig::builder()`
+— see `tls.rs`'s own module doc comment) — vetting
 rows for each are in SECURITY.md. `[dev-dependencies]` also gained `tempfile` (T-37, `overrides.rs`'s
 `load()` tests only — never shipped in a binary) and `x509-parser` (T-48, `cert.rs`'s tests only —
 decodes the real DER `rcgen` produces to assert SAN/`is_ca`/validity empirically rather than
@@ -170,8 +207,10 @@ trusting `rcgen`'s docs; T-50 also uses its `pem` module to prove `Certificate::
 to the same DER). `deny.toml`'s license allowlist also covers `CDLA-Permissive-2.0`
 (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and `rustls-webpki`), both
 added several batches ago; `futures-util`/`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/
-`parking_lot`/`rcgen`/`x509-parser`/`zeroize` didn't need new allowlist entries (`rcgen`/
-`x509-parser`/`zeroize` are all `MIT OR Apache-2.0`, already allowed).
+`parking_lot`/`rcgen`/`x509-parser`/`zeroize`/`rustls` didn't need new allowlist entries (`rcgen`/
+`x509-parser`/`zeroize` are all `MIT OR Apache-2.0`, already allowed; `rustls` is `Apache-2.0 OR
+ISC OR MIT`, `ISC` already allowed for this same TLS stack) — `cargo deny check` confirmed clean
+at T-142 (2026-08-26).
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
@@ -445,6 +484,40 @@ decision from scratch).
   an `Access is denied (os error 5)`. Caught immediately by this module's own new test, not by
   CI a second time. Fixed by comparing only the segment after the last `\` in the printed
   principal, case-insensitively (`cert::other_principals`, T-50).
+- **`rustls::pki_types::PemObject` (the trait providing `from_pem_slice`/`from_pem_file`) lives at
+  `rustls::pki_types::pem::PemObject`, not `rustls::pki_types::PemObject`** — the compiler's own
+  suggested-import diagnostic named the correct path immediately, but `use rustls::pki_types::{...,
+  PemObject, ...}` (the path that "looks right" by analogy with `CertificateDer`/`PrivateKeyDer`,
+  which *are* directly under `pki_types`) fails to resolve (`tls.rs`, T-142).
+- **Declaring a `rustls`-family crate with its *default* features (`rustls = "0.23"`, no
+  `default-features = false`) is wrong even when the default feature set "looks safe" on paper.**
+  `rustls` 0.23.43's own `Cargo.toml` default (`aws_lc_rs`, `logging`, `prefer-post-quantum`,
+  `std`, `tls12`) already matches this project's chosen crypto backend, but Cargo unifies features
+  across the *whole* dependency graph — declaring defaults would union `logging` (pulls in a new
+  `log` dependency) and `prefer-post-quantum` into `reqwest`'s already-shipped, already-tested TLS
+  client path too, a behavior change to unrelated code as a side effect of an unrelated task.
+  Confirmed via `cargo tree -f "{p} {f}" -p rustls` *before* adding the dependency that `reqwest`
+  already activates exactly `aws-lc-rs,aws_lc_rs,std,tls12` — matched that set explicitly
+  (`default-features = false, features = ["aws_lc_rs", "std", "tls12"]`) and re-ran the same
+  command after adding it to confirm zero features changed (T-142; caught by advisor review of the
+  plan before implementing, not assumed from reading `rustls`'s `Cargo.toml` alone).
+- **`rustls::ServerConfig::builder()` is not equivalent to "the config that reqwest's client
+  already made work" — it re-resolves the process-default crypto provider from whichever `rustls`
+  crypto-backend features are active *across the whole graph*, and `.expect()`s that resolution to
+  be unambiguous** (confirmed by reading `rustls` 0.23.43's own source,
+  `CryptoProvider::get_default_or_install_from_crate_features`) — a future dependency enabling the
+  `ring` feature anywhere in the graph would turn that `.expect()` into a runtime panic on the
+  `DoH` server's startup path, silently, since nothing in this project's own code would have
+  changed. `tls::build_server_config` (T-142) uses
+  `ServerConfig::builder_with_provider(aws_lc_rs::default_provider())` instead, naming the provider
+  explicitly so this module's correctness doesn't depend on what else the dependency graph does —
+  caught by advisor review of the plan, not the first draft, which had used plain `builder()`.
+- **`rcgen::CertifiedKey<KeyPair>`'s `cert`/`signing_key` fields are `pub`, not just accessible via
+  destructuring inside `rcgen` itself** — confirmed by constructing a deliberately mismatched
+  `CertifiedKey { cert: a.cert, signing_key: b.signing_key }` from two independently generated
+  certs in a test (`tls::tests::server_config_rejects_a_mismatched_cert_and_key_pair`, T-142), a
+  real negative test that a wrong DER-extraction would actually fail, not just "the happy path
+  returns `Ok`."
 
 ## Documentation map — who owns what
 

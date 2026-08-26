@@ -284,6 +284,7 @@ dependencies = [
  "parking_lot",
  "rcgen",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",

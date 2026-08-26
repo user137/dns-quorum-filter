@@ -3,13 +3,20 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, десятий
-//! зріз (T-48): `cert::generate_self_signed_cert` — the local listener's
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, дванадцятий
+//! зріз (T-142): `tls::load_or_generate_server_config` — builds a
+//! `rustls::ServerConfig` from the persisted cert/key, or generates and
+//! persists a fresh one if none exists/usable (the load-vs-regenerate
+//! decision T-50 explicitly left open). Still no `hyper` TCP accept loop or
+//! request dispatch — `main.rs` stays a stub until that separate, later
+//! task (see `tls`'s own module doc comment for the crypto-provider
+//! reasoning). On top of the eleventh slice's (T-50)
+//! `cert::write_cert_and_key_to_app_data` — disk persistence for T-48's
+//! cert/key — and the tenth slice's (T-48) `cert::generate_self_signed_cert`
+//! — the local listener's
 //! self-signed leaf certificate (SPEC.md §2), SAN `IP:127.0.0.1`, `IP:::1`,
 //! `DNS:localhost`, explicit 100-year validity window (not rcgen's raw
-//! default), never a CA. Generation only — no file persistence (T-50), no
-//! trust-store install (T-49), no TLS listener wiring yet (see `cert`'s own
-//! module doc comment). On top of the ninth slice's (T-42, T-43) `query_log`
+//! default), never a CA. On top of the ninth slice's (T-42, T-43) `query_log`
 //! — the in-memory ring buffer query log
 //! (SPEC.md §6, §6.1), a `VecDeque<LogEntry>` behind `parking_lot::RwLock`
 //! bounded independently by entry count (evict-oldest-on-insert) and age
@@ -51,6 +58,7 @@ mod pipeline;
 mod query_log;
 mod quorum;
 mod timeout;
+mod tls;
 mod upstream;
 mod wire;
 
@@ -66,6 +74,7 @@ pub use pipeline::{handle_query, invalidate_changed, PipelineOutcome, Voters};
 pub use query_log::{Decision, DecisionSource, LogEntry, QueryLog, VoterRecord, VoterVerdict};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
+pub use tls::{load_or_generate_server_config, TlsError};
 pub use upstream::{
     doh_get_url, ecs_option_for_upstream, DohClient, Provider, ReqwestDohClient, UpstreamError,
     BASELINE_DOH_URL,
