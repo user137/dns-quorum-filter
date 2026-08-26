@@ -196,6 +196,13 @@ Commands (from repo root):
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`).
 
+**Check the actual CI run after every push — local-green is not CI-green, especially for
+OS-permission/environment-dependent code.** `gh run list --branch main --limit 5` to find the
+run; `gh run watch <run-id> --exit-status` to wait on it; `gh run view <run-id> --log-failed` to
+read a failure. Confirmed the hard way: an `icacls`-based ACL fix (T-50) passed the full local
+gate on a Windows 11 Pro dev box but failed on the `windows-latest` CI runner, which has
+different default file ACLs.
+
 **`SPEC.md` is the source of truth for all design decisions.** Read it before proposing any
 architectural change — most non-obvious choices in this project are already deliberated there with
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
@@ -495,6 +502,10 @@ need more detail than fits here.)
   applied to Rust's equivalent of an empty catch block.
 - **Before committing, check what's actually staged** (`git status` after `git add`) — don't trust a
   filename alone to mean "no secrets in here."
+- **When splitting one working tree into separate commits, `git restore --staged <file>` only
+  unstages that file — everything else you `git add`ed stays staged.** Run `git diff --cached
+  --stat` immediately before each `git commit` to confirm the file list actually matches that
+  commit's intent.
 - **Diagram ground-truth ritual** (`~/.claude/diagram-ground-truth-ritual.md`) — now in effect,
   copied into `diagrams/README.md` once the first diagrams (`ui-*.md`) landed. Check the SOURCES
   block of any diagram you touch, and run the sync checklist before calling doc changes done.
