@@ -9,6 +9,10 @@
 //! T-40 adds a second, non-`handle_query` entry point: [`invalidate_changed`]
 //! is the reload-event counterpart, called whenever the override lists
 //! change rather than once per query — see its own doc comment.
+//!
+//! T-41 adds [`Voters`]: SPEC.md §3/§8.1's explicit pass-through when the
+//! user has disabled every quorum provider — see `handle_query`'s
+//! `Voters::Disabled` branch.
 
 use crate::cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
@@ -16,7 +20,7 @@ use crate::cache::{
 use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
 use crate::quorum::{requires_quorum, resolve, QuorumVerdict};
-use crate::timeout::TimeoutConfig;
+use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
 use crate::upstream::{DohClient, BASELINE_DOH_URL};
 use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
 use hickory_proto::op::Message;
@@ -47,6 +51,30 @@ pub enum PipelineOutcome {
     ProxyToSingleUpstream,
 }
 
+/// SPEC.md §3, §8.1 (T-41): whether any quorum voter is enabled at all.
+///
+/// Not `&[Provider]` — a slice whose only check is `.is_empty()` would let a
+/// caller pass a *partial* subset (e.g. only Quad9, `AdGuard` disabled) and
+/// silently get both providers queried anyway, since nothing downstream
+/// reads which providers are actually in the list. That's exactly the
+/// "мовчазна поведінка «як є»" (silent as-is behavior) SPEC.md §3 forbids —
+/// just scoped to one provider instead of all. This two-variant type makes
+/// the unsupported partial case unrepresentable instead of silently
+/// mishandled (rust.md "Make Illegal States Unrepresentable").
+///
+/// Phase 1 only distinguishes "some" from "none" — a genuine per-provider
+/// subset is T-52 scope, once a real toggle config exists to drive it; that
+/// task replaces this type (and the compiler enumerates every call site), a
+/// deliberate breaking change rather than a silently wrong default today.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Voters {
+    /// Run quorum over both Phase-1 providers, as usual.
+    Enabled,
+    /// Every provider disabled by the user — SPEC.md §3's explicit
+    /// pass-through case.
+    Disabled,
+}
+
 /// SPEC.md §5: run `query` through allowlist → blocklist → cache → quorum,
 /// in that fixed order. Allowlist and blocklist apply regardless of query
 /// type (an MX/TXT domain can be overridden too); cache and quorum apply
@@ -61,6 +89,7 @@ pub async fn handle_query<C: DohClient + Sync>(
     query: &Message,
     client: &C,
     overrides: &OverrideLists,
+    voters: Voters,
     cache: &Cache,
     cache_config: &CacheConfig,
     timeout_config: &TimeoutConfig,
@@ -85,7 +114,9 @@ pub async fn handle_query<C: DohClient + Sync>(
     // theoretical edge case degrades safely instead of panicking.
     match overrides.decision(&domain) {
         Ok(Some(ListKind::Allowlist)) => {
-            return PipelineOutcome::Response(resolve_via_baseline(client, query).await);
+            return PipelineOutcome::Response(
+                resolve_via_baseline(client, query, timeout_config).await,
+            );
         }
         Ok(Some(ListKind::Blocklist)) => {
             let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
@@ -96,6 +127,31 @@ pub async fn handle_query<C: DohClient + Sync>(
 
     if !requires_quorum(qtype) {
         return PipelineOutcome::ProxyToSingleUpstream;
+    }
+
+    if voters == Voters::Disabled {
+        // SPEC.md §3, §8.1: explicit pass-through, not fail-closed, not a
+        // silent no-op — OR-logic over an empty voter set is semantically
+        // undefined, so resolution goes through the baseline resolver with
+        // no filtering at all, the same path the allowlist branch above
+        // already uses. A blocklist match still short-circuited above this
+        // check regardless of `voters` - disabling third-party voters does
+        // not disable the user's own override rules, that's the pipeline's
+        // fixed step order, not an inconsistency to "fix" later.
+        //
+        // Placed *before* the cache lookup below, not just before the
+        // cache write - a fresh cache entry written while voters were
+        // still enabled (e.g. a BLOCK verdict) must not be served here
+        // either, or disabling every provider would silently keep
+        // blocking via a stale cache hit instead of actually passing
+        // through. Read and write both skip the cache for the same
+        // reason: a cached record from a pass-through moment (or served
+        // through one) would be indistinguishable from a genuinely-
+        // filtered verdict once the user re-enables a provider and the
+        // cache is later replayed.
+        return PipelineOutcome::Response(
+            resolve_via_baseline(client, query, timeout_config).await,
+        );
     }
 
     let Ok(key) = CacheKey::new(&domain, qtype) else {
@@ -133,14 +189,30 @@ pub async fn handle_query<C: DohClient + Sync>(
 }
 
 /// SPEC.md §5 step 1: one direct query to the baseline resolver (T-22),
-/// forwarded as-is — an allowlisted domain never consults quorum, but the
-/// client still needs a real answer, not just a verdict.
-async fn resolve_via_baseline<C: DohClient + Sync>(client: &C, query: &Message) -> Message {
-    match client.query(BASELINE_DOH_URL, query).await {
-        Ok(response) => crate::wire::forward_response(query, &response),
+/// forwarded as-is — used both by the allowlist branch (an allowlisted
+/// domain never consults quorum, but the client still needs a real answer,
+/// not just a verdict) and by T-41's `Voters::Disabled` pass-through, where
+/// this is the entire resolution path for *every* A/AAAA query while
+/// filtering is off.
+///
+/// Bounded by `timeout_config.duration` via [`query_with_timeout`] — a bare
+/// unbounded `client.query(...)` here would let one hung baseline stall
+/// every query the browser makes for as long as voters stay disabled,
+/// worse than no filtering at all (Три Б, user safety). `timeout_config`'s
+/// `mode` is deliberately ignored: this call isn't casting an OR-vote, it's
+/// "get a real answer or fail honestly" — the same principle already
+/// governing the `TimedOut`/`Errored` branch below.
+async fn resolve_via_baseline<C: DohClient + Sync>(
+    client: &C,
+    query: &Message,
+    timeout_config: &TimeoutConfig,
+) -> Message {
+    match query_with_timeout(client, BASELINE_DOH_URL, query, timeout_config.duration).await {
+        VoterOutcome::Responded(response) => crate::wire::forward_response(query, &response),
         // Три Б (user safety): an honest failure, not a silent block-shaped
-        // `0.0.0.0` on a domain the user just allowlisted.
-        Err(_) => build_servfail_response(query),
+        // `0.0.0.0` on a domain the user just allowlisted, or on ordinary
+        // traffic while filtering is off.
+        VoterOutcome::TimedOut | VoterOutcome::Errored(_) => build_servfail_response(query),
     }
 }
 
@@ -297,7 +369,7 @@ fn duration_to_ttl_secs(duration: Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_query, invalidate_changed, PipelineOutcome};
+    use super::{handle_query, invalidate_changed, PipelineOutcome, Voters};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::timeout::{TimeoutConfig, TimeoutMode};
@@ -452,6 +524,7 @@ mod tests {
             &query,
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -493,6 +566,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -518,6 +592,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -559,6 +634,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -580,6 +656,7 @@ mod tests {
             &query_for("example.com.", RecordType::MX),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -610,6 +687,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -654,6 +732,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -690,6 +769,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -709,6 +789,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -738,6 +819,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -762,6 +844,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -791,6 +874,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -811,6 +895,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -842,6 +927,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -868,6 +954,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &config,
@@ -903,6 +990,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
+            Voters::Enabled,
             &cache,
             &cache_config(),
             &timeout_config(),
@@ -1059,5 +1147,226 @@ mod tests {
             cache.get(&key).await.is_some(),
             "a reload diffing to no changes must not wipe unrelated cache entries"
         );
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_yields_pass_through_via_baseline_without_consulting_quorum() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.answers, allow_message_with_ip(baseline_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_is_never_cached() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 2, 3, 4))),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        assert!(
+            cache.get(&key).await.is_none(),
+            "a pass-through answer must never be cached - it would be indistinguishable \
+             from a genuinely-filtered Allow once the user re-enables a provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_baseline_error_yields_servfail() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Error,
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn voters_disabled_baseline_timeout_yields_servfail_not_a_hang() {
+        // Advisor-review regression: resolve_via_baseline used to call the
+        // baseline directly with no timeout - harmless for the handful of
+        // allowlisted domains that path used to serve alone, but T-41 makes
+        // it the entire resolution path for *every* A/AAAA query while
+        // voters are disabled. An unbounded hang here would stall all
+        // traffic, worse than no filtering at all. Paused time makes a
+        // real hang observable without an actual wait (same technique as
+        // quorum.rs's T-30 cancellation tests): if resolve_via_baseline
+        // waited out PendingClient instead of being bounded by
+        // timeout_config.duration, elapsed would jump to that duration
+        // instead of staying near zero.
+        let client = PendingClient;
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+        let started = tokio::time::Instant::now();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &config,
+        )
+        .await;
+
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+        // Tied to `config.duration` itself (T-30's own precedent), not a
+        // generous constant - a hardcoded fallback timeout inside
+        // resolve_via_baseline that ignored `timeout_config` entirely would
+        // still pass a "< 1s" assertion against this 5ms config.
+        assert!(
+            started.elapsed() < config.duration * 2,
+            "resolve_via_baseline must be bounded by timeout_config.duration, not hang forever"
+        );
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_skips_a_stale_ready_block_cache_entry() {
+        // Advisor-review regression: Voters::Disabled is checked *before*
+        // the cache lookup, not just before the cache write - a BLOCK
+        // verdict cached while voters were still enabled must not be
+        // served here either, or disabling every provider would silently
+        // keep blocking via a stale cache hit instead of actually passing
+        // through (exactly the surprise SPEC.md §3 forbids). A test that
+        // only proves the pass-through path is never *cached* (the
+        // existing voters_disabled_is_never_cached) doesn't prove the
+        // read side is skipped too - this one starts from a cache that's
+        // already populated.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key,
+                CacheEntry::new(Verdict::Block, Duration::from_secs(300)),
+            )
+            .await;
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected the real baseline A answer, not a NULL-blocked one");
+        };
+        assert!(
+            matches!(answer.data, RData::A(a) if a.0 == baseline_ip),
+            "a stale cached BLOCK verdict must not be served while voters are disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_still_honors_blocklist() {
+        // Disabling third-party voters does not disable the user's own
+        // override rules - blocklist must still short-circuit above the
+        // Voters::Disabled branch, and baseline must never be consulted for
+        // a blocked domain regardless of voter state.
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let outcome = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            Voters::Disabled,
+            &cache,
+            &cache_config(),
+            &timeout_config(),
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-blocked A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
     }
 }

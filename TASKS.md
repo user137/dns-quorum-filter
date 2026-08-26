@@ -38,7 +38,6 @@ UI-задачі нижче (T-47, T-52 та ін.) мають детальні �
 ## Фаза 1 — Proof of concept
 
 - [ ] T-137 — Команда/кнопка "очистити кеш" вручну, доступна в один клік (аналогічно T-44 для логу) (4)
-- [ ] T-41 — Явний pass-through при порожньому наборі voters (не fail-closed, не мовчазний no-op) (3, 8.1)
 - [ ] T-42 — Ring buffer логу: `VecDeque` за `parking_lot::RwLock`, межа 1000 записів або 24 год (що настане раніше) (6, 6.1)
 - [ ] T-43 — Структура запису логу (6): timestamp, domain, qtype, decision, decision_source (значення Фази 1 — `ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`), voters, latency_ms; поля `voter_scope` і `geoip_country` додаються відповідно у Фазі 4 і Фазі 2
 - [ ] T-44 — Кнопка/команда очищення логу (6)
@@ -60,7 +59,6 @@ UI-задачі нижче (T-47, T-52 та ін.) мають детальні �
 - [ ] T-60 — Misuse-тест "вимкнути всіх voters одночасно" → очікується pass-through (8.1)
 - [ ] T-63 — Юніт-тести порядку застосування overrides (Наскрізні вимоги)
 - [ ] T-64 — Юніт-тест суфіксного wildcard-збігу (`evil-example.com` не збігається з `*.example.com`) (Наскрізні вимоги)
-- [ ] T-65 — Юніт-тест на порожній набір voters — pass-through, не fail-closed (Наскрізні вимоги, 8.1)
 - [ ] T-66 — Вимірювання метрик Фази 1: латентність холодний/теплий кеш; detection rate кворуму проти кожного окремого провайдера на тестовому наборі malicious-доменів (Фазований план, Фаза 1)
 
 - [x] T-20 — Live-тест сигнатур блоку Quad9 і AdGuard перед імплементацією `is_blocked()` (3.1, Відкриті питання п.1) — підтверджено, DECISIONS.md 2026-08-25
@@ -86,6 +84,8 @@ UI-задачі нижче (T-47, T-52 та ін.) мають детальні �
 - [x] T-37 — Override-списки: allowlist/blocklist, суфіксний wildcard-збіг (не regex, не підрядок) (5) — новий модуль `overrides.rs`: `OverrideLists::decision`/`conflicts`/`load`, `parse_pattern`/`rule_matches`; **частково**: запис файлу (`save`) відсутній (свідомо, до T-46/T-47), підключення до `resolve()` — T-39
 - [x] T-39 — Конвеєр Фази 1: allowlist → blocklist → cache → quorum; allowlist пріоритетний над blocklist, попередження в UI при конфлікті (5) — новий модуль `pipeline.rs`: `handle_query`, разом з `quorum::resolve()`'s розширенням до `QuorumOutcome{verdict, answer}` (SPEC.md §5 крок 5 — "ALLOW + IP" однією дією); **частково**: voter scope (крок 4, Фаза 4) і GeoIP (крок 6, Фаза 2) — пізніші фази; інвалідація кешу при зміні override-файлу — T-40; UI-попередження про allowlist/blocklist-конфлікт — `OverrideLists::conflicts()` вже готовий, споживач — T-47/T-52 (UI ще не існує); RFC 8767 stale-if-error — `should_serve_stale` лишається невикликаним предикатом у живому конвеєрі, окремий малий коміт пізніше; підключення до мережевого listener'а — T-48 (сертифікат)
 - [x] T-40 — Інвалідація відповідних записів кешу при зміні override-списків, без перезапуску сервісу (5) — `overrides::changed_entries` (pure diff, `pub(crate)`), `Cache::invalidate_matching` (один `moka`-предикат на весь батч, не по одному на запис — `moka` застосовує кожен живий предикат на кожен `get()`), `pipeline::invalidate_changed` — склеює обидва; **частково**: жоден живий викликач ще не існує (файл-вотчер чи UI-writer — T-46/T-47/дописник `save()`), той самий патерн, що T-39's власні модулі до їхньої задачі підключення
+- [x] T-41 — Явний pass-through при порожньому наборі voters (не fail-closed, не мовчазний no-op) (3, 8.1) — `pipeline::Voters { Enabled, Disabled }` (не `&[Provider]`: партковий підмножина-toggle зробив би непредставним, а не мовчки хибно обробленим — rust.md "Make Illegal States Unrepresentable"), `handle_query`'s нова гілка коротко замикає на вже наявний `resolve_via_baseline`; той же helper тепер іде через `query_with_timeout` (раніше — голий виклик без таймауту, advisor-знахідка: без цього одне зависання baseline зупинило б увесь трафік, поки voters вимкнені); pass-through не кешується (та сама причина, що allowlist/blocklist — застарілий запис був би невідрізнимий від справді відфільтрованого ALLOW); **частково**: жоден живий викликач ще не передає `Voters::Disabled` — реального per-provider toggle-конфігу ще нема (T-52)
+- [x] T-65 — Юніт-тест на порожній набір voters — pass-through, не fail-closed (Наскрізні вимоги, 8.1) — п'ять тестів у `pipeline.rs` разом із T-41: pass-through не консультує quorum, не кешується, чесний SERVFAIL на помилку і на таймаут baseline (paused-time доказ, той самий прийом, що T-30), blocklist усе одно спрацьовує незалежно від стану voters
 
 ## Фаза 2 — Автоматизація сертифіката + друга платформа
 

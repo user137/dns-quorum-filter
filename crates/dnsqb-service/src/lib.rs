@@ -3,16 +3,21 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, шостий
-//! зріз (T-40): `pipeline::invalidate_changed` evicts cache entries affected
-//! by an override-list reload, on top of the fifth slice's (T-39) end-to-end
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, сьомий
+//! зріз (T-41): `pipeline::handle_query` gains a `Voters` parameter — every
+//! provider disabled is an explicit pass-through via the baseline resolver,
+//! not `fail-closed` and not a silent no-op (SPEC.md §3, §8.1) — on top of
+//! the sixth slice's (T-40) `pipeline::invalidate_changed` (cache eviction
+//! on an override-list reload) and the fifth slice's (T-39) end-to-end
 //! `pipeline::handle_query` (allowlist → blocklist → cache → quorum) and the
 //! earlier slices' timeout-mode-aware OR-logic quorum with early
 //! return/cancellation, `DoH` wire codec, baseline/upstream client with
 //! HTTP/2 keep-alive, and `moka`-backed cache. Override lists have no
 //! file-write path yet (`save()` — T-46/T-47, when a UI writer exists), so
-//! nothing calls `invalidate_changed` yet either. Log and Tauri UI are later
-//! batches — see TASKS.md.
+//! nothing calls `invalidate_changed` yet either; likewise no real
+//! per-provider toggle config exists yet (T-52), so nothing calls
+//! `handle_query` with `Voters::Disabled` yet either. Log and Tauri UI are
+//! later batches — see TASKS.md.
 
 mod cache;
 mod listener;
@@ -30,7 +35,7 @@ pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
-pub use pipeline::{handle_query, invalidate_changed, PipelineOutcome};
+pub use pipeline::{handle_query, invalidate_changed, PipelineOutcome, Voters};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use upstream::{

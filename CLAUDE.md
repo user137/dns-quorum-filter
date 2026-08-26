@@ -8,19 +8,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
-Фаза 1, sixth slice done (T-40 — TASKS.md, one commit): cache invalidation on an override-list
-reload, on top of the fifth slice's (T-39) end-to-end request pipeline — allowlist → blocklist →
-cache → quorum (SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from eight
-modules — `cache` (`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`,
-`chain_cache_ttl`, `is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching` new this slice —
-one `moka` `invalidate_entries_if` predicate per whole batch of changed domains, not one per
-domain, since `moka` re-applies every live predicate on every `get()` until its own maintenance
-task sweeps it away), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
+Фаза 1, seventh slice done (T-41 — TASKS.md, one commit): `pipeline::handle_query` gains a
+`Voters` parameter — SPEC.md §3/§8.1's explicit pass-through when the user has disabled every
+quorum provider, on top of the sixth slice's (T-40) cache invalidation on an override-list reload
+and the fifth slice's (T-39) end-to-end request pipeline — allowlist → blocklist → cache → quorum
+(SPEC.md §5 steps 1-3+5). `dnsqb-service`'s `lib.rs` now re-exports from eight modules — `cache`
+(`CacheKey`/`CacheEntry`/`Verdict`/`CacheConfig`/`Cache`, `clamp_ttl`, `chain_cache_ttl`,
+`is_cacheable`, T-32/T-34/T-36; `Cache::invalidate_matching`, T-40 — one `moka`
+`invalidate_entries_if` predicate per whole batch of changed domains, not one per domain, since
+`moka` re-applies every live predicate on every `get()` until its own maintenance task sweeps it
+away), `overrides` (`OverrideLists::decision`/`conflicts`/`load`,
 `OverrideEntry`/`ListKind`/`InvalidEntry`/`InvalidReason`/`OverrideError`, T-37;
-`changed_entries` new this slice — `pub(crate)`, symmetric diff between two `OverrideLists`
-snapshots, no reader outside `pipeline::invalidate_changed` yet), `pipeline`
-(`handle_query`/`PipelineOutcome`, T-39; `invalidate_changed` new this slice — the reload-event
-counterpart to `handle_query`'s per-query flow), `wire` (`DoH` wire codec, block/NODATA/
+`changed_entries`, T-40 — `pub(crate)`, symmetric diff between two `OverrideLists` snapshots, no
+reader outside `pipeline::invalidate_changed` yet), `pipeline` (`handle_query`/`PipelineOutcome`,
+T-39; `invalidate_changed`, T-40 — the reload-event counterpart to `handle_query`'s per-query
+flow; `Voters { Enabled, Disabled }` new this slice — deliberately not `&[Provider]`, see the
+gotchas section below), `wire` (`DoH` wire codec, block/NODATA/
 SERVFAIL/direct-answer response construction, AD-bit passthrough), `upstream` (`Provider` enum,
 `DohClient` trait + `ReqwestDohClient` with per-upstream HTTP/2 keep-alive, T-31), `timeout`
 (`TimeoutMode`/`TimeoutConfig`, `VoterOutcome`, `query_with_timeout`, T-27), `quorum` (`is_blocked`
@@ -41,17 +44,24 @@ entries in one `Cache::invalidate_matching` call. Needed because `handle_query`'
 overrides-before-cache order means a domain under an active override rule can never get a *new*
 cache entry — the only entry that can go stale is one written *before* the rule existed, so
 invalidating at rule-*add* time (not just removal) is what actually closes the gap; see
-`invalidate_changed`'s own doc comment for the full argument. **Not yet in this slice**: voter
-scope (SPEC.md §5.3-конвеєр крок 4, top-N-per-country, Фаза 4) and GeoIP (крок 6, Фаза 2) — both
-later phases by design; RFC 8767 stale-if-error wired into the live pipeline (`should_serve_stale`
-stays an unconsumed predicate — deferred per advisor review, see the gotchas section below for
-why); UI warning on an allowlist/blocklist conflict (`OverrideLists::conflicts()` is ready, no UI
-consumer yet — T-47/T-52); `overrides.rs` still has **no file-write path** (`save()` — deliberately
-deferred to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований і вручну",
-manually text-edited, until then) — so nothing calls `invalidate_changed` yet either, same pattern
-as `handle_query` itself before T-48's listener wiring. No log wiring either, and no live
-`hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert, T-48).
-`dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
+`invalidate_changed`'s own doc comment for the full argument. `Voters::Disabled` (T-41) short-
+circuits `handle_query` straight to the already-existing `resolve_via_baseline` helper (the same
+one the allowlist branch uses) — one baseline query, no filtering, not cached (same reasoning as
+the allowlist/blocklist branches: a cached pass-through record would be indistinguishable from a
+genuinely-filtered `Allow` once a provider is re-enabled). A blocklist match still short-circuits
+above the `Voters::Disabled` check regardless of voter state — disabling third-party voters never
+disables the user's own override rules. **Not yet in this slice**: voter scope (SPEC.md
+§5.3-конвеєр крок 4, top-N-per-country, Фаза 4) and GeoIP (крок 6, Фаза 2) — both later phases by
+design; RFC 8767 stale-if-error wired into the live pipeline (`should_serve_stale` stays an
+unconsumed predicate — deferred per advisor review, see the gotchas section below for why); UI
+warning on an allowlist/blocklist conflict (`OverrideLists::conflicts()` is ready, no UI consumer
+yet — T-47/T-52); `overrides.rs` still has **no file-write path** (`save()` — deliberately deferred
+to T-46/T-47, when a UI writer exists; SPEC.md §5 calls the file "редагований і вручну", manually
+text-edited, until then) — so nothing calls `invalidate_changed` yet either, same pattern as
+`handle_query` itself before T-48's listener wiring; no real per-provider toggle config exists yet
+either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. No log wiring either,
+and no live `hyper`+TLS listener yet (`main.rs` is still a stub — that needs the self-signed cert,
+T-48). `dnsqb-watcher` is still a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
@@ -96,7 +106,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-40 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-41 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -225,6 +235,29 @@ decision from scratch).
   `PredicateError`'s definition in full (`moka-0.12.16/src/common/error.rs`) rather than trusting a
   grep filtered to the one call site already found — a second variant would have made the comment
   false and the swallowed error a silent regression of the exact bug T-40 exists to fix.
+- **A "config subset" parameter typed as a slice (`&[Provider]`) that internally only checks
+  `.is_empty()` is a footgun, not a convenience** — a caller passing a genuine partial subset
+  (e.g. `&[Provider::Quad9]`, `AdGuard` meant to stay disabled) would silently get every provider
+  queried anyway, since nothing downstream reads which elements are actually in the slice. Caught
+  by advisor review of the T-41 plan before implementing, not by any test. Fixed by using a
+  two-variant enum (`pipeline::Voters { Enabled, Disabled }`) instead — the unsupported partial
+  case becomes unrepresentable rather than silently mishandled (rust.md "Make Illegal States
+  Unrepresentable"). General lesson: when a function's real behavior only distinguishes two cases
+  today, don't type the parameter as though it already supports N — that's a promise the code
+  doesn't keep, and the type system won't catch the caller relying on it.
+- **Promoting a helper from an edge-case path to an all-traffic path means re-auditing it for
+  properties the edge case never needed** — `pipeline::resolve_via_baseline` (T-39, allowlist-only)
+  called the baseline `DohClient` with no timeout at all; harmless when it only served a handful of
+  allowlisted domains, but T-41 makes it the entire resolution path for every A/AAAA query while
+  `Voters::Disabled`. An unbounded hang there would stall all traffic — worse than no filtering,
+  the Три Б user-safety failure mode by name. Caught by advisor review of the T-41 plan, not by any
+  test the original allowlist-only version had. Fixed by routing through the already-existing
+  `timeout::query_with_timeout` (the same primitive every `quorum::resolve` voter call already
+  uses), which fixes both call sites (allowlist and pass-through) at once since they now share one
+  helper. Proved with a `#[tokio::test(start_paused = true)]` test asserting elapsed time stays
+  near-zero against a client that never resolves — the same technique T-30's cancellation tests use
+  (a passing "eventually returns SERVFAIL" assertion alone wouldn't distinguish "timed out
+  correctly" from "waited out a much longer real-world hang before some other mechanism gave up").
 
 ## Documentation map — who owns what
 
