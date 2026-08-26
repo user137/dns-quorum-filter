@@ -12,6 +12,11 @@
 //! class of risk SPEC.md §2 already names for a rejected CA-based design
 //! ("синхронізація папки в хмару" leaking a private key applies just as
 //! much to a synced `%APPDATA%`).
+//!
+//! `app_data_dir`/`PathsError` are re-exported `pub` from `lib.rs` as of
+//! T-143 — `main.rs` is a separate crate (the `[[bin]]` target) and needs a
+//! real `pub` path to resolve the override-list file location, not just
+//! `pub(crate)` visibility.
 
 use std::env;
 use std::ffi::OsString;
@@ -19,7 +24,7 @@ use std::path::PathBuf;
 
 /// Errors resolving the app-data directory.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(crate) enum PathsError {
+pub enum PathsError {
     /// `%LOCALAPPDATA%` is not set in the environment.
     #[error("%LOCALAPPDATA% environment variable is not set")]
     LocalAppDataNotSet,
@@ -40,7 +45,12 @@ pub(crate) fn resolve_app_data_dir(
 /// This app's local (non-roaming) app-data directory:
 /// `%LOCALAPPDATA%\dns-quorum-filter`. Thin wrapper over
 /// [`resolve_app_data_dir`] — not separately tested, trivial pass-through.
-pub(crate) fn app_data_dir() -> Result<PathBuf, PathsError> {
+///
+/// # Errors
+///
+/// Returns [`PathsError::LocalAppDataNotSet`] if `%LOCALAPPDATA%` isn't set
+/// in the environment.
+pub fn app_data_dir() -> Result<PathBuf, PathsError> {
     resolve_app_data_dir(env::var_os("LOCALAPPDATA"))
 }
 

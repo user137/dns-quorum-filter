@@ -8,7 +8,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
-Фаза 1, twelfth slice done (T-142 — TASKS.md, one commit): `tls::load_or_generate_server_config`
+Фаза 1, thirteenth slice done (T-143 — TASKS-DONE.md, one commit): `main.rs` is no longer a
+stub — a real `hyper` TCP accept loop + `rustls`/`tokio-rustls` TLS termination + `DoH` GET/POST →
+`pipeline::handle_query` request dispatch (plus T-25's non-A/AAAA proxying) now resolves queries
+end to end, manually confirmed against the running binary (`Invoke-WebRequest -HttpVersion 2.0
+-SkipCertificateCheck`: GET and POST both 200 with a correctly encoded `application/dns-message`
+answer, wrong path 404, wrong method 405). New `dispatch.rs` module: `wire_bytes_from_get`/
+`content_type_is_dns_message` (`pub(crate)`, RFC 8484 §4.1.1/RFC 7231, unit-tested directly),
+`resolve_doh_request` (`pub(crate)`, decode → `handle_query` → `pipeline::proxy_to_single_upstream`
+on `ProxyToSingleUpstream` → encode), and `pub` `AppState<C: DohClient + Sync>` + `serve` — `serve`
+is deliberately generic over the request body type (`B: Body<Data = Bytes>`), not hardcoded to
+`hyper::body::Incoming` (which only a live connection can construct), specifically so it's
+unit-testable with `http_body_util::Full` instead of needing a real socket. Routing: exact-match
+`/dns-query` only (SPEC.md §1 line 84), 404 otherwise — leaves `/health` (T-86, Фаза 3) free on the
+same port without colliding; POST body size is bounded via `http_body_util::Limited::new(body,
+MAX_MESSAGE_SIZE)` wrapped **before** `.collect()`, not after (a post-collection length check
+bounds nothing — advisor review of the plan caught the first draft doing this backwards, violating
+SPEC.md §8.1's "ліміт розміру, не необмежена алокація"). `tls::build_server_config` now sets
+`alpn_protocols` (`h2` then `http/1.1`) — advisor review of the plan: an unset ALPN offer doesn't
+guarantee predictable HTTP/2 negotiation. `paths::app_data_dir`/`PathsError` are `pub` as of this
+slice (were `pub(crate)`) — `main.rs` is a separate crate (the `[[bin]]` target) and is the first
+genuine external-crate consumer, needing a real path to resolve `overrides.json`'s location. Seven
+new direct dependencies (`hyper`, `hyper-util`, `tokio-rustls`, `http`, `http-body-util`, `bytes`,
+`tracing-subscriber` — SECURITY.md rows added for each); `tracing_subscriber::fmt::init()` is the
+first real subscriber this project has ever wired, so every existing `tracing::` call site starts
+emitting for the first time — audited (grep, not assumed) before enabling it, none interpolates a
+domain name. Port `8443` and `Voters::Enabled` are MVP hardcoded defaults (no config UI yet —
+T-52), documented provisional tech debt, same pattern as T-48's cert validity window. **Not yet in
+this slice**: `query_log::LogEntry` still has no producer; graceful shutdown/signal handling (no
+watcher yet, Фаза 3); T-49 (manual trust-store install) and T-51 (empirical CT-policy check) are
+now genuinely unblocked (a real listener exists to connect to) but not themselves done.
+
+Фаза 1, twelfth slice done (T-142 — TASKS-DONE.md, one commit): `tls::load_or_generate_server_config`
 — builds a `rustls::ServerConfig` from the cert/key T-48/T-50 generate and persist, making the
 "load-existing-vs-regenerate" decision T-50 explicitly left open for "the future listener-wiring
 caller." New `tls.rs` module, three functions layered the same way every prior slice in this crate
@@ -33,10 +64,11 @@ variant) rather than this project assuming a fixed encoding, and it's already av
 `rustls`'s `std` feature — one fewer dependency, one fewer place two PEM parsers could disagree.
 Every `ServerConfig` is built via `ServerConfig::builder_with_provider(aws_lc_rs::
 default_provider())`, never the plain `ServerConfig::builder()` — see the gotchas section below,
-this was a real correction during the closing advisor review, not a first-draft decision. `main.rs`
-is still an untouched stub — the actual `hyper` TCP accept loop, TLS termination, and DoH
-GET/POST → `pipeline::handle_query` request dispatch (plus T-25's non-A/AAAA passthrough) are a
-separate, larger, not-yet-numbered next task.
+this was a real correction during the closing advisor review, not a first-draft decision. At the
+time of this slice, `main.rs` was still an untouched stub — the actual `hyper` TCP accept loop,
+TLS termination, and DoH GET/POST → `pipeline::handle_query` request dispatch (plus T-25's
+non-A/AAAA passthrough) were a separate, larger, not-yet-numbered next task. **Superseded by
+T-143** (see the thirteenth-slice paragraph above) — that task is now done.
 
 Фаза 1, eleventh slice done (T-50 — TASKS.md, one commit): `cert::write_cert_and_key_to_app_data`
 — disk persistence for T-48's cert/key, SPEC.md §2's explicitly named MVP fallback ("якщо secure
@@ -65,7 +97,8 @@ overwrites both files on every call — deciding whether to load an existing cer
 the future listener-wiring caller, stated explicitly rather than silently assumed. **Not yet in
 this slice**: trust-store installation (T-49), certificate rotation (T-69), platform secure storage
 (T-67, Фаза 2), and the load-existing-vs-regenerate decision itself (real `main.rs` listener
-wiring, still a stub).
+wiring, still a stub at the time). **Both since superseded**: the load-vs-regenerate decision by
+T-142, the listener wiring itself by T-143 (see the paragraphs above).
 
 Фаза 1, tenth slice done (T-48 — TASKS.md, one commit): `cert::generate_self_signed_cert` — the
 local `DoH` listener's self-signed leaf certificate (SPEC.md §2), generation only. SAN
@@ -87,8 +120,8 @@ empirically) so this module's own tests assert an exact timestamp; stated as pro
 T-51's empirical Chrome/Firefox CT-policy check, not a settled number. **Not yet in this slice**
 (same "primitive ready, wiring later" pattern as every prior module): writing the cert/key to disk
 (T-50, explicit private-key-file tech debt), trust-store installation (T-49, manual/human step),
-certificate rotation (T-69, Фаза 3), or wiring into a real `hyper` + TLS listener (`main.rs` is
-still a stub).
+certificate rotation (T-69, Фаза 3), or wiring into a real `hyper` + TLS listener (`main.rs` was
+still a stub at the time — **superseded by T-143**, see the paragraphs above).
 
 Фаза 1, ninth slice done (T-42/T-43 — TASKS.md, one commit): `query_log::QueryLog` — the in-memory
 ring buffer query log (SPEC.md §6, §6.1), a `VecDeque<LogEntry>` behind `parking_lot::RwLock` (new
@@ -170,13 +203,15 @@ text-edited, until then) — so nothing calls `invalidate_changed` yet either, s
 `handle_query` itself before the real listener exists; no real per-provider toggle config exists
 yet either (T-52), so nothing calls `handle_query` with `Voters::Disabled` yet. `query_log::QueryLog`
 (T-42/T-43) exists but has no live producer either — `handle_query` doesn't build or push a
-`LogEntry` yet, that wiring is a later task. No live `hyper`+TLS listener yet (`main.rs` is still a
-stub) — the self-signed leaf certificate now exists and is persisted to disk
-(`cert::generate_self_signed_cert` + `write_cert_and_key_to_app_data`, T-48/T-50), and the
-load-existing-vs-regenerate decision those left open is now made
-(`tls::load_or_generate_server_config`, T-142, produces a real `rustls::ServerConfig`) — but
-trust-store install (T-49) and the actual `hyper` TCP accept loop + request dispatch are still
-open. `dnsqb-watcher` is still
+`LogEntry` yet, that wiring is a later task. The self-signed leaf certificate exists and is
+persisted to disk (`cert::generate_self_signed_cert` + `write_cert_and_key_to_app_data`,
+T-48/T-50), the load-existing-vs-regenerate decision those left open is made
+(`tls::load_or_generate_server_config`, T-142, produces a real `rustls::ServerConfig`), and as of
+T-143 there's a real `hyper` TCP accept loop + TLS termination + `dispatch::serve` request
+dispatch — `main.rs` is no longer a stub, manually confirmed resolving real queries end to end
+(see the thirteenth-slice paragraph above). Trust-store install (T-49) and the empirical CT-policy
+check (T-51) are now genuinely unblocked — a real listener exists to connect to — but not
+themselves done yet. `dnsqb-watcher` is still
 a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
@@ -184,7 +219,11 @@ in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `r
 (`default-features = false`, `rustls`/`http2` only — no `native-tls`), `thiserror`, `base64`,
 `futures-util` (`FuturesUnordered`/`StreamExt` only, not the full `futures` crate — T-30), `tracing`
 (diagnostic logging, T-29; `SPEC.md`'s "Технічний стек" table doesn't name a logging crate, `tracing`
-is the tokio-ecosystem de-facto default — no subscriber wired yet, that's the real-listener scope),
+is the tokio-ecosystem de-facto default), `tracing-subscriber` (T-143 — `main.rs`'s
+`tracing_subscriber::fmt::init()`, the first real subscriber this project has wired; every existing
+`tracing::` call site was grepped and confirmed not to interpolate a domain name before this was
+enabled — RUSTSEC-2025-0055 against this crate doesn't cover the version resolved here, re-checked
+via `cargo audit`, see SECURITY.md),
 `moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32),
 `serde` (`derive` feature) + `serde_json` (override-list file's on-disk JSON shape, T-37; also the
 dependency T-53's Tauri DTO layer will need regardless — introduced now for that long-term purpose,
@@ -199,7 +238,18 @@ zeroizes the source `KeyPair` after writing; default features only, `alloc` not 
 tree -f "{p} {f}" -p rustls` to be the exact feature set `reqwest` already activates; builds the
 local `DoH` listener's `rustls::ServerConfig` in `tls::load_or_generate_server_config`, always via
 `builder_with_provider(aws_lc_rs::default_provider())`, never the plain `ServerConfig::builder()`
-— see `tls.rs`'s own module doc comment) — vetting
+— see `tls.rs`'s own module doc comment), `hyper` (T-143 — `server` feature added to the
+`client, http1, http2` set `reqwest` already activated; `dispatch.rs`/`main.rs`'s TCP accept loop
+and request handling), `hyper-util` (T-143 — `default-features = false`, features `http1`/`http2`/
+`server`/`server-auto`/`tokio`; `hyper_util::server::conn::auto::Builder` negotiates HTTP/1.1 vs
+HTTP/2 per connection), `tokio-rustls` (T-143 — `default-features = false`, feature `tls12` only,
+`aws-lc-rs` resolves in automatically via this workspace's already-active `rustls` feature choice,
+confirmed via `cargo tree`; TLS termination on each accepted connection), `http` (T-143 — default
+features, `StatusCode`/`Method`/`Request`/`Response`/`header` types `dispatch.rs` names directly),
+`http-body-util` (T-143 — default features; `Full<Bytes>` for every response body,
+`Limited::new(body, MAX_MESSAGE_SIZE)` wrapped **before** `.collect()` for every POST request body
+— see the thirteenth-slice paragraph above for why that ordering matters), `bytes` (T-143 —
+default features, the `Bytes` buffer type those response/request bodies are built from) — vetting
 rows for each are in SECURITY.md. `[dev-dependencies]` also gained `tempfile` (T-37, `overrides.rs`'s
 `load()` tests only — never shipped in a binary) and `x509-parser` (T-48, `cert.rs`'s tests only —
 decodes the real DER `rcgen` produces to assert SAN/`is_ca`/validity empirically rather than
@@ -207,10 +257,12 @@ trusting `rcgen`'s docs; T-50 also uses its `pem` module to prove `Certificate::
 to the same DER). `deny.toml`'s license allowlist also covers `CDLA-Permissive-2.0`
 (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and `rustls-webpki`), both
 added several batches ago; `futures-util`/`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/
-`parking_lot`/`rcgen`/`x509-parser`/`zeroize`/`rustls` didn't need new allowlist entries (`rcgen`/
+`parking_lot`/`rcgen`/`x509-parser`/`zeroize`/`rustls`/`hyper`/`hyper-util`/`tokio-rustls`/`http`/
+`http-body-util`/`bytes`/`tracing-subscriber` didn't need new allowlist entries (`rcgen`/
 `x509-parser`/`zeroize` are all `MIT OR Apache-2.0`, already allowed; `rustls` is `Apache-2.0 OR
-ISC OR MIT`, `ISC` already allowed for this same TLS stack) — `cargo deny check` confirmed clean
-at T-142 (2026-08-26).
+ISC OR MIT`, `ISC` already allowed for this same TLS stack; the `hyper` family/`http`/
+`http-body-util`/`bytes`/`tracing-subscriber` are all plain `MIT`, already allowed) — `cargo deny
+check` confirmed clean at T-142 (2026-08-26) and again at T-143 (2026-08-26).
 
 Commands (from repo root):
 - `cargo build --workspace` — build both crates.
@@ -247,7 +299,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-50 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-143 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -518,6 +570,28 @@ decision from scratch).
   certs in a test (`tls::tests::server_config_rejects_a_mismatched_cert_and_key_pair`, T-142), a
   real negative test that a wrong DER-extraction would actually fail, not just "the happy path
   returns `Ok`."
+- **`hyper::body::Incoming` can only be produced by a real `hyper` server connection reading from
+  an actual socket — it can't be constructed by hand in a test.** `dispatch::serve` (T-143) is
+  generic over the request body type (`B: hyper::body::Body<Data = Bytes> + Send + 'static`, with
+  `B::Error: Into<Box<dyn std::error::Error + Send + Sync>>` for `Limited<B>`'s own bound)
+  specifically so it can be unit-tested with a hand-built `http::Request<http_body_util::Full<Bytes>>`
+  instead of needing a live TCP/TLS connection just to get an `Incoming` value; `main.rs` calls the
+  same generic function with the real `Incoming` type inferred from context, never spelled out.
+  Hardcoding the parameter type to `Incoming` (the first draft) would have made `serve` itself
+  fundamentally untestable without a real socket, the same class of gap `listener.rs`/`tls.rs`'s
+  own pure/impure splits exist to avoid.
+- **`http_body_util::Limited::new(body, limit)` only bounds allocation if it wraps the body
+  *before* `.collect()`, not after.** A `body: &[u8]` (or `Bytes`) parameter checked against a size
+  limit *after* the caller already ran `.collect()` on the raw, unbounded body has already
+  allocated the full thing — the check at that point only proves the bound was measured, not
+  enforced. `dispatch::serve`'s POST path (T-143) does
+  `Limited::new(req.into_body(), MAX_MESSAGE_SIZE).collect().await` — `Limited`'s own `poll_frame`
+  rejects a frame that would push the running total over the limit, so the allocation itself never
+  happens for an oversized body, not just the post-hoc length check SPEC.md §8.1's "ліміт розміру,
+  не необмежена алокація" actually requires. Caught by advisor review of the plan before
+  implementing, not by any test the first draft's shape would have passed (a test posting an
+  oversized body would still have measured a correctly-rejected length either way — it's the
+  allocation, not the final `Err`, that the wrong ordering fails to bound).
 
 ## Documentation map — who owns what
 

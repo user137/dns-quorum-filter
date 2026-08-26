@@ -216,6 +216,20 @@ async fn resolve_via_baseline<C: DohClient + Sync>(
     }
 }
 
+/// T-25's call-site half of [`PipelineOutcome::ProxyToSingleUpstream`] — proxies `query` to the
+/// baseline resolver, unfiltered, via the same bounded path `handle_query`'s own allowlist and
+/// `Voters::Disabled` branches already use ([`resolve_via_baseline`]). A separate `pub` name
+/// rather than exposing `resolve_via_baseline` itself: this function's contract to callers is
+/// "the non-A/AAAA proxy step," not "the allowlist helper" — the two happen to share an
+/// implementation because SPEC.md §5 step 1 is genuinely the same action in both cases.
+pub async fn proxy_to_single_upstream<C: DohClient + Sync>(
+    client: &C,
+    query: &Message,
+    timeout_config: &TimeoutConfig,
+) -> Message {
+    resolve_via_baseline(client, query, timeout_config).await
+}
+
 /// The `Allow`-verdict branch of `handle_query`'s quorum step — separated
 /// out only because `handle_query` was otherwise growing past a readable
 /// single function, not because this is reused elsewhere.
@@ -1282,6 +1296,26 @@ mod tests {
             started.elapsed() < config.duration * 2,
             "resolve_via_baseline must be bounded by timeout_config.duration, not hang forever"
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_to_single_upstream_forwards_the_baseline_answer() {
+        // T-143: proxy_to_single_upstream is a thin pub wrapper around
+        // resolve_via_baseline (already fully covered above, including the
+        // timeout-bound regression test) - this only proves the delegation
+        // itself, not resolve_via_baseline's own behavior a second time.
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
+            calls: AtomicU32::new(0),
+        };
+        let query = query_for("example.com.", RecordType::TXT);
+
+        let response = super::proxy_to_single_upstream(&client, &query, &timeout_config()).await;
+
+        assert_eq!(response.metadata.response_code, ResponseCode::NoError);
+        assert_eq!(client.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

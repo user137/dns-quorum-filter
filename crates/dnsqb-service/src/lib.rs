@@ -3,14 +3,36 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, дванадцятий
-//! зріз (T-142): `tls::load_or_generate_server_config` — builds a
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, тринадцятий
+//! зріз (T-143): `main.rs` is no longer a stub — a real `hyper` TCP accept
+//! loop + `rustls`/`tokio-rustls` TLS termination + `dispatch::serve`
+//! (`GET`/`POST /dns-query` → `pipeline::handle_query`, RFC 8484) actually
+//! resolves queries end to end, manually confirmed against the running
+//! binary (200 OK with correctly encoded answers on GET and POST, 404 on
+//! any other path, 405 on any other method). `dispatch.rs` is new: its pure
+//! parsing helpers (`wire_bytes_from_get`, `content_type_is_dns_message`)
+//! and `resolve_doh_request` (decode → `handle_query` →
+//! `pipeline::proxy_to_single_upstream` for T-25's non-A/AAAA case → encode)
+//! are `pub(crate)` and unit-tested directly; `serve` and `AppState` are
+//! `pub` — `serve` is generic over the request body type specifically so it
+//! can be unit-tested with `http_body_util::Full` instead of
+//! `hyper::body::Incoming`, which only a live connection can produce.
+//! `tls::build_server_config` now sets `alpn_protocols` (h2, then
+//! http/1.1) — advisor review of the plan caught that an unset ALPN offer
+//! doesn't guarantee predictable HTTP/2 negotiation. `paths::app_data_dir`/
+//! `PathsError` are `pub` as of this slice — `main.rs` is a separate crate
+//! (the `[[bin]]` target) and needed a real external path to resolve
+//! `overrides.json`'s location, `cert.rs`'s `pub(crate)` access no longer
+//! being enough. Port `8443` is an MVP hardcoded default (no config UI yet
+//! — T-52), documented provisional tech debt, same pattern as T-48's cert
+//! validity window; so is `Voters::Enabled` with no real per-provider
+//! toggle. Query-log wiring (`query_log::LogEntry` still has no producer)
+//! and graceful shutdown (no watcher yet, Фаза 3) stay out of scope, same as
+//! every prior slice's "primitive ready, wiring later" pattern. On top of
+//! the twelfth slice's (T-142) `tls::load_or_generate_server_config` — builds a
 //! `rustls::ServerConfig` from the persisted cert/key, or generates and
 //! persists a fresh one if none exists/usable (the load-vs-regenerate
-//! decision T-50 explicitly left open). Still no `hyper` TCP accept loop or
-//! request dispatch — `main.rs` stays a stub until that separate, later
-//! task (see `tls`'s own module doc comment for the crypto-provider
-//! reasoning). On top of the eleventh slice's (T-50)
+//! decision T-50 explicitly left open). On top of the eleventh slice's (T-50)
 //! `cert::write_cert_and_key_to_app_data` — disk persistence for T-48's
 //! cert/key — and the tenth slice's (T-48) `cert::generate_self_signed_cert`
 //! — the local listener's
@@ -51,6 +73,7 @@
 
 mod cache;
 mod cert;
+mod dispatch;
 mod listener;
 mod overrides;
 mod paths;
@@ -66,11 +89,15 @@ pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
+pub use dispatch::{serve, AppState};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
-pub use pipeline::{handle_query, invalidate_changed, PipelineOutcome, Voters};
+pub use paths::{app_data_dir, PathsError};
+pub use pipeline::{
+    handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome, Voters,
+};
 pub use query_log::{Decision, DecisionSource, LogEntry, QueryLog, VoterRecord, VoterVerdict};
 pub use quorum::{is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict};
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};

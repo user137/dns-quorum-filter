@@ -141,10 +141,15 @@ fn build_server_config(
     key_der: PrivateKeyDer<'static>,
 ) -> Result<ServerConfig, TlsError> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-    let config = ServerConfig::builder_with_provider(provider)
+    let mut config = ServerConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()?
         .with_no_client_auth()
         .with_single_cert(cert_chain, key_der)?;
+    // Without an ALPN offer, the handshake completes with no protocol
+    // selected and a strict client's HTTP/2 negotiation isn't guaranteed to
+    // land predictably (T-143) — h2 preferred, http/1.1 as fallback, matching
+    // hyper-util's `auto` builder's own ability to serve either.
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(config)
 }
 
@@ -247,6 +252,22 @@ mod tests {
         // be used, so it's about to be silently overwritten unless the
         // caller logs a `warn!` distinct from the ordinary first-run case.
         assert_eq!(cert_origin(true, false), CertOrigin::Replaced);
+    }
+
+    #[test]
+    fn server_config_advertises_h2_then_http1_1_via_alpn() {
+        let certified_key = match generate_self_signed_cert() {
+            Ok(ck) => ck,
+            Err(err) => panic!("generation must succeed: {err}"),
+        };
+        let config = match server_config_from_certified_key(&certified_key) {
+            Ok(config) => config,
+            Err(err) => panic!("a matching cert/key pair must build a ServerConfig: {err}"),
+        };
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+        );
     }
 
     #[test]
