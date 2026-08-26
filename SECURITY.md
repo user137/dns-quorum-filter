@@ -10,9 +10,13 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   private key spoofs localhost only, not arbitrary domains. See SPEC.md §2. **Current storage
   posture (T-50, explicit MVP tech debt, not the intended end state):** the private key is
   persisted as a plaintext PEM file at `%LOCALAPPDATA%\dns-quorum-filter\key.pem`, with its ACL
-  restricted to the current user only via `icacls.exe` (`cert::write_cert_and_key_to_app_data`) —
-  not a platform secure-storage API (DPAPI). That's tracked as **T-67** (Фаза 2), not a silent
-  permanent default.
+  restricted to the current user only via a **two-phase** `icacls.exe` sequence
+  (`cert::restrict_to_current_user`) — a single `/inheritance:r /grant:r` pass is not enough on
+  every Windows image (confirmed by a CI failure this task's own first draft hit: the
+  GitHub-hosted `windows-latest` runner leaves pre-existing explicit `SYSTEM`/`Administrators`
+  grants on a fresh file that a single pass doesn't touch; a second phase reads the ACL back and
+  explicitly removes every non-target principal) — not a platform secure-storage API (DPAPI).
+  That's tracked as **T-67** (Фаза 2), not a silent permanent default.
 - **Tauri IPC boundary (webview → Rust backend)** — treated as untrusted input (XSS in the UI,
   compromised render, or dev error can all produce an arbitrary IPC call). Covered by four test
   categories, not one "smoke" test: correctness, exploit (path traversal, allowlist bypass,

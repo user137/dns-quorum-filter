@@ -18,11 +18,14 @@ on this toolchain regardless of edition, which would conflict with `#![forbid(un
 `key.pem`'s ACL is restricted to the current user only via `icacls.exe`, spawned by absolute path
 (`%SystemRoot%\System32\icacls.exe`) with a bare `%USERNAME%` grant — confirmed empirically (not
 assumed) that `icacls` resolves an unqualified account name against the local machine first, so no
-`%USERDOMAIN%` lookup is needed. Advisor review of the plan caught a real TOCTOU gap in the first
-draft (write key bytes, then restrict the ACL) — fixed to create the file empty, restrict its ACL,
-*then* write the key bytes, so the private key is never on disk under the parent directory's wider
-inherited ACL even briefly; confirmed empirically that a truncate-in-place write preserves an
-already-set ACL rather than resetting it. The derived PEM text is wrapped in `zeroize::Zeroizing`
+`%USERDOMAIN%` lookup is needed. Restriction is **two `icacls` phases, not one** — see the gotchas
+section below for why a single `/inheritance:r /grant:r` pass looked sufficient on the dev machine
+but left extra grants in place on CI, caught only once CI actually ran (not by any local test).
+Advisor review of the plan caught a real TOCTOU gap in the first draft (write key bytes, then
+restrict the ACL) — fixed to create the file empty, restrict its ACL, *then* write the key bytes,
+so the private key is never on disk under the parent directory's wider inherited ACL even briefly;
+confirmed empirically that a truncate-in-place write preserves an already-set ACL rather than
+resetting it. The derived PEM text is wrapped in `zeroize::Zeroizing`
 and the source `KeyPair` gets an explicit `.zeroize()` call after writing (new direct `zeroize`
 dependency; `rcgen`'s own `zeroize` feature, now enabled, only wipes the `KeyPair`'s internal DER
 bytes, not a PEM `String` derived from it) — documented as best-effort in-memory hygiene, not a
@@ -408,6 +411,33 @@ decision from scratch).
   `write_key_file_creates_a_file_restricted_to_the_current_user_only` test, T-50 — caught by
   advisor review of the diff before commit, the same "test that passes without proving the
   property" shape as the `IsCa::NoCa` gotcha above).
+- **`icacls <path> /inheritance:r /grant:r <user>:F` in a single pass is not sufficient to
+  restrict a file to one principal — confirmed only by CI, not by a local probe.**
+  `/inheritance:r` removes only *inherited* ACEs; `/grant:r` replaces only the *same
+  principal's* own prior explicit grant — neither touches another principal's pre-existing
+  *explicit* ACE. On the Windows 11 Pro dev machine, a freshly created file's only ACEs were
+  inherited, so this single pass happened to leave exactly one entry and the first-written
+  test passed. On the GitHub-hosted `windows-latest` CI runner, a freshly created file already
+  carries **explicit** `SYSTEM`/`Administrators`/local-admin grants (not inherited), which the
+  single pass left untouched — CI failed with 3 ACEs where the test expected 1, a case the dev
+  machine could not reproduce no matter how carefully probed there. Fixed with a second phase:
+  read the ACL back and `/remove:g` every principal that isn't the target user, so the result
+  is self-correcting against whatever a given Windows image's default file ACL happens to be,
+  rather than hardcoding a denylist of expected group names (`cert::restrict_to_current_user`,
+  T-50). **Lesson beyond this one bug: "confirmed empirically" on a single machine is not the
+  same class of evidence as CI on the actual target image** — this project's empirical-
+  verification discipline (scratch probes, real command output) still needs the probe run
+  somewhere representative of where the code will actually execute, not just wherever the
+  agent happens to be developing.
+- **Matching an `icacls`-printed principal against a bare `%USERNAME%` needs a suffix
+  comparison, not equality.** `icacls` always prints the qualified form
+  (`DESKTOP-PA\Pa`, `runnervmeef0v\runneradmin`), never the bare account name passed to
+  `/grant`. A first draft of the CI fix compared `principal != keep` with `keep` set to the
+  bare `%USERNAME%` value — that treated the tool's own just-granted principal as "extra" and
+  stripped it too, leaving the file with zero ACEs and turning the very next `fs::write` into
+  an `Access is denied (os error 5)`. Caught immediately by this module's own new test, not by
+  CI a second time. Fixed by comparing only the segment after the last `\` in the printed
+  principal, case-insensitively (`cert::other_principals`, T-50).
 
 ## Documentation map — who owns what
 
