@@ -498,6 +498,11 @@ Commands (from repo root):
 - `cargo audit` / `cargo deny check` — dependency vetting, required (SECURITY.md, `deny.toml`).
 - `cargo llvm-cov --workspace --lib --lcov --output-path lcov.info` — coverage report, published as
   a CI artifact, non-blocking at the MVP stage (T-19).
+- `cargo doc --workspace --no-deps --document-private-items` with `RUSTDOCFLAGS=-D warnings` —
+  rustdoc gate, required, not advisory. `lib.rs` carries `#![allow(rustdoc::private_intra_doc_links)]`
+  (this crate is never published, its docs are always built with `--document-private-items`, and
+  its doc comments routinely cross-reference private helpers on purpose) — don't add a second
+  one-off `#[allow(...)]` next to a broken link instead of fixing the link itself.
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`).
@@ -870,6 +875,8 @@ decision from scratch).
 | `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |
 | `SECURITY.md` | threat model summary, hard security constraints, dependency-vetting table | threat model changes or a dependency is added |
 | `README.md` | human-facing project description | repo structure changes |
+| `CONFIGURATION.md` | operator-facing reference for both TOML config files (`resolver_config.toml`, `overrides.toml`) — fields, defaults, validation, examples | a config field is added, changed, or removed |
+| `SERVICES.md` | what each binary does, how to run it, its logs and startup behavior | a binary's runtime behavior, ports, or file I/O changes |
 
 Don't duplicate a fact across files — link to the owner instead. `SPEC.md` stays the deep source of
 truth; the other files summarize or track state, they don't re-derive it.

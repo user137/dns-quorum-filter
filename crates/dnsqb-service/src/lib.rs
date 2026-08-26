@@ -2,6 +2,11 @@
 #![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+// This crate is never published - it's built only for `dnsqb-service`/`dnsqb-watcher` and its own
+// docs are always generated with `--document-private-items` (CLAUDE.md). Doc comments on public
+// items routinely cross-reference private helpers on purpose (the established habit for this
+// crate); that's exactly what this lint flags, so it's not a real problem to fix at each site.
+#![allow(rustdoc::private_intra_doc_links)]
 
 //! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, чотирнадцятий
 //! зріз (T-144): `main.rs`'s three MVP-hardcoded constants (port, timeout
