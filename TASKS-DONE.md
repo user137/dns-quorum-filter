@@ -1,0 +1,65 @@
+# Завершені задачі
+
+Дзеркало [`TASKS.md`](TASKS.md) — задачі переносяться сюди по завершенню, той самий
+формат (`- [x] T-N — опис (розділ SPEC.md) — примітка про реалізацію`), не
+видаляються й не перенумеровуються. Порядок усередині кожної фази —
+хронологічний порядок завершення, не порядок номерів T-N.
+
+## Крок 0 — Таблиця RFC-стандартів + conformance-тести
+
+Виконання розбите на 3 коміти (план погоджено з advisor, сесія 2026-08-25):
+батч 0 — цей запис; батч 1 — T-1, T-2, T-15–T-19 (workspace + CI scaffold);
+батч 2 — T-3–T-14 (RFC conformance тести, `#[ignore]` до відповідної Фази 1
+задачі). Платформа Фази 1 для CI/build matrix — Windows (SPEC.md лишав це
+відкритим; рішення й причина — DECISIONS.md).
+
+- [x] T-1 — Ініціалізувати Rust workspace (Cargo.toml, крейти-заглушки за компонентами), без коду резолвера (Технічний стек)
+- [x] T-2 — Підключити `cargo audit` та `cargo deny` як обов'язкові кроки CI (Наскрізні вимоги)
+- [x] T-3 — Падаючий conformance-тест на RFC 1035 (базовий wire format) до реалізації резолвера (Крок 0) — `#[ignore]` до T-21/T-23
+- [x] T-4 — Падаючий conformance-тест на RFC 2181 (узгодженість TTL всередині RRset) (Крок 0, 4.1) — `#[ignore]` до T-33
+- [x] T-5 — Падаючий conformance-тест на RFC 2308 (TTL негативного кешування з SOA MINIMUM) (Крок 0, 3.1, 4.1) — `#[ignore]` до T-35
+- [x] T-6 — Падаючий conformance-тест на RFC 5891 IDNA2008 (нормалізація override-списків/ключа кешу) (Крок 0, 5) — `#[ignore]` до T-38
+- [x] T-7 — Падаючий conformance-тест на RFC 6891 EDNS(0) (Крок 0, 3.4) — `#[ignore]` до T-24
+- [x] T-8 — Падаючий conformance-тест на RFC 7871 ECS (поведінка Quad9 9.9.9.11-варіанту) (Крок 0, 3.4) — `#[ignore]` до T-24
+- [x] T-9 — Падаючий conformance-тест на RFC 8484 DoH (формат запиту/відповіді локального сервера й апстрімів) (Крок 0, 1, 3) — `#[ignore]` до T-24
+- [x] T-10 — Падаючий conformance-тест на RFC 8767 stale-if-error поверх fail-open (Крок 0, 3.3, 4.1) — `#[ignore]` до T-28
+- [x] T-11 — Падаючий conformance-тест на RFC 9460 SVCB/HTTPS (проксі повз quorum) (Крок 0, 3) — `#[ignore]` до T-25
+- [x] T-12 — Падаючий conformance-тест на RFC 4033–4035 DNSSEC (коректність AD-біта, якщо передається клієнту) (Крок 0, 3.4) — `#[ignore]` до T-24
+- [x] T-13 — Винести conformance-тести в окрему секцію CI, незалежну від юніт-тестів бізнес-логіки (Крок 0) — job `conformance` у ci.yml
+- [x] T-14 — Перевірити актуальний статус ECH (draft vs RFC) на момент імплементації, не видавати чернетку за стандарт (Крок 0, примітка щодо ECH) — тепер RFC 9849, SPEC.md оновлено
+- [x] T-15 — Оновити "Project state" у CLAUDE.md реальними build/lint/test-командами, щойно з'явиться перший код (CLAUDE.md)
+- [x] T-16 — CI workflow: `cargo build` + `cargo test` (юніт + conformance) на кожен push/PR (Наскрізні вимоги)
+- [x] T-17 — CI gate: `cargo clippy -- -D warnings` + `cargo fmt -- --check` як обов'язкові кроки, не рекомендація (Наскрізні вимоги)
+- [x] T-18 — CI: build matrix для цільової платформи Фази 1 (розширення на другу платформу — Фаза 2) (Фазований план, Фаза 1) — Windows, DECISIONS.md 2026-08-25
+- [x] T-19 — CI: coverage-звіт (напр. `cargo llvm-cov`) як публікований артефакт, не блокуючий gate на MVP-етапі (Наскрізні вимоги)
+
+## Фаза 1 — Proof of concept (завершені)
+
+- [x] T-20 — Live-тест сигнатур блоку Quad9 і AdGuard перед імплементацією `is_blocked()` (3.1, Відкриті питання п.1) — підтверджено, DECISIONS.md 2026-08-25
+- [x] T-21 — DoH-сервер на `127.0.0.1`, фіксований конфігурований порт, явна помилка при конфлікті без мовчазного fallback (1) — `bind_listener`/`BindError` (`127.0.0.1` хардкод) і decode/encode-codec готові; фактичний hyper+TLS listener в `main.rs` — після T-48 (сертифікат)
+- [x] T-22 — Baseline-резолвер (дефолт Cloudflare 1.1.1.1, конфігурований) для звірки NXDOMAIN і резолюції allowlist (3.1, 3.4) — baseline-клієнт готовий і підключений в `is_blocked`/`resolve`; виклик з allowlist — T-37–T-41
+- [x] T-23 — `is_blocked()` як явна per-provider таблиця сигнатур (Quad9 NXDOMAIN, AdGuard `0.0.0.0`/`::`) (3.1) — сигнатури live-verified, T-20
+- [x] T-24 — Quorum resolver: OR-логіка з 2 апстрімів (Quad9 + AdGuard DNS, буквально за Фазованим планом Фази 1) (3, 3.4, Фазований план Фаза 1) — early-return/timeout-режими додано T-27/T-30, keep-alive T-31, stale-if-error T-28
+- [x] T-25 — Обмежити quorum лише A/AAAA; інші типи (MX, TXT, HTTPS/SVCB) проксіювати без quorum на один апстрім (3) — `requires_quorum` + `resolve()` сам відмовляється консультувати quorum для non-A/AAAA (`QuorumVerdict::NotApplicable`, без жодного апстрім-виклику); фактичне проксіювання non-A/AAAA до апстріму (сам виклик) ще не підключене (диспетчеризація в `main.rs`, разом з T-21's listener)
+- [x] T-26 — Формат блок-відповіді: `0.0.0.0`/`::` для A/AAAA, NODATA для решти типів (3.2)
+- [x] T-61 — Юніт-тести `is_blocked()` per-provider (Наскрізні вимоги)
+- [x] T-62 — Юніт-тести quorum-логіки з мокнутими апстрімами (Наскрізні вимоги)
+- [x] T-28 — `stale-if-error`-стратегія (RFC 8767) поверх `fail-open`, окрема в конфігу від трьох режимів таймауту (3.3, 4.1)
+- [x] T-31 — HTTP/2 keep-alive з'єднання per-upstream з агресивним idle-timeout (3.6) — білдер `ReqwestDohClient` налаштований; юніт-тест покриває лише "клієнт будується з цими опціями", не фактичне перевикористання з'єднання (потребує живого мережевого тесту)
+- [x] T-27 — Три режими таймауту — `fail-open` (дефолт), `fail-closed`, `degraded` — конфігурований таймаут (3.3) — `timeout::TimeoutMode`/`TimeoutConfig`, застосовуються в `quorum::combine`; уточнення двох прогалин (не-timeout помилки апстріму, недоступний baseline) дописано в SPEC.md §3.3
+- [x] T-29 — Логувати кожен таймаут апстріму без доменних імен у діагностичних логах сервісу (3.3, Наскрізні вимоги) — `tracing`-евенти в `quorum::resolve`/`log_outcome`; жодних доменних імен чи вмісту `Message`, лише ідентифікатор провайдера й груба категорія помилки
+- [x] T-30 — Early return при першому BLOCK через `FuturesUnordered`, статус `CANCELED` для недочеканих voters (3.6) — реалізовано в `quorum::resolve`; "CANCELED" поки що лише `tracing::debug!`-подія (`log_canceled`), не типізоване поле в структурі логу — самої структури логу запитів (T-42/T-43, з полем `voters`) ще не існує
+- [x] T-38 — Нормалізація домену: lowercase, IDNA2008 → punycode, обрізання кінцевої крапки (5) — `normalize_domain` через `hickory_proto::rr::Name::from_utf8`/`to_ascii` (той самий `idna::uts46::Uts46` шлях, яким `hickory-proto` сам парсить вхідні запити) — жодної нової прямої залежності, версійний розсинхрон неможливий конструктивно
+- [x] T-33 — Мінімальний TTL всередині одного RRset (RFC 2181) (4.1) — `min_rrset_ttl`; емпірично підтверджено (`wire::tests::hickory_proto_does_not_reconcile_rrset_ttls_on_decode`), що `hickory-proto` НЕ узгоджує розбіжні TTL одного RRset самостійно при декодуванні — це відповідальність проєкту, реалізовано
+- [x] T-35 — Негативне кешування з поля MINIMUM у SOA (RFC 2308) (4.1) — `negative_cache_ttl`, тонкий passthrough до `soa.minimum`
+- [x] T-32 — Кеш на `moka`: `CacheKey`/`CacheEntry`, TTL=0 не кешується (4, 4.1) — новий модуль `cache.rs`; `Cache::insert` сам no-op'ить на TTL=0, `is_cacheable` лишається окремою публічною предикат-функцію для викликача; ще не підключений до `resolve()`/pipeline (T-39)
+- [x] T-34 — Clamping TTL (дефолт мін. 30с / макс. 24 год, конфігуровано) (4.1) — `clamp_ttl(raw_seconds, &CacheConfig)`, застосовується лише до апстрім-похідного TTL, не до `block_verdict_ttl`/`stale_grace`
+- [x] T-36 — Мінімальний TTL по всьому CNAME-ланцюжку (4.1, 6) — `chain_cache_ttl`; **частково**: власний voters-запис у логі на кожен хоп не реалізовано — залежить від структури логу T-42/T-43, якої ще не існує (той самий патерн часткового покриття, що T-30/T-31)
+- [x] T-37 — Override-списки: allowlist/blocklist, суфіксний wildcard-збіг (не regex, не підрядок) (5) — новий модуль `overrides.rs`: `OverrideLists::decision`/`conflicts`/`load`, `parse_pattern`/`rule_matches`; **частково**: запис файлу (`save`) відсутній (свідомо, до T-46/T-47), підключення до `resolve()` — T-39
+- [x] T-39 — Конвеєр Фази 1: allowlist → blocklist → cache → quorum; allowlist пріоритетний над blocklist, попередження в UI при конфлікті (5) — новий модуль `pipeline.rs`: `handle_query`, разом з `quorum::resolve()`'s розширенням до `QuorumOutcome{verdict, answer}` (SPEC.md §5 крок 5 — "ALLOW + IP" однією дією); **частково**: voter scope (крок 4, Фаза 4) і GeoIP (крок 6, Фаза 2) — пізніші фази; інвалідація кешу при зміні override-файлу — T-40; UI-попередження про allowlist/blocklist-конфлікт — `OverrideLists::conflicts()` вже готовий, споживач — T-47/T-52 (UI ще не існує); RFC 8767 stale-if-error — `should_serve_stale` лишається невикликаним предикатом у живому конвеєрі, окремий малий коміт пізніше; підключення до мережевого listener'а — T-48 (сертифікат)
+- [x] T-40 — Інвалідація відповідних записів кешу при зміні override-списків, без перезапуску сервісу (5) — `overrides::changed_entries` (pure diff, `pub(crate)`), `Cache::invalidate_matching` (один `moka`-предикат на весь батч, не по одному на запис — `moka` застосовує кожен живий предикат на кожен `get()`), `pipeline::invalidate_changed` — склеює обидва; **частково**: жоден живий викликач ще не існує (файл-вотчер чи UI-writer — T-46/T-47/дописник `save()`), той самий патерн, що T-39's власні модулі до їхньої задачі підключення
+- [x] T-41 — Явний pass-through при порожньому наборі voters (не fail-closed, не мовчазний no-op) (3, 8.1) — `pipeline::Voters { Enabled, Disabled }` (не `&[Provider]`: партковий підмножина-toggle зробив би непредставним, а не мовчки хибно обробленим — rust.md "Make Illegal States Unrepresentable"), `handle_query`'s нова гілка коротко замикає на вже наявний `resolve_via_baseline`; той же helper тепер іде через `query_with_timeout` (раніше — голий виклик без таймауту, advisor-знахідка: без цього одне зависання baseline зупинило б увесь трафік, поки voters вимкнені); pass-through не кешується (та сама причина, що allowlist/blocklist — застарілий запис був би невідрізнимий від справді відфільтрованого ALLOW); **частково**: жоден живий викликач ще не передає `Voters::Disabled` — реального per-provider toggle-конфігу ще нема (T-52)
+- [x] T-65 — Юніт-тест на порожній набір voters — pass-through, не fail-closed (Наскрізні вимоги, 8.1) — п'ять тестів у `pipeline.rs` разом із T-41: pass-through не консультує quorum, не кешується, чесний SERVFAIL на помилку і на таймаут baseline (paused-time доказ, той самий прийом, що T-30), blocklist усе одно спрацьовує незалежно від стану voters
+- [x] T-63 — Юніт-тести порядку застосування overrides (Наскрізні вимоги) — уже покрито двома рівнями тестів: `overrides::tests::decision_allowlist_wins_on_conflict` (T-37) — пріоритет усередині `OverrideLists::decision()`, і `pipeline::tests::allowlist_wins_when_domain_is_in_both_lists` (T-39) — той самий конфлікт наскрізь через `handle_query` (allowlist-гілка коротко замикає на baseline, blocklist-мок узагалі не консультується); жодного нового коду не знадобилось, лише закриття прогалини в TASKS.md
+- [x] T-64 — Юніт-тест суфіксного wildcard-збігу (`evil-example.com` не збігається з `*.example.com`) (Наскрізні вимоги) — уже покрито `overrides::tests::rule_matches_wildcard_matches_apex_and_subdomain_not_lookalike` (T-37), включно саме з `evil-example.com`-кейсом, названим у самій задачі
+- [x] T-137 — Команда/кнопка "очистити кеш" вручну, доступна в один клік (аналогічно T-44 для логу) (4) — `Cache::clear()`, тонка обгортка над `moka::future::Cache::invalidate_all` (без предиката — `moka` просто фіксує поточний час як межу інвалідації, на відміну від `invalidate_matching`); **частково**: жоден живий викликач ще не існує (Tauri-команда — T-53)

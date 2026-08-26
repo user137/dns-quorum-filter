@@ -274,7 +274,8 @@ decision from scratch).
 | `UI-SPEC.md` | GUI: screen inventory, per-screen field/type tables, Tauri command allowlist draft — no rationale, links back to SPEC.md §8 by section number | a screen, field, or DTO changes; rationale changes go in SPEC.md instead |
 | `diagrams/` | architecture + UI diagrams, each anchored to a SOURCES section list; ground-truth ritual in `diagrams/README.md` applies from here on | a diagrammed state/flow/DTO changes — see the ritual's trigger list |
 | `CLAUDE.md` | agent-facing summary: commands, architecture at a glance, non-obvious gotchas | architecture/commands change |
-| `TASKS.md` | backlog — status only, no reasoning | a task starts/finishes/gets added |
+| `TASKS.md` | open backlog — status only, no reasoning | a task starts or gets added |
+| `TASKS-DONE.md` | completed tasks, moved out of `TASKS.md` on finish, same format + a one-line implementation note per task | a task finishes |
 | `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |
 | `SECURITY.md` | threat model summary, hard security constraints, dependency-vetting table | threat model changes or a dependency is added |
 | `README.md` | human-facing project description | repo structure changes |
