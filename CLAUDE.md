@@ -33,11 +33,44 @@ new direct dependencies (`hyper`, `hyper-util`, `tokio-rustls`, `http`, `http-bo
 `tracing-subscriber` — SECURITY.md rows added for each); `tracing_subscriber::fmt::init()` is the
 first real subscriber this project has ever wired, so every existing `tracing::` call site starts
 emitting for the first time — audited (grep, not assumed) before enabling it, none interpolates a
-domain name. Port `8443` and `Voters::Enabled` are MVP hardcoded defaults (no config UI yet —
-T-52), documented provisional tech debt, same pattern as T-48's cert validity window. **Not yet in
+domain name. At the time of this slice, port `8443` and `Voters::Enabled` were MVP hardcoded
+defaults (no config UI yet — T-52) — **superseded by T-144** (see the fourteenth-slice paragraph
+below), which made both a real persisted config. **Not yet in
 this slice**: `query_log::LogEntry` still has no producer; graceful shutdown/signal handling (no
 watcher yet, Фаза 3); T-49 (manual trust-store install) and T-51 (empirical CT-policy check) are
 now genuinely unblocked (a real listener exists to connect to) but not themselves done.
+
+Фаза 1, fourteenth slice done (T-144 — TASKS-DONE.md, one commit): `main.rs`'s three MVP-hardcoded
+constants (port, timeout mode/duration, `Voters::Enabled`) are now a real persisted
+`ResolverConfig` — new module `config.rs`, mirroring `overrides.rs`'s own load pattern closely
+(`ResolverConfigFile`/`ConfigError`/`ResolverConfig::load`: missing file → `Ok(default())`,
+malformed file → `Err`, struct-level `#[serde(default, deny_unknown_fields)]` so an absent key
+defaults per-field but a typo'd key fails loudly). Deliberately **not** a per-provider/category
+config (UI-SPEC.md §3.4's Security/Ads/Adult toggles) — checked `quorum::resolve` (`quorum.rs`)
+first: it hardcodes querying both `Provider::Quad9` and `Provider::AdGuard` unconditionally, no
+parameter anywhere for "which providers to query," and `upstream::Provider` only has those two
+variants (matching Фаза 1's explicit "2 upstreams" scope) against SPEC.md's much longer preset
+table — persisting a per-provider toggle the resolver can't act on would repeat T-41's own `Voters`
+lesson (a config subset nothing downstream honors is a footgun), so only `voters_enabled` (the one
+toggle already wired since T-41) is persisted; per-provider toggling is a named, open gap for
+whoever scopes T-52's config surface for real. Unlike `overrides.json`'s own load errors (non-fatal,
+falls back to empty), a malformed `resolver_config.json` is **fatal** at startup — SPEC.md §1's
+"never a silent port fallback" rule means silently substituting the default port for a corrupted
+file would be exactly the forbidden behavior, one step removed. `port == 0`/`timeout_ms == 0` are
+rejected explicitly at load (`ConfigError::ZeroPort`/`ZeroTimeout`, not silently clamped — a `0`ms
+timeout would SERVFAIL every query instantly with no obvious cause, Три Б user safety, advisor
+review of the plan). A *privileged* port (1-1023) is deliberately left unhandled for now — a bind
+failure there is still loud (`BindError::Other`), just not specifically diagnosed as "needs
+elevation"; noted in `config.rs`'s own doc comment as worth revisiting once T-53 exposes
+`set_doh_port(port)` from the UI. `timeout::TimeoutMode` gained `Serialize`/`Deserialize`
+(`#[serde(rename_all = "snake_case")]`) rather than a parallel config-only copy of the same three
+variants. `main.rs` now resolves `app_data_dir()` once and joins two file paths off it
+(`overrides.json`, `resolver_config.json`) instead of resolving it twice. **Manually confirmed on
+the running binary**: a `resolver_config.json` with `port: 9443` actually changed which port the
+listener bound (confirmed with a real `DoH` query against 9443), and a structurally-invalid file
+exits with code 1 and an explicit error, not a silent fallback. **Not yet in this slice**:
+per-provider/category toggles, `save()`/live-reload, the Tauri scaffold and commands themselves
+(T-52/T-53) that would actually let a user change any of this without hand-editing JSON.
 
 Фаза 1, twelfth slice done (T-142 — TASKS-DONE.md, one commit): `tls::load_or_generate_server_config`
 — builds a `rustls::ServerConfig` from the cert/key T-48/T-50 generate and persist, making the
@@ -299,7 +332,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-143 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-144 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -592,6 +625,14 @@ decision from scratch).
   implementing, not by any test the first draft's shape would have passed (a test posting an
   oversized body would still have measured a correctly-rejected length either way — it's the
   allocation, not the final `Err`, that the wrong ordering fails to bound).
+- **Struct-level `#[serde(default, deny_unknown_fields)]` composes fine — a missing field falls
+  back to `impl Default for TheStruct`'s corresponding field, an unknown key still fails loudly —
+  but per-field `#[serde(default = "...")]` needs a *function path* returning that field's type,
+  not a field-access expression.** `config::ResolverConfigFile` (T-144) needed one `impl Default`
+  for the whole file-shape struct (mirroring `ResolverConfig::default()`'s values field-by-field),
+  not four small `default_port()`/`default_timeout_mode()`/... functions — simpler, and confirmed
+  (not assumed) to still reject a typo'd key. Advisor review of the plan caught the first draft
+  reaching for the per-field function-path form before there was any code to test against.
 
 ## Documentation map — who owns what
 

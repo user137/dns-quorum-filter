@@ -9,7 +9,8 @@ use std::time::Duration;
 
 /// SPEC.md §3.3: how an unresponsive voter (timeout, or any other upstream
 /// error — SPEC.md §3.3 addendum) is interpreted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TimeoutMode {
     /// A voter that didn't answer in time is treated as not blocking.
     /// Availability priority: one degraded provider doesn't break the
@@ -77,10 +78,34 @@ pub async fn query_with_timeout<C: DohClient>(
 
 #[cfg(test)]
 mod tests {
-    use super::{query_with_timeout, VoterOutcome};
+    use super::{query_with_timeout, TimeoutMode, VoterOutcome};
     use crate::upstream::{DohClient, UpstreamError};
     use hickory_proto::op::Message;
     use std::time::Duration;
+
+    // T-144: proves the on-disk shape `config.rs`'s `ResolverConfigFile`
+    // relies on is the intentional snake_case form, not whatever serde's
+    // own default happened to pick.
+    #[test]
+    fn timeout_mode_round_trips_through_the_expected_snake_case_json() {
+        let cases = [
+            (TimeoutMode::FailOpen, "\"fail_open\""),
+            (TimeoutMode::FailClosed, "\"fail_closed\""),
+            (TimeoutMode::Degraded, "\"degraded\""),
+        ];
+        for (mode, expected_json) in cases {
+            let json = match serde_json::to_string(&mode) {
+                Ok(json) => json,
+                Err(err) => panic!("must serialize: {err}"),
+            };
+            assert_eq!(json, expected_json);
+            let round_tripped: TimeoutMode = match serde_json::from_str(&json) {
+                Ok(mode) => mode,
+                Err(err) => panic!("must deserialize its own output: {err}"),
+            };
+            assert_eq!(round_tripped, mode);
+        }
+    }
 
     struct DelayedClient {
         delay: Duration,

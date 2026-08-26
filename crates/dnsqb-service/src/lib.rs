@@ -3,8 +3,39 @@
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, тринадцятий
-//! зріз (T-143): `main.rs` is no longer a stub — a real `hyper` TCP accept
+//! `DoH` server + quorum resolver core (SPEC.md §1, §3). Фаза 1, чотирнадцятий
+//! зріз (T-144): `main.rs`'s three MVP-hardcoded constants (port, timeout
+//! mode/duration, whether voters are enabled) are now a real persisted
+//! config — new module `config.rs`: `ResolverConfig`/`ResolverConfig::load`,
+//! mirroring `overrides.rs`'s own load pattern (`ResolverConfigFile`,
+//! struct-level `#[serde(default, deny_unknown_fields)]`, missing file →
+//! `Ok(default())`, malformed file → `Err`). Deliberately **not** a per-
+//! provider/category config (UI-SPEC.md §3.4's Security/Ads/Adult toggles
+//! and preset checklist) — `quorum::resolve` hardcodes querying both
+//! `Provider::Quad9` and `Provider::AdGuard` unconditionally, with no
+//! parameter anywhere for "which providers to query," so persisting a
+//! per-provider toggle the resolver can't act on would repeat T-41's own
+//! `Voters`-design lesson (a config subset nothing downstream honors is a
+//! footgun) — flagged as an open gap for whoever scopes T-52's config
+//! surface for real, not silently invented here. Unlike `overrides.json`'s
+//! own load errors (non-fatal, falls back to empty), a malformed
+//! `resolver_config.json` is **fatal** at startup (`tracing::error!` +
+//! `exit(1)`) — SPEC.md §1's "never a silent port fallback" rule means
+//! silently substituting the default port for a corrupted file would be
+//! exactly the forbidden behavior, just one step removed. `port == 0` /
+//! `timeout_ms == 0` are rejected explicitly at load (`ConfigError::
+//! ZeroPort`/`ZeroTimeout`) rather than silently clamped — a `0`ms timeout
+//! would SERVFAIL every query instantly with no obvious cause (Три Б, user
+//! safety; caught by advisor review of the plan, not a test). `TimeoutMode`
+//! (`timeout.rs`) gained `Serialize`/`Deserialize` (`snake_case` on disk) —
+//! reused directly rather than a parallel config-only copy of the same three
+//! variants. Manually confirmed against the running binary: a
+//! `resolver_config.json` with a non-default port actually changes which
+//! port the listener binds (verified end-to-end with a real `DoH` query
+//! against the new port), and a structurally-invalid file exits 1 with an
+//! explicit error, not a silent fallback.
+//!
+//! Фаза 1, тринадцятий зріз (T-143): `main.rs` is no longer a stub — a real `hyper` TCP accept
 //! loop + `rustls`/`tokio-rustls` TLS termination + `dispatch::serve`
 //! (`GET`/`POST /dns-query` → `pipeline::handle_query`, RFC 8484) actually
 //! resolves queries end to end, manually confirmed against the running
@@ -23,10 +54,12 @@
 //! `PathsError` are `pub` as of this slice — `main.rs` is a separate crate
 //! (the `[[bin]]` target) and needed a real external path to resolve
 //! `overrides.json`'s location, `cert.rs`'s `pub(crate)` access no longer
-//! being enough. Port `8443` is an MVP hardcoded default (no config UI yet
-//! — T-52), documented provisional tech debt, same pattern as T-48's cert
-//! validity window; so is `Voters::Enabled` with no real per-provider
-//! toggle. Query-log wiring (`query_log::LogEntry` still has no producer)
+//! being enough. Port `8443`, timeout mode/duration, and `Voters::Enabled`
+//! were MVP hardcoded defaults at the time of this slice — **superseded by
+//! T-144** (see the fourteenth-slice paragraph above), which made all three
+//! a real persisted config; per-provider toggling itself is still not
+//! wired (`quorum::resolve` still hardcodes both Phase-1 providers
+//! unconditionally). Query-log wiring (`query_log::LogEntry` still has no producer)
 //! and graceful shutdown (no watcher yet, Фаза 3) stay out of scope, same as
 //! every prior slice's "primitive ready, wiring later" pattern. On top of
 //! the twelfth slice's (T-142) `tls::load_or_generate_server_config` — builds a
@@ -73,6 +106,7 @@
 
 mod cache;
 mod cert;
+mod config;
 mod dispatch;
 mod listener;
 mod overrides;
@@ -89,6 +123,7 @@ pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
+pub use config::{ConfigError, ResolverConfig};
 pub use dispatch::{serve, AppState};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{

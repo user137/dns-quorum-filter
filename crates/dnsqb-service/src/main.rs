@@ -12,20 +12,15 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, OverrideLists, ReqwestDohClient, TimeoutConfig, Voters,
+    CacheConfig, OverrideLists, ReqwestDohClient, ResolverConfig, TimeoutConfig, Voters,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_rustls::TlsAcceptor;
-
-/// MVP hardcoded default (no config UI yet — T-52). SPEC.md §1 requires the
-/// port be fixed-by-default and configurable, but doesn't itself name a
-/// number — provisional, documented tech debt, same pattern as T-48's cert
-/// validity window; T-52's Tauri settings screen is where this becomes a
-/// real setting.
-const DOH_PORT: u16 = 8443;
 
 #[tokio::main]
 async fn main() {
@@ -40,15 +35,22 @@ async fn main() {
     };
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-    let listener = match bind_listener(DOH_PORT).await {
+    // Resolved once, used for both the resolver config and override lists
+    // below (T-144) - a missing app-data directory (`%LOCALAPPDATA%` unset)
+    // isn't fatal for either, same tolerance `load_overrides` already had
+    // before this slice: both fall back to defaults/empty with a warning.
+    let app_data = app_data_dir().ok();
+
+    let resolver_config = load_resolver_config(app_data.as_deref());
+
+    let listener = match bind_listener(resolver_config.port).await {
         Ok(listener) => listener,
         Err(BindError::AddrInUse(port)) => {
             // SPEC.md §1: an already-used port is an explicit error, never a
             // silent fallback to a different port.
             tracing::error!(
                 "port {port} is already in use - not falling back to a different port \
-                 (SPEC.md §1); stop the conflicting process, or wait for a configurable-port \
-                 setting (T-52)"
+                 (SPEC.md §1); stop the conflicting process, or edit resolver_config.json"
             );
             std::process::exit(1);
         }
@@ -66,18 +68,29 @@ async fn main() {
         }
     };
 
-    let overrides = load_overrides();
+    let overrides = load_overrides(app_data.as_deref());
+
+    let voters = if resolver_config.voters_enabled {
+        Voters::Enabled
+    } else {
+        Voters::Disabled
+    };
+    let timeout_config = TimeoutConfig {
+        mode: resolver_config.timeout_mode,
+        duration: Duration::from_millis(resolver_config.timeout_ms.into()),
+    };
 
     let state = Arc::new(AppState::new(
         client,
         overrides,
-        Voters::Enabled, // MVP default, no toggle UI yet (T-52)
+        voters,
         Cache::new(&CacheConfig::default()),
         CacheConfig::default(),
-        TimeoutConfig::default(),
+        timeout_config,
     ));
 
-    tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{DOH_PORT}/dns-query");
+    let port = resolver_config.port;
+    tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
 
     loop {
         let (stream, _peer) = match listener.accept().await {
@@ -109,23 +122,18 @@ async fn main() {
     }
 }
 
-/// Loads `overrides.json` from the app-data directory (SPEC.md §5: a plain,
+/// Loads `overrides.json` from `app_data` (SPEC.md §5: a plain,
 /// manually-edited JSON file — T-46/T-47's UI writer is later work).
 /// `OverrideLists::load` already treats a missing file as "no overrides
 /// yet," so a first run with no file present starts empty rather than
-/// failing. An app-data directory that can't be resolved at all is not
-/// fatal either — SPEC.md's user-safety principle: starting with no
-/// overrides is strictly better than refusing to start at all.
-fn load_overrides() -> OverrideLists {
-    let dir = match app_data_dir() {
-        Ok(dir) => dir,
-        Err(err) => {
-            tracing::warn!(
-                "could not resolve the app-data directory ({err}), starting with empty \
-                 override lists"
-            );
-            return OverrideLists::empty();
-        }
+/// failing. A missing `app_data` (the app-data directory couldn't be
+/// resolved) is not fatal either — SPEC.md's user-safety principle:
+/// starting with no overrides is strictly better than refusing to start at
+/// all.
+fn load_overrides(app_data: Option<&Path>) -> OverrideLists {
+    let Some(dir) = app_data else {
+        tracing::warn!("no app-data directory available, starting with empty override lists");
+        return OverrideLists::empty();
     };
     match OverrideLists::load(&dir.join("overrides.json")) {
         Ok((overrides, invalid)) => {
@@ -141,6 +149,30 @@ fn load_overrides() -> OverrideLists {
         Err(err) => {
             tracing::warn!("failed to load override lists ({err}), starting with none");
             OverrideLists::empty()
+        }
+    }
+}
+
+/// Loads `resolver_config.json` from `app_data` (T-144). A missing
+/// `app_data` falls back to [`ResolverConfig::default`] with a warning, same
+/// tolerance as [`load_overrides`]. Unlike override lists, a
+/// present-but-malformed config file is **fatal** — SPEC.md §1's explicit
+/// "never a silent fallback on port" rule means silently substituting the
+/// default port for a corrupted `resolver_config.json` could restart the
+/// service on a different port than the one the user's browser is actually
+/// pointed at, invisibly. `ResolverConfig::load` already validates `port`/
+/// `timeout_ms` aren't `0` internally, so any `Err` here is a config the
+/// user needs to actually fix, not a routine startup condition.
+fn load_resolver_config(app_data: Option<&Path>) -> ResolverConfig {
+    let Some(dir) = app_data else {
+        tracing::warn!("no app-data directory available, using default resolver config");
+        return ResolverConfig::default();
+    };
+    match ResolverConfig::load(&dir.join("resolver_config.json")) {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!("failed to load resolver_config.json: {err}");
+            std::process::exit(1);
         }
     }
 }
