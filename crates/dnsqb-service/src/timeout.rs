@@ -83,9 +83,14 @@ mod tests {
     use hickory_proto::op::Message;
     use std::time::Duration;
 
-    // T-144: proves the on-disk shape `config.rs`'s `ResolverConfigFile`
-    // relies on is the intentional snake_case form, not whatever serde's
-    // own default happened to pick.
+    // T-144: proves the enum-as-string shape `config.rs`'s
+    // `ResolverConfigFile` relies on is the intentional snake_case form, not
+    // whatever serde's own default happened to pick. Tested via JSON here
+    // (not TOML, which `config.rs` actually uses as of T-145) because
+    // `toml::to_string` has no bare-scalar document root to serialize a
+    // lone enum variant into — but the quoted-string variant-name
+    // representation this proves is identical in both formats, so this
+    // stays a valid proof of the on-disk shape either way.
     #[test]
     fn timeout_mode_round_trips_through_the_expected_snake_case_json() {
         let cases = [

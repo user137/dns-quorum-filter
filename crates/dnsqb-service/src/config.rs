@@ -2,6 +2,15 @@
 //! voters are enabled at all (T-144). Mirrors `overrides.rs`'s own load
 //! pattern closely (`ResolverConfigFile`/`ConfigError`/`load`).
 //!
+//! On-disk format is TOML (T-145, superseding T-144's JSON) — chosen over
+//! JSON specifically for comment support, closer to the `ssh_config`/`my.cnf`
+//! hand-editable style than JSON allows. `ConfigError::Toml` wraps
+//! `toml::de::Error` directly (unlike `overrides.rs`'s deliberately
+//! payload-less parse-error variant) — `resolver_config.toml` never contains
+//! a domain name, so `toml`'s parse errors (which render an annotated
+//! snippet of the offending input line, confirmed empirically via a scratch
+//! probe) are a genuine UX win here with no privacy cost.
+//!
 //! Deliberately **not** a per-provider/category config — `quorum::resolve`
 //! hardcodes querying both `Provider::Quad9` and `Provider::AdGuard`
 //! unconditionally, with no parameter anywhere for "which providers to
@@ -33,9 +42,9 @@ pub enum ConfigError {
     /// a missing file is `Ok`, see [`ResolverConfig::load`]).
     #[error("failed to read resolver config file: {0}")]
     Io(#[source] io::Error),
-    /// The file's contents are not valid JSON in the expected shape.
-    #[error("failed to parse resolver config JSON: {0}")]
-    Json(#[source] serde_json::Error),
+    /// The file's contents are not valid TOML in the expected shape.
+    #[error("failed to parse resolver config TOML: {0}")]
+    Toml(#[source] toml::de::Error),
     /// `port` was `0` — `bind_listener(0)` would bind an OS-chosen ephemeral
     /// port, exactly the silent dynamic-port behavior SPEC.md §1 forbids for
     /// the real listener (Three safety legs, user safety: a browser
@@ -94,7 +103,7 @@ impl ResolverConfig {
     /// file is always `Err`, never a silent fallback to defaults: an
     /// operator who hand-edited the file and made a mistake should see an
     /// error, not have their edit silently discarded. A field absent from
-    /// otherwise-valid JSON defaults to the MVP value for just that field
+    /// otherwise-valid TOML defaults to the MVP value for just that field
     /// (`ResolverConfigFile`'s own `#[serde(default)]`); an unknown key is
     /// rejected outright (`#[serde(deny_unknown_fields)]`), the same
     /// "graceful partial, loud typo" split `overrides.rs` already
@@ -106,7 +115,7 @@ impl ResolverConfig {
     /// # Errors
     ///
     /// Returns [`ConfigError::Io`] for a read failure other than "file not
-    /// found", [`ConfigError::Json`] if the file's JSON doesn't match the
+    /// found", [`ConfigError::Toml`] if the file's TOML doesn't match the
     /// expected shape, [`ConfigError::ZeroPort`] if `port` is `0`, or
     /// [`ConfigError::ZeroTimeout`] if `timeout_ms` is `0`.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
@@ -115,7 +124,7 @@ impl ResolverConfig {
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => return Err(ConfigError::Io(err)),
         };
-        let file: ResolverConfigFile = serde_json::from_str(&raw).map_err(ConfigError::Json)?;
+        let file: ResolverConfigFile = toml::from_str(&raw).map_err(ConfigError::Toml)?;
 
         if file.port == 0 {
             return Err(ConfigError::ZeroPort);
@@ -133,7 +142,7 @@ impl ResolverConfig {
     }
 }
 
-/// On-disk shape — a plain, hand-editable JSON object (same spirit as
+/// On-disk shape — a plain, hand-editable TOML table (same spirit as
 /// `overrides.rs`'s own `OverrideListsFile`). Struct-level `#[serde(default)]`
 /// (backed by `impl Default` below, mirroring [`ResolverConfig::default`])
 /// fills any field absent from a partial file; `deny_unknown_fields` still
@@ -171,7 +180,7 @@ mod tests {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
         };
-        let path = dir.path().join("resolver_config.json");
+        let path = dir.path().join("resolver_config.toml");
         (dir, path)
     }
 
@@ -188,8 +197,8 @@ mod tests {
     #[test]
     fn load_of_a_fully_specified_file_returns_exactly_those_values() {
         let (_dir, path) = temp_config_path();
-        let json = r#"{"port":9000,"timeout_mode":"fail_closed","timeout_ms":5000,"voters_enabled":false}"#;
-        if let Err(err) = fs::write(&path, json) {
+        let toml = "port = 9000\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 5000\nvoters_enabled = false\n";
+        if let Err(err) = fs::write(&path, toml) {
             panic!("must be able to write the fixture file: {err}");
         }
         let config = match ResolverConfig::load(&path) {
@@ -210,7 +219,7 @@ mod tests {
     #[test]
     fn load_of_a_partial_file_fills_the_rest_from_defaults() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, r#"{"port":9000}"#) {
+        if let Err(err) = fs::write(&path, "port = 9000\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         let config = match ResolverConfig::load(&path) {
@@ -229,31 +238,31 @@ mod tests {
     #[test]
     fn load_rejects_a_misspelled_key_instead_of_silently_ignoring_it() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, r#"{"potr":9000}"#) {
+        if let Err(err) = fs::write(&path, "potr = 9000\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(
             ResolverConfig::load(&path),
-            Err(ConfigError::Json(_))
+            Err(ConfigError::Toml(_))
         ));
     }
 
     #[test]
-    fn load_rejects_structurally_invalid_json() {
+    fn load_rejects_structurally_invalid_toml() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, "not json") {
+        if let Err(err) = fs::write(&path, "not valid toml ===") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(
             ResolverConfig::load(&path),
-            Err(ConfigError::Json(_))
+            Err(ConfigError::Toml(_))
         ));
     }
 
     #[test]
     fn load_rejects_a_zero_port() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, r#"{"port":0}"#) {
+        if let Err(err) = fs::write(&path, "port = 0\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(
@@ -265,7 +274,7 @@ mod tests {
     #[test]
     fn load_rejects_a_zero_timeout() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, r#"{"timeout_ms":0}"#) {
+        if let Err(err) = fs::write(&path, "timeout_ms = 0\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(

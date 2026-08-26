@@ -40,6 +40,54 @@ this slice**: `query_log::LogEntry` still has no producer; graceful shutdown/sig
 watcher yet, Фаза 3); T-49 (manual trust-store install) and T-51 (empirical CT-policy check) are
 now genuinely unblocked (a real listener exists to connect to) but not themselves done.
 
+Фаза 1, fifteenth slice done (T-145 — TASKS-DONE.md, one commit): config-file format switched
+from JSON to TOML for both `config.rs`'s `ResolverConfig` (T-144) and `overrides.rs`'s
+`OverrideLists` (T-37) — user asked, mid-session, for a hand-editable format "like `ssh_config`/
+`my.cnf`" and whether something beats plain JSON; TOML was recommended and implemented (comment
+support is the actual gap JSON has vs. that style; the swap is close to mechanical on top of the
+existing serde-based `ResolverConfigFile`/`OverrideListsFile` pattern — `toml::from_str` in place of
+`serde_json::from_str`, same struct shapes, same `#[serde(default, deny_unknown_fields)]`
+attributes). **This is a genuine SPEC.md reversal, not just a code change** — SPEC.md named JSON
+explicitly (comms-matrix row, §1's override-storage line), both now edited to say TOML, with a
+`DECISIONS.md` entry recording the switch (same precedent as T-20's block-response-format
+correction). Hard cutover, no dual-format loader: `resolver_config.json`/`overrides.json` are no
+longer read at all, file names become `resolver_config.toml`/`overrides.toml`. Two things an
+`advisor` review of the plan caught before implementing: (1) `toml::de::Error`'s `Display`/`Debug`
+both render an annotated snippet of the offending input line (unlike `serde_json::Error`'s generic
+"expected value at line N"), confirmed empirically via a scratch probe — since `overrides.toml` is
+nothing but domain names, wrapping that error type the same way `config.rs` does would newly leak a
+domain into the service diagnostic log the moment `main.rs` logs it, the same failure class already
+recorded for `InvalidReason`/`ProtoError` in this file's own gotchas. Fixed by making
+`overrides::OverrideError`'s parse variant (`Parse`) carry **no payload at all** — a fixed message,
+structurally incapable of carrying a domain — while `config::ConfigError::Toml(toml::de::Error)`
+keeps its payload, since `resolver_config.toml` carries no domains and the rich snippet is a genuine
+UX win there. A new regression test (`overrides.rs`'s
+`load_error_display_never_contains_the_raw_toml_input`) formats the error with a sentinel domain
+embedded in malformed input and asserts the sentinel is absent, mirroring the existing
+`InvalidEntry`-redaction test. (2) A hard cutover alone would make an already-populated
+`overrides.json` silently invisible on upgrade — `load()` sees no `.toml` file, returns empty, and
+the caller only warned on `Err`, never on merely-missing. A user with a real blocklist would go
+silently unfiltered, the Три Б user-safety failure mode by name. Fixed with a small `main.rs` helper
+(`warn_if_legacy_json_sibling_exists`), called before both `load_overrides`/`load_resolver_config`'s
+real `load()` calls — if the new `.toml` path is missing but the old `.json` sibling exists,
+`tracing::warn!`s the two file *paths* (never contents) so the operator notices the format changed
+instead of silently losing their config. Not a compatibility shim — the old file is still never
+read, only its *presence* is detected and reported. Manually confirmed on the running binary: a
+`resolver_config.toml` port override still works exactly as T-144's own JSON version did; a
+malformed `.toml` still exits 1 with an explicit (now TOML-snippet) error, not a silent fallback; a
+leftover `overrides.json` with no `overrides.toml` sibling produces exactly the new warning log line
+and nothing else. New direct dependency `toml` 1.1.4 (+ `toml_parser`/`toml_writer`/
+`toml_datetime`/`serde_spanned`/`winnow`, all `MIT`/`MIT OR Apache-2.0`, already-allowed licenses,
+SECURITY.md row added) — default features (`display`, `parse`, `serde`, `std`) are sufficient, no
+`cargo tree` feature drift found for the crates it shares with the existing dependency graph (none
+— this is a genuinely new leaf in the tree). `timeout.rs`'s existing `TimeoutMode` JSON round-trip
+test is intentionally left as JSON, not converted to TOML — `toml::to_string` has no bare-scalar
+document root to serialize a lone enum variant into, and the snake_case variant-name string it
+proves is identical in both formats regardless (only the test's own comment was reworded to stop
+claiming it proves `config.rs`'s literal on-disk shape, which is no longer JSON). T-146
+(config-driven persisted query log) stays explicitly out of scope — separate task, blocked on the
+encrypted-storage mechanism SPEC.md's privacy constraints require (T-96).
+
 Фаза 1, fourteenth slice done (T-144 — TASKS-DONE.md, one commit): `main.rs`'s three MVP-hardcoded
 constants (port, timeout mode/duration, `Voters::Enabled`) are now a real persisted
 `ResolverConfig` — new module `config.rs`, mirroring `overrides.rs`'s own load pattern closely
@@ -258,9 +306,13 @@ is the tokio-ecosystem de-facto default), `tracing-subscriber` (T-143 — `main.
 enabled — RUSTSEC-2025-0055 against this crate doesn't cover the version resolved here, re-checked
 via `cargo audit`, see SECURITY.md),
 `moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32),
-`serde` (`derive` feature) + `serde_json` (override-list file's on-disk JSON shape, T-37; also the
-dependency T-53's Tauri DTO layer will need regardless — introduced now for that long-term purpose,
-not as a one-off parser), `parking_lot` (`query_log.rs`'s ring buffer lock, T-42 — SPEC.md §6.1's
+`serde` (`derive` feature) + `serde_json` (introduced T-37 for the override-list file's on-disk
+shape; that use moved to `toml` at T-145, but `serde_json` stays direct — `timeout.rs`'s
+`TimeoutMode` round-trip test still exercises it deliberately, per the fifteenth-slice paragraph
+above, and it's also the dependency T-53's Tauri DTO layer will need regardless), `toml` (T-145 —
+default features `display`/`parse`/`serde`/`std`; `config.rs`'s `ResolverConfig`/`overrides.rs`'s
+`OverrideLists` on-disk format, replacing `serde_json` there for comment support and
+`ssh_config`/`my.cnf`-style hand-editability, DECISIONS.md), `parking_lot` (`query_log.rs`'s ring buffer lock, T-42 — SPEC.md §6.1's
 explicit choice over `tokio::sync::RwLock`, since no critical section here ever holds the lock
 across an `.await`), `rcgen` (`default-features = false`, features `aws_lc_rs`/`pem`/`zeroize` —
 not the default `ring`, to match `reqwest`/`rustls`'s already-chosen crypto backend; SPEC.md §2's
@@ -291,7 +343,7 @@ to the same DER). `deny.toml`'s license allowlist also covers `CDLA-Permissive-2
 (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and `rustls-webpki`), both
 added several batches ago; `futures-util`/`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/
 `parking_lot`/`rcgen`/`x509-parser`/`zeroize`/`rustls`/`hyper`/`hyper-util`/`tokio-rustls`/`http`/
-`http-body-util`/`bytes`/`tracing-subscriber` didn't need new allowlist entries (`rcgen`/
+`http-body-util`/`bytes`/`tracing-subscriber`/`toml` didn't need new allowlist entries (`rcgen`/
 `x509-parser`/`zeroize` are all `MIT OR Apache-2.0`, already allowed; `rustls` is `Apache-2.0 OR
 ISC OR MIT`, `ISC` already allowed for this same TLS stack; the `hyper` family/`http`/
 `http-body-util`/`bytes`/`tracing-subscriber` are all plain `MIT`, already allowed) — `cargo deny
@@ -332,7 +384,7 @@ architectural change — most non-obvious choices in this project are already de
 explicit reasoning (search the file for the relevant section number rather than re-deriving a
 decision from scratch).
 
-## Rust/tooling gotchas (learned by doing, T-20–T-144 batches)
+## Rust/tooling gotchas (learned by doing, T-20–T-145 batches)
 
 - `hickory-proto` 0.26.1's API is field-heavy, not method-heavy — `.answers`, `.authorities`,
   `.name`, `.data`, `.metadata.response_code` etc. are public fields, not methods. Check the
@@ -633,6 +685,20 @@ decision from scratch).
   not four small `default_port()`/`default_timeout_mode()`/... functions — simpler, and confirmed
   (not assumed) to still reject a typo'd key. Advisor review of the plan caught the first draft
   reaching for the per-field function-path form before there was any code to test against.
+- **`toml::de::Error`'s `Display` *and* `Debug` both render an annotated snippet of the offending
+  input line** (`TOML parse error at line N, column M\n  |\nN | <the actual line>\n  |  ^\n<message>`)
+  — unlike `serde_json::Error`'s generic "expected value at line N column M", which never echoes the
+  input back. Confirmed empirically with a scratch probe (a malformed TOML fixture containing a
+  sentinel string, `format!("{err}")`/`format!("{err:?}")`, both contained the sentinel) before
+  relying on it, not assumed from the crate's docs. For any file that can contain sensitive text
+  (`overrides.toml`'s domain names, this project's own "no domain names in service logs" rule) —
+  wrapping this error type directly in a `thiserror` variant and logging it is an automatic leak; the
+  fix is a payload-free error variant with a fixed message (`overrides::OverrideError::Parse`, T-145
+  — same shape as `InvalidReason`), not redacting a field after the fact. A file that structurally
+  cannot contain sensitive text (`config.rs`'s `resolver_config.toml`, no domains) can keep the real
+  `toml::de::Error` payload — the rich snippet is a genuine UX win there with no privacy cost, so the
+  two error types are deliberately shaped differently on purpose, not an inconsistency to "fix" into
+  matching each other later.
 
 ## Documentation map — who owns what
 

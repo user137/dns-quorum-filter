@@ -122,8 +122,8 @@ async fn main() {
     }
 }
 
-/// Loads `overrides.json` from `app_data` (SPEC.md §5: a plain,
-/// manually-edited JSON file — T-46/T-47's UI writer is later work).
+/// Loads `overrides.toml` from `app_data` (SPEC.md §5: a plain,
+/// manually-edited TOML file, T-145 — T-46/T-47's UI writer is later work).
 /// `OverrideLists::load` already treats a missing file as "no overrides
 /// yet," so a first run with no file present starts empty rather than
 /// failing. A missing `app_data` (the app-data directory couldn't be
@@ -135,7 +135,9 @@ fn load_overrides(app_data: Option<&Path>) -> OverrideLists {
         tracing::warn!("no app-data directory available, starting with empty override lists");
         return OverrideLists::empty();
     };
-    match OverrideLists::load(&dir.join("overrides.json")) {
+    let toml_path = dir.join("overrides.toml");
+    warn_if_legacy_json_sibling_exists(&toml_path, &dir.join("overrides.json"));
+    match OverrideLists::load(&toml_path) {
         Ok((overrides, invalid)) => {
             if !invalid.is_empty() {
                 tracing::warn!(
@@ -153,26 +155,48 @@ fn load_overrides(app_data: Option<&Path>) -> OverrideLists {
     }
 }
 
-/// Loads `resolver_config.json` from `app_data` (T-144). A missing
-/// `app_data` falls back to [`ResolverConfig::default`] with a warning, same
-/// tolerance as [`load_overrides`]. Unlike override lists, a
-/// present-but-malformed config file is **fatal** — SPEC.md §1's explicit
-/// "never a silent fallback on port" rule means silently substituting the
-/// default port for a corrupted `resolver_config.json` could restart the
-/// service on a different port than the one the user's browser is actually
-/// pointed at, invisibly. `ResolverConfig::load` already validates `port`/
-/// `timeout_ms` aren't `0` internally, so any `Err` here is a config the
-/// user needs to actually fix, not a routine startup condition.
+/// Loads `resolver_config.toml` from `app_data` (T-144, format switched to
+/// TOML by T-145). A missing `app_data` falls back to
+/// [`ResolverConfig::default`] with a warning, same tolerance as
+/// [`load_overrides`]. Unlike override lists, a present-but-malformed config
+/// file is **fatal** — SPEC.md §1's explicit "never a silent fallback on
+/// port" rule means silently substituting the default port for a corrupted
+/// `resolver_config.toml` could restart the service on a different port than
+/// the one the user's browser is actually pointed at, invisibly.
+/// `ResolverConfig::load` already validates `port`/`timeout_ms` aren't `0`
+/// internally, so any `Err` here is a config the user needs to actually fix,
+/// not a routine startup condition.
 fn load_resolver_config(app_data: Option<&Path>) -> ResolverConfig {
     let Some(dir) = app_data else {
         tracing::warn!("no app-data directory available, using default resolver config");
         return ResolverConfig::default();
     };
-    match ResolverConfig::load(&dir.join("resolver_config.json")) {
+    let toml_path = dir.join("resolver_config.toml");
+    warn_if_legacy_json_sibling_exists(&toml_path, &dir.join("resolver_config.json"));
+    match ResolverConfig::load(&toml_path) {
         Ok(config) => config,
         Err(err) => {
-            tracing::error!("failed to load resolver_config.json: {err}");
+            tracing::error!("failed to load resolver_config.toml: {err}");
             std::process::exit(1);
         }
+    }
+}
+
+/// T-145: the config file format switched from JSON to TOML with a hard
+/// cutover, no dual-format loading — but a hard cutover on its own would make
+/// an existing populated `overrides.json` silently invisible (`load()` sees
+/// no `overrides.toml`, returns empty, and the caller only warns on `Err`,
+/// never on a merely-missing file). A user with a real blocklist would go
+/// silently unfiltered — worse off than before, with no indication why
+/// (Три Б, user safety). This only logs the two file *paths*, never file
+/// contents, so it carries no domain-name exposure risk.
+fn warn_if_legacy_json_sibling_exists(toml_path: &Path, json_path: &Path) {
+    if !toml_path.exists() && json_path.exists() {
+        tracing::warn!(
+            "found {} but not {} - the config file format changed to TOML (T-145); \
+             rename/recreate it in the new format, the old file is being ignored",
+            json_path.display(),
+            toml_path.display()
+        );
     }
 }

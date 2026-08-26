@@ -3,6 +3,19 @@
 //! wired to `resolve()`/the request pipeline (T-39), and has no `save()` —
 //! SPEC.md §5 describes the file as "редагований і вручну" (manually edited)
 //! and no writer exists yet (T-46/T-47); adding one now would be speculative.
+//!
+//! On-disk format is TOML (T-145, superseding T-37's JSON) — same
+//! `ssh_config`/`my.cnf`-style hand-editability motivation as `config.rs`.
+//! **Unlike `config.rs`'s `ConfigError::Toml`, this module's parse-error
+//! variant carries no payload at all.** `overrides.toml` is nothing but
+//! domain names, and `toml::de::Error`'s `Display`/`Debug` both render an
+//! annotated snippet of the offending input line (confirmed empirically via
+//! a scratch probe, not assumed) — wrapping it here would newly leak a
+//! domain into the service diagnostic log the moment a caller logs the
+//! error, the exact failure class `InvalidReason` already exists to prevent
+//! (see that type's own doc comment). A fixed, payload-free message is
+//! structurally incapable of carrying a domain, the same reasoning, applied
+//! one layer up.
 
 use std::fmt;
 use std::fs;
@@ -110,12 +123,18 @@ pub enum OverrideError {
     /// a missing file is `Ok`, see [`OverrideLists::load`]).
     #[error("failed to read override list file: {0}")]
     Io(#[source] io::Error),
-    /// The file's contents are not valid JSON in the expected shape.
-    #[error("failed to parse override list JSON: {0}")]
-    Json(#[source] serde_json::Error),
+    /// The file's contents are not valid TOML in the expected shape.
+    ///
+    /// Deliberately carries **no** payload — `toml::de::Error`'s own
+    /// `Display`/`Debug` render an annotated snippet of the offending input
+    /// line, and this file is nothing but domain names (see this module's
+    /// own doc comment for the empirical confirmation and the full
+    /// reasoning, same shape as [`InvalidReason`]).
+    #[error("failed to parse override list TOML")]
+    Parse,
 }
 
-/// On-disk shape (SPEC.md §5: "простий текстовий/JSON-файл", "редагований і
+/// On-disk shape (SPEC.md §5: "простий текстовий/TOML-файл", "редагований і
 /// вручну") — two plain string arrays, not a literal `Vec<OverrideEntry>`.
 /// A wildcard entry is written as `*.example.com` (UI-SPEC.md §3.3's own
 /// user-facing convention), not as a separate `is_wildcard` field — simpler
@@ -124,7 +143,7 @@ pub enum OverrideError {
 /// `CacheEntry` never being serialized directly).
 ///
 /// `deny_unknown_fields`: a misspelled key (`"blockList"`, `"block_list"`,
-/// ...) must fail the whole load loudly (`OverrideError::Json`), not parse
+/// ...) must fail the whole load loudly (`OverrideError::Parse`), not parse
 /// as `Ok` with the misspelled list silently defaulted to empty via
 /// `#[serde(default)]` — that would be silent total loss of a list, a worse
 /// outcome than the single-bad-domain case design decision 9 guards against,
@@ -278,8 +297,8 @@ impl OverrideLists {
     /// second element of the tuple as an [`InvalidEntry`] (design decision 9)
     /// — one typo in a hand-edited blocklist must not silently empty the
     /// entire blocklist. Only I/O failures other than "not found", or a file
-    /// whose JSON isn't even shaped like `{"allowlist": [...], "blocklist":
-    /// [...]}`, fail the whole load.
+    /// whose TOML isn't even shaped like `allowlist = [...]` /
+    /// `blocklist = [...]`, fail the whole load.
     ///
     /// This does blocking file I/O — call at startup or on a
     /// list-changed event, not from a per-query hot path.
@@ -287,8 +306,8 @@ impl OverrideLists {
     /// # Errors
     ///
     /// Returns [`OverrideError::Io`] for a read failure other than "file not
-    /// found", or [`OverrideError::Json`] if the file's top-level JSON shape
-    /// doesn't match `{"allowlist": [...], "blocklist": [...]}`.
+    /// found", or [`OverrideError::Parse`] if the file's top-level TOML shape
+    /// doesn't match `allowlist = [...]` / `blocklist = [...]`.
     pub fn load(path: &Path) -> Result<(Self, Vec<InvalidEntry>), OverrideError> {
         let raw = match fs::read_to_string(path) {
             Ok(raw) => raw,
@@ -297,7 +316,7 @@ impl OverrideLists {
             }
             Err(err) => return Err(OverrideError::Io(err)),
         };
-        let file: OverrideListsFile = serde_json::from_str(&raw).map_err(OverrideError::Json)?;
+        let file: OverrideListsFile = toml::from_str(&raw).map_err(|_| OverrideError::Parse)?;
 
         let mut entries = Vec::new();
         let mut invalid = Vec::new();
@@ -486,8 +505,8 @@ mod tests {
     }
 
     #[test]
-    fn load_rejects_structurally_invalid_json() {
-        let mut file = match tempfile_with_contents("not json") {
+    fn load_rejects_structurally_invalid_toml() {
+        let mut file = match tempfile_with_contents("not valid toml ===") {
             Ok(file) => file,
             Err(err) => panic!("failed to create temp file: {err}"),
         };
@@ -496,41 +515,77 @@ mod tests {
             panic!("failed to flush temp file: {err}");
         }
         match OverrideLists::load(&path) {
-            Err(OverrideError::Json(_)) => {}
-            other => panic!("expected OverrideError::Json, got {other:?}"),
+            Err(OverrideError::Parse) => {}
+            other => panic!("expected OverrideError::Parse, got {other:?}"),
         }
     }
 
     #[test]
     fn load_rejects_a_misspelled_top_level_key_instead_of_silently_dropping_that_list() {
-        let json = r#"{"allowlist": ["example.com"], "blockList": ["bad.example.com"]}"#;
-        let file = match tempfile_with_contents(json) {
+        let toml = "allowlist = [\"example.com\"]\nblockList = [\"bad.example.com\"]\n";
+        let file = match tempfile_with_contents(toml) {
             Ok(file) => file,
             Err(err) => panic!("failed to create temp file: {err}"),
         };
         match OverrideLists::load(file.path()) {
-            Err(OverrideError::Json(_)) => {}
-            other => panic!("expected OverrideError::Json, got {other:?}"),
+            Err(OverrideError::Parse) => {}
+            other => panic!("expected OverrideError::Parse, got {other:?}"),
         }
     }
 
     #[test]
-    fn load_of_empty_object_and_single_key_object_still_succeeds() {
-        for json in [r"{}", r#"{"allowlist": ["example.com"]}"#] {
-            let file = match tempfile_with_contents(json) {
+    fn load_error_display_never_contains_the_raw_toml_input() {
+        // Empirical proof that OverrideError::Parse's payload-free design
+        // (this module's own doc comment) actually holds: a scratch probe
+        // confirmed toml::de::Error's own Display/Debug render an annotated
+        // snippet of the offending input line, so a domain in a malformed
+        // overrides.toml must never survive into OverrideError's own Display.
+        let telltale = "sentinel-marker.broken.example";
+        let toml = format!("blocklist = [\"{telltale}\n");
+        let file = match tempfile_with_contents(&toml) {
+            Ok(file) => file,
+            Err(err) => panic!("failed to create temp file: {err}"),
+        };
+        let Err(err) = OverrideLists::load(file.path()) else {
+            panic!("expected the malformed TOML to fail to load")
+        };
+        let display_output = format!("{err}");
+        assert!(
+            !display_output.contains(telltale),
+            "error Display must not contain the raw TOML input: {display_output}"
+        );
+        // Display alone isn't enough — in a tracing codebase the accidental
+        // leak path is Debug (`tracing::warn!(?err)`/`"{err:?}"`), not just
+        // Display (same reasoning as InvalidEntry's own Debug guard above).
+        // This also catches a future regression the Display assertion alone
+        // would miss: `#[source]` isn't rendered by thiserror's `#[error]`
+        // message, so adding a `toml::de::Error` payload back to this
+        // variant while keeping the same `#[error("...")]` text would pass
+        // the Display assertion and still leak via Debug.
+        let debug_output = format!("{err:?}");
+        assert!(
+            !debug_output.contains(telltale),
+            "error Debug must not contain the raw TOML input: {debug_output}"
+        );
+    }
+
+    #[test]
+    fn load_of_empty_file_and_single_key_file_still_succeeds() {
+        for toml in ["", "allowlist = [\"example.com\"]\n"] {
+            let file = match tempfile_with_contents(toml) {
                 Ok(file) => file,
-                Err(err) => panic!("failed to create temp file for {json:?}: {err}"),
+                Err(err) => panic!("failed to create temp file for {toml:?}: {err}"),
             };
             if let Err(err) = OverrideLists::load(file.path()) {
-                panic!("expected Ok for {json:?}: {err}");
+                panic!("expected Ok for {toml:?}: {err}");
             }
         }
     }
 
     #[test]
     fn load_normalizes_and_splits_mixed_exact_and_wildcard_entries() {
-        let json = r#"{"allowlist": ["Example.COM."], "blocklist": ["*.bad.example.net"]}"#;
-        let file = match tempfile_with_contents(json) {
+        let toml = "allowlist = [\"Example.COM.\"]\nblocklist = [\"*.bad.example.net\"]\n";
+        let file = match tempfile_with_contents(toml) {
             Ok(file) => file,
             Err(err) => panic!("failed to create temp file: {err}"),
         };
@@ -553,8 +608,8 @@ mod tests {
 
     #[test]
     fn load_skips_one_invalid_domain_without_dropping_the_rest_of_the_list() {
-        let json = r#"{"allowlist": [], "blocklist": ["good.example.com", "*.*.broken.example"]}"#;
-        let file = match tempfile_with_contents(json) {
+        let toml = "allowlist = []\nblocklist = [\"good.example.com\", \"*.*.broken.example\"]\n";
+        let file = match tempfile_with_contents(toml) {
             Ok(file) => file,
             Err(err) => panic!("failed to create temp file: {err}"),
         };
