@@ -12,8 +12,8 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, OverrideLists, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
-    RuntimeSettings, TimeoutConfig,
+    CacheConfig, OverrideLists, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient,
+    ResolverConfig, RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -78,16 +78,20 @@ async fn main() {
             duration: Duration::from_millis(resolver_config.timeout_ms.into()),
         },
     };
-    // T-52: the admin channel persists a config change back to whichever
-    // path it was loaded from - `None` (no app-data dir) means a live
-    // change still applies in-memory, it just can't survive a restart, same
-    // tolerance `load_resolver_config` already applies to a missing
-    // app-data directory.
+    // T-52/T-149: the admin channel persists a config change back to
+    // whichever path it was loaded from, and /admin/reset (T-149) reloads
+    // from the same two paths - `None` (no app-data dir) means a live
+    // change still applies in-memory, it just can't survive a restart (and
+    // /admin/reset has nothing to reload from, 500), same tolerance
+    // `load_resolver_config`/`load_overrides` already apply to a missing
+    // app-data directory. Both paths are always resolved together from the
+    // same `app_data_dir()` call - never independently `Some`/`None`.
     let persist = PersistTarget {
         port: resolver_config.port,
-        config_path: app_data
-            .as_deref()
-            .map(|dir| dir.join("resolver_config.toml")),
+        paths: app_data.as_deref().map(|dir| PersistPaths {
+            config: dir.join("resolver_config.toml"),
+            overrides: dir.join("overrides.toml"),
+        }),
     };
 
     // No config-driven sizing yet - T-146 (SPEC.md §6's own stated defaults:

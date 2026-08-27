@@ -12,15 +12,21 @@
 //! tests call it with `http_body_util::Full`.
 //!
 //! Endpoint is fixed to `/dns-query` (SPEC.md §1 line 84) — any other path is
-//! a 404, except `/admin/status` and `/admin/config` (T-52), added on this
-//! same listener rather than a new one, the same "extend the existing port"
-//! pattern already named for the future `/health` (T-86). `/health` itself
-//! is still free to add later without colliding.
+//! a 404, except `/admin/status`/`/admin/config` (T-52), `/admin/reset`
+//! (T-149, soft reset — see `apply_admin_reset`), and `/admin/ui`/
+//! `/admin/ui/main.js`/`/admin/ui/style.css` (T-149, the embedded web UI —
+//! see `admin_ui.rs`), all added on this same listener rather than a new
+//! one, the same "extend the existing port" pattern already named for the
+//! future `/health` (T-86). `/health` itself is still free to add later
+//! without colliding. `/admin/shutdown` (T-149's highest-blast-radius
+//! endpoint) is deliberately not here yet — it ships in the same commit as
+//! its only consumer, the `dnsqb-tray` crate.
 
-use crate::admin::{compute_stats, AdminConfigUpdate, AdminStatusResponse};
+use crate::admin::{compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse};
+use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig};
 use crate::config::ResolverConfig;
-use crate::overrides::OverrideLists;
+use crate::overrides::{OverrideError, OverrideLists};
 use crate::pipeline::{handle_query, proxy_to_single_upstream, PipelineOutcome};
 use crate::query_log::{LogEntry, QueryLog};
 use crate::quorum::EnabledProviders;
@@ -38,6 +44,7 @@ use parking_lot::RwLock;
 use serde::Serialize;
 use std::convert::Infallible;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -53,6 +60,10 @@ const DNS_MESSAGE_CONTENT_TYPE: &str = "application/dns-message";
 
 const ADMIN_STATUS_PATH: &str = "/admin/status";
 const ADMIN_CONFIG_PATH: &str = "/admin/config";
+const ADMIN_RESET_PATH: &str = "/admin/reset";
+const ADMIN_UI_PATH: &str = "/admin/ui";
+const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
+const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
 
 /// `POST /admin/config`'s body is two bools and a short enum — this bound
 /// exists for the same reason `MAX_MESSAGE_SIZE` does (SPEC.md §8.1: "ліміт
@@ -170,12 +181,27 @@ pub struct RuntimeSettings {
 pub struct PersistTarget {
     /// The local `DoH` listener's port (unchanging at runtime).
     pub port: u16,
-    /// Where to write `resolver_config.toml` on an admin config change, or
-    /// `None` if no app-data directory was available at startup (same
-    /// tolerance `main.rs` already applies to loading it) — an admin write
-    /// with no target still live-applies, just can't persist
-    /// ([`AdminStatusResponse::persisted`] reports `false`).
-    pub config_path: Option<PathBuf>,
+    /// Where `resolver_config.toml`/`overrides.toml` live, or `None` if no
+    /// app-data directory was available at startup (same tolerance
+    /// `main.rs` already applies to loading them) — an admin write with no
+    /// target still live-applies, just can't persist ([`AdminStatusResponse::
+    /// persisted`] reports `false`) and `/admin/reset` (T-149) has nowhere
+    /// to reload from (500).
+    pub paths: Option<PersistPaths>,
+}
+
+/// The two on-disk config files' paths, always resolved together from one
+/// `app_data_dir()` call in `main.rs` — bundled as one field on
+/// [`PersistTarget`] rather than two independent `Option<PathBuf>`s so
+/// "config path present but overrides path absent" (or vice versa) is
+/// unrepresentable, not just unreachable in practice (T-149, advisor-caught:
+/// rust.md "Make Illegal States Unrepresentable").
+#[derive(Debug, Clone)]
+pub struct PersistPaths {
+    /// `resolver_config.toml`'s path.
+    pub config: PathBuf,
+    /// `overrides.toml`'s path.
+    pub overrides: PathBuf,
 }
 
 /// Decode `wire_bytes`, run it through the pipeline, and encode whatever
@@ -198,16 +224,29 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     state: &AppState<C>,
 ) -> Result<Vec<u8>, ProtoError> {
     let query = decode_wire_message(wire_bytes)?;
+    // Counted only once the request is a real DNS query - a malformed
+    // request never enters resolution, so it's never "in flight" in the
+    // sense the tray tooltip/admin dashboard means (T-149). RAII, not a
+    // manual inc/dec pair - this function (and handle_query below it) has
+    // several return points, and a forgotten decrement on a future one
+    // would leak the counter upward forever (the same class of bug T-147's
+    // own notes already flag for this exact function).
+    let _in_flight = InFlightGuard::new(&state.in_flight);
     let started = Instant::now();
     // Snapshot-read once, not re-read per field below - a `Copy` value, and
     // the lock is never held across the `.await` this call makes (T-52,
     // same "no `.await` under the lock" precedent `query_log.rs` already
     // established for its own `RwLock`).
     let settings = *state.runtime.read();
+    // Same snapshot discipline as `settings` above, but `OverrideLists`
+    // isn't `Copy` (Vec-backed) - `Arc::clone` bumps a refcount under the
+    // lock instead of either holding the lock across the `.await` below or
+    // cloning the whole list on every query (T-149).
+    let overrides = Arc::clone(&state.overrides.read());
     let response = match handle_query(
         &query,
         &state.client,
-        &state.overrides,
+        &overrides,
         settings.providers,
         &state.cache,
         &state.cache_config,
@@ -252,12 +291,18 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
 /// `upstream::ReqwestDohClient`.
 pub struct AppState<C: DohClient + Sync> {
     client: C,
-    overrides: OverrideLists,
+    overrides: RwLock<Arc<OverrideLists>>,
     runtime: RwLock<RuntimeSettings>,
     cache: Cache,
     cache_config: CacheConfig,
     query_log: QueryLog,
     persist: PersistTarget,
+    /// How many requests are currently between "decoded" and "answered"
+    /// (T-149) — a live counter surfaced in [`AdminStats::in_flight`],
+    /// maintained by [`InFlightGuard`], never read/written directly outside
+    /// [`resolve_doh_request`]/[`admin_status`]/[`apply_admin_config`]/
+    /// [`apply_admin_reset`].
+    in_flight: AtomicU64,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
@@ -266,7 +311,9 @@ impl<C: DohClient + Sync> AppState<C> {
     /// live-mutable settings — passed as plain values here and wrapped in
     /// the internal lock by this constructor, so existing call sites barely
     /// change shape even though the storage underneath now supports live
-    /// updates.
+    /// updates. `overrides` is likewise wrapped (`RwLock<Arc<_>>`, T-149) so
+    /// `/admin/reset` can swap the whole list atomically without forcing
+    /// every per-query read to clone it.
     #[must_use]
     pub fn new(
         client: C,
@@ -279,13 +326,34 @@ impl<C: DohClient + Sync> AppState<C> {
     ) -> Self {
         Self {
             client,
-            overrides,
+            overrides: RwLock::new(Arc::new(overrides)),
             runtime: RwLock::new(runtime),
             cache,
             cache_config,
             query_log,
             persist,
+            in_flight: AtomicU64::new(0),
         }
+    }
+}
+
+/// RAII in-flight counter guard (T-149) — increments on construction,
+/// decrements on `Drop`. See [`resolve_doh_request`]'s own comment for why
+/// this is RAII and not a manual increment/decrement pair.
+struct InFlightGuard<'a> {
+    counter: &'a AtomicU64,
+}
+
+impl<'a> InFlightGuard<'a> {
+    fn new(counter: &'a AtomicU64) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self { counter }
+    }
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -298,7 +366,7 @@ impl<C: DohClient + Sync> AppState<C> {
 /// validation this function never exercises, so unlike the
 /// `resolved`-response builder below (a real `Content-Type` header, worth
 /// double-checking), there is no failure mode here to handle at all.
-fn status_response(status: StatusCode) -> Response<Full<Bytes>> {
+pub(crate) fn status_response(status: StatusCode) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::new(Bytes::new()));
     *response.status_mut() = status;
     response
@@ -323,8 +391,18 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
-        stats: compute_stats(&entries),
+        stats: live_stats(state, &entries),
         persisted,
+    }
+}
+
+/// [`compute_stats`] plus the live in-flight counter [`compute_stats`]
+/// itself has no access to (it only ever sees the log) — the one merge
+/// point every [`AdminStatusResponse`] builder below shares (T-149).
+fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) -> AdminStats {
+    AdminStats {
+        in_flight: state.in_flight.load(Ordering::Relaxed),
+        ..compute_stats(entries)
     }
 }
 
@@ -352,15 +430,15 @@ fn apply_admin_config<C: DohClient + Sync>(
         guard.timeout.mode = update.timeout_mode;
         *guard
     };
-    let persisted = match &state.persist.config_path {
-        Some(path) => {
+    let persisted = match state.persist.paths.as_ref() {
+        Some(paths) => {
             let config = ResolverConfig {
                 port: state.persist.port,
                 timeout_mode: settings.timeout.mode,
                 timeout_ms: timeout_ms(settings.timeout.duration),
                 providers: settings.providers,
             };
-            match config.save(path) {
+            match config.save(&paths.config) {
                 Ok(()) => true,
                 Err(err) => {
                     tracing::warn!("failed to persist an admin config change to disk: {err}");
@@ -375,7 +453,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
-        stats: compute_stats(&state.query_log.snapshot(SystemTime::now())),
+        stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
         persisted,
     }
 }
@@ -435,6 +513,112 @@ where
         return status_response(StatusCode::BAD_REQUEST);
     };
     json_response(&apply_admin_config(state, update))
+}
+
+/// Errors reloading state from disk for `POST /admin/reset` (T-149).
+#[derive(Debug, thiserror::Error)]
+enum AdminResetError {
+    /// No app-data directory was resolved at startup — nothing to reload
+    /// from (same condition [`PersistTarget::paths`] being `None` already
+    /// means for persisting an admin config change).
+    #[error("no app-data directory available to reload from")]
+    NoAppData,
+    /// `resolver_config.toml` failed to reload.
+    #[error("failed to reload resolver_config.toml: {0}")]
+    Config(#[source] crate::config::ConfigError),
+    /// `overrides.toml` failed to reload.
+    #[error("failed to reload overrides.toml: {0}")]
+    Overrides(#[source] OverrideError),
+}
+
+/// Soft-resets `state` (T-149): reloads both TOML files from disk into
+/// local values first, and only swaps them into the live state once *both*
+/// succeed (prepare-then-commit — same discipline as T-50's cert TOCTOU
+/// fix) — a malformed file on disk must never leave `state` half-updated.
+///
+/// Overrides are swapped **before** the cache is cleared, not after — the
+/// reverse order leaves a window where a query racing this reset could
+/// repopulate the cache from the *old* overrides between the clear and the
+/// swap; swap-then-clear can't produce that.
+fn apply_admin_reset<C: DohClient + Sync>(
+    state: &AppState<C>,
+) -> Result<AdminStatusResponse, AdminResetError> {
+    let paths = state
+        .persist
+        .paths
+        .as_ref()
+        .ok_or(AdminResetError::NoAppData)?;
+    let config = ResolverConfig::load(&paths.config).map_err(AdminResetError::Config)?;
+    let (overrides, invalid) =
+        OverrideLists::load(&paths.overrides).map_err(AdminResetError::Overrides)?;
+    if !invalid.is_empty() {
+        tracing::warn!(
+            "{} override-list entr{} rejected as invalid on reset, ignored",
+            invalid.len(),
+            if invalid.len() == 1 { "y" } else { "ies" }
+        );
+    }
+    if config.port != state.persist.port {
+        // Live-apply only, never a rebind - the same "port isn't
+        // admin-mutable" boundary `PersistTarget::port`'s own doc comment
+        // already states, just reachable here from a different direction
+        // (the file changed under the running service, not an admin POST).
+        tracing::warn!(
+            "resolver_config.toml's port ({}) differs from the running listener's port ({}) - \
+             /admin/reset never rebinds, ignored",
+            config.port,
+            state.persist.port
+        );
+    }
+    *state.runtime.write() = RuntimeSettings {
+        providers: config.providers,
+        timeout: TimeoutConfig {
+            mode: config.timeout_mode,
+            duration: Duration::from_millis(config.timeout_ms.into()),
+        },
+    };
+    *state.overrides.write() = Arc::new(overrides);
+    state.cache.clear();
+    state.query_log.clear();
+    // `persisted: true` is correct here in its documented, admin-mutable-
+    // subset sense (providers/timeout) even when `config.port` differed
+    // above - `port` was never part of that promise (see
+    // `apply_admin_config`'s own `persisted` handling, which never
+    // considers port either).
+    Ok(admin_status(state, true))
+}
+
+/// `POST /admin/reset` (T-149) — same CSRF gate and body-size cap as
+/// `/admin/config`. A malformed/missing on-disk file is 500 (the caller
+/// didn't cause it); everything else about the request shape is 400/405,
+/// same convention as every other route here.
+async fn serve_admin_reset<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    if *req.method() != Method::POST {
+        return status_response(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    if limited.collect().await.is_err() {
+        return status_response(StatusCode::BAD_REQUEST);
+    }
+    match apply_admin_reset(state) {
+        Ok(response) => json_response(&response),
+        Err(err) => {
+            tracing::warn!("admin reset failed: {err}");
+            status_response(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// `/dns-query`'s `GET`/`POST` handling (SPEC.md §1 line 84) — everything
@@ -524,6 +708,10 @@ where
         DNS_QUERY_PATH => serve_dns_query(req, &state).await,
         ADMIN_STATUS_PATH => serve_admin_status(req.method(), &state),
         ADMIN_CONFIG_PATH => serve_admin_config(req, &state).await,
+        ADMIN_RESET_PATH => serve_admin_reset(req, &state).await,
+        ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
+        ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
+        ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
         _ => status_response(StatusCode::NOT_FOUND),
     })
 }
@@ -532,7 +720,7 @@ where
 mod tests {
     use super::{
         content_type_is_dns_message, resolve_doh_request, serve, wire_bytes_from_get, AppState,
-        DohRequestError, PersistTarget, RuntimeSettings, MAX_MESSAGE_SIZE,
+        DohRequestError, PersistPaths, PersistTarget, RuntimeSettings, MAX_MESSAGE_SIZE,
     };
     use crate::admin::{AdminConfigUpdate, AdminStatusResponse};
     use crate::cache::{Cache, CacheConfig};
@@ -703,6 +891,30 @@ mod tests {
         assert_eq!(decoded.metadata.response_code, ResponseCode::NoError);
     }
 
+    // T-149: catches a broken/missing decrement (e.g. a `fetch_add` paired
+    // with the wrong field, or a guard that never actually drops) - doesn't
+    // prove the *increment* happened mid-flight, which needs a
+    // never-resolving mock future to observe (not worth the complexity
+    // here; the RAII shape itself, not this test, is what makes the
+    // increment/decrement pairing provable).
+    #[tokio::test]
+    async fn resolve_doh_request_leaves_in_flight_at_zero_after_completing() {
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let wire_bytes = query_bytes("example.com.", RecordType::A);
+        let state = state_with(client);
+
+        if let Err(err) = resolve_doh_request(&wire_bytes, &state).await {
+            panic!("must resolve: {err}");
+        }
+
+        assert_eq!(state.in_flight.load(Ordering::SeqCst), 0);
+    }
+
     // T-147: resolve_doh_request is the one place that pushes a LogEntry -
     // a test at pipeline.rs's level can prove the metadata is computed
     // correctly, but only this layer can prove it actually reaches the log.
@@ -776,7 +988,7 @@ mod tests {
             client,
             PersistTarget {
                 port: 8443,
-                config_path: None,
+                paths: None,
             },
         )
     }
@@ -1156,7 +1368,10 @@ mod tests {
             no_op_client(),
             PersistTarget {
                 port: 8443,
-                config_path: Some(path.clone()),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
             },
         );
 
@@ -1203,5 +1418,191 @@ mod tests {
             panic!("response body must decode as AdminStatusResponse");
         };
         assert!(!status.persisted);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_reset_rejects_non_post_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/reset")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // T-149, mirrors serve_admin_config_rejects_a_missing_content_type_even_with_a_valid_json_body
+    // - same CSRF gate, same regression risk: a nominally-no-body mutating
+    // route is exactly the one a naive implementation forgets to gate
+    // (advisor-caught in the plan review, not a test written first).
+    #[tokio::test]
+    async fn serve_admin_reset_rejects_a_missing_content_type() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/reset")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    fn admin_reset_request() -> Request<Full<Bytes>> {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/reset")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    #[tokio::test]
+    async fn serve_admin_reset_returns_500_with_no_app_data_configured() {
+        let response = match serve(admin_reset_request(), state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_reset_reloads_settings_and_clears_state() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &config_path,
+            "port = 8443\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 3000\n\n\
+             [providers]\nquad9 = false\nadguard = true\n",
+        ) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        // A real entry, not an empty file - an empty→empty overrides swap
+        // would pass even if the load path/swap itself were broken
+        // (advisor-caught: same shape as `IsCa::NoCa`'s own "passes because
+        // the extension is absent, not because the bytes say so" gotcha).
+        // The post-reset query below proves this landed end to end, not
+        // just that `state.overrides` holds *some* value.
+        if let Err(err) = std::fs::write(&overrides_path, "blocklist = [\"reset-fixture.test\"]\n")
+        {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with_persist(
+            client,
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path,
+                    overrides: overrides_path,
+                }),
+            },
+        );
+
+        // Prime the query log with one entry so the test can prove reset
+        // actually clears it, not just that it returns 200.
+        let wire_bytes = query_bytes("example.com.", RecordType::A);
+        if let Err(err) = resolve_doh_request(&wire_bytes, &state).await {
+            panic!("priming query must resolve: {err}");
+        }
+        assert_eq!(
+            state.query_log.snapshot(std::time::SystemTime::now()).len(),
+            1,
+            "priming query must have been logged"
+        );
+
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert_eq!(
+            status.providers,
+            EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+            "reset must reload providers from the fixture file"
+        );
+        assert_eq!(
+            status.timeout_mode,
+            crate::timeout::TimeoutMode::FailClosed,
+            "reset must reload timeout_mode from the fixture file"
+        );
+        assert_eq!(status.stats.total, 0, "reset must clear the query log");
+        assert!(status.persisted);
+
+        assert!(
+            state
+                .query_log
+                .snapshot(std::time::SystemTime::now())
+                .is_empty(),
+            "the live query log must actually be empty, not just reported as 0"
+        );
+
+        // Proves the overrides swap itself actually took effect (not just
+        // that *some* `OverrideLists` value is present) - a fresh query for
+        // the fixture's blocklisted domain must be blocked without ever
+        // reaching the quorum mock (which would panic if called, since
+        // `resolve-fixture.test` was never part of the Instant-response
+        // fixtures above).
+        let blocklisted_wire_bytes = query_bytes("reset-fixture.test.", RecordType::A);
+        if let Err(err) = resolve_doh_request(&blocklisted_wire_bytes, &state).await {
+            panic!("post-reset blocklisted query must still resolve: {err}");
+        }
+        let entries = state.query_log.snapshot(std::time::SystemTime::now());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].domain, "reset-fixture.test");
+        assert_eq!(entries[0].decision, crate::query_log::Decision::Blocked);
+        assert_eq!(
+            entries[0].decision_source,
+            crate::query_log::DecisionSource::Blocklist
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_routes_admin_ui_to_the_embedded_html_document() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/ui")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE),
+            Some(&header::HeaderValue::from_static(
+                "text/html; charset=utf-8"
+            ))
+        );
     }
 }

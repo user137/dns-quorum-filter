@@ -83,6 +83,14 @@ pub struct AdminStats {
     /// Failed`] (SERVFAIL) is a separate outcome, not counted as blocked
     /// filtering (T-147).
     pub blocked: u64,
+    /// How many requests are being resolved *right now* (T-149) — a live
+    /// counter (`dispatch::AppState`'s `in_flight` field), not derived from
+    /// [`crate::QueryLog`] like `total`/`blocked` above: a `LogEntry` is only
+    /// written after a query finishes, so the log alone can never answer
+    /// "how many are in flight." `compute_stats` itself can't fill this in
+    /// (it only ever sees the log) — both call sites in `dispatch.rs`
+    /// overwrite it with the live counter via struct-update syntax.
+    pub in_flight: u64,
 }
 
 /// `POST /admin/config`'s body — always a full replace of both fields, never
@@ -110,6 +118,9 @@ pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
     AdminStats {
         total: u64::try_from(total).unwrap_or(u64::MAX),
         blocked: u64::try_from(blocked).unwrap_or(u64::MAX),
+        // Filled in by the caller (`dispatch.rs`) from the live in-flight
+        // counter, which this pure, log-only function has no access to.
+        in_flight: 0,
     }
 }
 
@@ -207,6 +218,27 @@ impl AdminClient {
             .map_err(AdminClientError::Request)?;
         response.json().await.map_err(AdminClientError::Request)
     }
+
+    /// Soft-resets the live resolver (T-149) — reloads `resolver_config.toml`/
+    /// `overrides.toml` from disk and clears the cache and query log. Not a
+    /// process restart (SPEC.md §7 leaves that to `dnsqb-watcher`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdminClientError::Request`] if the service isn't reachable,
+    /// the reset itself failed server-side (a malformed on-disk file), or the
+    /// response doesn't decode as [`AdminStatusResponse`].
+    pub async fn reset(&self) -> Result<AdminStatusResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/reset", self.base_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
 }
 
 #[cfg(test)]
@@ -241,6 +273,7 @@ mod tests {
             AdminStats {
                 total: 4,
                 blocked: 2,
+                in_flight: 0,
             }
         );
     }
@@ -252,6 +285,7 @@ mod tests {
             AdminStats {
                 total: 0,
                 blocked: 0,
+                in_flight: 0,
             }
         );
     }

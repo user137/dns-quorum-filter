@@ -120,6 +120,7 @@
 //! not wired to any UI (T-52, no longer blocked on this task).
 
 mod admin;
+mod admin_ui;
 mod cache;
 mod cert;
 mod config;
@@ -143,7 +144,7 @@ pub use cache::{
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use config::{ConfigError, ResolverConfig};
-pub use dispatch::{serve, AppState, PersistTarget, RuntimeSettings};
+pub use dispatch::{serve, AppState, PersistPaths, PersistTarget, RuntimeSettings};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,

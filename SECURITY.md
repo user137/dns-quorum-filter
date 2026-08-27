@@ -22,6 +22,20 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   categories, not one "smoke" test: correctness, exploit (path traversal, allowlist bypass,
   oversized payload), misuse (contradictory input, malformed manually-edited override file),
   fuzz (no `unwrap()`/`panic!` on arbitrary byte input at the boundary). See SPEC.md §8.1.
+  **Superseded by T-149** (SPEC.md "Відкриті питання" п.13, DECISIONS.md) — `crates/dnsqb-ui`
+  scheduled for deletion once the replacement (tray + admin-channel web UI) lands; this bullet
+  stays accurate only until that commit.
+- **Admin HTTP channel (browser/tray → `dnsqb-service`, loopback, T-52/T-149)** — every mutating
+  route (`POST /admin/config`, `POST /admin/reset`) requires `Content-Type: application/json`
+  (`dispatch::content_type_is_json`) as its whole CSRF defense: not a CORS-simple content type, so
+  a cross-origin write forces a preflight this service never answers. DNS-rebinding is closed
+  independently by the leaf cert's narrow SAN set (`127.0.0.1`/`::1`/`localhost` only, T-48), not
+  by this gate. `POST /admin/reset` (T-149) reloads both on-disk TOML files and clears the cache +
+  query log — a malformed file on disk fails closed (500, live state untouched), never a partial
+  apply. The embedded web UI (`GET /admin/ui`, T-149) ships `Content-Security-Policy: default-src
+  'self'; frame-ancestors 'none'` — the latter specifically to keep the page from becoming
+  iframe-able/clickjackable once T-49 installs the cert and the current incidental
+  untrusted-cert protection against framing goes away.
 - **Upstream DoH providers and DNS wire format** — parsed via `hickory-dns`, not a hand-rolled
   parser, specifically because this is historically the highest-CVE-density code class in C-based
   DNS software.
