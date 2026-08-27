@@ -20,7 +20,7 @@ hickory-proto = "0.26.1"
 http = "1"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.0", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1.20", default-features = false, features = ["http1", "http2", "server", "server-auto", "tokio"] }
+hyper-util = { version = "0.1.20", default-features = false, features = ["http1", "http2", "server", "server-auto", "server-graceful", "tokio"] }
 moka = { version = "0.12", default-features = false, features = ["future"] }
 parking_lot = "0.12"
 rcgen = { version = "0.14.9", default-features = false, features = ["aws_lc_rs", "pem", "zeroize"] }
@@ -29,7 +29,7 @@ rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "time"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["tls12"] }
 toml = "1.1.4"
 tracing = "0.1.41"

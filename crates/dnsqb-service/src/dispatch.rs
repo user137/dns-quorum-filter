@@ -13,14 +13,14 @@
 //!
 //! Endpoint is fixed to `/dns-query` (SPEC.md §1 line 84) — any other path is
 //! a 404, except `/admin/status`/`/admin/config` (T-52), `/admin/reset`
-//! (T-149, soft reset — see `apply_admin_reset`), and `/admin/ui`/
+//! (T-149, soft reset — see `apply_admin_reset`), `/admin/shutdown` (T-149,
+//! graceful process exit — see `serve_admin_shutdown` and `main.rs`'s accept
+//! loop, its only consumer is the `dnsqb-tray` crate), and `/admin/ui`/
 //! `/admin/ui/main.js`/`/admin/ui/style.css` (T-149, the embedded web UI —
 //! see `admin_ui.rs`), all added on this same listener rather than a new
 //! one, the same "extend the existing port" pattern already named for the
 //! future `/health` (T-86). `/health` itself is still free to add later
-//! without colliding. `/admin/shutdown` (T-149's highest-blast-radius
-//! endpoint) is deliberately not here yet — it ships in the same commit as
-//! its only consumer, the `dnsqb-tray` crate.
+//! without colliding.
 
 use crate::admin::{compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse};
 use crate::admin_ui;
@@ -47,6 +47,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+use tokio::sync::watch;
 
 /// The largest a DNS wire message is allowed to be, GET or POST alike — the
 /// classic DNS-over-TCP 2-byte length prefix this project doesn't use still
@@ -61,6 +62,7 @@ const DNS_MESSAGE_CONTENT_TYPE: &str = "application/dns-message";
 const ADMIN_STATUS_PATH: &str = "/admin/status";
 const ADMIN_CONFIG_PATH: &str = "/admin/config";
 const ADMIN_RESET_PATH: &str = "/admin/reset";
+const ADMIN_SHUTDOWN_PATH: &str = "/admin/shutdown";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
@@ -303,6 +305,15 @@ pub struct AppState<C: DohClient + Sync> {
     /// [`resolve_doh_request`]/[`admin_status`]/[`apply_admin_config`]/
     /// [`apply_admin_reset`].
     in_flight: AtomicU64,
+    /// The shutdown signal `POST /admin/shutdown` sends (T-149) — `false`
+    /// until that route fires `send(true)`. `main.rs`'s accept loop holds
+    /// the one long-lived [`watch::Receiver`] it `tokio::select!`s against
+    /// ([`AppState::shutdown_handle`]); a plain `tokio::sync::Notify` was
+    /// considered and rejected (see the T-149 plan) because its stored-
+    /// permit/fresh-future semantics on every `select!` iteration are exactly
+    /// the kind of claim this project verifies empirically before relying on
+    /// — `watch` has no equivalent ambiguity, so no probe was needed.
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
@@ -324,6 +335,7 @@ impl<C: DohClient + Sync> AppState<C> {
         query_log: QueryLog,
         persist: PersistTarget,
     ) -> Self {
+        let (shutdown_tx, _) = watch::channel(false);
         Self {
             client,
             overrides: RwLock::new(Arc::new(overrides)),
@@ -333,7 +345,18 @@ impl<C: DohClient + Sync> AppState<C> {
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
+            shutdown_tx,
         }
+    }
+
+    /// Subscribes a new receiver for the shutdown signal (T-149) — each call
+    /// returns an independent [`watch::Receiver`] starting from the current
+    /// value, per `watch::Sender::subscribe`'s own semantics. `main.rs` calls
+    /// this exactly once at startup and holds the result for the lifetime of
+    /// the accept loop.
+    #[must_use]
+    pub fn shutdown_handle(&self) -> watch::Receiver<bool> {
+        self.shutdown_tx.subscribe()
     }
 }
 
@@ -621,6 +644,47 @@ where
     }
 }
 
+/// `POST /admin/shutdown` (T-149) — the highest blast-radius endpoint on
+/// this channel: its only consumer is `dnsqb-tray`'s "Зупинити фільтрацію"
+/// menu item, which gates it behind a confirm dialog that names the
+/// consequence before ever sending this request. Same CSRF gate and
+/// body-size cap as `/admin/config`/`/admin/reset`.
+///
+/// Sends the shutdown signal and returns `200` immediately — the actual
+/// process exit happens asynchronously in `main.rs`'s accept loop, driven by
+/// [`AppState::shutdown_handle`]. This response is written by the same
+/// per-connection task that keeps running regardless of when the accept loop
+/// notices the signal, so "answer 200, then the process later exits" needs
+/// no manual ordering here.
+async fn serve_admin_shutdown<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    if *req.method() != Method::POST {
+        return status_response(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    if limited.collect().await.is_err() {
+        return status_response(StatusCode::BAD_REQUEST);
+    }
+    // `Err` means every receiver has already been dropped - reachable if a
+    // second `/admin/shutdown` arrives after the accept loop already exited
+    // its `select!` and dropped its receiver, mid-drain. Not a failure from
+    // this request's point of view: shutdown was already requested and is
+    // already underway, so the same 200 is still correct.
+    let _ = state.shutdown_tx.send(true);
+    status_response(StatusCode::OK)
+}
+
 /// `/dns-query`'s `GET`/`POST` handling (SPEC.md §1 line 84) — everything
 /// [`serve`] routed here after confirming the path. Decodes the request into
 /// wire bytes and hands off to [`resolve_doh_request`]; every failure mode
@@ -709,6 +773,7 @@ where
         ADMIN_STATUS_PATH => serve_admin_status(req.method(), &state),
         ADMIN_CONFIG_PATH => serve_admin_config(req, &state).await,
         ADMIN_RESET_PATH => serve_admin_reset(req, &state).await,
+        ADMIN_SHUTDOWN_PATH => serve_admin_shutdown(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
@@ -1604,5 +1669,91 @@ mod tests {
                 "text/html; charset=utf-8"
             ))
         );
+    }
+
+    #[tokio::test]
+    async fn serve_admin_shutdown_rejects_non_post_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/shutdown")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // T-149, same CSRF regression class as serve_admin_reset_rejects_a_missing_content_type
+    // - the highest blast-radius route on this channel is exactly the one
+    // that must never be reachable via a CORS-simple cross-origin request.
+    #[tokio::test]
+    async fn serve_admin_shutdown_rejects_a_missing_content_type() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/shutdown")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_shutdown_returns_200_and_signals_the_watch_channel() {
+        let state = state_with(no_op_client());
+        let mut rx = state.shutdown_handle();
+        assert!(!*rx.borrow(), "must start unsignaled");
+
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/shutdown")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        match tokio::time::timeout(std::time::Duration::from_secs(1), rx.changed()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => panic!("sender must not have been dropped: {err}"),
+            Err(elapsed) => panic!("shutdown signal must arrive promptly: {elapsed}"),
+        }
+        assert!(*rx.borrow(), "signaled value must be true");
+    }
+
+    // A second `/admin/shutdown` after every receiver has already been
+    // dropped (main.rs's accept loop, mid-drain) must still answer 200, not
+    // fail - see serve_admin_shutdown's own doc comment for why.
+    #[tokio::test]
+    async fn serve_admin_shutdown_still_returns_200_once_every_receiver_is_dropped() {
+        let state = state_with(no_op_client());
+        drop(state.shutdown_handle());
+
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/shutdown")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

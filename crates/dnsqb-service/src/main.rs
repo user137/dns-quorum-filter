@@ -18,6 +18,7 @@ use dnsqb_service::{
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
+use hyper_util::server::graceful::GracefulShutdown;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -109,33 +110,89 @@ async fn main() {
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
 
+    serve_until_shutdown(listener, acceptor, state).await;
+}
+
+/// Accepts connections until `/admin/shutdown` signals (T-149), then drains
+/// whatever's already in flight before returning. Split out of `main` to
+/// stay under `clippy::too_many_lines` — same "extract a helper, not
+/// `#[allow(...)]`" precedent T-147/T-148 already established for
+/// `handle_query`/`resolve`.
+///
+/// `/admin/shutdown`'s only effect is sending `true` on `state`'s shutdown
+/// channel - one long-lived receiver here, `tokio::select!`ed against
+/// `listener.accept()` on every loop iteration. `graceful` gets one
+/// `Watcher` per accepted connection (`graceful.watcher()`, not the
+/// `GracefulShutdown` itself - it's deliberately not `Clone`, see its own doc
+/// comment) so a connection accepted just before shutdown still gets watched
+/// and drained rather than dropped mid-response.
+async fn serve_until_shutdown(
+    listener: tokio::net::TcpListener,
+    acceptor: TlsAcceptor,
+    state: Arc<AppState<ReqwestDohClient>>,
+) {
+    let mut shutdown_rx = state.shutdown_handle();
+    let graceful = GracefulShutdown::new();
+
     loop {
-        let (stream, _peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(err) => {
-                tracing::warn!("failed to accept a connection: {err}");
-                continue;
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _peer) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(err) => {
+                        tracing::warn!("failed to accept a connection: {err}");
+                        continue;
+                    }
+                };
+                let acceptor = acceptor.clone();
+                let state = Arc::clone(&state);
+                let watcher = graceful.watcher();
+                tokio::spawn(async move {
+                    let tls_stream = match acceptor.accept(stream).await {
+                        Ok(stream) => stream,
+                        Err(err) => {
+                            tracing::warn!("TLS handshake failed: {err}");
+                            return;
+                        }
+                    };
+                    let io = TokioIo::new(tls_stream);
+                    let service = service_fn(move |req| serve(req, Arc::clone(&state)));
+                    let builder = auto::Builder::new(TokioExecutor::new());
+                    let conn = builder.serve_connection(io, service);
+                    if let Err(err) = watcher.watch(conn).await {
+                        tracing::warn!("connection error: {err}");
+                    }
+                });
             }
-        };
-        let acceptor = acceptor.clone();
-        let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            let tls_stream = match acceptor.accept(stream).await {
-                Ok(stream) => stream,
-                Err(err) => {
-                    tracing::warn!("TLS handshake failed: {err}");
-                    return;
-                }
-            };
-            let io = TokioIo::new(tls_stream);
-            let service = service_fn(move |req| serve(req, Arc::clone(&state)));
-            if let Err(err) = auto::Builder::new(TokioExecutor::new())
-                .serve_connection(io, service)
-                .await
-            {
-                tracing::warn!("connection error: {err}");
+            // `Receiver::changed()` only resolves on an actual `true` send
+            // from `/admin/shutdown` - `watch`'s initial value (`false`)
+            // never triggers this branch on its own.
+            _ = shutdown_rx.changed() => {
+                tracing::info!(
+                    "shutdown requested via /admin/shutdown - draining active connections"
+                );
+                break;
             }
-        });
+        }
+    }
+
+    // Stop accepting new connections immediately - `graceful.shutdown()`
+    // below only drains what's already been accepted.
+    drop(listener);
+
+    // Never `std::process::exit()` here - that would kill the still-running
+    // `/admin/shutdown` handler's own connection before its 200 response
+    // finishes writing. A 5s cap bounds a connection that never closes on
+    // its own (e.g. a browser tab left open on `/admin/ui`) - draining is
+    // best-effort past that point, not a promise every connection finished
+    // cleanly.
+    tokio::select! {
+        () = graceful.shutdown() => {
+            tracing::info!("graceful shutdown complete");
+        }
+        () = tokio::time::sleep(Duration::from_secs(5)) => {
+            tracing::warn!("graceful shutdown timed out after 5s - exiting anyway");
+        }
     }
 }
 

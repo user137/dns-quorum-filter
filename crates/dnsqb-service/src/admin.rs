@@ -239,6 +239,33 @@ impl AdminClient {
             .map_err(AdminClientError::Request)?;
         response.json().await.map_err(AdminClientError::Request)
     }
+
+    /// Requests a graceful shutdown of the whole `dnsqb-service` process
+    /// (T-149) — the highest blast-radius call on this channel: after this
+    /// returns `Ok`, `dnsqb-service` is draining and will exit, and DNS
+    /// resolution for the whole machine stops until it's manually restarted
+    /// (SPEC.md §7 leaves full process supervision to `dnsqb-watcher`, not
+    /// this channel). The only caller is `dnsqb-tray`'s "Зупинити
+    /// фільтрацію" menu item, behind a confirm dialog naming that
+    /// consequence — never call this without an equivalent, explicit
+    /// user confirmation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdminClientError::Request`] if the service isn't reachable
+    /// or the response wasn't a success status. A success response here has
+    /// no meaningful body (the process may already be exiting), unlike
+    /// [`AdminClient::reset`]/[`AdminClient::apply`].
+    pub async fn shutdown(&self) -> Result<(), AdminClientError> {
+        self.client
+            .post(format!("{}/admin/shutdown", self.base_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

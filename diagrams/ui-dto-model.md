@@ -111,9 +111,10 @@ classDiagram
         +bool adguard
     }
     class AdminStats {
-        <<T-52, реалізовано>>
+        <<T-52, реалізовано; in_flight — T-149>>
         +u64 total
         +u64 blocked
+        +u64 in_flight
     }
 
     class GeoIPConfig {
@@ -178,6 +179,24 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 варіантів, `Pending` лишається окремим легітимним варіантом (зарезервований під
 майбутнє live-відображення), а не хиба §8. SPEC.md §6/§8 лишаються буквально
 розбіжними в тексті; DECISIONS.md — джерело істини для цієї розбіжності.
+
+## `AdminStats.in_flight` — нове поле (T-149)
+
+`AdminStats` (T-52) отримало третє поле, `in_flight: u64` — кількість запитів, що резолвляться
+просто зараз (`dispatch::AppState`'s `AtomicU64`-лічильник, RAII-guard), на відміну від
+`total`/`blocked`, які походять із уже завершених записів `QueryLog`. Не розбіжність джерела —
+`AdminStats`'s власний doc-коментар у коді вже пояснює, чому це поле не могло походити з логу.
+Значення живиться і `dnsqb-service`'s вбудованим веб-UI (T-149), і `dnsqb-tray`'s tooltip
+(нижче) — не нова окрема DTO-форма, те саме поле в одній структурі.
+
+## `dnsqb-tray`'s tooltip — не новий DTO, похідний стан (T-149)
+
+`dnsqb-tray`'s три стани tooltip'а (`Unreachable`/`NoActiveProvider{in_flight}`/
+`Filtering{in_flight,blocked,total}`, `crates/dnsqb-tray/src/status.rs`) — це **не** нова DTO-
+форма на дроті, а чисто клієнтська інтерпретація вже існуючого `AdminStatusResponse` (той самий
+`providers`/`stats`, вище): `NoActiveProvider` = `!providers.quad9 && !providers.adguard`,
+`Filtering` = інакше. Не діаграмується як окремий клас — похідне, не передане окремим
+JSON-полем.
 
 ## `AdminStatusResponse`/`AdminStats`/`EnabledProviders` — реальна реалізація, ширша за чернетку
 
