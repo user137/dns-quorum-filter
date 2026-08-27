@@ -67,6 +67,26 @@ const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
 
+/// T-53/T-59: the single source of truth for which paths [`serve`] routes at
+/// all and which method(s) each one accepts — `serve` checks a request
+/// against this table *before* the handler-dispatch `match` below ever runs,
+/// so a path/method pair not listed here can never reach a handler no matter
+/// what arm someone later adds to that `match`. This is what makes
+/// `dispatch::tests::serve_matches_the_documented_admin_route_allowlist`
+/// (an independent, hand-written copy of this same table) an actual proof
+/// that the exposed surface is exactly this list, not just a test that
+/// happens to pass today.
+const ROUTES: &[(&str, &[Method])] = &[
+    (DNS_QUERY_PATH, &[Method::GET, Method::POST]),
+    (ADMIN_STATUS_PATH, &[Method::GET]),
+    (ADMIN_CONFIG_PATH, &[Method::POST]),
+    (ADMIN_RESET_PATH, &[Method::POST]),
+    (ADMIN_SHUTDOWN_PATH, &[Method::POST]),
+    (ADMIN_UI_PATH, &[Method::GET]),
+    (ADMIN_UI_JS_PATH, &[Method::GET]),
+    (ADMIN_UI_CSS_PATH, &[Method::GET]),
+];
+
 /// `POST /admin/config`'s body is two bools and a short enum — this bound
 /// exists for the same reason `MAX_MESSAGE_SIZE` does (SPEC.md §8.1: "ліміт
 /// розміру, не необмежена алокація"), just a much smaller one, since nothing
@@ -496,19 +516,16 @@ fn json_response<T: Serialize>(value: &T) -> Response<Full<Bytes>> {
     }
 }
 
-/// `GET /admin/status` — any other method on this path is 405.
-fn serve_admin_status<C: DohClient + Sync>(
-    method: &Method,
-    state: &AppState<C>,
-) -> Response<Full<Bytes>> {
-    if *method != Method::GET {
-        return status_response(StatusCode::METHOD_NOT_ALLOWED);
-    }
+/// `GET /admin/status` — method allowlisting for this path happens once,
+/// centrally, in [`serve`]'s `ROUTES` check before this is ever called; this
+/// function itself trusts that and doesn't re-check.
+fn serve_admin_status<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
     json_response(&admin_status(state, true))
 }
 
-/// `POST /admin/config` — any other method on this path is 405; a body that
-/// exceeds [`MAX_ADMIN_BODY_SIZE`], fails to read, or doesn't decode as
+/// `POST /admin/config` — method allowlisting happens centrally in
+/// [`serve`]'s `ROUTES` check, not re-checked here; a body that exceeds
+/// [`MAX_ADMIN_BODY_SIZE`], fails to read, or doesn't decode as
 /// [`AdminConfigUpdate`] is 400.
 async fn serve_admin_config<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
 where
@@ -516,9 +533,6 @@ where
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    if *req.method() != Method::POST {
-        return status_response(StatusCode::METHOD_NOT_ALLOWED);
-    }
     // See `content_type_is_json`'s own doc comment - this is not a format
     // nicety, it's the whole CSRF defense for this route.
     let content_type = req
@@ -611,19 +625,17 @@ fn apply_admin_reset<C: DohClient + Sync>(
     Ok(admin_status(state, true))
 }
 
-/// `POST /admin/reset` (T-149) — same CSRF gate and body-size cap as
-/// `/admin/config`. A malformed/missing on-disk file is 500 (the caller
-/// didn't cause it); everything else about the request shape is 400/405,
-/// same convention as every other route here.
+/// `POST /admin/reset` (T-149) — method allowlisting happens centrally in
+/// [`serve`]'s `ROUTES` check, not re-checked here. Same CSRF gate and
+/// body-size cap as `/admin/config`. A malformed/missing on-disk file is 500
+/// (the caller didn't cause it); everything else about the request shape is
+/// 400, same convention as every other route here.
 async fn serve_admin_reset<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
 where
     C: DohClient + Sync,
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    if *req.method() != Method::POST {
-        return status_response(StatusCode::METHOD_NOT_ALLOWED);
-    }
     let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -647,8 +659,9 @@ where
 /// `POST /admin/shutdown` (T-149) — the highest blast-radius endpoint on
 /// this channel: its only consumer is `dnsqb-tray`'s "Зупинити фільтрацію"
 /// menu item, which gates it behind a confirm dialog that names the
-/// consequence before ever sending this request. Same CSRF gate and
-/// body-size cap as `/admin/config`/`/admin/reset`.
+/// consequence before ever sending this request. Method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check, not re-checked here. Same CSRF
+/// gate and body-size cap as `/admin/config`/`/admin/reset`.
 ///
 /// Sends the shutdown signal and returns `200` immediately — the actual
 /// process exit happens asynchronously in `main.rs`'s accept loop, driven by
@@ -662,9 +675,6 @@ where
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    if *req.method() != Method::POST {
-        return status_response(StatusCode::METHOD_NOT_ALLOWED);
-    }
     let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -719,6 +729,11 @@ where
                 Err(DohRequestError::UnsupportedContentType)
             }
         }
+        // Unreachable via `serve()` - `ROUTES` only allows GET/POST for this
+        // path, so this arm's response never actually goes out. Kept because
+        // the two real arms above are branching on *behavior*, not just
+        // permission, so this match can't be replaced by a `ROUTES` check
+        // the way the four `serve_admin_*` handlers' checks were.
         _ => return status_response(StatusCode::METHOD_NOT_ALLOWED),
     };
 
@@ -768,15 +783,27 @@ where
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    Ok(match req.uri().path() {
+    let path = req.uri().path();
+    let Some(&(_, allowed_methods)) = ROUTES.iter().find(|(route_path, _)| *route_path == path)
+    else {
+        return Ok(status_response(StatusCode::NOT_FOUND));
+    };
+    if !allowed_methods.contains(req.method()) {
+        return Ok(status_response(StatusCode::METHOD_NOT_ALLOWED));
+    }
+    Ok(match path {
         DNS_QUERY_PATH => serve_dns_query(req, &state).await,
-        ADMIN_STATUS_PATH => serve_admin_status(req.method(), &state),
+        ADMIN_STATUS_PATH => serve_admin_status(&state),
         ADMIN_CONFIG_PATH => serve_admin_config(req, &state).await,
         ADMIN_RESET_PATH => serve_admin_reset(req, &state).await,
         ADMIN_SHUTDOWN_PATH => serve_admin_shutdown(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
+        // Unreachable: `path` already matched a `ROUTES` entry above, and
+        // every `ROUTES` path has a corresponding arm here - kept as an
+        // explicit, safe (404) fallback because the match itself has no way
+        // to prove that correspondence to the compiler.
         _ => status_response(StatusCode::NOT_FOUND),
     })
 }
@@ -1755,5 +1782,117 @@ mod tests {
             Err(err) => match err {},
         };
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// T-53/T-59: `serve()`'s `ROUTES` table (declared near this module's
+    /// `_PATH` consts) is the actual dispatch source — a request is checked
+    /// against it *before* the handler-selection `match` in `serve()` ever
+    /// runs (see `ROUTES`'s own doc comment). This compares that live table
+    /// against an independent, hand-written copy: adding, removing, or
+    /// widening a route in `ROUTES` changes what's reachable, so it must
+    /// also change here, or this assertion fails — unlike a test that only
+    /// ever probes a hardcoded list of paths (which a genuinely new route
+    /// would silently sail past), this one fails on that exact case because
+    /// it reads the same table `serve()` uses, not a copy of `serve()`'s
+    /// `match` arms.
+    const EXPECTED_ADMIN_ROUTES: &[(&str, &[Method])] = &[
+        ("/dns-query", &[Method::GET, Method::POST]),
+        ("/admin/status", &[Method::GET]),
+        ("/admin/config", &[Method::POST]),
+        ("/admin/reset", &[Method::POST]),
+        ("/admin/shutdown", &[Method::POST]),
+        ("/admin/ui", &[Method::GET]),
+        ("/admin/ui/main.js", &[Method::GET]),
+        ("/admin/ui/style.css", &[Method::GET]),
+    ];
+
+    #[test]
+    fn serve_matches_the_documented_admin_route_allowlist() {
+        assert_eq!(super::ROUTES, EXPECTED_ADMIN_ROUTES);
+    }
+
+    /// `HEAD` is deliberately left out of this sweep: RFC 7231 §4.3.2
+    /// recommends supporting it wherever GET is supported, which this
+    /// project hasn't decided either way for any route yet (SPEC.md's own
+    /// "RFC over intuition" rule) — pinning "HEAD is 405 everywhere" as
+    /// tested behavior here would silently make that decision by omission.
+    const ALL_HTTP_METHODS: &[Method] = &[
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::PATCH,
+        Method::OPTIONS,
+        Method::TRACE,
+    ];
+
+    /// Complements `serve_matches_the_documented_admin_route_allowlist`:
+    /// that test proves `ROUTES` matches this same expected list; this one
+    /// proves `ROUTES` is actually *enforced*, not just declared — every
+    /// listed (path, method) pair reaches a handler instead of being
+    /// rejected, and every method not listed for a given path gets 405.
+    #[tokio::test]
+    async fn serve_enforces_the_route_table_it_matched_above() {
+        for &(path, allowed) in EXPECTED_ADMIN_ROUTES {
+            for method in ALL_HTTP_METHODS {
+                let Ok(req) = Request::builder()
+                    .method(method.clone())
+                    .uri(path)
+                    .body(Full::new(Bytes::new()))
+                else {
+                    panic!("fixture request must build");
+                };
+                let response = match serve(req, state_with(no_op_client())).await {
+                    Ok(response) => response,
+                    Err(err) => match err {},
+                };
+                if allowed.contains(method) {
+                    assert!(
+                        response.status() != StatusCode::NOT_FOUND
+                            && response.status() != StatusCode::METHOD_NOT_ALLOWED,
+                        "{method} {path} is in the allowlist but got {}",
+                        response.status()
+                    );
+                } else {
+                    assert_eq!(
+                        response.status(),
+                        StatusCode::METHOD_NOT_ALLOWED,
+                        "{method} {path} is not in the allowlist but wasn't rejected as 405"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_returns_404_for_every_path_outside_the_documented_allowlist() {
+        const UNLISTED_PATHS: &[&str] = &[
+            "/",
+            "/admin",
+            "/admin/",
+            "/admin/config/",
+            "/dns-query/",
+            "/ADMIN/STATUS",
+            "/admin/secret",
+            "/health",
+        ];
+        for path in UNLISTED_PATHS {
+            let Ok(req) = Request::builder()
+                .method(Method::GET)
+                .uri(*path)
+                .body(Full::new(Bytes::new()))
+            else {
+                panic!("fixture request must build");
+            };
+            let response = match serve(req, state_with(no_op_client())).await {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{path} unexpectedly matched a route"
+            );
+        }
     }
 }

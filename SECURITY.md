@@ -23,7 +23,13 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   underlying principle (explicit allowlisted surface, no raw internal structs exposed, four test
   categories not one smoke test — SPEC.md §8.1) carries forward to the admin HTTP channel below,
   not lost with the removal.
-- **Admin HTTP channel (browser/tray → `dnsqb-service`, loopback, T-52/T-149)** — every mutating
+- **Admin HTTP channel (browser/tray → `dnsqb-service`, loopback, T-52/T-149)** — the exposed route
+  set is a structural allowlist, not just documentation: `dispatch::ROUTES` is the actual table
+  `serve()` dispatches from (checked before the handler-selection `match`), so a path/method pair
+  not listed there can never reach a handler no matter what arm a future `match` edit adds
+  (T-59, verified empirically — an unlisted arm added to the `match` without a `ROUTES` entry stays
+  unreachable; `serve_matches_the_documented_admin_route_allowlist` fails if `ROUTES` itself drifts
+  from its own hand-written expected copy). Every mutating
   route (`POST /admin/config`, `POST /admin/reset`, `POST /admin/shutdown`) requires
   `Content-Type: application/json` (`dispatch::content_type_is_json`) as its whole CSRF defense:
   not a CORS-simple content type, so a cross-origin write forces a preflight this service never

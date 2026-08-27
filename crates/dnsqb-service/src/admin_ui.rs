@@ -48,7 +48,12 @@ pub(crate) fn serve_css(method: &Method) -> Response<Full<Bytes>> {
 }
 
 /// Any other method on one of these three paths is 405 — same convention as
-/// every other route in `dispatch.rs`.
+/// every other route in `dispatch.rs`. Unlike the four `serve_admin_*`
+/// handlers there (T-59), this check is **not** redundant with `dispatch::
+/// ROUTES` and stays: these three functions are `pub(crate)`, not private to
+/// one call site, and this module's own tests below call them directly,
+/// bypassing `dispatch::serve` entirely — removing this check would make
+/// those tests describe behavior that no longer exists.
 ///
 /// `frame-ancestors 'none'` is set alongside `default-src 'self'` on the
 /// document response, not left to `default-src` alone — `default-src` does

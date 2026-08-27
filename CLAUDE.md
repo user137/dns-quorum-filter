@@ -8,6 +8,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-first slice done (T-55 + T-59 — TASKS-DONE.md, one commit): T-55 closed with no new
+code — `admin_ui::respond`'s CSP (`default-src 'self'; frame-ancestors 'none'`, no inline
+script/style) already satisfies it as a side effect of T-149's architecture, already proven by
+`admin_ui::tests::serve_html_returns_ok_with_a_strict_csp_header`. T-59's own first draft (a
+hardcoded path list swept against `serve()`'s behavior) passed while proving nothing about route
+*addition* — confirmed empirically (a throwaway unlisted `match` arm added to `serve()` left the
+test green), advisor-caught before commit, not by the test itself. Real fix is structural, not a
+stronger assertion: new `dispatch::ROUTES` (`&[(&str, &[Method])]`) is the actual table `serve()`
+dispatches from — checked before the handler-selection `match`, so an unlisted path/method can
+never reach a handler regardless of what arm the `match` grows — plus a test asserting that live
+table against an independent hand-written copy (`serve_matches_the_documented_admin_route_
+allowlist`) and a second proving the table is actually enforced, not just declared
+(`serve_enforces_the_route_table_it_matched_above`). Re-verified empirically both ways (added-route
+→ red, reverted → green) before committing. Side effect: the four private `serve_admin_*` handlers
+lost their now-unreachable inner method checks (single call site, `ROUTES` already gates it —
+CLAUDE.md's own "no validation for scenarios that can't happen" rule); `admin_ui::serve_html/js/css`
+keep theirs (`pub(crate)`, independently tested, bypass `serve()` entirely). `HEAD` deliberately
+left out of the negative-method sweep — RFC 7231 §4.3.2's "SHOULD support HEAD wherever GET is
+supported" is a decision this project hasn't made yet, and freezing 405-for-HEAD as tested behavior
+would make it by omission. T-53 narrowed in TASKS.md, not closed — the allowlist half is now
+structurally real, the DTO half ("not directly exposing internal backend structs") is still open.
+New generalized gotcha recorded below (third instance of "a passing test that doesn't prove its own
+named property" — see `IsCa::NoCa`/`icacls` denylist entries — first one fixed by making the
+property into data the test reads, not a stronger assertion).
+
 Фаза 1, twentieth slice done (T-149 — TASKS-DONE.md, **three commits**): replaced T-52's Tauri
 desktop UI (`dnsqb-ui`) with a lightweight tray icon (`crates/dnsqb-tray`, `tray-icon`/`tao`/`rfd`,
 not Tauri) plus a browser-based config page `dnsqb-service` serves itself at `GET /admin/ui`. User
@@ -1166,6 +1191,29 @@ decision from scratch).
   `toml::de::Error` payload — the rich snippet is a genuine UX win there with no privacy cost, so the
   two error types are deliberately shaped differently on purpose, not an inconsistency to "fix" into
   matching each other later.
+- **General lesson (third instance of this shape — `IsCa::NoCa`, the `icacls` substring denylist,
+  now this): a test that passes today doesn't prove the property its name claims unless the
+  property is something the test can actually observe changing.** T-59's first draft
+  (`dispatch.rs`) hardcoded a list of admin-channel paths and swept `serve()`'s behavior against it
+  — this proves a *removal*/method-*narrowing* regression (delete a route, widen a 405 to 200 →
+  fails) but nothing about *addition*: a new `match` arm in `serve()` that the hardcoded list never
+  knew to probe sails through unnoticed. Confirmed empirically, not asserted from reading the test
+  — added a throwaway unlisted `match` arm to `serve()`, reran the test, watched it stay green.
+  What made the two earlier instances of this shape different from this one: `IsCa::ExplicitNoCa`
+  and the `icacls` ACE-count rewrite both fixed it by asserting a stronger *observation* of the
+  same already-real artifact (the cert's actual DER bytes, the real ACL readback). Here the
+  property genuinely couldn't be observed from outside at all — no black-box request sequence
+  proves "nothing beyond this list is routable," because "beyond this list" isn't a fact about
+  behavior, it's a fact about the *source code structure* of a `match` block, which a test exercises
+  by calling, never by reading. The fix had to be structural: extract `dispatch::ROUTES` (`&[(&str,
+  &[Method])]`) as the actual table `serve()` dispatches from — checked *before* the
+  handler-selection `match`, so a path/method pair not in `ROUTES` can never reach a handler no
+  matter what arm the `match` grows — then assert that live table against an independent
+  hand-written copy. Only then does "a new route was added" become a fact the test can see, because
+  it's now data the test can read rather than behavior it has to infer. **When a "prove nothing
+  extra is exposed" test can't be made stronger by tightening an assertion, ask whether the property
+  even has an external observation point before writing the test — if it doesn't, the fix is making
+  the property into data, not writing a cleverer probe.**
 
 ## Documentation map — who owns what
 
