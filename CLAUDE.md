@@ -8,6 +8,118 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twentieth slice done (T-149 — TASKS-DONE.md, **three commits**): replaced T-52's Tauri
+desktop UI (`dnsqb-ui`) with a lightweight tray icon (`crates/dnsqb-tray`, `tray-icon`/`tao`/`rfd`,
+not Tauri) plus a browser-based config page `dnsqb-service` serves itself at `GET /admin/ui`. User
+asked (Ukrainian) whether the add-on could run headless with a tray icon instead of a desktop
+window; SPEC.md's own "Відкриті питання" п.13 had already named this exact question as needing a
+plan-mode + advisor review before implementing, which this slice carried out. Three explicit
+user decisions via `AskUserQuestion`: (1) tray "Restart" = soft reset over the admin channel
+(clear cache+log, re-read both TOML configs from disk) — not an OS process kill/relaunch, full
+process supervision stays `dnsqb-watcher`'s job (Фаза 3). (2) The tray menu splits **"Close"**
+(exits the tray only, `dnsqb-service` keeps running) from a separate, confirm-gated **"Stop
+filtering"** (calls the new `POST /admin/shutdown`) — advisor-caught before implementation: a
+single combined "Close" button would leave zero on-screen indication that filtering silently
+stopped (SPEC.md "Відкриті питання" п.10), the same Три-Б user-safety class already caught twice
+before (T-148, T-52's CSRF fix); the split itself came from the user's own follow-up question
+about who launches `dnsqb-service` if the tray doesn't own it as a child process. (3) `dnsqb-ui`
+is deleted entirely, no parallel Tauri build kept — recorded as a DECISIONS.md reversal of T-52.
+Autostart (who launches `dnsqb-service` for a mouse-only user with no terminal) was scoped out as
+a new, separately tracked **T-150** (installer registers a Startup shortcut/Run key, Фаза 2/3),
+chosen via `AskUserQuestion` over building it into this slice.
+
+**Commit 1 — `dnsqb-service` additive, minimal new attack surface**: `AppState.overrides` became
+`RwLock<Arc<OverrideLists>>` (was a bare `RwLock<OverrideLists>`) so a read can `Arc::clone` and
+hold no lock across `.await`; a new `AtomicU64` in-flight counter with an RAII `InFlightGuard`
+(not manual inc/dec at ~9 return points, same footgun class already named for T-147); `AdminStats`
+gained `in_flight`; `PersistTarget` gained `paths: Option<PersistPaths>` (one struct with `config`
++ `overrides` fields always set together, not two independent `Option<PathBuf>` — advisor-caught,
+illegal-state-unrepresentable, since `main.rs` always resolves both paths from one
+`app_data_dir()` call). New `POST /admin/reset` (`content_type_is_json` CSRF gate, same as
+`/admin/config`): prepare-then-commit — loads both config files into locals first, only mutates
+`state.runtime`/`state.overrides`/clears cache+log if both loads succeed; swaps `overrides` before
+`cache.clear()`, not after (advisor-caught ordering — the reverse leaves a window where a
+concurrent query repopulates the cache from stale overrides). New embedded web UI at `GET
+/admin/ui` (+ `/admin/ui/main.js`, `/admin/ui/style.css`), `include_str!`-compiled in, no runtime
+file I/O — new `admin_ui.rs` module, ported from `dnsqb-ui/ui/*`'s layout/labels but CSS moved to
+its own file so CSP can be `default-src 'self'; frame-ancestors 'none'` with no `unsafe-inline`
+from the start (T-55's goal for the now-deleted Tauri UI, met differently here — `frame-ancestors`
+is required separately from `default-src`, advisor-caught, since `default-src` doesn't cover
+framing and an untrusted cert accidentally blocking iframing today is not the same as blocking it
+on purpose once T-49 installs the cert). Fully green standalone.
+
+**Commit 2 — `/admin/shutdown` + graceful shutdown + new `dnsqb-tray` crate**: `hyper-util` gained
+the `server-graceful` feature (`GracefulShutdown`, API verified by reading vendored source, not
+memory — `.watcher()`'s non-`Clone` `Watcher` exists specifically to avoid a race, per its own
+source comment); `tokio` gained `sync` for `watch::channel(bool)`, chosen over `Notify`
+specifically to avoid an unverified ambiguity worth a scratch probe when an unambiguous primitive
+was equally viable. `AppState` gained `shutdown_tx: watch::Sender<bool>` + `pub fn
+shutdown_handle()`; new `POST /admin/shutdown` (same CSRF gate) sends `true` and returns 200 — the
+response is written by the already-spawned per-connection task, independent of the accept loop the
+signal stops, so no ordering/sleep hack is needed; a `send()` failure (all receivers already
+dropped, reachable if a second shutdown call lands mid-drain) still returns 200 with a one-line WHY
+comment, not a silent `let _ =`. `main.rs`'s accept loop is now `serve_until_shutdown`:
+`tokio::select!` between `listener.accept()` and `shutdown_rx.changed()`, then `drop(listener)` and
+`graceful.shutdown()` under a 5s timeout — never `std::process::exit()`, which would kill
+`/admin/shutdown`'s own response mid-flight. New crate `crates/dnsqb-tray` (`tray-icon` 0.21.3 +
+`tao` 0.31.1 + `rfd` 0.15.4, Крок 0 empirically probed first, scratch project deleted before
+commit): `tao`'s `EventLoop::run` owns the calling thread forever, so admin-channel polling runs on
+a separate OS thread with its own single-threaded `tokio` runtime (`status.rs`); `muda`'s
+`MenuEvent` queue isn't wired into `tao`'s event delivery on Windows, drained via `.try_recv()` on
+a 100ms `ControlFlow::WaitUntil` tick. Three honestly-distinguished tray states (`Unreachable`,
+`NoActiveProvider`, `Filtering{in_flight,blocked,total}`) — `Unreachable` also covers "cert.pem
+doesn't exist yet" (first run, before `dnsqb-service` has ever started) so the tray never stays
+permanently dead; `status.rs` lazily rebuilds `Option<AdminClient>` only after a failed poll (not
+every poll — advisor-caught, same "promoted to all-traffic path needs re-audit" gotcha class
+already in this file for T-39→T-41, since rebuilding a TLS-pinned client 30×/minute is a different
+cost class than the old Tauri UI's build-once-per-user-click). Browser opened via
+`rundll32.exe url.dll,FileProtocolHandler`, absolute `%SystemRoot%\System32\` path, no new
+open/opener crate — same absolute-path-for-spawned-processes precedent as `cert.rs`'s `icacls`
+call. Icon shipped as a compiled-in 32×32 RGBA buffer (Python/Pillow-generated once from the old
+`.ico`, command documented in a code comment since the source file is deleted in commit 3) via
+`Icon::from_rgba`, not a runtime `.ico` file read.
+
+**Commit 3 — architectural reversal**: `crates/dnsqb-ui` deleted entirely (`git rm -r`).
+DECISIONS.md records the T-52 reversal. SPEC.md: tech-stack UI row updated; comms-matrix row 4
+(Tauri webview↔Rust IPC) struck through in place rather than deleted/renumbered (grepped first —
+nothing else in the repo cites rows by number, and struck-in-place matches this file's own "never
+silently deprecate" rule better than a renumber with unbounded blast radius); row 12 split into
+12a (tray↔service: `/admin/reset`, `/admin/shutdown`) and 12b (browser↔service: `/admin/ui` +
+existing `/admin/status`/`/admin/config`); "Відкриті питання" п.13 marked resolved, pointing at
+DECISIONS.md. UI-SPEC.md §5's Tauri-command table gets a superseded-header note, not a rewrite —
+it stays a draft for screens T-149 didn't touch. SECURITY.md: Tauri IPC threat bullet replaced with
+an admin-HTTP-channel bullet; `tauri`/`tauri-build` rows removed, `tray-icon`/`tao`/`rfd` rows
+added with real versions. SERVICES.md: `dnsqb-ui` section replaced by a `dnsqb-tray` section
+(cross-referencing the commit-2 write-up above); admin-channel section gained `/admin/reset` and
+`/admin/shutdown`. CONFIGURATION.md and README.md's stack table updated to match. TASKS.md: T-150
+added; T-53/T-55/T-56/T-58/T-59/T-139 annotated where their Tauri-IPC referent no longer exists
+(T-55's CSP goal already met differently, T-53/T-59's allowlist/snapshot goal now maps to
+`dispatch.rs`'s route table, already test-covered). `deny.toml`: `MPL-2.0`/`Zlib` and all 5
+`unic-*` RUSTSEC ignores removed **one at a time with `cargo deny check` after each** (per the
+plan's explicit instruction, not a bulk removal) — all confirmed genuinely no longer needed;
+`[graph] targets = ["x86_64-pc-windows-msvc"]` restriction kept (independently correct for a
+Windows-only Ф1 project, not Tauri-specific — its comment reworded to say so instead of crediting
+Tauri alone). Closing advisor review before this commit caught two misses: CLAUDE.md's own
+operational sections (Commands, "Planned stack" table, Runtime-dependencies paragraph) still named
+`dnsqb-ui`/Tauri — fixed in place, this paragraph included; `diagrams/ui-dto-model.md` still cited
+SPEC.md's old, now-renamed "row 12" — fixed to "rows 12a/12b". Діаграма ground-truth ritual run
+(triggered — `AdminStats.in_flight` at commit 1, SPEC.md §0/§8 renumbered at commit 3):
+`ui-dto-model.md` updated twice (new `in_flight` field + explanatory paragraph at commit 1; the
+row-12→12a/12b reference fixed at commit 3); `ui-navigation.md`/`ui-status-indicator.md` checked
+against their SOURCES §8/§8.1 citations both times — both are screen-inventory/condition-table
+diagrams describing UI-technology-agnostic requirements, unaffected by the Tauri→tray/web swap.
+Звірка діаграм: прогнано, зачеплено 1 діаграму (`ui-dto-model.md`), оновлено 2 рази, GAP: 0.
+`cargo audit`'s advisory count dropped 17→11 (Tauri's own advisories gone) but still lists
+gtk/glib informationally — `tray-icon`/`muda`/`tao`'s own Linux-only cfg'd deps resolve into
+`Cargo.lock` without compiling here, same shape Tauri had, already excluded from `cargo deny`'s
+evaluation by the kept `[graph] targets` restriction; `cargo audit` itself doesn't respect that
+restriction, so this is expected, not a regression. **Not in this slice**: T-150 (autostart) —
+separate, still-open task; T-56 (status indicator)/T-57 (quorum privacy notice) stay open, now
+targeting the tray/web UI instead of a Tauri window; a real visual click-through check of
+`/admin/ui` via Chrome browser automation (the CLAUDE.md-named gap T-52 left, "if you can't test
+the UI, say so explicitly") — genuinely possible now (unlike a native Tauri window) but not yet
+done this slice.
+
 Фаза 1, seventeenth slice done (T-147 — TASKS-DONE.md, one commit): `query_log::QueryLog` finally
 has a producer — `dispatch::resolve_doh_request` pushes a `LogEntry` after every `pipeline::
 handle_query` call that returns a decision (allowlist/blocklist/cache-hit/quorum). Found while
@@ -595,7 +707,8 @@ check (T-51) are now genuinely unblocked — a real listener exists to connect t
 themselves done yet. `dnsqb-watcher` is still
 a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
-Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
+Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`sync`/`time` —
+`sync` added T-149 for `tokio::sync::watch`, `main.rs`'s `/admin/shutdown` signal; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
 (`default-features = false`, `rustls`/`http2`/`json` — `json` added T-52 for `admin::AdminClient`'s
 `Response::json()`/`RequestBuilder::json()`, `cargo deny check` clean, no new license entries; still
@@ -611,7 +724,8 @@ via `cargo audit`, see SECURITY.md),
 `serde` (`derive` feature) + `serde_json` (introduced T-37 for the override-list file's on-disk
 shape; that use moved to `toml` at T-145, but `serde_json` stays direct — `timeout.rs`'s
 `TimeoutMode` round-trip test still exercises it deliberately, per the fifteenth-slice paragraph
-above, and it's also the dependency T-53's Tauri DTO layer will need regardless), `toml` (T-145 —
+above, and it's also what `admin.rs`'s JSON DTOs and `admin_ui.rs`'s embedded web UI need
+regardless), `toml` (T-145 —
 default features `display`/`parse`/`serde`/`std`; `config.rs`'s `ResolverConfig`/`overrides.rs`'s
 `OverrideLists` on-disk format, replacing `serde_json` there for comment support and
 `ssh_config`/`my.cnf`-style hand-editability, DECISIONS.md), `parking_lot` (`query_log.rs`'s ring buffer lock, T-42 — SPEC.md §6.1's
@@ -629,7 +743,9 @@ local `DoH` listener's `rustls::ServerConfig` in `tls::load_or_generate_server_c
 `client, http1, http2` set `reqwest` already activated; `dispatch.rs`/`main.rs`'s TCP accept loop
 and request handling), `hyper-util` (T-143 — `default-features = false`, features `http1`/`http2`/
 `server`/`server-auto`/`tokio`; `hyper_util::server::conn::auto::Builder` negotiates HTTP/1.1 vs
-HTTP/2 per connection), `tokio-rustls` (T-143 — `default-features = false`, feature `tls12` only,
+HTTP/2 per connection; `server-graceful` added T-149 — `hyper_util::server::graceful::
+GracefulShutdown`, `main.rs`'s `serve_until_shutdown` drains in-flight connections after
+`/admin/shutdown` fires, 5s timeout), `tokio-rustls` (T-143 — `default-features = false`, feature `tls12` only,
 `aws-lc-rs` resolves in automatically via this workspace's already-active `rustls` feature choice,
 confirmed via `cargo tree`; TLS termination on each accepted connection), `http` (T-143 — default
 features, `StatusCode`/`Method`/`Request`/`Response`/`header` types `dispatch.rs` names directly),
@@ -637,7 +753,15 @@ features, `StatusCode`/`Method`/`Request`/`Response`/`header` types `dispatch.rs
 `Limited::new(body, MAX_MESSAGE_SIZE)` wrapped **before** `.collect()` for every POST request body
 — see the thirteenth-slice paragraph above for why that ordering matters), `bytes` (T-143 —
 default features, the `Bytes` buffer type those response/request bodies are built from) — vetting
-rows for each are in SECURITY.md. `[dev-dependencies]` also gained `tempfile` (T-37, `overrides.rs`'s
+rows for each are in SECURITY.md. `crates/dnsqb-tray` (T-149, new crate, replacing `dnsqb-ui`'s
+Tauri dependency tail) adds `tray-icon` 0.21.3 (tray icon + `muda`-backed menu, consumed only via
+`tray_icon::menu::*`'s re-export — no direct `muda` dependency), `tao` 0.31.1 (the event loop
+`tray-icon` requires — `EventLoop::run` owns the calling thread; `status.rs`'s admin-channel
+polling runs on a separate OS thread with its own `tokio::runtime::Builder::new_current_thread()`
+runtime), `rfd` 0.15.4 (`default-features = false`; native confirm dialog for "Stop filtering"),
+`parking_lot` (`status.rs`'s `Arc<RwLock<TrayStatus>>`), and depends on `dnsqb-service` itself as
+a library (for `AdminClient`) — all license-clean (`MIT OR Apache-2.0`/`MIT`), `cargo deny check`
+confirmed at T-149 (2026-08-27). `[dev-dependencies]` also gained `tempfile` (T-37, `overrides.rs`'s
 `load()` tests only — never shipped in a binary) and `x509-parser` (T-48, `cert.rs`'s tests only —
 decodes the real DER `rcgen` produces to assert SAN/`is_ca`/validity empirically rather than
 trusting `rcgen`'s docs; T-50 also uses its `pem` module to prove `Certificate::pem()` round-trips
@@ -653,9 +777,10 @@ check` confirmed clean at T-142 (2026-08-26) and again at T-143 (2026-08-26).
 
 Commands (from repo root):
 - `cargo build --workspace` — build all three crates (`dnsqb-service`, `dnsqb-watcher`, and
-  `dnsqb-ui` as of T-52). `cargo build -p dnsqb-ui` alone needs no `tauri-cli` installed — the
-  frontend is plain HTML/CSS/JS with no build step; `cargo tauri dev` (install `tauri-cli`
-  separately) is a local-only convenience for hot-reload, not required for CI or a plain build.
+  `dnsqb-tray` as of T-149, replacing T-52's Tauri-based `dnsqb-ui` — see DECISIONS.md). No
+  `tauri-cli`/frontend build step of any kind — `dnsqb-tray` is a plain Rust binary
+  (`tray-icon`/`tao`/`rfd`), and the browser-based config page (`/admin/ui`) is served directly
+  by `dnsqb-service` from `include_str!`-embedded HTML/CSS/JS, no bundler.
 - `cargo test --workspace --lib` — unit tests (`is_blocked`/quorum, T-61/T-62; `#[tokio::test]` for
   the async quorum cases).
 - `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green
@@ -1066,10 +1191,12 @@ truth; the other files summarize or track state, they don't re-derive it.
 (Adapted from a personal cross-project practices file — see it only if a point below turns out to
 need more detail than fits here.)
 
-- **Test-first, where a unit is isolatable.** SPEC.md §8.1 already instantiates this for the Tauri
-  IPC boundary specifically (smoke / exploit / misuse / fuzz, four categories, not one "smoke"
-  test) — apply the same discipline (write the failing test before the implementation) to the
-  resolver, cache, and override-list logic too, not just the UI channel. A bug fix gets a
+- **Test-first, where a unit is isolatable.** SPEC.md §8.1 already instantiates this for the
+  UI↔backend boundary specifically (smoke / exploit / misuse / fuzz, four categories, not one
+  "smoke" test) — the boundary itself moved from Tauri IPC to the `/admin/*` HTTP routes at
+  T-149, but the four-category discipline still applies there unchanged (§8.1's own header note,
+  SPEC.md §8). Apply the same discipline (write the failing test before the implementation) to
+  the resolver, cache, and override-list logic too, not just the UI channel. A bug fix gets a
   regression test written first, reproducing the bug, before the fix.
 - **Три Б (three safety legs) — check all three, not just "is this correct."** This project already
   embodies all three without naming them; naming them is useful as a completeness check when adding
@@ -1079,8 +1206,9 @@ need more detail than fits here.)
     SPEC.md, and why the watchdog "must **notify**, not silently self-heal.")
   - *Software safety* — is the code safe against adversarial/malformed input, provably from the line
     itself? Two concrete input boundaries in this project: DNS wire format from upstream providers
-    (why `hickory-dns`, not a hand-rolled parser) and the Tauri IPC channel from the webview
-    (SPEC.md §8.1's exploit/misuse/fuzz categories exist exactly for this leg).
+    (why `hickory-dns`, not a hand-rolled parser) and the `/admin/*` HTTP channel from the tray/
+    browser UI, formerly Tauri IPC from the webview (SPEC.md §8.1's exploit/misuse/fuzz categories
+    exist exactly for this leg, unchanged by the T-149 channel swap).
   - *Lower-layer safety* — every layer this project doesn't own and can't fix is untrusted: the OS
     trust store, upstream DoH providers, the GeoIP/top-sites data feeds (why atomic-replace +
     integrity check before swapping in a new file), and the browser's own DoH-fallback behavior
@@ -1142,7 +1270,7 @@ OpenSSL dependency).
 | TLS | `rustls` |
 | Cache | `moka` (per-entry TTL) |
 | GeoIP reader | `maxminddb` |
-| UI | Tauri |
+| UI | Tray icon (`tray-icon`/`tao`/`rfd`) + browser-based config page served by `dnsqb-service` |
 | Fuzz/property tests | `proptest` |
 
 ## Architecture (from SPEC.md)

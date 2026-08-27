@@ -111,7 +111,7 @@ cargo run -p dnsqb-service
 | TLS | `rustls` |
 | Кеш (per-entry TTL) | `moka` |
 | GeoIP | `maxminddb` |
-| UI | Tauri |
+| UI | Трей-індикатор (`tray-icon`/`tao`/`rfd`) + вбудований веб-UI на `dnsqb-service`'s адмін-каналі |
 | Fuzz/property tests | `proptest` |
 
 Деталі й обґрунтування вибору кожного компонента — SPEC.md, розділ "Технічний стек".

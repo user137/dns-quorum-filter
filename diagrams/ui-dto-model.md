@@ -202,7 +202,8 @@ JSON-полем.
 
 `ResolverSettings` (вище) — чернетка з UI-SPEC.md §5, ще не реалізована як окремий DTO.
 `AdminStatusResponse` (T-52) — те, що реально повертають `GET /admin/status`/`POST /admin/config`
-на новому адмін-каналі (SPEC.md §0, ряд 12) — покриває той самий `timeout_mode`/`timeout_ms`/`port`,
+на новому адмін-каналі (SPEC.md §0, рядки 12a/12b — розщеплені з колишнього рядка 12 при T-149)
+— покриває той самий `timeout_mode`/`timeout_ms`/`port`,
 що й чернетковий `ResolverSettings`, плюс `providers: EnabledProviders` (T-148, а не категорійний
 перемикач — Ф1 має лише 2 провайдери, не категорії) і `stats: AdminStats` (лічильники з поточного
 вікна логу — не персистований, не "сьогодні" в календарному сенсі). Не заміна `ResolverSettings` за

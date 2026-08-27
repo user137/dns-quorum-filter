@@ -128,8 +128,8 @@ adguard = true
 
 `dnsqb-service` сам роздає сторінку налаштувань на тому самому порту — `https://127.0.0.1:<port>/admin/ui`
 (плюс `/admin/ui/main.js`, `/admin/ui/style.css`). Ті самі тумблери провайдерів/режиму таймауту,
-що були в `dnsqb-ui` (Tauri-вікно, T-52 — **заплановане видалення** в третьому коміті T-149,
-див. SERVICES.md), тепер у звичайному браузері: сторінка ходить у `/admin/status`/`/admin/config`
+що були в колишньому `dnsqb-ui` (Tauri-вікно, T-52 — видалено T-149, див. DECISIONS.md/
+SERVICES.md), тепер у звичайному браузері: сторінка ходить у `/admin/status`/`/admin/config`
 через `fetch()` того самого походження (same-origin, CORS не потрібен). Сувора CSP
 (`default-src 'self'; frame-ancestors 'none'`, без `unsafe-inline`) — жодного інлайн-скрипта/
 стилю. **До ручного встановлення сертифіката в довірене сховище (T-49)** браузер покаже
