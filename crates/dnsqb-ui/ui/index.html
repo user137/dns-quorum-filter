@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DNS Quorum Filter</title>
+<style>
+  /* Trimmed subset of mockups/gui-dashboard.html's tokens/classes -
+     just what this single-panel window actually uses (T-52's "мінімальний"
+     scope; other screens are separate tasks, no sidebar/nav shell here). */
+  :root {
+    --paper: #ffffff;
+    --surface-raised: #ffffff;
+    --line: #dde2e7;
+    --line-soft: #e8ebee;
+    --text: #16202b;
+    --text-muted: #5b6b78;
+    --accent: #157b73;
+    --accent-strong: #0e5f59;
+    --good: #2f8f52;
+    --good-soft: #e5f4ea;
+    --bad: #c5384a;
+    --bad-soft: #fbe6e9;
+    --warn: #b9740c;
+    --warn-soft: #fbf0dd;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d1117;
+      --surface-raised: #161d27;
+      --line: #26303b;
+      --line-soft: #1d2530;
+      --text: #e7ecf0;
+      --text-muted: #a1afba;
+      --accent: #4fd8c9;
+      --accent-strong: #6fe3d6;
+      --good: #57c07c;
+      --good-soft: #133023;
+      --bad: #ea6b7a;
+      --bad-soft: #341419;
+      --warn: #e3a63f;
+      --warn-soft: #33270f;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1rem;
+    background: var(--paper);
+    color: var(--text);
+    font-family: "Segoe UI", -apple-system, sans-serif;
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 15px; margin: 0 0 0.9rem; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 0.28rem 0.65rem; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+    background: var(--good-soft); color: var(--good);
+    margin-bottom: 0.9rem;
+  }
+  .status-pill.is-bad { background: var(--bad-soft); color: var(--bad); }
+  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  .card {
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.8rem;
+  }
+  .card h3 {
+    font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.6rem;
+  }
+
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.4rem 0; border-bottom: 1px solid var(--line-soft);
+  }
+  .toggle-row:last-child { border-bottom: none; }
+  .switch { position: relative; width: 34px; height: 20px; flex-shrink: 0; }
+  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .switch .track {
+    position: absolute; inset: 0; background: var(--line); border-radius: 999px;
+    pointer-events: none;
+  }
+  .switch .thumb {
+    position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--paper); box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    pointer-events: none; transition: transform 0.1s;
+  }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track + .thumb { transform: translateX(14px); }
+  .switch input:disabled + .track { opacity: 0.5; }
+
+  .radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
+  .radio-opt { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 12.8px; }
+  .radio-opt input { margin-top: 0.2rem; accent-color: var(--accent); }
+
+  .stat { font-size: 24px; font-weight: 700; }
+  .stat-row { display: flex; gap: 1.5rem; }
+  .stat-sub { font-size: 11.5px; color: var(--text-muted); }
+
+  .notice.warn {
+    background: var(--warn-soft); color: var(--warn);
+    border-radius: 8px; padding: 0.6rem 0.75rem; font-size: 12.3px;
+    margin-bottom: 0.8rem;
+  }
+  .error-panel {
+    background: var(--bad-soft); color: var(--bad);
+    border-radius: 8px; padding: 0.7rem 0.85rem; font-size: 12.8px;
+  }
+</style>
+</head>
+<body>
+  <h1>DNS Quorum Filter</h1>
+  <div id="status-pill" class="status-pill"><span class="dot"></span><span id="status-text">…</span></div>
+  <div id="app-body">
+    <p>Завантаження…</p>
+  </div>
+  <script src="main.js"></script>
+</body>
+</html>

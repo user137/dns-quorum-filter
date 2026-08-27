@@ -113,6 +113,108 @@ checked, not affected. Звірка діаграм: прогнано, зачеп
 UI-SPEC.md §3.4) — needs upstream presets `upstream::Provider` doesn't have; the Tauri UI itself
 (T-52), now genuinely unblocked but still not built.
 
+Фаза 1, nineteenth slice done (T-52 — TASKS-DONE.md, **two commits**, advisor-recommended split
+given the size — backend control-plane fully green on its own before the new Tauri crate's much
+larger dependency tail landed): the project's first real UI, a minimal Tauri window with the three
+Ф1 controls SPEC.md §8 names (provider toggles, timeout mode, blocked-stat). **Real architectural
+gap found before this could even be scoped**: `dnsqb-service` and any future UI are separate
+long-running processes (SERVICES.md) with no channel between them — `config.rs` only had
+startup-time `load()`, `query_log::QueryLog` was in-memory-only with no external reader. Asked the
+user (AskUserQuestion) which architecture to build; chosen: a **full live control-plane** — toggles/
+timeout-mode apply to the running resolver immediately, no restart, and the stat panel shows real
+live numbers. Plan-mode + advisor review of the plan (before any code) caught one thing that
+blocked and several real refinements, all folded into the plan before implementation started — most
+consequentially: the whole admin-channel TLS design rested on an unverified assumption
+(`reqwest::Certificate::from_pem` + `.add_root_certificate()` validating against `cert.rs`'s
+`IsCa::ExplicitNoCa` self-signed leaf, `cA=FALSE`) — confirmed **empirically** via a throwaway
+scratch probe (real `tokio-rustls` server + pinned `reqwest` client, deleted before commit) before
+building anything on top of it. Green — real TLS validation, not disabled cert checking.
+
+**Commit 1 — backend control-plane** (`crates/dnsqb-service`): new `admin.rs` — `AdminStatusResponse`/
+`AdminStats`/`AdminConfigUpdate` JSON DTOs, `compute_stats` (from `QueryLog::snapshot`, no new
+storage), `AdminClient`/`AdminClientError` (a `reqwest::Client` pinned to the service's own
+`cert.pem`, deliberately kept out of `dnsqb-ui`'s own dependency graph entirely — no cross-crate
+`reqwest` version coupling). `quorum::EnabledProviders` gained `Serialize`. `config::ResolverConfig::
+save()` — this file's first writer ever; a stated, documented tradeoff, not a silent one: it
+overwrites the whole file from struct fields, destroying any hand-written comments T-145 chose TOML
+specifically to preserve, and — advisor-sharpened — a pending, not-yet-restarted-into hand-edit to
+`port`/`timeout_ms` gets silently reverted by the next UI toggle click too (CONFIGURATION.md now
+says both explicitly). `dispatch::AppState<C>` — **one** `RwLock<RuntimeSettings>` (providers+timeout
+together, not two separate locks — advisor-caught: two locks would let a query observe new
+providers paired with a stale timeout mid-update), plus `PersistTarget { port, config_path }`;
+`AppState::new`'s param count held at 7 (not 9) via these two cohesive bundles, the same structural
+`too_many_arguments` fix T-147/T-148 already established, not `#[allow(...)]`. New routes
+`GET /admin/status`/`POST /admin/config` on the *same* loopback TLS port `/dns-query` already uses —
+no new listener, the same pattern already named for the future `/health` (T-86).
+
+**Real CSRF gap, caught by advisor review of the finished diff before commit, not a test**:
+`POST /admin/config` initially had no `Content-Type` check — a `text/plain` (or missing)
+`Content-Type` is a CORS *simple* request (no preflight), so any page the browser happened to be
+rendering could have silently disabled filtering machine-wide the moment `cert.pem` is trust-store-
+installed (T-49). Fixed with `content_type_is_json` mirroring the existing `content_type_is_dns_message`
+gate — `application/json` isn't a simple type, forcing a preflight that this route never answers, so
+the real request never fires. DNS rebinding (the obvious next worry on a loopback admin channel) was
+already closed independently by the leaf cert's narrow SAN set (`IP:127.0.0.1`/`IP:::1`/
+`DNS:localhost`, T-48), not by this fix — documented in `content_type_is_json`'s own comment so it
+isn't re-litigated later. Verified live against the running binary: a `text/plain` POST → 415, a
+real `application/json` POST live-applies and persists, and the persisted value **survives a
+restart** (confirmed by actually restarting the service and re-reading `/admin/status`). 201 tests,
+full gate green, CI confirmed (all 6 jobs).
+
+**Commit 2 — `crates/dnsqb-ui`**: new Tauri v2 workspace member, vanilla HTML/CSS/JS frontend (no
+npm/bundler — `tauri.conf.json`'s `withGlobalTauri: true`, no `beforeDevCommand`/`beforeBuildCommand`,
+so plain `cargo build -p dnsqb-ui` — what CI runs — needs no `tauri-cli`). One panel, no sidebar/nav
+(other screens are separate future tasks): provider toggles, timeout-mode radios, a stat panel
+honestly labeled "current log window" rather than "today" (same honesty correction T-66 already made
+relabeling cache buckets "miss/hit" instead of "cold/warm" — the ring buffer isn't a calendar-day
+count). Three thin Tauri commands (`get_status`/`set_providers`/`set_timeout_mode`) wrapping
+`AdminClient`, returning a typed `UiError` (not a bare `String`) so the frontend can render "service
+unreachable" honestly instead of a fake `0`/`0` stat. A one-line warning renders when both providers
+are off (Три Б — a one-click-reachable unfiltered state needs *some* on-screen indication even before
+T-56's real status indicator exists).
+
+Two real build obstacles, both resolved empirically: (1) Windows requires `icons/icon.ico` even for
+plain `cargo build` (`tauri-build` always generates a Windows resource file) — generated a minimal
+valid 32×32 ICO with a small Python/`struct` script, not hand-authored bytes. (2) `cargo deny check`
+against the full Tauri tree genuinely failed three ways at once, confirming the advisor's own
+"budget this, it's bigger than the UI" warning: a wildcard path-dependency (`dnsqb-service` needed an
+explicit `version` field), two new licenses needing real vetting (`MPL-2.0` — weak, file-level
+copyleft, doesn't propagate to an unmodified dependency; `Zlib` — permissive), and five `unmaintained`
+advisories on the `unic-*` crate family (via `urlpattern`, no safe upgrade available per the
+advisories' own text) — added as an explicit, ID-specific `ignore` list, not a blanket
+unmaintained-check disable. Separately, the entire GTK/Linux-only tail (unmaintained gtk-rs bindings,
+an extra Apache-2.0-variant license) disappeared on its own once `deny.toml` gained
+`[graph] targets = ["x86_64-pc-windows-msvc"]` — the actually-correct fix for a Windows-only Ф1
+project, not licensing code that never compiles here.
+
+Manual verification, with an honestly-named limit: launched `dnsqb-ui.exe` next to a live
+`dnsqb-service` — the process starts, doesn't crash, and spawns a real `msedgewebview2.exe` process
+tree (confirmed via `Get-CimInstance Win32_Process`), proving the webview actually rendered something
+rather than failing silently. **Not verified**: the actual visual render or click-through interaction
+— no screenshot/browser-automation tool exists in this environment for a native Tauri window; every
+layer below the webview (the admin channel, `AdminClient`, both Tauri commands) is already covered by
+commit 1's tests and live manual confirmation. Named as a real gap, not glossed over (CLAUDE.md: "if
+you can't test the UI, say so explicitly rather than claiming success").
+
+SPEC.md/UI-SPEC.md/diagrams updated, not left to silently drift: SPEC.md §0 gained communication-
+matrix row 12 ("UI ↔ `dnsqb-service`, адмін-канал") plus a §8 paragraph distinguishing the two
+different "UI↔backend" channels (webview↔Tauri-core vs. Tauri-core↔separate `dnsqb-service`) the
+previous edition never separated. UI-SPEC.md §5's draft Tauri-command table is annotated where T-52's
+real implementation diverged (`set_category_enabled` → `set_providers`, with the reason — Ф1 has 2
+providers, not categories, T-148; `get_status`/`set_timeout_mode` now return the wider
+`AdminStatusResponse`, not a standalone `ResolverSettings`). Diagram ritual run: 1 diagram touched
+(`ui-dto-model.md` — new `AdminStatusResponse`/`AdminStats`/`EnabledProviders` classes plus a
+discrepancy paragraph against the draft `ResolverSettings`), `ui-navigation.md`/`ui-status-indicator.md`
+checked, unaffected. T-139 narrowed, not silently duplicated — its processed/blocked counters are now
+covered by `dnsqb-ui`'s dashboard; only the percentage display remains open.
+
+**Not in this slice**: T-53 (formal audited command allowlist), T-54 (tagged-enum DTOs for the rest
+of the channel), T-55 (CSP without `unsafe-inline` — the current CSP still allows `style-src
+'unsafe-inline'` for the inline `<style>` block), T-56 (status indicator), T-57 (quorum privacy
+notice), T-58/59/60 (4-category IPC channel tests) — all separate, still-open tasks; `port`/
+`timeout_ms` aren't admin-editable this slice (only `providers`/`timeout_mode`) — changing the port
+needs a listener re-bind, out of scope for a live-apply call.
+
 Поза фазами, T-141 done (TASKS-DONE.md, one commit, docs only — no code): investigated whether
 HTTP/3 upstream support is worth building now, same "research, not implementation" precedent as
 T-14 (ECH). Client-side stack is the decisive blocker: `reqwest` 0.13.4's `http3` feature is
@@ -550,7 +652,10 @@ ISC OR MIT`, `ISC` already allowed for this same TLS stack; the `hyper` family/`
 check` confirmed clean at T-142 (2026-08-26) and again at T-143 (2026-08-26).
 
 Commands (from repo root):
-- `cargo build --workspace` — build both crates.
+- `cargo build --workspace` — build all three crates (`dnsqb-service`, `dnsqb-watcher`, and
+  `dnsqb-ui` as of T-52). `cargo build -p dnsqb-ui` alone needs no `tauri-cli` installed — the
+  frontend is plain HTML/CSS/JS with no build step; `cargo tauri dev` (install `tauri-cli`
+  separately) is a local-only convenience for hot-reload, not required for CI or a plain build.
 - `cargo test --workspace --lib` — unit tests (`is_blocked`/quorum, T-61/T-62; `#[tokio::test]` for
   the async quorum cases).
 - `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green

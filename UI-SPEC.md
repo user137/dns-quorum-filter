@@ -176,16 +176,16 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 
 | Команда | Повертає / приймає | Екран | Фаза |
 |---|---|---|---|
-| `get_status()` | `StatusIndicatorState` | Header (всі екрани) | Ф1 |
+| `get_status()` | ⚠️ реалізовано T-52 як `AdminStatusResponse` (ширше за чернетковий `StatusIndicatorState` — включає `stats`) | Header (всі екрани) | Ф1 |
 | `get_dashboard_summary()` | статистика + прев'ю логу | Dashboard | Ф1 |
-| `set_category_enabled(category, bool)` | — | Dashboard, Провайдери | Ф1 |
+| ~~`set_category_enabled(category, bool)`~~ → `set_providers(quad9, adguard)` | ⚠️ реалізовано T-52 з іншою назвою/сигнатурою — Ф1 має лише 2 провайдери, не категорії (T-148); category-рівень лишається пізнішою фазою | Dashboard, Провайдери | Ф1 |
 | `get_log(filter)` | `Vec<LogEntry>` | Лог запитів | Ф1 |
 | `clear_log()` | — | Лог запитів | Ф1 |
 | `add_to_allowlist(domain)` | — | Лог, Списки | Ф1 |
 | `add_to_blocklist(domain)` | — | Лог, Списки | Ф1 |
 | `remove_from_list(domain, list)` | — | Списки | Ф1 |
 | `get_override_lists()` | `{allowlist, blocklist}` | Списки | Ф1 |
-| `get_provider_config()` / `set_timeout_mode(mode)` / `set_doh_port(port)` | `ResolverSettings` | Провайдери | Ф1 |
+| `get_provider_config()` / `set_timeout_mode(mode)` / `set_doh_port(port)` | `ResolverSettings` — ⚠️ `set_timeout_mode` реалізовано T-52 (повертає `AdminStatusResponse`, не окремий `ResolverSettings`); `get_provider_config()`/`set_doh_port(port)` ще ні | Провайдери | Ф1 |
 | `add_custom_provider(name, url)` | — | Провайдери | Ф2 |
 | `get_geoip_config()` / `set_blocked_countries(list)` | `GeoIPConfig` | GeoIP | Ф2 |
 | `get_geoip_db_status()` | дата оновлення | GeoIP | Ф2 |

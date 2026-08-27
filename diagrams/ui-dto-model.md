@@ -96,6 +96,25 @@ classDiagram
         +u32 timeout_ms
         +u16 doh_port
     }
+    class AdminStatusResponse {
+        <<T-52, реалізовано>>
+        +EnabledProviders providers
+        +TimeoutMode timeout_mode
+        +u32 timeout_ms
+        +u16 port
+        +AdminStats stats
+        +bool persisted
+    }
+    class EnabledProviders {
+        <<T-148, реалізовано>>
+        +bool quad9
+        +bool adguard
+    }
+    class AdminStats {
+        <<T-52, реалізовано>>
+        +u64 total
+        +u64 blocked
+    }
 
     class GeoIPConfig {
         +List~String~ blocked_countries
@@ -159,6 +178,19 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 варіантів, `Pending` лишається окремим легітимним варіантом (зарезервований під
 майбутнє live-відображення), а не хиба §8. SPEC.md §6/§8 лишаються буквально
 розбіжними в тексті; DECISIONS.md — джерело істини для цієї розбіжності.
+
+## `AdminStatusResponse`/`AdminStats`/`EnabledProviders` — реальна реалізація, ширша за чернетку
+
+`ResolverSettings` (вище) — чернетка з UI-SPEC.md §5, ще не реалізована як окремий DTO.
+`AdminStatusResponse` (T-52) — те, що реально повертають `GET /admin/status`/`POST /admin/config`
+на новому адмін-каналі (SPEC.md §0, ряд 12) — покриває той самий `timeout_mode`/`timeout_ms`/`port`,
+що й чернетковий `ResolverSettings`, плюс `providers: EnabledProviders` (T-148, а не категорійний
+перемикач — Ф1 має лише 2 провайдери, не категорії) і `stats: AdminStats` (лічильники з поточного
+вікна логу — не персистований, не "сьогодні" в календарному сенсі). Не заміна `ResolverSettings` за
+задумом (той DTO лишається чернеткою на майбутнє, коли з'явиться `set_doh_port`/`get_provider_config`
+з окремою структурою) — це паралельна, вже реально повернута форма для того, що T-52 встиг покрити.
+T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна точка звести це до однієї форми, не
+раніше.
 
 ## ⚠️ GAP — `VoterScope` більше не однозначний (SPEC.md §5.1.1, T-138)
 

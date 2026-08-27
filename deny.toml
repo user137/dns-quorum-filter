@@ -1,6 +1,33 @@
+[graph]
+# T-52: `tauri`'s dependency graph includes platform-cfg'd deps for every
+# target it supports (Linux GTK/webkit2gtk bindings, in particular) - Cargo
+# resolves and locks those regardless of the host platform. This project is
+# Windows-only for Ф1 (CLAUDE.md, DECISIONS.md 2026-08-25) and never builds
+# or ships the Linux backend, so restricting the graph cargo-deny actually
+# evaluates to the real target platform is the correct fix, not vetting
+# licenses/advisories for code that never compiles here.
+targets = ["x86_64-pc-windows-msvc"]
+
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
+# T-52: `tauri-utils` (via `urlpattern`, used for its capability/permission
+# URL-pattern matching) pulls in the `unic-*` Unicode crate family - all
+# flagged "unmaintained" (not a vulnerability), and each advisory's own text
+# says "No safe upgrade is available" (inherent to `urlpattern`'s current
+# dependency choice, not something pinning a different version of anything
+# in this workspace fixes). `cargo audit`'s own default treats "unmaintained"
+# as informational, not a hard failure - matched here via an explicit,
+# specific ignore list (not a blanket unmaintained-check disable) so a
+# *future* unmaintained advisory on a crate this workspace actually controls
+# still fails loudly.
+ignore = [
+  "RUSTSEC-2025-0075", # unic-char-range
+  "RUSTSEC-2025-0080", # unic-common
+  "RUSTSEC-2025-0081", # unic-char-property
+  "RUSTSEC-2025-0098", # unic-ucd-version
+  "RUSTSEC-2025-0100", # unic-ucd-ident
+]
 
 [licenses]
 confidence-threshold = 0.93
@@ -16,6 +43,16 @@ confidence-threshold = 0.93
 # wording, same permissions). Pulled in by aws-lc-rs/aws-lc-sys (rustls'
 # crypto backend) and rustls-webpki/untrusted (same TLS stack) - reqwest's
 # rustls feature (Фаза 1, T-20-T-26 batch).
+# MPL-2.0 (T-52): OSI-approved, weak/file-level copyleft (Mozilla Public
+# License) - modifying an MPL-covered *file* obligates releasing that file's
+# source, but doesn't propagate to the rest of the binary the way GPL would.
+# This project doesn't modify any of these vendored crates, only depends on
+# them unmodified, so no source-disclosure obligation is triggered. Pulled
+# in by cssparser/cssparser-macros/dtoa-short/selectors (via `dom_query`,
+# tauri-utils's HTML/CSS parsing dependency) and option-ext (via `dirs`,
+# app-data-directory lookup) - all Tauri transitive deps.
+# Zlib (T-52): OSI-approved, permissive (MIT/BSD-equivalent in practice, no
+# copyleft). Pulled in by foldhash (via `dom_query`, same chain as above).
 allow = [
   "MIT",
   "Apache-2.0",
@@ -23,6 +60,8 @@ allow = [
   "Unicode-3.0",
   "CDLA-Permissive-2.0",
   "ISC",
+  "MPL-2.0",
+  "Zlib",
 ]
 
 [bans]
