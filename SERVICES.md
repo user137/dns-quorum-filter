@@ -38,6 +38,16 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
 4. Приймає з'єднання, термінує TLS (`rustls`), і на кожен DoH GET/POST-запит прогонює конвеєр
    allowlist → blocklist → cache → quorum (SPEC.md §5.3) через `dispatch::resolve_doh_request`.
 
+### Адмін-канал (T-52)
+
+На цьому ж слухачі (той самий порт, той самий TLS-сертифікат — жодного нового мережевого
+слухача) `GET /admin/status` і `POST /admin/config` дають локальному UI (`dnsqb-ui`) живий
+контроль над `providers`/`timeout_mode`: зміна застосовується миттєво (без рестарту) і
+персистується назад у `resolver_config.toml`, якщо той успішно завантажився при старті — деталі
+й формат у [`CONFIGURATION.md`](CONFIGURATION.md#адмін-канал--живий-запис-providerstimeout_mode-t-52).
+Довіра TLS з боку клієнта — пінінг на конкретний `cert.pem`, що вже персистує цей сервіс
+(`admin::AdminClient`), не системний trust store і не вимкнена перевірка сертифіката.
+
 ### Логи
 
 Через `tracing`, `tracing_subscriber::fmt::init()` пише у stdout. Дефолтний рівень —

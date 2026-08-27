@@ -495,7 +495,9 @@ a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`time`; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
-(`default-features = false`, `rustls`/`http2` only — no `native-tls`), `thiserror`, `base64`,
+(`default-features = false`, `rustls`/`http2`/`json` — `json` added T-52 for `admin::AdminClient`'s
+`Response::json()`/`RequestBuilder::json()`, `cargo deny check` clean, no new license entries; still
+no `native-tls`), `thiserror`, `base64`,
 `futures-util` (`FuturesUnordered`/`StreamExt` only, not the full `futures` crate — T-30), `tracing`
 (diagnostic logging, T-29; `SPEC.md`'s "Технічний стек" table doesn't name a logging crate, `tracing`
 is the tokio-ecosystem de-facto default), `tracing-subscriber` (T-143 — `main.rs`'s

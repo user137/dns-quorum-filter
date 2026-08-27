@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
@@ -27,7 +27,10 @@ use std::pin::Pin;
 /// split as every other on-disk shape in this crate) is derived directly on
 /// this type rather than a config-only wrapper, mirroring how
 /// `timeout::TimeoutMode` gained `Serialize`/`Deserialize` directly at T-144.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// `Serialize` (T-52) lets `admin::AdminStatusResponse` echo the live value
+/// back over the admin channel — same TOML shape either way, since
+/// `#[serde(default, deny_unknown_fields)]` only affects deserialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EnabledProviders {
     /// Whether Quad9 is queried at all.
@@ -747,6 +750,23 @@ mod tests {
             .answers
             .push(Record::from_rdata(Name::root(), 60, RData::A(A(ip))));
         message
+    }
+
+    #[test]
+    fn enabled_providers_json_round_trips_through_the_admin_channel_shape() {
+        let providers = EnabledProviders {
+            quad9: false,
+            adguard: true,
+        };
+        let json = match serde_json::to_string(&providers) {
+            Ok(json) => json,
+            Err(err) => panic!("must serialize: {err}"),
+        };
+        let round_tripped: EnabledProviders = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(err) => panic!("must deserialize: {err}"),
+        };
+        assert_eq!(round_tripped, providers);
     }
 
     fn nxdomain_message() -> Message {

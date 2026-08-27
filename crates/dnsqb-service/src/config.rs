@@ -20,17 +20,17 @@
 //! later-phase gap — this module only persists what `resolve()` can act on
 //! today.
 //!
-//! No `save()` either — same "no file-write path yet" precedent as
-//! `overrides.rs` before T-46/T-47's UI writer existed. No live-reload:
-//! `overrides.json` (T-37) already only loads once at `main.rs` startup with
-//! no writer and no watcher, and this file follows the same precedent, not a
-//! stronger guarantee than its sibling config file already has.
+//! `save()` (T-52) is this file's first writer — `admin.rs`'s
+//! `POST /admin/config` handler calls it to persist a live-applied change.
+//! `overrides.toml` (T-37) still has none — no writer and no watcher there
+//! yet (T-46/T-47), so *that* sibling file keeps the "load once at startup,
+//! no live-reload" precedent this module used to share with it in full.
 
 use std::fs;
 use std::io;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutMode;
@@ -38,13 +38,20 @@ use crate::timeout::TimeoutMode;
 /// Errors loading the resolver config.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    /// Failed to read the file (anything other than "file does not exist" —
-    /// a missing file is `Ok`, see [`ResolverConfig::load`]).
-    #[error("failed to read resolver config file: {0}")]
+    /// Failed to read or write the file (anything other than "file does not
+    /// exist" on read — a missing file is `Ok`, see [`ResolverConfig::load`]).
+    #[error("failed to read or write resolver config file: {0}")]
     Io(#[source] io::Error),
     /// The file's contents are not valid TOML in the expected shape.
     #[error("failed to parse resolver config TOML: {0}")]
     Toml(#[source] toml::de::Error),
+    /// [`ResolverConfig::save`] failed to serialize the config to TOML. Not
+    /// expected to ever actually happen for this struct's field types (no
+    /// non-representable floats, no map keys), but `toml::to_string` returns
+    /// a real `Result`, so this variant exists rather than an `unwrap`
+    /// (forbidden, `#![deny(clippy::unwrap_used)]`).
+    #[error("failed to serialize resolver config to TOML: {0}")]
+    TomlSerialize(#[source] toml::ser::Error),
     /// `port` was `0` — `bind_listener(0)` would bind an OS-chosen ephemeral
     /// port, exactly the silent dynamic-port behavior SPEC.md §1 forbids for
     /// the real listener (Three safety legs, user safety: a browser
@@ -140,6 +147,35 @@ impl ResolverConfig {
             providers: file.providers,
         })
     }
+
+    /// Persists this config to `path` as TOML (T-52 — the admin channel's
+    /// `POST /admin/config` is the first writer this file has ever had).
+    ///
+    /// **Overwrites the whole file from struct fields** — any hand-written
+    /// comments or formatting the operator added are lost. T-145 chose TOML
+    /// specifically for comment support (DECISIONS.md); a format-preserving
+    /// edit would avoid this, but is over-engineering for two booleans and
+    /// an enum at this project's current scope. `CONFIGURATION.md` carries
+    /// an explicit warning about this — a stated tradeoff, not a silent one.
+    ///
+    /// This does blocking file I/O — call from a place that's already
+    /// accepted that cost (T-52's admin handler), not a per-query hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::TomlSerialize`] if serialization fails (not
+    /// expected for this struct's field types) or [`ConfigError::Io`] if the
+    /// write itself fails.
+    pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        let file = ResolverConfigFile {
+            port: self.port,
+            timeout_mode: self.timeout_mode,
+            timeout_ms: self.timeout_ms,
+            providers: self.providers,
+        };
+        let toml = toml::to_string(&file).map_err(ConfigError::TomlSerialize)?;
+        fs::write(path, toml).map_err(ConfigError::Io)
+    }
 }
 
 /// On-disk shape — a plain, hand-editable TOML table (same spirit as
@@ -148,7 +184,7 @@ impl ResolverConfig {
 /// fills any field absent from a partial file; `deny_unknown_fields` still
 /// rejects a typo'd key (`"potr"`, `"timeoutMs"`, ...) loudly rather than
 /// silently ignoring it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct ResolverConfigFile {
     port: u16,
@@ -326,6 +362,48 @@ mod tests {
             ResolverConfig::load(&path),
             Err(ConfigError::ZeroPort)
         ));
+    }
+
+    #[test]
+    fn save_then_load_round_trips_a_non_default_config() {
+        let (_dir, path) = temp_config_path();
+        let config = ResolverConfig {
+            port: 9443,
+            timeout_mode: TimeoutMode::FailClosed,
+            timeout_ms: 3500,
+            providers: EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+        };
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to load what was just saved: {err}"),
+        };
+        assert_eq!(loaded, config);
+    }
+
+    #[test]
+    fn save_overwrites_a_preexisting_file_entirely() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "port = 1\ntimeout_mode = \"fail_open\"\ntimeout_ms = 1\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = ResolverConfig::default();
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to load what was just saved: {err}"),
+        };
+        assert_eq!(loaded, config);
     }
 
     #[test]

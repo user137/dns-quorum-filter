@@ -119,6 +119,7 @@
 //! `[providers]` TOML table) rather than a parallel config-only copy. Still
 //! not wired to any UI (T-52, no longer blocked on this task).
 
+mod admin;
 mod cache;
 mod cert;
 mod config;
@@ -134,12 +135,15 @@ mod tls;
 mod upstream;
 mod wire;
 
+pub use admin::{
+    AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
+};
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use config::{ConfigError, ResolverConfig};
-pub use dispatch::{serve, AppState};
+pub use dispatch::{serve, AppState, PersistTarget, RuntimeSettings};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,

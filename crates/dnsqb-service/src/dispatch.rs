@@ -1,8 +1,10 @@
 //! `DoH` GET/POST → `pipeline::handle_query` request dispatch (T-143) — RFC 8484
 //! (SPEC.md §1, §3). `main.rs`'s TCP accept loop and TLS handshake hand each
-//! connection off to [`serve`], the only piece of this module `main.rs`
-//! (a separate crate — the `[[bin]]` target) actually calls; everything else
-//! here is `pub(crate)` and independently unit-tested with a mock
+//! connection off to [`serve`], the piece of this module `main.rs`
+//! (a separate crate — the `[[bin]]` target) calls directly; [`RuntimeSettings`]/
+//! [`PersistTarget`] (T-52) are `pub` too, since `main.rs` constructs both to
+//! build the [`AppState`] it hands to `serve`. Everything else here is
+//! `pub(crate)` or private, independently unit-tested with a mock
 //! [`DohClient`] and a hand-built [`Request`], no live TCP/TLS needed.
 //! [`serve`] itself is generic over the request body type (not hardcoded to
 //! `hyper::body::Incoming`, which can't be constructed outside a real
@@ -10,11 +12,14 @@
 //! tests call it with `http_body_util::Full`.
 //!
 //! Endpoint is fixed to `/dns-query` (SPEC.md §1 line 84) — any other path is
-//! a 404, deliberately leaving `/health` (T-86, Фаза 3: "розширення наявного
-//! порту, не новий слухач") free to add on this same listener later without
-//! colliding.
+//! a 404, except `/admin/status` and `/admin/config` (T-52), added on this
+//! same listener rather than a new one, the same "extend the existing port"
+//! pattern already named for the future `/health` (T-86). `/health` itself
+//! is still free to add later without colliding.
 
+use crate::admin::{compute_stats, AdminConfigUpdate, AdminStatusResponse};
 use crate::cache::{Cache, CacheConfig};
+use crate::config::ResolverConfig;
 use crate::overrides::OverrideLists;
 use crate::pipeline::{handle_query, proxy_to_single_upstream, PipelineOutcome};
 use crate::query_log::{LogEntry, QueryLog};
@@ -29,9 +34,12 @@ use hickory_proto::ProtoError;
 use http::{header, Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Body;
+use parking_lot::RwLock;
+use serde::Serialize;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The largest a DNS wire message is allowed to be, GET or POST alike — the
 /// classic DNS-over-TCP 2-byte length prefix this project doesn't use still
@@ -42,6 +50,15 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 65_535;
 
 const DNS_QUERY_PATH: &str = "/dns-query";
 const DNS_MESSAGE_CONTENT_TYPE: &str = "application/dns-message";
+
+const ADMIN_STATUS_PATH: &str = "/admin/status";
+const ADMIN_CONFIG_PATH: &str = "/admin/config";
+
+/// `POST /admin/config`'s body is two bools and a short enum — this bound
+/// exists for the same reason `MAX_MESSAGE_SIZE` does (SPEC.md §8.1: "ліміт
+/// розміру, не необмежена алокація"), just a much smaller one, since nothing
+/// legitimate ever needs more than a few dozen bytes here.
+const MAX_ADMIN_BODY_SIZE: usize = 4096;
 
 /// A malformed `DoH` HTTP request — never carries the request's own bytes or
 /// the decoded message, only a closed, coarse reason (same discipline as
@@ -94,14 +111,71 @@ pub(crate) fn wire_bytes_from_get(query_string: &str) -> Result<Vec<u8>, DohRequ
 /// parameters (`application/dns-message; charset=utf-8` is still
 /// `application/dns-message`) — a byte-equality check would reject a
 /// conforming client whose `Content-Type` isn't byte-identical to Chrome's.
-pub(crate) fn content_type_is_dns_message(content_type: Option<&str>) -> bool {
+fn content_type_matches(content_type: Option<&str>, expected: &str) -> bool {
     content_type
         .and_then(|value| value.split(';').next())
-        .is_some_and(|media_type| {
-            media_type
-                .trim()
-                .eq_ignore_ascii_case(DNS_MESSAGE_CONTENT_TYPE)
-        })
+        .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case(expected))
+}
+
+/// Whether `content_type` is `application/dns-message` (RFC 8484 §6),
+/// ignoring case and any trailing parameters.
+pub(crate) fn content_type_is_dns_message(content_type: Option<&str>) -> bool {
+    content_type_matches(content_type, DNS_MESSAGE_CONTENT_TYPE)
+}
+
+/// **Not** an implementation detail — this is the whole CSRF defense for
+/// `POST /admin/config` (T-52). `application/json` is not a CORS "simple"
+/// content type, so a cross-origin `fetch()` (e.g. from a page the browser
+/// happens to be rendering once `cert.pem` is trust-store-installed, T-49)
+/// must preflight; the preflight `OPTIONS` isn't routed to anything here and
+/// gets a bare 404/405 with no CORS headers, so the browser never sends the
+/// real request. Without this check, a `text/plain` (or missing)
+/// `Content-Type` is a CORS *simple* request — no preflight — and the write
+/// already lands before the browser even enforces same-origin on reading the
+/// response: silent, persisted, unfiltered DNS with zero on-screen
+/// indication, the Три Б failure mode by name. Caught by advisor review of
+/// the diff before commit, not a test — `serve_dns_query`'s own
+/// `content_type_is_dns_message` gate was the precedent this admin route
+/// should have matched from the start.
+///
+/// **DNS rebinding is a separate obvious worry here and is already closed,
+/// not by this check** — `cert.rs`'s leaf SANs are exactly `IP:127.0.0.1`/
+/// `IP:::1`/`DNS:localhost` (T-48), so a rebound attacker-controlled hostname
+/// fails TLS certificate validation before any request to this route could
+/// even complete. Widening that SAN set in the future would reopen this —
+/// don't, without re-litigating this comment.
+fn content_type_is_json(content_type: Option<&str>) -> bool {
+    content_type_matches(content_type, "application/json")
+}
+
+/// The admin-mutable subset of resolver config (T-52) — bundled into one
+/// [`AppState::runtime`] lock rather than two separate locks, so a read/
+/// write is atomic across both fields: a query must never be able to
+/// observe a newly-changed `providers` paired with a stale `timeout`, which
+/// two independent locks could momentarily allow between an admin write to
+/// one and the other.
+#[derive(Debug, Clone, Copy)]
+pub struct RuntimeSettings {
+    /// Which providers are currently queried.
+    pub providers: EnabledProviders,
+    /// Current timeout mode/duration.
+    pub timeout: TimeoutConfig,
+}
+
+/// Where (if anywhere) admin-channel config changes should be persisted,
+/// plus the immutable `port` value needed to reconstruct a full
+/// [`ResolverConfig`] for that write. `port` itself is never admin-mutable —
+/// changing it needs a listener re-bind, out of scope for a live-apply call.
+#[derive(Debug, Clone)]
+pub struct PersistTarget {
+    /// The local `DoH` listener's port (unchanging at runtime).
+    pub port: u16,
+    /// Where to write `resolver_config.toml` on an admin config change, or
+    /// `None` if no app-data directory was available at startup (same
+    /// tolerance `main.rs` already applies to loading it) — an admin write
+    /// with no target still live-applies, just can't persist
+    /// ([`AdminStatusResponse::persisted`] reports `false`).
+    pub config_path: Option<PathBuf>,
 }
 
 /// Decode `wire_bytes`, run it through the pipeline, and encode whatever
@@ -125,14 +199,19 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
 ) -> Result<Vec<u8>, ProtoError> {
     let query = decode_wire_message(wire_bytes)?;
     let started = Instant::now();
+    // Snapshot-read once, not re-read per field below - a `Copy` value, and
+    // the lock is never held across the `.await` this call makes (T-52,
+    // same "no `.await` under the lock" precedent `query_log.rs` already
+    // established for its own `RwLock`).
+    let settings = *state.runtime.read();
     let response = match handle_query(
         &query,
         &state.client,
         &state.overrides,
-        state.voters,
+        settings.providers,
         &state.cache,
         &state.cache_config,
-        &state.timeout_config,
+        &settings.timeout,
     )
     .await
     {
@@ -160,7 +239,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         // decision_source values describe a proxy pass-through (T-147, named
         // gap, not silently dropped).
         (PipelineOutcome::ProxyToSingleUpstream, _) => {
-            proxy_to_single_upstream(&state.client, &query, &state.timeout_config).await
+            proxy_to_single_upstream(&state.client, &query, &settings.timeout).await
         }
     };
     encode_wire_message(&response)
@@ -174,34 +253,38 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
 pub struct AppState<C: DohClient + Sync> {
     client: C,
     overrides: OverrideLists,
-    voters: EnabledProviders,
+    runtime: RwLock<RuntimeSettings>,
     cache: Cache,
     cache_config: CacheConfig,
-    timeout_config: TimeoutConfig,
     query_log: QueryLog,
+    persist: PersistTarget,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
     /// Builds the shared per-service state `serve` reads from on every
-    /// request.
+    /// request. `runtime`'s two fields (T-52) are the admin channel's
+    /// live-mutable settings — passed as plain values here and wrapped in
+    /// the internal lock by this constructor, so existing call sites barely
+    /// change shape even though the storage underneath now supports live
+    /// updates.
     #[must_use]
     pub fn new(
         client: C,
         overrides: OverrideLists,
-        voters: EnabledProviders,
+        runtime: RuntimeSettings,
         cache: Cache,
         cache_config: CacheConfig,
-        timeout_config: TimeoutConfig,
         query_log: QueryLog,
+        persist: PersistTarget,
     ) -> Self {
         Self {
             client,
             overrides,
-            voters,
+            runtime: RwLock::new(runtime),
             cache,
             cache_config,
-            timeout_config,
             query_log,
+            persist,
         }
     }
 }
@@ -221,36 +304,149 @@ fn status_response(status: StatusCode) -> Response<Full<Bytes>> {
     response
 }
 
-/// The `hyper` request handler `main.rs` hands every accepted, TLS-terminated
-/// connection to. Routes only `GET`/`POST /dns-query` (SPEC.md §1 line 84) to
-/// [`resolve_doh_request`] — everything else is a 404/405/400/413 with no
-/// pipeline involvement at all.
-///
-/// Generic over the request body type `B` rather than hardcoded to
-/// `hyper::body::Incoming` — `Incoming` can only be produced by a real
-/// `hyper` connection, so a generic bound is what lets this function be unit
-/// tested with a plain `http_body_util::Full` request instead of needing a
-/// live socket. `main.rs` calls this with `Incoming`; the type is inferred
-/// from context there, never spelled out.
-///
-/// # Errors
-///
-/// Never returns `Err` — every failure mode maps to an HTTP status instead,
-/// which is what lets this be a `hyper` `Service` (`Infallible` is the
-/// required error type for a connection that must never itself fail).
-pub async fn serve<C, B>(
-    req: Request<B>,
-    state: Arc<AppState<C>>,
-) -> Result<Response<Full<Bytes>>, Infallible>
+/// `duration` rounded down to whole milliseconds, saturating at `u32::MAX`
+/// rather than panicking or truncating silently — a per-query timeout will
+/// never legitimately be anywhere near that large.
+fn timeout_ms(duration: Duration) -> u32 {
+    u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
+}
+
+/// Builds the current [`AdminStatusResponse`] from `state` — shared by
+/// `GET /admin/status` and the response [`apply_admin_config`] echoes back
+/// after a `POST /admin/config`. `persisted` is the caller's to state
+/// (always `true` for a plain status read, since nothing changed).
+fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> AdminStatusResponse {
+    let settings = *state.runtime.read();
+    let entries = state.query_log.snapshot(SystemTime::now());
+    AdminStatusResponse {
+        providers: settings.providers,
+        timeout_mode: settings.timeout.mode,
+        timeout_ms: timeout_ms(settings.timeout.duration),
+        port: state.persist.port,
+        stats: compute_stats(&entries),
+        persisted,
+    }
+}
+
+/// Applies `update` to `state`'s live runtime settings (one atomic write —
+/// see [`RuntimeSettings`]'s own doc comment for why this is one lock, not
+/// two), persists it to `state.persist.config_path` if one is configured,
+/// and returns the resulting status. A persistence failure is
+/// `tracing::warn!`'d and reflected as `persisted: false` — it never
+/// discards the live change that already took effect (T-52 plan: an
+/// in-memory update must not be reported as failed just because the disk
+/// write was).
+fn apply_admin_config<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: AdminConfigUpdate,
+) -> AdminStatusResponse {
+    // Captured inside the write guard's own scope, not re-read via a second
+    // lock acquisition afterward — advisor-caught: re-reading opened a
+    // window where a concurrent `POST` could persist *its* values under
+    // *this* request's response, however unlikely with a single local UI
+    // client. This way the values persisted/echoed are provably the exact
+    // ones just written, not "whatever the lock currently holds."
+    let settings = {
+        let mut guard = state.runtime.write();
+        guard.providers = update.providers;
+        guard.timeout.mode = update.timeout_mode;
+        *guard
+    };
+    let persisted = match &state.persist.config_path {
+        Some(path) => {
+            let config = ResolverConfig {
+                port: state.persist.port,
+                timeout_mode: settings.timeout.mode,
+                timeout_ms: timeout_ms(settings.timeout.duration),
+                providers: settings.providers,
+            };
+            match config.save(path) {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("failed to persist an admin config change to disk: {err}");
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+    AdminStatusResponse {
+        providers: settings.providers,
+        timeout_mode: settings.timeout.mode,
+        timeout_ms: timeout_ms(settings.timeout.duration),
+        port: state.persist.port,
+        stats: compute_stats(&state.query_log.snapshot(SystemTime::now())),
+        persisted,
+    }
+}
+
+/// A `200 OK` JSON response, or `500` if `value` somehow fails to serialize
+/// (not expected for these DTOs — no non-representable floats, no map keys
+/// — but `serde_json::to_vec` returns a real `Result`, so this handles it
+/// rather than unwrapping, same discipline as `config::ResolverConfig::save`).
+fn json_response<T: Serialize>(value: &T) -> Response<Full<Bytes>> {
+    match serde_json::to_vec(value) {
+        Ok(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(bytes)))
+            .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR)),
+        Err(_) => status_response(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// `GET /admin/status` — any other method on this path is 405.
+fn serve_admin_status<C: DohClient + Sync>(
+    method: &Method,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>> {
+    if *method != Method::GET {
+        return status_response(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    json_response(&admin_status(state, true))
+}
+
+/// `POST /admin/config` — any other method on this path is 405; a body that
+/// exceeds [`MAX_ADMIN_BODY_SIZE`], fails to read, or doesn't decode as
+/// [`AdminConfigUpdate`] is 400.
+async fn serve_admin_config<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
 where
     C: DohClient + Sync,
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    if req.uri().path() != DNS_QUERY_PATH {
-        return Ok(status_response(StatusCode::NOT_FOUND));
+    if *req.method() != Method::POST {
+        return status_response(StatusCode::METHOD_NOT_ALLOWED);
     }
+    // See `content_type_is_json`'s own doc comment - this is not a format
+    // nicety, it's the whole CSRF defense for this route.
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(update) = serde_json::from_slice::<AdminConfigUpdate>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    json_response(&apply_admin_config(state, update))
+}
 
+/// `/dns-query`'s `GET`/`POST` handling (SPEC.md §1 line 84) — everything
+/// [`serve`] routed here after confirming the path. Decodes the request into
+/// wire bytes and hands off to [`resolve_doh_request`]; every failure mode
+/// maps to an HTTP status, never a panic.
+async fn serve_dns_query<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     let wire_bytes = match *req.method() {
         Method::GET => wire_bytes_from_get(req.uri().query().unwrap_or_default()),
         Method::POST => {
@@ -275,36 +471,72 @@ where
                 Err(DohRequestError::UnsupportedContentType)
             }
         }
-        _ => return Ok(status_response(StatusCode::METHOD_NOT_ALLOWED)),
+        _ => return status_response(StatusCode::METHOD_NOT_ALLOWED),
     };
 
     let wire_bytes = match wire_bytes {
         Ok(bytes) => bytes,
         Err(DohRequestError::MessageTooLarge) => {
-            return Ok(status_response(StatusCode::PAYLOAD_TOO_LARGE))
+            return status_response(StatusCode::PAYLOAD_TOO_LARGE)
         }
-        Err(_) => return Ok(status_response(StatusCode::BAD_REQUEST)),
+        Err(_) => return status_response(StatusCode::BAD_REQUEST),
     };
 
-    let resolved = resolve_doh_request(&wire_bytes, &state).await;
+    let resolved = resolve_doh_request(&wire_bytes, state).await;
 
     match resolved {
-        Ok(bytes) => Ok(Response::builder()
+        Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, DNS_MESSAGE_CONTENT_TYPE)
             .body(Full::new(Bytes::from(bytes)))
-            .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))),
-        Err(_) => Ok(status_response(StatusCode::BAD_REQUEST)),
+            .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR)),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
+}
+
+/// The `hyper` request handler `main.rs` hands every accepted, TLS-terminated
+/// connection to. Routes `/dns-query` (SPEC.md §1 line 84) to
+/// [`serve_dns_query`], `/admin/status`/`/admin/config` (T-52) to their own
+/// handlers, and any other path to a 404 with no further processing.
+///
+/// Generic over the request body type `B` rather than hardcoded to
+/// `hyper::body::Incoming` — `Incoming` can only be produced by a real
+/// `hyper` connection, so a generic bound is what lets this function be unit
+/// tested with a plain `http_body_util::Full` request instead of needing a
+/// live socket. `main.rs` calls this with `Incoming`; the type is inferred
+/// from context there, never spelled out.
+///
+/// # Errors
+///
+/// Never returns `Err` — every failure mode maps to an HTTP status instead,
+/// which is what lets this be a `hyper` `Service` (`Infallible` is the
+/// required error type for a connection that must never itself fail).
+pub async fn serve<C, B>(
+    req: Request<B>,
+    state: Arc<AppState<C>>,
+) -> Result<Response<Full<Bytes>>, Infallible>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    Ok(match req.uri().path() {
+        DNS_QUERY_PATH => serve_dns_query(req, &state).await,
+        ADMIN_STATUS_PATH => serve_admin_status(req.method(), &state),
+        ADMIN_CONFIG_PATH => serve_admin_config(req, &state).await,
+        _ => status_response(StatusCode::NOT_FOUND),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         content_type_is_dns_message, resolve_doh_request, serve, wire_bytes_from_get, AppState,
-        DohRequestError, MAX_MESSAGE_SIZE,
+        DohRequestError, PersistTarget, RuntimeSettings, MAX_MESSAGE_SIZE,
     };
+    use crate::admin::{AdminConfigUpdate, AdminStatusResponse};
     use crate::cache::{Cache, CacheConfig};
+    use crate::config::ResolverConfig;
     use crate::overrides::OverrideLists;
     use crate::query_log::QueryLog;
     use crate::quorum::EnabledProviders;
@@ -540,14 +772,27 @@ mod tests {
     }
 
     fn state_with(client: MockClient) -> Arc<AppState<MockClient>> {
+        state_with_persist(
+            client,
+            PersistTarget {
+                port: 8443,
+                config_path: None,
+            },
+        )
+    }
+
+    fn state_with_persist(client: MockClient, persist: PersistTarget) -> Arc<AppState<MockClient>> {
         Arc::new(AppState::new(
             client,
             OverrideLists::empty(),
-            EnabledProviders::default(),
+            RuntimeSettings {
+                providers: EnabledProviders::default(),
+                timeout: TimeoutConfig::default(),
+            },
             Cache::new(&CacheConfig::default()),
             CacheConfig::default(),
-            TimeoutConfig::default(),
             QueryLog::default(),
+            persist,
         ))
     }
 
@@ -699,5 +944,264 @@ mod tests {
             Err(err) => match err {},
         };
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    async fn body_bytes(response: http::Response<Full<Bytes>>) -> Bytes {
+        use http_body_util::BodyExt;
+        match response.into_body().collect().await {
+            Ok(collected) => collected.to_bytes(),
+            Err(err) => match err {},
+        }
+    }
+
+    fn admin_config_request(body: AdminConfigUpdate) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&body) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/config")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    #[tokio::test]
+    async fn serve_admin_status_returns_the_default_live_settings() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/status")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert_eq!(status.providers, EnabledProviders::default());
+        assert!(status.persisted);
+        assert_eq!(status.stats.total, 0);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_status_rejects_non_get_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/status")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_config_rejects_non_post_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/config")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_config_rejects_a_malformed_body() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/config")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"not json")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // T-52, advisor-caught before commit: without this gate, a `text/plain`
+    // (or missing) Content-Type is a CORS *simple* request - no preflight -
+    // so any page the browser is rendering could silently flip filtering off
+    // for the whole machine the moment cert.pem is trust-store-installed
+    // (T-49). This test is the CSRF defense's own regression test, not a
+    // format nicety - see `content_type_is_json`'s doc comment.
+    #[tokio::test]
+    async fn serve_admin_config_rejects_a_missing_content_type_even_with_a_valid_json_body() {
+        let update = AdminConfigUpdate {
+            providers: EnabledProviders::default(),
+            timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+        };
+        let Ok(json) = serde_json::to_vec(&update) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/config")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_config_rejects_a_non_json_content_type_even_with_a_valid_json_body() {
+        let update = AdminConfigUpdate {
+            providers: EnabledProviders::default(),
+            timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+        };
+        let Ok(json) = serde_json::to_vec(&update) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/config")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    // T-52: both providers disabled is newly reachable through a UI (the
+    // admin channel) for the first time - the exact regression shape T-148
+    // already proved at the quorum::resolve level
+    // (quad9_disabled_under_fail_closed_is_still_allow_not_falsely_blocked),
+    // re-proven here at the HTTP admin-channel level: a live-applied
+    // both-disabled update under fail_closed must still resolve via
+    // pass-through, never fail-closed-block, and must never call the
+    // quorum-branch mock at all.
+    #[tokio::test]
+    async fn serve_admin_config_disabling_both_providers_is_pass_through_not_fail_closed() {
+        let ip = Ipv4Addr::new(9, 9, 9, 9);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Panic,
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+
+        let update = AdminConfigUpdate {
+            providers: EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
+            timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+        };
+        let config_response = match serve(admin_config_request(update), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(config_response.status(), StatusCode::OK);
+
+        let wire_bytes = query_bytes("example.com.", RecordType::A);
+        let query_req = match Request::builder()
+            .method(Method::POST)
+            .uri("/dns-query")
+            .header(header::CONTENT_TYPE, "application/dns-message")
+            .body(Full::new(Bytes::from(wire_bytes)))
+        {
+            Ok(req) => req,
+            Err(err) => panic!("fixture request must build: {err}"),
+        };
+        let response = match serve(query_req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "pass-through must still resolve, not fail-closed-block"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_admin_config_persists_a_change_to_disk_when_a_config_path_is_set() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                config_path: Some(path.clone()),
+            },
+        );
+
+        let update = AdminConfigUpdate {
+            providers: EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+            timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+        };
+        let response = match serve(admin_config_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert!(status.persisted);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(loaded.providers, update.providers);
+        assert_eq!(loaded.timeout_mode, update.timeout_mode);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_config_reports_not_persisted_when_no_config_path_is_set() {
+        let state = state_with(no_op_client());
+        let update = AdminConfigUpdate {
+            providers: EnabledProviders::default(),
+            timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+        };
+        let response = match serve(admin_config_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert!(!status.persisted);
     }
 }

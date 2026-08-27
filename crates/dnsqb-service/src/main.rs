@@ -12,7 +12,8 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, OverrideLists, QueryLog, ReqwestDohClient, ResolverConfig, TimeoutConfig,
+    CacheConfig, OverrideLists, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
+    RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -50,7 +51,7 @@ async fn main() {
             // silent fallback to a different port.
             tracing::error!(
                 "port {port} is already in use - not falling back to a different port \
-                 (SPEC.md §1); stop the conflicting process, or edit resolver_config.json"
+                 (SPEC.md §1); stop the conflicting process, or edit resolver_config.toml"
             );
             std::process::exit(1);
         }
@@ -70,22 +71,35 @@ async fn main() {
 
     let overrides = load_overrides(app_data.as_deref());
 
-    let voters = resolver_config.providers;
-    let timeout_config = TimeoutConfig {
-        mode: resolver_config.timeout_mode,
-        duration: Duration::from_millis(resolver_config.timeout_ms.into()),
+    let runtime = RuntimeSettings {
+        providers: resolver_config.providers,
+        timeout: TimeoutConfig {
+            mode: resolver_config.timeout_mode,
+            duration: Duration::from_millis(resolver_config.timeout_ms.into()),
+        },
+    };
+    // T-52: the admin channel persists a config change back to whichever
+    // path it was loaded from - `None` (no app-data dir) means a live
+    // change still applies in-memory, it just can't survive a restart, same
+    // tolerance `load_resolver_config` already applies to a missing
+    // app-data directory.
+    let persist = PersistTarget {
+        port: resolver_config.port,
+        config_path: app_data
+            .as_deref()
+            .map(|dir| dir.join("resolver_config.toml")),
     };
 
-    // No persistence, no config-driven sizing yet - T-146 (SPEC.md §6's own
-    // stated defaults: 1000 entries or 24 hours).
+    // No config-driven sizing yet - T-146 (SPEC.md §6's own stated defaults:
+    // 1000 entries or 24 hours).
     let state = Arc::new(AppState::new(
         client,
         overrides,
-        voters,
+        runtime,
         Cache::new(&CacheConfig::default()),
         CacheConfig::default(),
-        timeout_config,
         QueryLog::default(),
+        persist,
     ));
 
     let port = resolver_config.port;
