@@ -8,6 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-second slice done (T-60 — TASKS-DONE.md, docs-only, no commit-worthy code): closed
+without new code, the third such case after T-55/T-59 — the two tests SPEC.md §8.1 requires
+("окремий рядок... не лише в тестах UI-каналу") already existed, written for other tasks and never
+credited to this line. Quorum-level: `pipeline::tests::
+voters_disabled_yields_pass_through_via_baseline_without_consulting_quorum` (T-41). Channel-level:
+`dispatch::tests::serve_admin_config_disabling_both_providers_is_pass_through_not_fail_closed`
+(T-52, commit `f2906c9`) — a real `POST /admin/config` with both providers false, then a real
+`/dns-query` resolving via baseline pass-through with the quorum mock set to panic on any call.
+Both confirmed via `git log -S` to predate this pass, not edited into shape now. Deliberately not
+claimed as covering all of SPEC.md §8.1's misuse category — three other named examples (override
+conflict, malformed/huge override file, rapid toggle race) stay open, and the `/admin/status`
+distinct-state requirement in the same §8.1 paragraph is T-56's line, not T-60's.
+
 Фаза 1, twenty-first slice done (T-55 + T-59 — TASKS-DONE.md, one commit): T-55 closed with no new
 code — `admin_ui::respond`'s CSP (`default-src 'self'; frame-ancestors 'none'`, no inline
 script/style) already satisfies it as a side effect of T-149's architecture, already proven by
