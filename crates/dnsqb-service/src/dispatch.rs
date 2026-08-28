@@ -1430,8 +1430,8 @@ mod tests {
     use super::{
         content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
         wire_bytes_from_get, AppState, CacheState, DohRequestError, LogQueryError, OverridesState,
-        PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT,
-        MAX_MESSAGE_SIZE,
+        PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH,
+        MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
@@ -1602,6 +1602,145 @@ mod tests {
                 // targeted tests above; this property only proves the
                 // absence of a panic anywhere in the routing/decode path.
                 let _ = serve(req, state_with(no_op_client())).await;
+            });
+        }
+    }
+
+    // T-58 fuzz bar, redefined as data (TASKS.md's Ф1 closure plan,
+    // 2026-08-29): the property above proves `/admin/config` alone is
+    // panic-free, but a hardcoded list of individually-fuzzed routes can't
+    // prove anything about a route *added later* - the same shape T-59's own
+    // `ROUTES`-table fix already had to solve for route *dispatch* (see
+    // `ROUTES`'s own doc comment). This property generates its (path,
+    // method) pair from `ROUTES` itself via `route_method_at`/
+    // `route_method_count` below, so a new route *or* a new method on an
+    // existing route is automatically exercised the moment it's added to
+    // `ROUTES`, with no second test to remember to write - `/dns-query`'s
+    // POST specifically is only reachable this way, since `route_method_at`
+    // flattens every method per path rather than picking just the first.
+    // Uses a benign `Instant`-answering client, not `no_op_client()`'s
+    // `Panic` responses - `/dns-query` is one of the routes this property
+    // can select, and while an arbitrary byte buffer decoding into a valid,
+    // allowlist/blocklist/cache-missing query is astronomically unlikely,
+    // "unlikely" isn't the same as "provably never" the way it is for the
+    // admin-only property above, which never reaches `handle_query` at all.
+
+    /// Total `(path, method)` pairs across every [`ROUTES`] entry - a plain
+    /// module-level fn, not a captured closure, since `proptest!`'s
+    /// generated `#[test] fn` can only reference items, not locals from an
+    /// enclosing block.
+    fn route_method_count() -> usize {
+        ROUTES.iter().map(|(_, methods)| methods.len()).sum()
+    }
+
+    /// The `index`-th `(path, method)` pair, flattening `ROUTES` in
+    /// declaration order. Panics on an out-of-range `index` - callers only
+    /// ever pass `0..route_method_count()`, so this is a real invariant
+    /// violation, not untrusted input.
+    fn route_method_at(index: usize) -> (&'static str, Method) {
+        let mut remaining = index;
+        for (path, methods) in ROUTES {
+            if remaining < methods.len() {
+                return (path, methods[remaining].clone());
+            }
+            remaining -= methods.len();
+        }
+        panic!("route_method_at index out of range - route_method_count() and this must stay consistent");
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn serve_never_panics_on_arbitrary_input_for_any_documented_route(
+            pair_index in 0..route_method_count(),
+            body in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096),
+            // A real key name from *some* GET route's own param set, not an
+            // arbitrary one - see the `query_key`/`query_value` comment
+            // below for why an arbitrary key would defeat the point of this
+            // property (advisor-caught before commit, first draft used a
+            // single arbitrary blob and never actually reached either
+            // param-parsing function it claimed to fuzz).
+            query_key in proptest::prop_oneof![
+                proptest::prelude::Just("dns"),
+                proptest::prelude::Just("domain_contains"),
+                proptest::prelude::Just("decision"),
+                proptest::prelude::Just("voter"),
+                proptest::prelude::Just("limit"),
+            ],
+            query_value in "\\PC{0,128}",
+        ) {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+                panic!("must be able to build a current-thread runtime");
+            };
+            rt.block_on(async {
+                let (path, method) = route_method_at(pair_index);
+                // GET routes get a fuzzed `key=value` query pair appended
+                // (this is the one path a GET request can carry untrusted
+                // input on - /dns-query's own `?dns=`, /admin/log's
+                // filters); non-GET routes get the fuzzed bytes as the body
+                // instead, matching how each method actually carries input
+                // in this API.
+                //
+                // **Advisor-caught, empirically confirmed (not assumed) —
+                // two real gaps in the first draft, neither a production
+                // bug, both "the property never reaches the code it claims
+                // to":**
+                // (1) percent-encoding the *whole* arbitrary query string
+                // with `NON_ALPHANUMERIC` also encodes `=`/`&`, so no GET
+                // case ever produced a real `key=value` pair -
+                // `wire_bytes_from_get`/`parse_log_query` always took their
+                // "no recognized param" early-return. Fixed by building the
+                // pair explicitly (`query_key` from the real per-route
+                // param-name set, only `query_value` percent-encoded) so
+                // the key is always recognizable while the value stays
+                // arbitrary.
+                // (2) POST requests all carried `Content-Type: application/
+                // json`, so `/dns-query`'s POST case always 415'd before
+                // `content_type_is_dns_message`'s body-decode branch ever
+                // ran. Fixed by making the content-type route-dependent.
+                // Confirmed by temporarily inserting `panic!()` at the top
+                // of `parse_log_query`'s `for pair in ...` loop body and at
+                // the top of `serve_dns_query`'s `if content_type_is_dns_
+                // message(...)` block: both fixes applied -> red (proving
+                // this property does reach them); both temporary panics
+                // reverted -> green again (295 total, this test included).
+                let is_dns_query = path == DNS_QUERY_PATH;
+                let (uri, body_bytes, content_type) = if method == Method::GET {
+                    let encoded_value = percent_encoding::utf8_percent_encode(
+                        &query_value,
+                        percent_encoding::NON_ALPHANUMERIC,
+                    );
+                    (
+                        format!("{path}?{query_key}={encoded_value}"),
+                        Bytes::new(),
+                        "application/json",
+                    )
+                } else {
+                    (
+                        path.to_string(),
+                        Bytes::from(body),
+                        if is_dns_query { "application/dns-message" } else { "application/json" },
+                    )
+                };
+                let Ok(req) = Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::CONTENT_TYPE, content_type)
+                    .body(Full::new(body_bytes))
+                else {
+                    panic!("fixture request must build");
+                };
+                let client = MockClient {
+                    baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
+                    quorum: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
+                    calls: AtomicU32::new(0),
+                };
+                // Status/body content deliberately not asserted - every
+                // route's real behavior is already covered by its own
+                // targeted tests; this property only proves the absence of
+                // a panic, for every path `serve()` documents, not just the
+                // ones someone remembered to fuzz individually.
+                let _ = serve(req, state_with(client)).await;
             });
         }
     }
