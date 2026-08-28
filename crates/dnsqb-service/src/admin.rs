@@ -45,11 +45,34 @@ use std::time::SystemTime;
 /// Live resolver state plus a snapshot of log-derived stats — the body of
 /// `GET /admin/status`, and echoed back by `POST /admin/config` after
 /// applying an update.
+///
+/// **T-53 DTO audit (2026-08-29), verdict for this file as a whole:**
+/// `providers`/`timeout_mode` below are the only two fields in this module
+/// that reuse an internal domain type directly (`quorum::EnabledProviders`,
+/// `timeout::TimeoutMode`) rather than going through a `*View` projection —
+/// checked by re-reading every DTO in this file against the type it's built
+/// from. Deliberate, not an oversight: both are already flat, `Serialize`-
+/// carrying config *values* (T-144/T-148), not internal implementation
+/// types with anything to leak (no `LogEntry`/`VoterRecord`-shaped payload,
+/// neither derives `Serialize` at all — confirmed by grep, so neither can be
+/// accidentally handed to `json_response` regardless). Wrapping them in a
+/// parallel DTO would recreate exactly the drift risk T-148's own module
+/// doc comment already named for `config::ResolverConfig::providers`
+/// reusing `EnabledProviders` — a duplicate type could represent a
+/// combination `quorum::resolve` doesn't actually honor. Every other DTO in
+/// this file (`OverrideDomainView`, `CacheConfigView`, `QTypeView`,
+/// `DecisionView`, `DecisionSourceView`, `VoterVerdictView`,
+/// `VoterResultView`, `LogEntryView`) is a genuine projection with its own
+/// `From` conversion, not a reuse — closes T-53's DTO half (the allowlist
+/// half was already closed structurally, `dispatch::ROUTES`, TASKS-DONE.md).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminStatusResponse {
-    /// Which providers are currently queried.
+    /// Which providers are currently queried. Reuses `quorum::
+    /// EnabledProviders` directly — see this struct's own doc comment for
+    /// the T-53 reuse-vs-projection verdict.
     pub providers: EnabledProviders,
-    /// Current timeout-interpretation mode.
+    /// Current timeout-interpretation mode. Reuses `timeout::TimeoutMode`
+    /// directly — same verdict as `providers` above.
     pub timeout_mode: TimeoutMode,
     /// Current per-query timeout, in milliseconds. Not itself editable via
     /// this slice's `POST /admin/config` (TASKS.md's T-52 line only asks for
@@ -102,6 +125,8 @@ pub struct AdminStats {
 /// uses it: the dashboard always has both controls' current values on hand
 /// and sends them together, so there's no scenario needing
 /// `Option<Option<T>>`-style patch semantics for this slice's two controls.
+/// Also reuses `EnabledProviders`/`TimeoutMode` directly on the *input*
+/// side — same T-53 verdict as [`AdminStatusResponse`]'s own doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminConfigUpdate {
     /// The desired provider toggles.
