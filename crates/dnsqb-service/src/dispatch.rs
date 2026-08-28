@@ -1106,7 +1106,10 @@ const DEFAULT_LOG_LIMIT: usize = 200;
 const MAX_LOG_LIMIT: usize = DEFAULT_MAX_ENTRIES;
 
 /// `GET /admin/log`'s parsed query-string facets (T-54) — mirrors
-/// [`LogFilter`]'s three fields plus the result-count cap above.
+/// [`LogFilter`]'s three fields plus the result-count cap above. Derives
+/// `Debug` for test-failure messages only — `domain_contains` carries
+/// caller-supplied search text, so (same discipline as [`LogEntry`]) never
+/// pass a `LogQuery` to `tracing`/a diagnostic-log context.
 #[derive(Debug, Default)]
 struct LogQuery {
     domain_contains: Option<String>,
@@ -1135,8 +1138,13 @@ enum LogQueryError {
     /// Same reasoning as `UnknownDecision`, for `voter`.
     #[error("voter does not match a known provider identifier")]
     UnknownVoter,
-    /// `limit` was present but didn't parse as a non-negative integer.
-    #[error("limit is not a valid non-negative integer")]
+    /// `limit` was present but didn't parse as a positive integer, or parsed
+    /// as `0` — a request for zero results isn't a meaningful "give me
+    /// fewer," it's almost certainly a client bug (an empty/`0`-valued form
+    /// field), so it's rejected the same as a non-numeric value rather than
+    /// silently returning an empty, indistinguishable-from-"no matches"
+    /// success (advisor-caught on the closing review of this route).
+    #[error("limit is not a valid positive integer")]
     BadLimit,
 }
 
@@ -1183,6 +1191,9 @@ fn parse_log_query(query_string: Option<&str>) -> Result<LogQuery, LogQueryError
                 let limit = value
                     .parse::<usize>()
                     .map_err(|_| LogQueryError::BadLimit)?;
+                if limit == 0 {
+                    return Err(LogQueryError::BadLimit);
+                }
                 parsed.limit = limit.min(MAX_LOG_LIMIT);
             }
             // An unrecognized key is ignored, not fatal - forward-compatible
@@ -1423,7 +1434,7 @@ mod tests {
         MAX_MESSAGE_SIZE,
     };
     use crate::admin::{
-        AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
+        AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
         LogQueryResponse, OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
@@ -3678,11 +3689,46 @@ mod tests {
         assert_eq!(parsed.limit, MAX_LOG_LIMIT);
     }
 
+    // Advisor-caught on the closing review: `?limit=0` against a non-empty
+    // log would silently return an empty-but-successful result,
+    // indistinguishable from "nothing matched the filter" - rejected
+    // outright instead, the same "don't silently answer a probably-buggy
+    // request" reasoning as the unrecognized-decision/voter checks above.
+    #[test]
+    fn parse_log_query_rejects_a_zero_limit() {
+        match parse_log_query(Some("limit=0")) {
+            Err(LogQueryError::BadLimit) => {}
+            other => panic!("expected BadLimit, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_log_query_rejects_invalid_percent_encoding() {
         match parse_log_query(Some("domain_contains=%ff%fe")) {
             Err(LogQueryError::BadEncoding) => {}
             other => panic!("expected BadEncoding, got {other:?}"),
+        }
+    }
+
+    // Advisor-caught on the closing review: `parse_log_query`'s `"ALLOWED"/
+    // "BLOCKED"/"FAILED"` literals are a second, independent copy of the
+    // wire strings `DecisionView`'s serde `rename_all` produces - nothing
+    // ties them together, so a future casing change to one side could
+    // silently desync from the other (the response would emit a value the
+    // filter can no longer accept). This test pins both sides against each
+    // other, not just against a hardcoded expectation.
+    #[test]
+    fn parse_log_query_decision_literals_match_decision_views_actual_wire_strings() {
+        use crate::query_log::Decision;
+        for decision in [Decision::Allowed, Decision::Blocked, Decision::Failed] {
+            let Ok(wire) = serde_json::to_string(&DecisionView::from(decision)) else {
+                panic!("must serialize")
+            };
+            let wire = wire.trim_matches('"');
+            let Ok(parsed) = parse_log_query(Some(&format!("decision={wire}"))) else {
+                panic!("must parse the value DecisionView itself just produced")
+            };
+            assert_eq!(parsed.decision, Some(decision));
         }
     }
 
