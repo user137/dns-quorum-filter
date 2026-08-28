@@ -46,34 +46,6 @@ async function applyConfig(overrides) {
   return response.json();
 }
 
-// SPEC.md "Відкриті питання" п.4 / §8: quorum privacy is a real tradeoff
-// (N third parties see a new, uncached domain instead of one) that must be
-// communicated explicitly, not buried. The baseline resolver
-// (`upstream::BASELINE_DOH_URL`, hardcoded to Cloudflare - not yet
-// admin-configurable) is queried unconditionally for every quorum-
-// applicable, uncached lookup regardless of which filtering providers are
-// toggled on - `quorum::resolve` always pushes a `Slot::Baseline` future,
-// even when both `quad9`/`adguard` are disabled (`quorum.rs`, the
-// unconditional push right after the two `if enabled.*` blocks). So the
-// true third-party count is always "enabled filtering providers + 1", never
-// just the filtering providers themselves - a first draft of this notice
-// undercounted by exactly that one party.
-const PROVIDER_LABELS = { quad9: "Quad9", adguard: "AdGuard" };
-const BASELINE_LABEL = "Cloudflare (baseline)";
-
-function privacyNoticeHtml(providers) {
-  const filtering = Object.keys(providers).filter((key) => providers[key]);
-  if (filtering.length === 0) {
-    // Both filtering providers are off - the "not filtered" warning below
-    // already names the baseline resolver and its full visibility, so no
-    // separate notice here (would be redundant, not a missing disclosure).
-    return "";
-  }
-  const names = filtering.map((key) => PROVIDER_LABELS[key]).concat(BASELINE_LABEL).join(", ");
-  const total = filtering.length + 1;
-  return `<div class="notice info">Кожен новий (не кешований) домен, який ви відвідуєте, надсилається до ${total} сторонніх серверів (${names}) — свідомий компроміс приватності заради кращого покриття загроз: ваша нова історія браузингу видима одразу ${total} сторонам замість однієї.</div>`;
-}
-
 // T-139: percentage is derived here, not stored server-side - `total`/`blocked`
 // are already the source of truth (`admin::compute_stats`), a third persisted
 // field would just be able to drift from them. `total === 0` (log window empty,
@@ -103,7 +75,7 @@ function render(status) {
   setPill(true, "Сервіс доступний");
   const bothOff = !status.providers.quad9 && !status.providers.adguard;
   appBody.innerHTML = `
-    ${bothOff ? `<div class="notice warn">Обидва провайдери вимкнено — фільтрація не активна, запити йдуть напряму через baseline-резолвер (Cloudflare), який усе одно бачить кожен новий домен, який ви відвідуєте.</div>` : privacyNoticeHtml(status.providers)}
+    ${bothOff ? `<div class="notice warn">Обидва провайдери вимкнено — фільтрація не активна, запити йдуть напряму через baseline-резолвер (Cloudflare), який усе одно бачить кожен новий домен, який ви відвідуєте.</div>` : ""}
     <div class="card">
       <h3>Провайдери</h3>
       <div class="toggle-row">

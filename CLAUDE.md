@@ -180,6 +180,11 @@ don't depend on file contents and needed no changes. Diagram ground-truth ritual
 (`diagrams/ui-dto-model.md`'s SOURCES includes §8) — not affected, no DTO type/field changed,
 only static text over the already-existing `AdminStatusResponse.providers`.
 
+**Reversed 2026-08-28 (DECISIONS.md)**: the notice itself (`privacyNoticeHtml`, `.notice.info`)
+was removed at the user's explicit request — the paragraph above stays as the historical record
+of what was built and why at the time, not rewritten. `.notice.warn` (both-providers-off warning)
+is unaffected.
+
 Фаза 1, twenty-third slice (T-58, narrowed but not closed — TASKS.md, one commit): a scoping pass
 over T-58's four-category admin-channel test requirement (SPEC.md §8.1) surfaced two real bugs, not
 just missing tests, and fixed both. (1) `overrides::OverrideLists::load`/`config::ResolverConfig::
