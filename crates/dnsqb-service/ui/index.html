@@ -27,6 +27,16 @@
     <h3>Кеш</h3>
     <p>Завантаження…</p>
   </div>
+  <!-- T-46/T-54: same reasoning as #overrides-body/#cache-config-body above
+       - a search box the user is actively typing into must not lose its
+       value to the unrelated 2s status poll. Unlike those two, this section
+       also doesn't auto-refresh on its own timer (see main.js) - a log
+       table re-rendering under a reader every few seconds would be
+       disruptive, not helpful. -->
+  <div id="log-body" class="card">
+    <h3>Лог запитів</h3>
+    <p>Завантаження…</p>
+  </div>
   <script src="/admin/ui/main.js"></script>
 </body>
 </html>

@@ -11,6 +11,7 @@ const statusText = document.getElementById("status-text");
 const appBody = document.getElementById("app-body");
 const overridesBody = document.getElementById("overrides-body");
 const cacheConfigBody = document.getElementById("cache-config-body");
+const logBody = document.getElementById("log-body");
 
 function setPill(ok, text) {
   statusPill.classList.toggle("is-bad", !ok);
@@ -501,3 +502,366 @@ async function refreshCacheConfig() {
 }
 
 refreshCacheConfig();
+
+// T-46/T-54: query log screen. Same isolation reasoning as the two sections
+// above (#log-body, own fetch/render cycle, not on the 2s poll) - but unlike
+// them, this one also has no timer of its own: a log table re-rendering
+// under a reader every couple seconds (losing scroll position, wiping an
+// expanded voter-detail row) would be actively worse than a stale view with
+// a manual "Оновити" button. Driven by an explicit call at the bottom, plus
+// re-fetches after a filter change or a successful "очистити лог".
+
+async function getLog(params) {
+  const response = await fetch(`/admin/log?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function clearLog() {
+  const response = await fetch("/admin/log/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+}
+
+const DECISION_LABELS = {
+  ALLOWED: { text: "Дозволено", cls: "good" },
+  BLOCKED: { text: "Заблоковано", cls: "bad" },
+  FAILED: { text: "Не вдалося", cls: "warn" },
+};
+const DECISION_SOURCE_LABELS = {
+  ALLOWLIST: "Allowlist",
+  BLOCKLIST: "Blocklist",
+  CACHE: "Кеш",
+  QUORUM: "Quorum",
+  CCTLD_BLOCK: "ccTLD-блок",
+  RATING_FILTER: "Рейтинговий фільтр",
+  GEOIP: "GeoIP",
+};
+const QTYPE_LABELS = { A: "A", AAAA: "AAAA", HTTPS_SVCB: "HTTPS/SVCB", OTHER: "Інше" };
+// VoterVerdictView's seven wire values (admin.rs) - PENDING is declared on
+// the DTO but structurally never produced by this read-only route (reserved
+// for a future live-updating log view that doesn't exist yet), kept here
+// anyway so an unrecognized status never renders as literally nothing.
+const VOTER_STATUS_LABELS = {
+  PENDING: "очікується",
+  BLOCK: "заблокував",
+  ALLOW: "дозволив",
+  TIMEOUT: "не відповів",
+  ERROR: "помилка",
+  CANCELED: "скасовано",
+  DISABLED: "вимкнено",
+};
+const PROVIDER_LABELS = { quad9: "Quad9", adguard: "AdGuard" };
+
+// Built via DOM methods only, same discipline as overrideListItem above -
+// `domain`/`voter.status.message` are both untrusted (a domain from live DNS
+// traffic; `message` is currently always a fixed coarse error-kind label
+// server-side, but nothing about this DTO's shape guarantees that stays
+// true) and admin_ui.rs's own module doc comment names exactly this screen
+// as the one that must not relax into innerHTML string interpolation.
+function voterDetailList(voters) {
+  const ul = document.createElement("ul");
+  ul.className = "log-voter-list";
+  voters.forEach((voter) => {
+    const li = document.createElement("li");
+    const provider = document.createElement("span");
+    provider.className = "log-voter-provider";
+    provider.textContent = PROVIDER_LABELS[voter.provider_name] || voter.provider_name;
+    li.appendChild(provider);
+    const status = document.createElement("span");
+    let text = VOTER_STATUS_LABELS[voter.status.status] || voter.status.status;
+    if (voter.status.status === "ALLOW") {
+      text += ` (${voter.status.ip_count} IP)`;
+    } else if (voter.status.status === "ERROR") {
+      text += `: ${voter.status.message}`;
+    }
+    status.textContent = text;
+    li.appendChild(status);
+    ul.appendChild(li);
+  });
+  return ul;
+}
+
+function logItem(entry) {
+  const li = document.createElement("li");
+  li.className = "log-item";
+
+  const row = document.createElement("div");
+  row.className = "log-item-row";
+
+  const time = document.createElement("span");
+  time.className = "log-item-time";
+  time.textContent = new Date(entry.timestamp_ms).toLocaleString();
+  row.appendChild(time);
+
+  const domain = document.createElement("span");
+  domain.className = "log-item-domain";
+  domain.textContent = entry.domain;
+  row.appendChild(domain);
+
+  const qtype = document.createElement("span");
+  qtype.className = "log-item-badge";
+  qtype.textContent = QTYPE_LABELS[entry.qtype] || entry.qtype;
+  row.appendChild(qtype);
+
+  const decision = DECISION_LABELS[entry.decision] || { text: entry.decision, cls: "" };
+  const decisionBadge = document.createElement("span");
+  decisionBadge.className = `log-item-badge log-item-decision ${decision.cls}`;
+  decisionBadge.textContent = decision.text;
+  row.appendChild(decisionBadge);
+
+  const source = document.createElement("span");
+  source.className = "log-item-source";
+  source.textContent = DECISION_SOURCE_LABELS[entry.decision_source] || entry.decision_source;
+  row.appendChild(source);
+
+  const latency = document.createElement("span");
+  latency.className = "log-item-latency";
+  latency.textContent = `${entry.latency_ms} мс`;
+  row.appendChild(latency);
+
+  li.appendChild(row);
+
+  const actions = document.createElement("div");
+  actions.className = "log-item-actions";
+
+  // Row-level "add in one click" (T-46) - reuses the already-established
+  // addOverride() from the T-47 section above rather than a second copy of
+  // the same POST /admin/overrides/add call.
+  ["allowlist", "blocklist"].forEach((list) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = list === "allowlist" ? "В allowlist" : "В blocklist";
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        await addOverride(entry.domain, list);
+        btn.textContent = "✓ Додано";
+        // Deliberately re-renders #overrides-body (unlike the unrelated 2s
+        // status poll T-47's own comment guards against) - the user just
+        // caused this exact mutation from this row, so showing the new
+        // entry/conflict highlight immediately is the point. If they have
+        // in-progress text in the override "add domain" input, it's lost;
+        // accepted as a reasonable trade for the immediate feedback.
+        await refreshOverrides();
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+      }
+    });
+    actions.appendChild(btn);
+  });
+
+  if (entry.voters.length > 0) {
+    const detailBtn = document.createElement("button");
+    detailBtn.type = "button";
+    detailBtn.textContent = "Деталі";
+    const detail = voterDetailList(entry.voters);
+    detail.hidden = true;
+    detailBtn.addEventListener("click", () => {
+      detail.hidden = !detail.hidden;
+      detailBtn.textContent = detail.hidden ? "Деталі" : "Сховати деталі";
+    });
+    actions.appendChild(detailBtn);
+    li.appendChild(actions);
+    li.appendChild(detail);
+  } else {
+    li.appendChild(actions);
+  }
+
+  return li;
+}
+
+function currentLogQuery() {
+  const params = new URLSearchParams();
+  const domain = document.getElementById("log-search").value.trim();
+  if (domain) {
+    params.set("domain_contains", domain);
+  }
+  const decision = document.getElementById("log-decision").value;
+  if (decision) {
+    params.set("decision", decision);
+  }
+  const voter = document.getElementById("log-voter").value;
+  if (voter) {
+    params.set("voter", voter);
+  }
+  return params;
+}
+
+// The filter row (search box, two selects, buttons) is built exactly once,
+// not rebuilt on every refresh - live-verified via Chrome that the naive
+// "rebuild everything from the fetch response" approach the sibling
+// sections (overrides/cache-config) use has two real bugs here that it
+// doesn't have there: (1) the very first refreshLog() call runs before any
+// data-driven render has ever happened, so currentLogQuery() would read
+// from elements that don't exist yet (`#log-search` etc.) - a null-deref,
+// not a hypothetical; (2) even past the first call, wiping and recreating
+// `<input id="log-search">` on every refresh would reset the user's
+// in-progress search text/dropdown selection right after they triggered the
+// very refresh that's supposed to show its result. Only `#log-results`
+// (entries/empty-state/truncated-notice/error) is data-dependent and gets
+// rebuilt; the filter chrome around it is permanent.
+const logResults = document.createElement("div");
+
+function buildLogFilterRow() {
+  logBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Лог запитів";
+  logBody.appendChild(heading);
+
+  const filterRow = document.createElement("div");
+  filterRow.className = "log-filter-row";
+
+  const search = document.createElement("input");
+  search.type = "text";
+  search.id = "log-search";
+  search.placeholder = "Пошук за доменом";
+  search.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      refreshLog();
+    }
+  });
+  filterRow.appendChild(search);
+
+  const decisionSelect = document.createElement("select");
+  decisionSelect.id = "log-decision";
+  [
+    ["", "Усі рішення"],
+    ["ALLOWED", "Дозволено"],
+    ["BLOCKED", "Заблоковано"],
+    ["FAILED", "Не вдалося"],
+  ].forEach(([value, text]) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    decisionSelect.appendChild(opt);
+  });
+  decisionSelect.addEventListener("change", refreshLog);
+  filterRow.appendChild(decisionSelect);
+
+  const voterSelect = document.createElement("select");
+  voterSelect.id = "log-voter";
+  // Hardcoded to the two Phase-1 providers, same as CACHE_CONFIG_FIELDS above
+  // - must match upstream::Provider::as_str()'s output, but nothing enforces
+  // that from the JS side (unlike the decision literals, which do have a
+  // Rust-side drift test). Whoever adds a third provider (T-73 presets) has
+  // to update this list by hand.
+  [["", "Усі voter'и"], ["quad9", "Quad9"], ["adguard", "AdGuard"]].forEach(([value, text]) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    voterSelect.appendChild(opt);
+  });
+  voterSelect.addEventListener("change", refreshLog);
+  filterRow.appendChild(voterSelect);
+
+  const searchBtn = document.createElement("button");
+  searchBtn.type = "button";
+  searchBtn.textContent = "Пошук";
+  searchBtn.addEventListener("click", refreshLog);
+  filterRow.appendChild(searchBtn);
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.textContent = "Оновити";
+  refreshBtn.addEventListener("click", refreshLog);
+  filterRow.appendChild(refreshBtn);
+
+  // Two-step confirm instead of a blocking window.confirm() (no precedent
+  // for one anywhere else on this page, and a native dialog can't be styled
+  // to explain the consequence the way this project's other destructive
+  // actions - dnsqb-tray's "Зупинити фільтрацію" - already do).
+  const clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.textContent = "Очистити лог";
+  let confirming = false;
+  clearBtn.addEventListener("click", async () => {
+    if (!confirming) {
+      confirming = true;
+      clearBtn.textContent = "Точно очистити?";
+      setTimeout(() => {
+        if (confirming) {
+          confirming = false;
+          clearBtn.textContent = "Очистити лог";
+        }
+      }, 4000);
+      return;
+    }
+    confirming = false;
+    try {
+      await clearLog();
+      await refreshLog();
+    } catch (err) {
+      renderLogError(err);
+    } finally {
+      // Live-verified gap: without this, a successful clear left the button
+      // permanently reading "Точно очистити?" - misleadingly implying a
+      // confirmation was still pending even though the action already
+      // completed.
+      clearBtn.textContent = "Очистити лог";
+    }
+  });
+  filterRow.appendChild(clearBtn);
+
+  logBody.appendChild(filterRow);
+  logBody.appendChild(logResults);
+}
+
+function renderLog(data) {
+  logResults.textContent = "";
+
+  if (data.entries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "log-empty";
+    empty.textContent = "Записів не знайдено.";
+    logResults.appendChild(empty);
+    return;
+  }
+
+  if (data.truncated) {
+    const truncatedNotice = document.createElement("div");
+    truncatedNotice.className = "notice warn";
+    truncatedNotice.textContent =
+      "Показано лише найновіші записи, що відповідають фільтру - звузьте пошук, щоб побачити решту.";
+    logResults.appendChild(truncatedNotice);
+  }
+
+  const list = document.createElement("ul");
+  list.className = "log-list";
+  // Newest first for reading, even though the backend returns oldest-first
+  // within the kept window (dispatch::serve_admin_log's own doc comment).
+  [...data.entries].reverse().forEach((entry) => list.appendChild(logItem(entry)));
+  logResults.appendChild(list);
+}
+
+function renderLogError(err) {
+  logResults.textContent = "";
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  logResults.appendChild(panel);
+}
+
+async function refreshLog() {
+  try {
+    renderLog(await getLog(currentLogQuery()));
+  } catch (err) {
+    renderLogError(err);
+  }
+}
+
+// Order matters: buildLogFilterRow() must run first - refreshLog() calls
+// currentLogQuery(), which reads #log-search/#log-decision/#log-voter, and
+// those elements don't exist until buildLogFilterRow() creates them (see its
+// own comment above for the null-deref this fixed).
+buildLogFilterRow();
+refreshLog();

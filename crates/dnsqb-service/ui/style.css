@@ -161,3 +161,50 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   background: var(--surface-raised); color: var(--text); font-size: 12.3px;
   cursor: pointer;
 }
+
+/* T-46/T-54: query log (#log-body, main.js) */
+.log-filter-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
+.log-filter-row input {
+  flex: 1 1 12rem; min-width: 0; padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--paper); color: var(--text); font-size: 12.8px;
+}
+.log-filter-row select, .log-filter-row button {
+  padding: 0.35rem 0.6rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-raised); color: var(--text); font-size: 12.3px;
+  cursor: pointer;
+}
+.log-empty { color: var(--text-muted); font-size: 12.8px; }
+.log-list { list-style: none; margin: 0; padding: 0; }
+.log-item { padding: 0.5rem 0; border-bottom: 1px solid var(--line-soft); }
+.log-item:last-child { border-bottom: none; }
+.log-item-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
+  font-size: 12.5px;
+}
+.log-item-time { color: var(--text-muted); font-size: 11.5px; flex-shrink: 0; }
+.log-item-domain { flex: 1 1 auto; word-break: break-all; font-weight: 600; }
+.log-item-badge {
+  display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px;
+  font-size: 11px; background: var(--line-soft); color: var(--text-muted);
+}
+.log-item-decision.good { background: var(--good-soft); color: var(--good); }
+.log-item-decision.bad { background: var(--bad-soft); color: var(--bad); }
+.log-item-decision.warn { background: var(--warn-soft); color: var(--warn); }
+.log-item-source { color: var(--text-muted); font-size: 11.5px; }
+.log-item-latency { color: var(--text-muted); font-size: 11.5px; flex-shrink: 0; }
+.log-item-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
+.log-item-actions button {
+  padding: 0.25rem 0.55rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-raised); color: var(--text); font-size: 11.5px;
+  cursor: pointer;
+}
+.log-voter-list {
+  list-style: none; margin: 0.4rem 0 0; padding: 0.5rem 0.6rem;
+  background: var(--line-soft); border-radius: 6px;
+}
+.log-voter-list li {
+  display: flex; justify-content: space-between; gap: 0.6rem;
+  font-size: 11.8px; padding: 0.15rem 0;
+}
+.log-voter-provider { color: var(--text-muted); }
