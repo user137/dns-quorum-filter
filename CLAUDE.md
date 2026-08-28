@@ -8,6 +8,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Поза фазами, T-139 done (TASKS-DONE.md, one commit, docs+static-asset only, no Rust code): closed
+the remaining scope of a task already narrowed once before (T-52's dashboard already covers
+processed/blocked/in-flight counts) — a blocked-percentage stat on `/admin/ui`, purely derived
+client-side (`main.js`'s `blockedPercentLabel`) from the already-returned `status.stats.blocked`/
+`.total`, no new backend field. **Advisor-caught before commit, same failure class as T-57's
+baseline undercount**: the first draft guarded only `total === 0` (→ "—", not `NaN`/a false `0%`)
+but a plain `Math.round` still misrepresents the far more common case — a real filter's steady-state
+block rate is often well under 1% of a full log window, so `blocked > 0` could still round display
+to a misleading `0%` (and the mirror case, `blocked < total` rounding up to a misleading `100%`).
+Fixed with explicit `<1%`/`>99%` bands instead of rounding through either edge. Second catch: the
+new fourth stat cell had no `flex-wrap` on `.stat-row`, a real narrow-window overflow risk — fixed
+with one CSS property. Verified two ways: a `node`-run unit pass over nine boundary cases for
+`blockedPercentLabel` (0/0, 0/4, 1/1, 1/100, 1/101, 99/100, 100/101, 3/1000, 997/1000, all correct),
+plus a live Chrome pass against a real running `dnsqb-service` (a real blocked-domain DoH query via
+a temporary `overrides.toml` + `POST /admin/reset`, confirming `—`/`0%`/`25%` render correctly on
+live data). The wrap fix itself was verified via forced-width DOM geometry
+(`getBoundingClientRect`, 4 cells → 2 rows, zero horizontal overflow at 360px) rather than a
+screenshot of an actually-narrowed OS window — `resize_window` didn't change the real viewport in
+this environment, named honestly rather than skipped. `UI-SPEC.md` §3.1's draft row annotated (not
+rewritten) to note the real shape differs (`AdminStats`, not a standalone "today" `u32`, percentage
+computed by the client). Diagram ritual checked (`ui-dto-model.md`'s SOURCES) — unaffected, no DTO
+field changed. No new Rust code, types, or tests.
+
 Фаза 1, twenty-fourth slice done (T-57 — TASKS-DONE.md, one commit, docs+static-asset only, no
 Rust code): the explicit, non-hidden quorum-privacy notice SPEC.md §8/"Відкриті питання" п.4
 requires on the admin UI. New `.notice.info` block on `/admin/ui` (`main.js`'s

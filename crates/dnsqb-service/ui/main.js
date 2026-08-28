@@ -73,6 +73,31 @@ function privacyNoticeHtml(providers) {
   return `<div class="notice info">Кожен новий (не кешований) домен, який ви відвідуєте, надсилається до ${total} сторонніх серверів (${names}) — свідомий компроміс приватності заради кращого покриття загроз: ваша нова історія браузингу видима одразу ${total} сторонам замість однієї.</div>`;
 }
 
+// T-139: percentage is derived here, not stored server-side - `total`/`blocked`
+// are already the source of truth (`admin::compute_stats`), a third persisted
+// field would just be able to drift from them. `total === 0` (log window empty,
+// e.g. right after a restart) must render as "no data" rather than a NaN/0%
+// that would misleadingly claim zero blocking is happening. A rounded 0%/100%
+// has the same falseness one level down: a real DNS filter's steady-state
+// block rate over a full log window is often well under 1% (most queries
+// aren't blocked), so plain Math.round would silently read "0% blocked" while
+// blocking is actively happening - and the mirror case (a handful of allowed
+// queries rounding away to "100% blocked") is the same lie in the other
+// direction. Both edges are called out explicitly instead of rounded through.
+function blockedPercentLabel(stats) {
+  if (stats.total === 0) {
+    return "—";
+  }
+  const pct = (stats.blocked / stats.total) * 100;
+  if (stats.blocked > 0 && pct < 1) {
+    return "<1%";
+  }
+  if (stats.blocked < stats.total && pct > 99) {
+    return ">99%";
+  }
+  return `${Math.round(pct)}%`;
+}
+
 function render(status) {
   setPill(true, "Сервіс доступний");
   const bothOff = !status.providers.quad9 && !status.providers.adguard;
@@ -123,6 +148,10 @@ function render(status) {
         <div>
           <div class="stat">${status.stats.in_flight}</div>
           <div class="stat-sub">зараз обробляється</div>
+        </div>
+        <div>
+          <div class="stat">${blockedPercentLabel(status.stats)}</div>
+          <div class="stat-sub">частка заблокованих</div>
         </div>
       </div>
     </div>
