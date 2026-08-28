@@ -8,6 +8,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-third slice (T-58, narrowed but not closed — TASKS.md, one commit): a scoping pass
+over T-58's four-category admin-channel test requirement (SPEC.md §8.1) surfaced two real bugs, not
+just missing tests, and fixed both. (1) `overrides::OverrideLists::load`/`config::ResolverConfig::
+load` had no file-size bound — every other input boundary in this crate is explicitly capped before
+allocating (`dispatch::MAX_MESSAGE_SIZE`, `MAX_ADMIN_BODY_SIZE`), but these two file loaders weren't,
+and both are reachable live via `POST /admin/reset` (T-149), not just at startup — SPEC.md §8.1's
+"malformed/huge override file" misuse example, now closed. Advisor-caught before implementing: the
+first draft checked `fs::metadata(path)?.len()` before `read_to_string` — measures one thing,
+allocates another, real TOCTOU. Fixed with a bounded read (`File::open` + `.take(MAX + 1).
+read_to_string(...)`, checked against the actual bytes read, not a separately-measured length) —
+`overrides::MAX_OVERRIDES_FILE_SIZE` (10 MiB, generous for a hand-edited domain list) and `config::
+MAX_CONFIG_FILE_SIZE` (64 KiB, four scalar fields — a deliberately separate, much smaller constant,
+not a shared one covering two files three orders of magnitude apart) with their own `OverrideError::
+TooLarge`/`ConfigError::TooLarge` variants. (2) `dispatch::apply_admin_config`'s disk persist
+(`ResolverConfig::save`, a plain non-atomic `fs::write`) happens *after* the `runtime` write lock is
+released — two near-simultaneous `POST /admin/config` calls (e.g. two quick UI clicks) could persist
+to disk in the opposite order from their in-memory writes, leaving the file not matching live state:
+SPEC.md §8.1's "rapid toggle race" misuse example, real not hypothetical. Fixed with a new
+`AppState::persist_lock` (`parking_lot::Mutex<()>`, invariant documented on the field: always
+acquired before `runtime`, never after), held across the whole write-then-persist sequence but not
+across the disk write via `runtime` itself (so a concurrent admin config write's disk I/O never
+blocks `resolve_doh_request`'s per-query `state.runtime.read()`). **Advisor-flagged and then
+empirically resolved, not assumed either way**: a naive concurrency test proving this exact race
+would very likely pass on both fixed and unfixed code (the same vacuous-test shape this file's
+gotchas section already documents three times — `IsCa::NoCa`, the `icacls` denylist, T-59's `ROUTES`
+fix) unless actually watched failing first. Checked, not assumed: with `persist_lock` temporarily
+reverted, `concurrent_admin_config_posts_leave_disk_matching_live_settings` (3 real OS threads,
+`flavor = "multi_thread"`, looped 20×) failed 16/20 runs; with the fix restored, 20/20 passed — a
+genuine, empirically-confirmed regression test, documented as such in the test's own comment rather
+than left to look like an untested aspiration. First real `proptest` usage in the workspace (named in
+the planned-stack table since Крок 0, never wired up before this slice) — `default-features = false,
+features = ["std"]`, confirmed via `cargo tree -f "{p} {f}" -p proptest` to exclude the default
+`fork`/`timeout` features' process-spawning tail (`rusty-fork`, `wait-timeout`, `quick-error`), per
+advisor review. Three property tests at the channel's actual untrusted-input parsing boundaries:
+`overrides::parse_pattern` (arbitrary strings never panic; a parsed domain never contains `*` — a
+regression-shaped property tied directly to this file's own documented `Name::from_utf8` wildcard-
+label gotcha), `dispatch::wire_bytes_from_get` (arbitrary GET query strings never panic, RFC 8484
+§4.1.1), and `dispatch::serve` end to end against arbitrary `/admin/config` POST bodies (proves the
+whole CSRF-gate→body-limit→JSON-decode→live-apply path is panic-free, not just the JSON decoder in
+isolation). **Deliberately not claimed exhaustive** — T-58 stays open in TASKS.md, narrowed: SPEC.md
+§8.1's third misuse example (allow+block override conflict) is covered separately, elsewhere, not by
+this slice; fuzzing covers only these three boundaries, not every admin route or `/dns-query`'s own
+POST body, named as a remaining gap rather than silently implied done.
+
 Фаза 1, twenty-second slice done (T-60 — TASKS-DONE.md, docs-only, no commit-worthy code): closed
 without new code, the third such case after T-55/T-59 — the two tests SPEC.md §8.1 requires
 ("окремий рядок... не лише в тестах UI-каналу") already existed, written for other tasks and never
@@ -803,7 +847,9 @@ confirmed at T-149 (2026-08-27). `[dev-dependencies]` also gained `tempfile` (T-
 `load()` tests only — never shipped in a binary) and `x509-parser` (T-48, `cert.rs`'s tests only —
 decodes the real DER `rcgen` produces to assert SAN/`is_ca`/validity empirically rather than
 trusting `rcgen`'s docs; T-50 also uses its `pem` module to prove `Certificate::pem()` round-trips
-to the same DER). `deny.toml`'s license allowlist also covers `CDLA-Permissive-2.0`
+to the same DER), and `proptest` (T-58 — first real use of the planned-stack's own named fuzz/
+property-test crate; `default-features = false, features = ["std"]`, deliberately excluding the
+default `fork`/`timeout` features' process-spawning dependency tail). `deny.toml`'s license allowlist also covers `CDLA-Permissive-2.0`
 (webpki-root-certs' CA-data license) and `ISC` (rustls' crypto backend and `rustls-webpki`), both
 added several batches ago; `futures-util`/`tracing`/`moka`/`serde`/`serde_json`/`tempfile`/
 `parking_lot`/`rcgen`/`x509-parser`/`zeroize`/`rustls`/`hyper`/`hyper-util`/`tokio-rustls`/`http`/

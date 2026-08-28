@@ -26,8 +26,8 @@
 //! yet (T-46/T-47), so *that* sibling file keeps the "load once at startup,
 //! no live-reload" precedent this module used to share with it in full.
 
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,22 @@ pub enum ConfigError {
     /// looks down" with no indication why (Three safety legs, user safety).
     #[error("timeout_ms must not be 0 - every query would time out instantly")]
     ZeroTimeout,
+    /// The file exceeds [`MAX_CONFIG_FILE_SIZE`] — rejected before being read
+    /// into memory (SPEC.md §8.1: "ліміт розміру, не необмежена алокація"),
+    /// not after.
+    #[error("resolver config file exceeds the {MAX_CONFIG_FILE_SIZE}-byte size limit")]
+    TooLarge,
 }
+
+/// Upper bound on `resolver_config.toml`'s on-disk size, checked in
+/// [`ResolverConfig::load`] before any of it is read into memory — reachable
+/// live via `POST /admin/reset` (T-149), not just at startup. A separate,
+/// much smaller constant than `overrides::MAX_OVERRIDES_FILE_SIZE`
+/// deliberately, not a shared one — this file holds four scalar fields plus
+/// a small nested table, not an open-ended domain list, so 64 KiB (the same
+/// order of magnitude as `dispatch::MAX_MESSAGE_SIZE`) is already generous
+/// for even a heavily hand-commented file.
+pub(crate) const MAX_CONFIG_FILE_SIZE: u64 = 64 * 1024;
 
 /// Resolver config, loaded once at startup (T-144). `Copy` — small and
 /// value-like, same as [`crate::CacheConfig`]/[`crate::TimeoutConfig`].
@@ -122,15 +137,28 @@ impl ResolverConfig {
     /// # Errors
     ///
     /// Returns [`ConfigError::Io`] for a read failure other than "file not
-    /// found", [`ConfigError::Toml`] if the file's TOML doesn't match the
-    /// expected shape, [`ConfigError::ZeroPort`] if `port` is `0`, or
-    /// [`ConfigError::ZeroTimeout`] if `timeout_ms` is `0`.
+    /// found", [`ConfigError::TooLarge`] if the file exceeds
+    /// [`MAX_CONFIG_FILE_SIZE`], [`ConfigError::Toml`] if the file's TOML
+    /// doesn't match the expected shape, [`ConfigError::ZeroPort`] if `port`
+    /// is `0`, or [`ConfigError::ZeroTimeout`] if `timeout_ms` is `0`.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let raw = match fs::read_to_string(path) {
-            Ok(raw) => raw,
+        let mut handle = match File::open(path) {
+            Ok(handle) => handle,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(err) => return Err(ConfigError::Io(err)),
         };
+        // Bounded read, not metadata-then-read - see overrides::OverrideLists
+        // ::load's own comment for why a size check has to be enforced by
+        // the call that actually allocates, not measured by a separate one.
+        let mut raw = String::new();
+        let read = handle
+            .by_ref()
+            .take(MAX_CONFIG_FILE_SIZE + 1)
+            .read_to_string(&mut raw)
+            .map_err(ConfigError::Io)?;
+        if u64::try_from(read).unwrap_or(u64::MAX) > MAX_CONFIG_FILE_SIZE {
+            return Err(ConfigError::TooLarge);
+        }
         let file: ResolverConfigFile = toml::from_str(&raw).map_err(ConfigError::Toml)?;
 
         if file.port == 0 {
@@ -350,6 +378,36 @@ mod tests {
             ResolverConfig::load(&path),
             Err(ConfigError::Toml(_))
         ));
+    }
+
+    #[test]
+    fn load_rejects_a_file_one_byte_over_the_size_limit() {
+        let (_dir, path) = temp_config_path();
+        let oversized =
+            "#".repeat(usize::try_from(super::MAX_CONFIG_FILE_SIZE + 1).unwrap_or(usize::MAX));
+        if let Err(err) = fs::write(&path, oversized) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::TooLarge)
+        ));
+    }
+
+    #[test]
+    fn load_accepts_a_file_exactly_at_the_size_limit() {
+        let (_dir, path) = temp_config_path();
+        let body = "port = 9000\n";
+        let padding = "#".repeat(
+            usize::try_from(super::MAX_CONFIG_FILE_SIZE).unwrap_or(usize::MAX) - body.len(),
+        );
+        if let Err(err) = fs::write(&path, format!("{body}{padding}")) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => assert_eq!(config.port, 9000),
+            Err(err) => panic!("a file exactly at the size limit must still load: {err}"),
+        }
     }
 
     #[test]

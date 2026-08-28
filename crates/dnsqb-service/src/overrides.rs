@@ -18,8 +18,8 @@
 //! one layer up.
 
 use std::fmt;
-use std::fs;
-use std::io;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::Path;
 
 use hickory_proto::ProtoError;
@@ -132,7 +132,22 @@ pub enum OverrideError {
     /// reasoning, same shape as [`InvalidReason`]).
     #[error("failed to parse override list TOML")]
     Parse,
+    /// The file exceeds [`MAX_OVERRIDES_FILE_SIZE`] — rejected before being
+    /// read into memory (SPEC.md §8.1: "ліміт розміру, не необмежена
+    /// алокація"), not after.
+    #[error("override list file exceeds the {MAX_OVERRIDES_FILE_SIZE}-byte size limit")]
+    TooLarge,
 }
+
+/// Upper bound on `overrides.toml`'s on-disk size, checked in [`OverrideLists::
+/// load`] before any of it is read into memory — reachable live via
+/// `POST /admin/reset` (T-149), not just at startup, so an unbounded read here
+/// is a real allocation vector through the admin channel, the same input-
+/// boundary discipline already applied to `DoH` wire messages
+/// (`dispatch::MAX_MESSAGE_SIZE`) and admin POST bodies
+/// (`dispatch::MAX_ADMIN_BODY_SIZE`). 10 MiB is generous for a hand-edited
+/// list (SPEC.md §5, tens of thousands of domain lines) while still bounded.
+pub(crate) const MAX_OVERRIDES_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
 /// On-disk shape (SPEC.md §5: "простий текстовий/TOML-файл", "редагований і
 /// вручну") — two plain string arrays, not a literal `Vec<OverrideEntry>`.
@@ -306,16 +321,35 @@ impl OverrideLists {
     /// # Errors
     ///
     /// Returns [`OverrideError::Io`] for a read failure other than "file not
-    /// found", or [`OverrideError::Parse`] if the file's top-level TOML shape
-    /// doesn't match `allowlist = [...]` / `blocklist = [...]`.
+    /// found", [`OverrideError::TooLarge`] if the file exceeds
+    /// [`MAX_OVERRIDES_FILE_SIZE`], or [`OverrideError::Parse`] if the file's
+    /// top-level TOML shape doesn't match `allowlist = [...]` /
+    /// `blocklist = [...]`.
     pub fn load(path: &Path) -> Result<(Self, Vec<InvalidEntry>), OverrideError> {
-        let raw = match fs::read_to_string(path) {
-            Ok(raw) => raw,
+        let mut file = match File::open(path) {
+            Ok(file) => file,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 return Ok((Self::empty(), Vec::new()));
             }
             Err(err) => return Err(OverrideError::Io(err)),
         };
+        // A bounded read, not a metadata check followed by an unbounded one -
+        // the file can change between two separate syscalls (TOCTOU), and
+        // only the call that actually does the allocating can enforce a cap
+        // on it. `take(MAX + 1)` never reads more than one byte past the
+        // limit, so the allocation itself is bounded regardless of the
+        // file's real size (advisor-caught before implementing: an earlier
+        // draft checked `fs::metadata(path)?.len()` first, which measures a
+        // different thing than what `read_to_string` then allocates).
+        let mut raw = String::new();
+        let read = file
+            .by_ref()
+            .take(MAX_OVERRIDES_FILE_SIZE + 1)
+            .read_to_string(&mut raw)
+            .map_err(OverrideError::Io)?;
+        if u64::try_from(read).unwrap_or(u64::MAX) > MAX_OVERRIDES_FILE_SIZE {
+            return Err(OverrideError::TooLarge);
+        }
         let file: OverrideListsFile = toml::from_str(&raw).map_err(|_| OverrideError::Parse)?;
 
         let mut entries = Vec::new();
@@ -418,6 +452,29 @@ mod tests {
         assert!(parse_pattern("*.").is_err());
     }
 
+    // T-58 fuzz pass: `parse_pattern` is the one place in this crate that
+    // already had a documented false-acceptance gotcha (`Name::from_utf8`
+    // silently normalizing a literal `*.example.com`-shaped wildcard label
+    // when it's fed straight through, per this module's own doc comment on
+    // the leading-`*` guard) - a natural target for arbitrary-string fuzzing,
+    // not a symbolic choice. Two properties: never panics on arbitrary
+    // input, and a successfully parsed domain never contains `*` regardless
+    // of what `raw` looked like (the exact regression shape that gotcha
+    // describes, generalized).
+    proptest::proptest! {
+        #[test]
+        fn parse_pattern_never_panics_and_never_returns_a_domain_containing_a_star(
+            raw in "\\PC{0,64}"
+        ) {
+            if let Ok((domain, _is_wildcard)) = parse_pattern(&raw) {
+                proptest::prop_assert!(
+                    !domain.contains('*'),
+                    "parsed domain must never contain '*': raw={raw:?} domain={domain:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn rule_matches_wildcard_matches_apex_and_subdomain_not_lookalike() {
         let wildcard = entry("example.com", true, ListKind::Blocklist);
@@ -517,6 +574,48 @@ mod tests {
         match OverrideLists::load(&path) {
             Err(OverrideError::Parse) => {}
             other => panic!("expected OverrideError::Parse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_rejects_a_file_one_byte_over_the_size_limit() {
+        // super::MAX_OVERRIDES_FILE_SIZE is 10 MiB - too large to actually
+        // allocate as a literal fixture here. Writing exactly one byte past
+        // it and asserting TooLarge (rather than, say, a parse failure) is
+        // enough to prove the bound is checked, without needing to prove the
+        // allocation itself stayed small (that's the `take(MAX + 1)` call
+        // site's own structural guarantee, not something a test can observe
+        // from outside).
+        let oversized =
+            "#".repeat(usize::try_from(super::MAX_OVERRIDES_FILE_SIZE + 1).unwrap_or(usize::MAX));
+        let file = match tempfile_with_contents(&oversized) {
+            Ok(file) => file,
+            Err(err) => panic!("failed to create temp file: {err}"),
+        };
+        match OverrideLists::load(file.path()) {
+            Err(OverrideError::TooLarge) => {}
+            other => panic!("expected OverrideError::TooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_accepts_a_file_exactly_at_the_size_limit() {
+        // One byte under the limit's own comment-line fixture, padded with a
+        // trailing comment to reach exactly MAX bytes without needing a real
+        // multi-megabyte domain list - proves no off-by-one on the accepting
+        // side, mirroring the rejecting side above.
+        let toml = "allowlist = []\n";
+        let padding = "#".repeat(
+            usize::try_from(super::MAX_OVERRIDES_FILE_SIZE).unwrap_or(usize::MAX) - toml.len(),
+        );
+        let contents = format!("{toml}{padding}");
+        let file = match tempfile_with_contents(&contents) {
+            Ok(file) => file,
+            Err(err) => panic!("failed to create temp file: {err}"),
+        };
+        match OverrideLists::load(file.path()) {
+            Ok(_) => {}
+            Err(err) => panic!("a file exactly at the size limit must still load: {err}"),
         }
     }
 

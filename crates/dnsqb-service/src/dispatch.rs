@@ -40,7 +40,7 @@ use hickory_proto::ProtoError;
 use http::{header, Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Body;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use std::convert::Infallible;
 use std::path::PathBuf;
@@ -334,6 +334,21 @@ pub struct AppState<C: DohClient + Sync> {
     /// the kind of claim this project verifies empirically before relying on
     /// — `watch` has no equivalent ambiguity, so no probe was needed.
     shutdown_tx: watch::Sender<bool>,
+    /// Orders `POST /admin/config`'s live-write + disk-persist sequence
+    /// across concurrent requests (T-58) — `ResolverConfig::save` is a plain
+    /// `fs::write`, not atomic, and happens *after* `runtime`'s write lock is
+    /// released (deliberately: holding `runtime` across a blocking disk
+    /// write would stall every in-flight query's `state.runtime.read()`
+    /// too). Without this, two near-simultaneous `POST /admin/config` calls
+    /// (e.g. two quick clicks in the web UI) can persist to disk in the
+    /// opposite order from the order their in-memory writes landed, leaving
+    /// the on-disk file not matching the live settings. **Invariant:
+    /// `persist_lock` is always acquired before `runtime`, never after** —
+    /// `apply_admin_reset` doesn't take this lock at all (it only reads
+    /// files and does one atomic in-memory swap, no disk write to order), so
+    /// nothing today acquires them in the reverse order; keep it that way if
+    /// a future change adds a disk write to `/admin/reset`.
+    persist_lock: Mutex<()>,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
@@ -366,6 +381,7 @@ impl<C: DohClient + Sync> AppState<C> {
             persist,
             in_flight: AtomicU64::new(0),
             shutdown_tx,
+            persist_lock: Mutex::new(()),
         }
     }
 
@@ -457,10 +473,17 @@ fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) ->
 /// discards the live change that already took effect (T-52 plan: an
 /// in-memory update must not be reported as failed just because the disk
 /// write was).
+///
+/// `state.persist_lock` (T-58) is held for the whole write-then-persist
+/// sequence, acquired *before* `runtime`'s own lock — see its own doc
+/// comment for why this is what keeps concurrent `POST /admin/config` calls'
+/// disk-write order matching their in-memory-write order, without holding
+/// `runtime` itself across the blocking `fs::write`.
 fn apply_admin_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: AdminConfigUpdate,
 ) -> AdminStatusResponse {
+    let _persist_guard = state.persist_lock.lock();
     // Captured inside the write guard's own scope, not re-read via a second
     // lock acquisition afterward — advisor-caught: re-reading opened a
     // window where a concurrent `POST` could persist *its* values under
@@ -888,6 +911,54 @@ mod tests {
             wire_bytes_from_get(&query_string),
             Err(DohRequestError::MessageTooLarge)
         ));
+    }
+
+    // T-58 fuzz pass: RFC 8484 §4.1.1's GET decode path is the first thing an
+    // arbitrary, untrusted query string reaches - never a decoded DNS
+    // message, since it's rejected or produces bytes before the `hickory-
+    // proto` decoder ever sees them, but this function's own base64/length
+    // handling must never panic regardless of input shape.
+    proptest::proptest! {
+        #[test]
+        fn wire_bytes_from_get_never_panics_on_arbitrary_query_strings(query in "\\PC{0,256}") {
+            // Ok/Err outcome is deliberately not asserted here - the exact
+            // decode/reject behavior is already covered by the targeted
+            // tests above; this property only proves the absence of a panic.
+            let _ = wire_bytes_from_get(&query);
+        }
+    }
+
+    // T-58 fuzz pass: exercises the whole `/admin/config` route (CSRF gate,
+    // body-size limit, JSON decode, live-apply) against arbitrary bytes, not
+    // just `AdminConfigUpdate`'s deserializer in isolation - proves the path
+    // `serve()` actually routes requests through is panic-free end to end.
+    // `proptest!` has no native async support, so each case builds its own
+    // single-threaded runtime rather than reusing `#[tokio::test]`.
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn serve_admin_config_never_panics_on_arbitrary_bodies(
+            body in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096)
+        ) {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() else {
+                panic!("must be able to build a current-thread runtime");
+            };
+            rt.block_on(async {
+                let Ok(req) = Request::builder()
+                    .method(Method::POST)
+                    .uri("/admin/config")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Full::new(Bytes::from(body)))
+                else {
+                    panic!("fixture request must build");
+                };
+                // Response status is deliberately not asserted here - the
+                // real status-code behavior is already covered by the
+                // targeted tests above; this property only proves the
+                // absence of a panic anywhere in the routing/decode path.
+                let _ = serve(req, state_with(no_op_client())).await;
+            });
+        }
     }
 
     #[test]
@@ -1493,6 +1564,102 @@ mod tests {
         assert_eq!(loaded.timeout_mode, update.timeout_mode);
     }
 
+    // T-58, SPEC.md §8.1's "rapid toggle race" misuse example. Several
+    // `POST /admin/config` calls run concurrently (real OS-thread
+    // parallelism, `flavor = "multi_thread"` - a current-thread runtime
+    // could never interleave these at all, since `apply_admin_config` itself
+    // has no `.await` point to yield at) and every one must complete
+    // successfully. This is a genuine, empirically-confirmed regression test,
+    // not a vacuous one (same discipline T-59's `ROUTES` fix established -
+    // verified by watching it fail, not assumed from reading the code): with
+    // `state.persist_lock` reverted, this test failed 16/20 runs on this dev
+    // machine (`cargo test -- --test-threads=1`, looped); with the lock in
+    // place, 20/20 passed. The race window around one small `fs::write` is
+    // real and reliably hits under actual thread contention, not just a
+    // theoretical concern. What this test proves: no deadlock under real
+    // contention, and after every call finishes, the live in-memory settings
+    // and the on-disk file agree with each other on *some* one of the applied
+    // updates - never a value that matches neither (which a broken
+    // read-modify-write, not just a persist-ordering race, could produce).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_admin_config_posts_leave_disk_matching_live_settings() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+
+        let updates = [
+            AdminConfigUpdate {
+                providers: EnabledProviders {
+                    quad9: true,
+                    adguard: false,
+                },
+                timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+            },
+            AdminConfigUpdate {
+                providers: EnabledProviders {
+                    quad9: false,
+                    adguard: true,
+                },
+                timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+            },
+            AdminConfigUpdate {
+                providers: EnabledProviders {
+                    quad9: true,
+                    adguard: true,
+                },
+                timeout_mode: crate::timeout::TimeoutMode::Degraded,
+            },
+        ];
+
+        let mut handles = Vec::new();
+        for update in updates {
+            let state = Arc::clone(&state);
+            handles.push(tokio::spawn(async move {
+                match serve(admin_config_request(update), state).await {
+                    Ok(response) => response.status(),
+                    Err(err) => match err {},
+                }
+            }));
+        }
+        for handle in handles {
+            match handle.await {
+                Ok(status) => assert_eq!(status, StatusCode::OK),
+                Err(err) => panic!("admin config task must not panic: {err}"),
+            }
+        }
+
+        let live = *state.runtime.read();
+        let loaded = match ResolverConfig::load(&config_path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the persisted file must still load: {err}"),
+        };
+        assert_eq!(
+            loaded.providers, live.providers,
+            "disk must match the live settings after concurrent admin config writes"
+        );
+        assert_eq!(
+            loaded.timeout_mode, live.timeout.mode,
+            "disk must match the live settings after concurrent admin config writes"
+        );
+        assert!(
+            updates
+                .iter()
+                .any(|u| u.providers == live.providers && u.timeout_mode == live.timeout.mode),
+            "final live settings must match one of the applied updates exactly, not a mix"
+        );
+    }
+
     #[tokio::test]
     async fn serve_admin_config_reports_not_persisted_when_no_config_path_is_set() {
         let state = state_with(no_op_client());
@@ -1563,6 +1730,96 @@ mod tests {
     #[tokio::test]
     async fn serve_admin_reset_returns_500_with_no_app_data_configured() {
         let response = match serve(admin_reset_request(), state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // T-58, SPEC.md §8.1's "malformed override file" misuse example:
+    // apply_admin_reset's prepare-then-commit discipline (its own doc
+    // comment) means a malformed overrides.toml must leave live state
+    // untouched, not half-updated - proven here via Arc pointer identity
+    // (the exact same Arc, not just an equal-looking one) rather than value
+    // equality, the strongest available proof that no swap happened at all.
+    #[tokio::test]
+    async fn serve_admin_reset_returns_500_for_a_malformed_overrides_file_and_leaves_state_untouched(
+    ) {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &config_path,
+            "port = 8443\ntimeout_mode = \"fail_open\"\ntimeout_ms = 2000\n",
+        ) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        if let Err(err) = std::fs::write(&overrides_path, "not valid toml ===") {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path,
+                    overrides: overrides_path,
+                }),
+            },
+        );
+        let before_overrides = std::sync::Arc::as_ptr(&state.overrides.read());
+        let before_runtime = *state.runtime.read();
+
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            std::sync::Arc::as_ptr(&state.overrides.read()),
+            before_overrides,
+            "a malformed overrides file must never swap in a new (even empty) OverrideLists"
+        );
+        let after_runtime = *state.runtime.read();
+        assert_eq!(after_runtime.providers, before_runtime.providers);
+        assert_eq!(after_runtime.timeout.mode, before_runtime.timeout.mode);
+        assert_eq!(
+            after_runtime.timeout.duration,
+            before_runtime.timeout.duration
+        );
+    }
+
+    // T-58, SPEC.md §8.1's "huge override file" misuse example, at the
+    // config-file sibling instead: config::MAX_CONFIG_FILE_SIZE's own
+    // rejection (unit-tested directly in config.rs) must actually surface as
+    // a real 500 through the admin-reset route, not get lost in translation.
+    #[tokio::test]
+    async fn serve_admin_reset_returns_500_for_an_oversized_resolver_config_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let oversized = "#".repeat(70 * 1024);
+        if let Err(err) = std::fs::write(&config_path, oversized) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        let overrides_path = dir.path().join("overrides.toml");
+
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path,
+                    overrides: overrides_path,
+                }),
+            },
+        );
+
+        let response = match serve(admin_reset_request(), state).await {
             Ok(response) => response,
             Err(err) => match err {},
         };
