@@ -8,6 +8,43 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-fourth slice done (T-57 — TASKS-DONE.md, one commit, docs+static-asset only, no
+Rust code): the explicit, non-hidden quorum-privacy notice SPEC.md §8/"Відкриті питання" п.4
+requires on the admin UI. New `.notice.info` block on `/admin/ui` (`main.js`'s
+`privacyNoticeHtml`), computed live from the already-returned `status.providers` — no new
+backend field or endpoint. **Real undercount bug in the first draft, caught by closing advisor
+review before commit, not by any test**: the count only summed the two toggleable filtering
+providers (`quad9`/`adguard`), missing that `quorum::resolve` pushes an *unconditional*
+`Slot::Baseline` future (right after the two `if enabled.*` blocks) for every quorum-applicable,
+uncached lookup — `upstream::BASELINE_DOH_URL` (hardcoded Cloudflare, not yet admin-configurable)
+is queried regardless of which filtering providers are toggled, so the true third-party count is
+always "enabled filtering providers + 1," never just the filtering providers. A privacy
+disclosure that understates real exposure is wrong in the one direction that's never acceptable.
+Fixed: `total = filtering.length + 1`, baseline always named in the list. Second consequence,
+also advisor-caught: the "both providers off" state previously showed *no* privacy notice at all
+(count was 0, notice suppressed) — but that's exactly the state where baseline alone sees 100% of
+new-domain traffic, the one state with zero disclosure. That state doesn't even go through
+`quorum::resolve` — `pipeline::handle_query`'s every-provider-disabled branch short-circuits
+straight to `resolve_via_baseline` (`pipeline.rs`, a separate call site that also always queries
+`BASELINE_DOH_URL`, same conclusion via a different function than the one named above). Fixed by
+extending the existing `.notice.warn` text itself ("...йдуть напряму через baseline-резолвер
+(Cloudflare), який усе одно бачить кожен новий домен...") rather than stacking a second box — the
+two notices stay
+**mutually exclusive**, now for the right reason (each names who sees traffic in that specific
+state, via whichever banner is showing). Verified with two full live-browser passes (Chrome
+automation, real toggle clicks on the running `/admin/ui`, all three provider-count states
+screenshotted) — once for the (already-corrected) single-provider-grammar issue, once again after
+the baseline-undercount fix, both before commit — the CLAUDE.md-named "if you can't test the UI,
+say so explicitly" gap doesn't apply here since T-149's web UI (unlike the deleted Tauri one) is
+genuinely browser-testable, and this slice is the first one to actually do it. `style.css`'s
+`.notice.warn`/new `.notice.info` now share their common properties via one `.notice` base
+selector instead of duplicating them — a small in-scope tidy of the exact block this slice was
+already editing. No new Rust types, endpoints, or tests — all logic lives in the static JS
+`admin_ui.rs` already serves via `include_str!`; the existing header/CSP tests on that module
+don't depend on file contents and needed no changes. Diagram ground-truth ritual checked
+(`diagrams/ui-dto-model.md`'s SOURCES includes §8) — not affected, no DTO type/field changed,
+only static text over the already-existing `AdminStatusResponse.providers`.
+
 Фаза 1, twenty-third slice (T-58, narrowed but not closed — TASKS.md, one commit): a scoping pass
 over T-58's four-category admin-channel test requirement (SPEC.md §8.1) surfaced two real bugs, not
 just missing tests, and fixed both. (1) `overrides::OverrideLists::load`/`config::ResolverConfig::
