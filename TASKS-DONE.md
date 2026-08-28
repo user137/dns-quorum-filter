@@ -526,6 +526,73 @@
   новий рядок у Tauri-командній чернетці з поясненням, чому окремий маршрут, нові DTO-класи
   `CacheConfigView`/`CacheConfigUpdate`).
 
+- [x] T-54 — Internally tagged enum DTO через serde (`VoterStatus`, `LogEntry`, `decision_source`,
+  `voter_scope`), дзеркальні до дискримінованого union'а (8): перший log-експонуючий маршрут на
+  адмін-каналі — `GET /admin/log` (пошук/фасети) і `POST /admin/log/clear` — та повна DTO-обгортка
+  над внутрішнім `query_log::LogEntry` (T-42/T-147), яка досі не мала жодного серіалізатора. Plan-mode
+  + advisor рев'ю плану до коду спіймав два реальні розриви, не лише "додай `#[serde(...)]`":
+  (1) `GET /admin/log` без обмеження розміру відповіді — вся інша межа входу/виходу в цьому крейті
+  явно обмежена (`MAX_MESSAGE_SIZE`, `MAX_ADMIN_BODY_SIZE`, `MAX_OVERRIDES_FILE_SIZE`), а відповідь,
+  чий розмір масштабується з живим трафіком, не виняток; (2) наївний парсинг `?decision=`/`?voter=`
+  міг би мовчки трактувати нерозпізнане значення як "без фільтра" — той самий клас пастки, що вже
+  named для T-148's disabled-provider-defaults-to-`TimedOut`. Обидва виправлено структурно, не
+  тестом заднім числом: `GET /admin/log` приймає `?limit=` (дефолт 200, дочитуваний до 200
+  реальних, хардкап — сам `DEFAULT_MAX_ENTRIES` ring buffer'а, 1000), відповідь —
+  `admin::LogQueryResponse{entries, truncated}` — `truncated` каже клієнту чесно, коли щось
+  відсічено; невизнане значення `decision`/`voter` — завжди `400` (`LogQueryError::
+  UnknownDecision`/`UnknownVoter`), ніколи мовчазне звуження назад до `ALL`.
+
+  Нові DTO в `admin.rs`: `QTypeView` (4 значення, не повний `RecordType` — щоб невідомий числовий
+  тип запису ніколи не round-трипив довільне число у відповідь, той самий клас витоку, що вже
+  named для `toml::de::Error`/`reqwest::Error`), `DecisionView` (3 значення, `Decision`'s
+  T-147-доданий `Failed` нарешті на дроті), `DecisionSourceView` (7 значень — `CcTldBlock`/`GeoIp`
+  потребують явного `#[serde(rename)]`, автоматична `SCREAMING_SNAKE_CASE`-конверсія дала б
+  `CC_TLD_BLOCK`/`GEO_IP`, не SPEC.md's власні `CCTLD_BLOCK`/`GEOIP` — перевірено емпірично через
+  `serde_json::to_string` у тесті, не лише вручну простежений алгоритм касінгу), `VoterScopeView`
+  (завжди `Full` — T-109 не існує), і `VoterVerdictView` — **перший internally tagged enum у цьому
+  крейті** (`#[serde(tag = "status")]`), сім варіантів, що вирішують розбіжність SPEC.md §6/§8, уже
+  підтверджену користувачем 2026-08-25 (DECISIONS.md/`diagrams/ui-dto-model.md`): `Pending`
+  лишається легітимним, структурно недосяжним із цього маршруту варіантом (зарезервований під
+  майбутній live-канал), `Disabled` — сьомий, T-148. **Total match, без wildcard-гілки**
+  (`impl From<&VoterRecord> for VoterVerdictView`) — якщо колись до бекенд-`VoterVerdict` додасться
+  ще один транзитний стан, конверсія перестане компілюватись замість тихо провалитись крізь
+  wildcard.
+
+  **Реальний backend-розрив, закритий не заглушкою**: `VoterVerdictView::Allow{ip_count}`/
+  `Error{message}` — вимоги самого DTO (SPEC.md §8), але `quorum::VoterRecord` (T-147) до цього
+  завдання ніс лише `{provider, verdict}`, без жодних даних для цих двох payload-полів. Замість
+  залишити їх заглушкою (`ip_count: 0`, `message: ""`) — розширено `VoterRecord` двома новими
+  полями (`allow_ip_count: Option<u32>`, `error_message: Option<&'static str>`), обчислюваними в
+  `quorum::voter_record` (де вже є доступ і до `Message`, і до `UpstreamError`, до отримання яких
+  довелось би інакше перебудовувати весь виклик). `error_message` **ніколи** не несе сирий текст
+  `UpstreamError::Http` (той embed'ить URL запиту — тобто base64url-закодований домен, той самий
+  клас витоку, що вже задокументований у CLAUDE.md gotchas для `reqwest::Error`) — лише вже наявний
+  закритий `error_kind()`-лейбл (`"http"`/`"encode"`/`"decode"`). Нові юніт-тести на `voter_record`
+  напряму (`quorum.rs`) для кожної гілки (`Allow` рахує реальні A/AAAA-записи, `Error` несе
+  коректний лейбл, `Block`/`Timeout`/`Canceled`/`Disabled` не несуть жодного payload) — 4 нові
+  тести, плюс 4 наявні тестові літерали `VoterRecord` (`query_log.rs`) оновлено новими полями.
+
+  `Provider` отримав `as_str()`/`impl FromStr` (нове, `upstream.rs`) — єдине джерело істини для
+  `"quad9"`/`"adguard"` в обох напрямках: `admin::VoterResultView::provider_name` і `GET
+  /admin/log?voter=` парсяться й будуються через один і той самий метод, не два незалежні
+  hardcoded-збіги рядків, що могли б розійтись.
+
+  Один новий пряма-залежність — `percent-encoding` 2.3.2 (MIT/Apache-2.0, `cargo deny check`
+  чистий) — для percent-декодування `?domain_contains=` (пошуковий рядок може легітимно нести
+  пробіл/юнікод, на відміну від `dns=`-параметра `wire_bytes_from_get`, чий base64url-алфавіт уже
+  URL-safe і percent-декодування навмисно не потребує). Новий `proptest` на `parse_log_query` —
+  довільний query-рядок ніколи не панікує, той самий T-58-прецедент, що вже покриває
+  `wire_bytes_from_get`/`serve()` проти `/admin/config`.
+
+  Живий гейт повністю зелений: 292 lib-тести (+16 із попереднього T-153-зрізу), 18/2
+  conformance, clippy/fmt/rustdoc/doctest/`cargo deny check`/`cargo audit` усі чисті — жодних нових
+  ліцензійних записів, жодних нових advisories понад уже задокументовані інформаційні
+  (gtk/glib Linux-only, yanked `chacha20`). `SERVICES.md`/`UI-SPEC.md`/`diagrams/ui-dto-model.md`
+  оновлені (ground-truth ритуал — реальні DTO-класи позначені `<<T-54, реалізовано>>`, `Decision`'s
+  третій варіант `FAILED` нарешті на діаграмі, новий розділ пояснює `VoterRecord`-розширення).
+  T-46 (row-level "додати в allowlist/blocklist" одним кліком) лишається окремою, ще відкритою
+  задачею — цей зріз дав маршрут/DTO, сам екран логу (де ця дія фізично живе) — не цей комміт.
+
 ## Поза фазами / бэклог (завершені)
 
 - [x] T-134 — Дослідити технічне рішення проти мовчазного браузерного DoH-fallback (enterprise

@@ -24,8 +24,8 @@
 
 use crate::admin::{
     compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse, CacheConfigUpdate,
-    CacheConfigView, OverrideAddRequest, OverrideDomainView, OverrideListsResponse,
-    OverrideRemoveRequest,
+    CacheConfigView, LogEntryView, LogQueryResponse, OverrideAddRequest, OverrideDomainView,
+    OverrideListsResponse, OverrideRemoveRequest,
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
@@ -34,10 +34,10 @@ use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, Ove
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome,
 };
-use crate::query_log::{LogEntry, QueryLog};
+use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
 use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutConfig;
-use crate::upstream::DohClient;
+use crate::upstream::{DohClient, Provider};
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -74,6 +74,8 @@ const ADMIN_OVERRIDES_ADD_PATH: &str = "/admin/overrides/add";
 const ADMIN_OVERRIDES_REMOVE_PATH: &str = "/admin/overrides/remove";
 const ADMIN_CACHE_CONFIG_PATH: &str = "/admin/cache-config";
 const ADMIN_CACHE_CONFIG_APPLY_PATH: &str = "/admin/cache-config/apply";
+const ADMIN_LOG_PATH: &str = "/admin/log";
+const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
@@ -98,6 +100,8 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_OVERRIDES_REMOVE_PATH, &[Method::POST]),
     (ADMIN_CACHE_CONFIG_PATH, &[Method::GET]),
     (ADMIN_CACHE_CONFIG_APPLY_PATH, &[Method::POST]),
+    (ADMIN_LOG_PATH, &[Method::GET]),
+    (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
@@ -1089,6 +1093,168 @@ where
     }
 }
 
+/// `GET /admin/log`'s default result cap (T-54) — a value a user actually
+/// reads in one screen, not [`DEFAULT_MAX_ENTRIES`] (1000): every other
+/// input/output boundary in this crate is explicitly bounded, and a JSON
+/// response whose size scales with live user traffic is no exception
+/// (advisor-caught during planning). A client may ask for more via `?limit=`,
+/// up to [`MAX_LOG_LIMIT`].
+const DEFAULT_LOG_LIMIT: usize = 200;
+/// The hard cap `?limit=` can't exceed — [`DEFAULT_MAX_ENTRIES`], the ring
+/// buffer's own size bound. Asking for more than the buffer can ever hold is
+/// meaningless, not a legitimate "give me everything" request.
+const MAX_LOG_LIMIT: usize = DEFAULT_MAX_ENTRIES;
+
+/// `GET /admin/log`'s parsed query-string facets (T-54) — mirrors
+/// [`LogFilter`]'s three fields plus the result-count cap above.
+#[derive(Debug, Default)]
+struct LogQuery {
+    domain_contains: Option<String>,
+    decision: Option<Decision>,
+    voter: Option<Provider>,
+    limit: usize,
+}
+
+/// A malformed `GET /admin/log` query string — closed and coarse (no
+/// arbitrary client-supplied text echoed back), same discipline as
+/// [`DohRequestError`]/`overrides::InvalidReason`.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+enum LogQueryError {
+    /// A `domain_contains` value wasn't valid percent-encoded UTF-8.
+    #[error("domain_contains is not valid percent-encoded UTF-8")]
+    BadEncoding,
+    /// `decision` was present but didn't match any [`Decision`] variant's
+    /// wire name. Never silently treated as "no filter" (`None`, i.e. the
+    /// facet's own `ALL`) - a typo'd `?decision=BLOCKD` must not silently
+    /// widen a request for blocked-only entries into every entry
+    /// (advisor-caught during planning, the same class of trap T-148's
+    /// disabled-provider-defaults-to-`TimedOut` bug already named for this
+    /// crate).
+    #[error("decision does not match a known value")]
+    UnknownDecision,
+    /// Same reasoning as `UnknownDecision`, for `voter`.
+    #[error("voter does not match a known provider identifier")]
+    UnknownVoter,
+    /// `limit` was present but didn't parse as a non-negative integer.
+    #[error("limit is not a valid non-negative integer")]
+    BadLimit,
+}
+
+/// Parses `GET /admin/log`'s raw query string (RFC 3986 `application/
+/// x-www-form-urlencoded`-style `key=value&key2=value2` pairs, percent-
+/// decoded per key) into a [`LogQuery`]. `None`/an absent query string is
+/// "no filters, default limit" - the same "missing means default, present-
+/// but-wrong means 400" split [`LogQueryError`]'s own doc comments describe
+/// per field.
+fn parse_log_query(query_string: Option<&str>) -> Result<LogQuery, LogQueryError> {
+    let mut parsed = LogQuery {
+        limit: DEFAULT_LOG_LIMIT,
+        ..LogQuery::default()
+    };
+    let Some(query_string) = query_string else {
+        return Ok(parsed);
+    };
+    for pair in query_string.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        let value = percent_encoding::percent_decode_str(raw_value)
+            .decode_utf8()
+            .map_err(|_| LogQueryError::BadEncoding)?;
+        match key {
+            "domain_contains" => parsed.domain_contains = Some(value.into_owned()),
+            "decision" => {
+                parsed.decision = Some(match value.as_ref() {
+                    "ALLOWED" => Decision::Allowed,
+                    "BLOCKED" => Decision::Blocked,
+                    "FAILED" => Decision::Failed,
+                    _ => return Err(LogQueryError::UnknownDecision),
+                });
+            }
+            "voter" => {
+                parsed.voter = Some(
+                    value
+                        .parse::<Provider>()
+                        .map_err(|_| LogQueryError::UnknownVoter)?,
+                );
+            }
+            "limit" => {
+                let limit = value
+                    .parse::<usize>()
+                    .map_err(|_| LogQueryError::BadLimit)?;
+                parsed.limit = limit.min(MAX_LOG_LIMIT);
+            }
+            // An unrecognized key is ignored, not fatal - forward-compatible
+            // with a future UI param this route doesn't know about yet,
+            // unlike an unrecognized *value* for a key this route does
+            // recognize (see LogQueryError's own doc comments for why those
+            // two cases are handled differently).
+            _ => {}
+        }
+    }
+    Ok(parsed)
+}
+
+/// `GET /admin/log` (T-54) — method allowlisting happens centrally in
+/// [`serve`]'s `ROUTES` check, not re-checked here. Read-only, no CSRF gate
+/// needed (same as `GET /admin/status`/`GET /admin/overrides`). A malformed
+/// query string is `400`, never silently widened to "no filter" (see
+/// [`LogQueryError`]).
+fn serve_admin_log<C: DohClient + Sync>(
+    query_string: Option<&str>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>> {
+    let Ok(parsed) = parse_log_query(query_string) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let filter = LogFilter {
+        domain_contains: parsed.domain_contains.as_deref(),
+        decision: parsed.decision,
+        voter: parsed.voter,
+    };
+    let mut entries = state.query_log.search(SystemTime::now(), &filter);
+    let truncated = entries.len() > parsed.limit;
+    // Keeps the *newest* `limit` entries (search()/snapshot() return
+    // oldest-first) - split_off's tail, not a `.take(limit)` off the front,
+    // which would instead keep the oldest matches and silently hide
+    // everything recent the moment a filter matches more than `limit`
+    // entries.
+    let keep_from = entries.len().saturating_sub(parsed.limit);
+    entries = entries.split_off(keep_from);
+    json_response(&LogQueryResponse {
+        entries: entries.iter().map(LogEntryView::from_entry).collect(),
+        truncated,
+    })
+}
+
+/// `POST /admin/log/clear` (T-54) — same CSRF gate and body-size cap as
+/// every other admin `POST`. No body fields to parse (same `{}`-body
+/// convention `AdminClient::reset`/`shutdown` already use); the body is
+/// still bounded and read, not ignored outright, so an oversized body is
+/// rejected the same way every other admin `POST` rejects one, not silently
+/// accepted because this route happens not to need it.
+async fn serve_admin_log_clear<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    if limited.collect().await.is_err() {
+        return status_response(StatusCode::BAD_REQUEST);
+    }
+    state.query_log.clear();
+    status_response(StatusCode::OK)
+}
+
 /// `POST /admin/shutdown` (T-149) — the highest blast-radius endpoint on
 /// this channel: its only consumer is `dnsqb-tray`'s "Зупинити фільтрацію"
 /// menu item, which gates it behind a confirm dialog that names the
@@ -1235,6 +1401,8 @@ where
         ADMIN_OVERRIDES_REMOVE_PATH => serve_admin_overrides_remove(req, &state).await,
         ADMIN_CACHE_CONFIG_PATH => serve_admin_cache_config(&state),
         ADMIN_CACHE_CONFIG_APPLY_PATH => serve_admin_cache_config_apply(req, &state).await,
+        ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
+        ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
@@ -1249,21 +1417,22 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        content_type_is_dns_message, resolve_doh_request, serve, wire_bytes_from_get, AppState,
-        CacheState, DohRequestError, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
+        content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
+        wire_bytes_from_get, AppState, CacheState, DohRequestError, LogQueryError, OverridesState,
+        PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT, MAX_LOG_LIMIT,
         MAX_MESSAGE_SIZE,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
-        OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
+        LogQueryResponse, OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::ResolverConfig;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
-    use crate::query_log::QueryLog;
-    use crate::quorum::EnabledProviders;
+    use crate::query_log::{LogEntry, QueryLog};
+    use crate::quorum::{EnabledProviders, VoterRecord, VoterVerdict};
     use crate::timeout::TimeoutConfig;
-    use crate::upstream::{doh_get_url, DohClient, UpstreamError};
+    use crate::upstream::{doh_get_url, DohClient, Provider, UpstreamError};
     use bytes::Bytes;
     use hickory_proto::op::{Message, Query, ResponseCode};
     use hickory_proto::rr::rdata::A;
@@ -1288,6 +1457,52 @@ mod tests {
             panic!("fixture message must encode");
         };
         bytes
+    }
+
+    // T-54: `GET /admin/log`/`POST /admin/log/clear` fixtures.
+
+    fn sample_log_entry(domain: &str, decision: crate::query_log::Decision) -> LogEntry {
+        LogEntry {
+            timestamp: std::time::SystemTime::now(),
+            domain: domain.to_string(),
+            qtype: RecordType::A,
+            decision,
+            decision_source: crate::query_log::DecisionSource::Quorum,
+            voters: vec![VoterRecord {
+                provider: Provider::Quad9,
+                verdict: VoterVerdict::Allow,
+                allow_ip_count: Some(1),
+                error_message: None,
+            }],
+            latency_ms: 5,
+        }
+    }
+
+    fn admin_log_request(query: Option<&str>) -> Request<Full<Bytes>> {
+        let uri = match query {
+            Some(query) => format!("/admin/log?{query}"),
+            None => "/admin/log".to_string(),
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    fn admin_log_clear_request() -> Request<Full<Bytes>> {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/log/clear")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        req
     }
 
     #[test]
@@ -3229,6 +3444,267 @@ mod tests {
         );
     }
 
+    // T-54: `GET /admin/log`/`POST /admin/log/clear`.
+
+    #[tokio::test]
+    async fn serve_admin_log_returns_an_empty_array_for_an_empty_log() {
+        let state = state_with(no_op_client());
+        let response = match serve(admin_log_request(None), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        assert!(body.entries.is_empty());
+        assert!(!body.truncated);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_filters_by_domain_contains() {
+        let state = state_with(no_op_client());
+        state.query_log.push(sample_log_entry(
+            "match.example",
+            crate::query_log::Decision::Allowed,
+        ));
+        state.query_log.push(sample_log_entry(
+            "other.example",
+            crate::query_log::Decision::Allowed,
+        ));
+
+        let response = match serve(admin_log_request(Some("domain_contains=match")), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        assert_eq!(body.entries.len(), 1);
+        assert_eq!(body.entries[0].domain, "match.example");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_filters_by_decision() {
+        let state = state_with(no_op_client());
+        state.query_log.push(sample_log_entry(
+            "blocked.example",
+            crate::query_log::Decision::Blocked,
+        ));
+        state.query_log.push(sample_log_entry(
+            "allowed.example",
+            crate::query_log::Decision::Allowed,
+        ));
+
+        let response = match serve(admin_log_request(Some("decision=BLOCKED")), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        assert_eq!(body.entries.len(), 1);
+        assert_eq!(body.entries[0].domain, "blocked.example");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_filters_by_voter() {
+        let state = state_with(no_op_client());
+        let mut adguard_entry =
+            sample_log_entry("adguard-voted.example", crate::query_log::Decision::Allowed);
+        adguard_entry.voters = vec![VoterRecord {
+            provider: Provider::AdGuard,
+            verdict: VoterVerdict::Allow,
+            allow_ip_count: Some(1),
+            error_message: None,
+        }];
+        state.query_log.push(adguard_entry);
+        state.query_log.push(sample_log_entry(
+            "quad9-voted.example",
+            crate::query_log::Decision::Allowed,
+        ));
+
+        let response = match serve(admin_log_request(Some("voter=adguard")), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        assert_eq!(body.entries.len(), 1);
+        assert_eq!(body.entries[0].domain, "adguard-voted.example");
+    }
+
+    // Advisor-caught during planning: an unrecognized `decision`/`voter`
+    // value must never silently fall back to "no filter" (the facet's own
+    // `ALL`) - these three prove the actual HTTP behavior is 400, not just
+    // that `parse_log_query` returns an `Err` in isolation.
+
+    #[tokio::test]
+    async fn serve_admin_log_rejects_an_unrecognized_decision_value() {
+        let response = match serve(
+            admin_log_request(Some("decision=BLOCKD")),
+            state_with(no_op_client()),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_rejects_an_unrecognized_voter_value() {
+        let response = match serve(
+            admin_log_request(Some("voter=bogus")),
+            state_with(no_op_client()),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_rejects_a_non_numeric_limit() {
+        let response = match serve(
+            admin_log_request(Some("limit=abc")),
+            state_with(no_op_client()),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_caps_the_response_at_the_requested_limit_and_reports_truncated() {
+        let state = state_with(no_op_client());
+        for i in 0..5 {
+            state.query_log.push(sample_log_entry(
+                &format!("domain{i}.example"),
+                crate::query_log::Decision::Allowed,
+            ));
+        }
+
+        let response = match serve(admin_log_request(Some("limit=2")), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        assert_eq!(body.entries.len(), 2);
+        assert!(body.truncated);
+        // The *newest* two, not the oldest two - domain3/domain4 were pushed
+        // last.
+        assert_eq!(body.entries[0].domain, "domain3.example");
+        assert_eq!(body.entries[1].domain, "domain4.example");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_clear_rejects_a_missing_content_type() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/log/clear")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_clear_actually_empties_the_log() {
+        let state = state_with(no_op_client());
+        state.query_log.push(sample_log_entry(
+            "to-be-cleared.example",
+            crate::query_log::Decision::Allowed,
+        ));
+        assert_eq!(
+            state.query_log.snapshot(std::time::SystemTime::now()).len(),
+            1
+        );
+
+        let response = match serve(admin_log_clear_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(state
+            .query_log
+            .snapshot(std::time::SystemTime::now())
+            .is_empty());
+    }
+
+    #[test]
+    fn parse_log_query_defaults_to_no_filters_and_the_default_limit() {
+        let Ok(parsed) = parse_log_query(None) else {
+            panic!("None must parse");
+        };
+        assert!(parsed.domain_contains.is_none());
+        assert!(parsed.decision.is_none());
+        assert!(parsed.voter.is_none());
+        assert_eq!(parsed.limit, DEFAULT_LOG_LIMIT);
+    }
+
+    #[test]
+    fn parse_log_query_percent_decodes_domain_contains() {
+        let Ok(parsed) = parse_log_query(Some("domain_contains=a%20b")) else {
+            panic!("must parse")
+        };
+        assert_eq!(parsed.domain_contains.as_deref(), Some("a b"));
+    }
+
+    #[test]
+    fn parse_log_query_clamps_a_limit_above_the_hard_cap() {
+        let Ok(parsed) = parse_log_query(Some("limit=999999")) else {
+            panic!("must parse")
+        };
+        assert_eq!(parsed.limit, MAX_LOG_LIMIT);
+    }
+
+    #[test]
+    fn parse_log_query_rejects_invalid_percent_encoding() {
+        match parse_log_query(Some("domain_contains=%ff%fe")) {
+            Err(LogQueryError::BadEncoding) => {}
+            other => panic!("expected BadEncoding, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_log_query_ignores_an_unrecognized_key() {
+        let Ok(parsed) = parse_log_query(Some("nonsense=1&domain_contains=x")) else {
+            panic!("must parse")
+        };
+        assert_eq!(parsed.domain_contains.as_deref(), Some("x"));
+    }
+
+    proptest::proptest! {
+        // T-54, same discipline as `wire_bytes_from_get_never_panics_on_arbitrary_query_strings`
+        // (T-58): the query-string parsing boundary for a second admin GET
+        // route must never panic on arbitrary client input, whatever it
+        // decides to return.
+        #[test]
+        fn parse_log_query_never_panics_on_arbitrary_query_strings(query in "\\PC{0,256}") {
+            let _ = parse_log_query(Some(&query));
+        }
+    }
+
     #[tokio::test]
     async fn serve_admin_shutdown_rejects_non_post_methods() {
         let Ok(req) = Request::builder()
@@ -3337,6 +3813,8 @@ mod tests {
         ("/admin/overrides/remove", &[Method::POST]),
         ("/admin/cache-config", &[Method::GET]),
         ("/admin/cache-config/apply", &[Method::POST]),
+        ("/admin/log", &[Method::GET]),
+        ("/admin/log/clear", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),

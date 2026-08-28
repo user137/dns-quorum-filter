@@ -33,12 +33,14 @@
 
 use crate::cache::{CacheConfig, CacheConfigError};
 use crate::overrides::ListKind;
-use crate::query_log::{Decision, LogEntry};
-use crate::quorum::EnabledProviders;
+use crate::query_log::{Decision, DecisionSource, LogEntry};
+use crate::quorum::{EnabledProviders, VoterRecord, VoterVerdict};
 use crate::timeout::TimeoutMode;
+use hickory_proto::rr::RecordType;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::time::SystemTime;
 
 /// Live resolver state plus a snapshot of log-derived stats — the body of
 /// `GET /admin/status`, and echoed back by `POST /admin/config` after
@@ -255,6 +257,243 @@ impl CacheConfigUpdate {
     }
 }
 
+/// SPEC.md §6 `qtype` column, DTO form (`diagrams/ui-dto-model.md`'s `QType`
+/// enum, T-54) — four coarse buckets, not [`RecordType`]'s full range: an
+/// unrecognized/unusual wire record type must never round-trip an arbitrary
+/// numeric value into this response (advisor-caught during planning — the
+/// same "an error/response type echoes untrusted input" shape this crate's
+/// own gotchas already record for `toml::de::Error`/`reqwest::Error`,
+/// applied here to a record-type number instead of a domain).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum QTypeView {
+    A,
+    Aaaa,
+    HttpsSvcb,
+    Other,
+}
+
+impl From<RecordType> for QTypeView {
+    fn from(qtype: RecordType) -> Self {
+        match qtype {
+            RecordType::A => Self::A,
+            RecordType::AAAA => Self::Aaaa,
+            RecordType::HTTPS => Self::HttpsSvcb,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// SPEC.md §6 `decision` column, DTO form (T-54/T-147) — three values, not
+/// the two `diagrams/ui-dto-model.md`'s draft `Decision` enum still lists;
+/// `Failed` (SERVFAIL — no filtering decision was actually made) was added
+/// to the internal [`Decision`] at T-147, after that diagram was drawn. This
+/// is the ground-truth ritual catching up the diagram, not a new design
+/// choice — see `diagrams/ui-dto-model.md`'s own update at this task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DecisionView {
+    Allowed,
+    Blocked,
+    Failed,
+}
+
+impl From<Decision> for DecisionView {
+    fn from(decision: Decision) -> Self {
+        match decision {
+            Decision::Allowed => Self::Allowed,
+            Decision::Blocked => Self::Blocked,
+            Decision::Failed => Self::Failed,
+        }
+    }
+}
+
+/// SPEC.md §6/§8 `decision_source` column, DTO form (T-54) — all seven
+/// values `UI-SPEC.md` §1's "carry every field from day one" principle
+/// requires, though only four (`Allowlist`/`Blocklist`/`Cache`/`Quorum`) are
+/// producible before their own later-phase pipeline step exists (see
+/// [`DecisionSourceView::from`] below — a total match over the internal
+/// four-variant [`DecisionSource`], so the other three can never actually be
+/// constructed by this conversion, only declared for the wire format).
+///
+/// `CcTldBlock`/`GeoIp` need an explicit `#[serde(rename)]` — automatic
+/// `SCREAMING_SNAKE_CASE` conversion would produce `CC_TLD_BLOCK`/`GEO_IP`,
+/// not SPEC.md's own `CCTLD_BLOCK`/`GEOIP` (verified by hand-tracing serde's
+/// case-boundary algorithm before relying on the blanket `rename_all` for
+/// these two, not assumed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DecisionSourceView {
+    Allowlist,
+    Blocklist,
+    #[serde(rename = "CCTLD_BLOCK")]
+    CcTldBlock,
+    Cache,
+    RatingFilter,
+    Quorum,
+    #[serde(rename = "GEOIP")]
+    GeoIp,
+}
+
+impl From<DecisionSource> for DecisionSourceView {
+    fn from(source: DecisionSource) -> Self {
+        match source {
+            DecisionSource::Allowlist => Self::Allowlist,
+            DecisionSource::Blocklist => Self::Blocklist,
+            DecisionSource::Cache => Self::Cache,
+            DecisionSource::Quorum => Self::Quorum,
+        }
+    }
+}
+
+/// SPEC.md §5.1/§6 `voter_scope` column, DTO form (T-54) — always [`Self::
+/// Full`] this phase: T-109 (Фаза 4) hasn't built the top-N voter-scope
+/// exemption yet, so every query gets the full enabled voter set. The field
+/// exists from day one (`UI-SPEC.md` §1) so a future phase only has to start
+/// *populating* it, never add a new wire field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VoterScopeView {
+    Full,
+    SecurityOnly,
+}
+
+/// SPEC.md §6 `voters` column, per-voter value, DTO form (T-54) — seven
+/// variants, resolving the SPEC.md §6-vs-§8 discrepancy `diagrams/
+/// ui-dto-model.md` already documented and the user already confirmed
+/// (DECISIONS.md 2026-08-25): `Pending` stays a legitimate variant, reserved
+/// for a future *live*-updating log view this crate doesn't have yet — see
+/// [`From<&VoterRecord>`](VoterVerdictView#impl-From<%26VoterRecord>-for-VoterVerdictView)
+/// below for why it can never come from an already-completed [`VoterRecord`].
+/// `#[serde(tag = "status")]` (internally tagged, T-53/T-54's own "mirror to
+/// a discriminated union" ask) rather than the flat, payload-free style every
+/// other DTO enum in this file uses — chosen specifically because `Allow`/
+/// `Error` carry a payload today and the tagged form lets a future variant
+/// gain its own payload later without changing the wire shape of the
+/// variants that already exist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VoterVerdictView {
+    Pending,
+    Block,
+    Allow { ip_count: u32 },
+    Timeout,
+    Error { message: String },
+    Canceled,
+    Disabled,
+}
+
+impl From<&VoterRecord> for VoterVerdictView {
+    /// Total over every backend [`VoterVerdict`] variant, no wildcard arm —
+    /// if a `Pending`-like transit state is ever added to the backend enum,
+    /// this match stops compiling instead of silently falling through
+    /// (advisor-caught during planning). `Pending` has no arm here at all:
+    /// it's structurally unreachable from this conversion, not just
+    /// documented as unused — see this type's own doc comment.
+    fn from(record: &VoterRecord) -> Self {
+        match record.verdict {
+            VoterVerdict::Block => Self::Block,
+            VoterVerdict::Allow => Self::Allow {
+                ip_count: record.allow_ip_count.unwrap_or(0),
+            },
+            VoterVerdict::Timeout => Self::Timeout,
+            VoterVerdict::Error => Self::Error {
+                message: record.error_message.unwrap_or("unknown").to_string(),
+            },
+            VoterVerdict::Canceled => Self::Canceled,
+            VoterVerdict::Disabled => Self::Disabled,
+        }
+    }
+}
+
+/// SPEC.md §8 `VoterResult` DTO (T-54).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoterResultView {
+    /// [`crate::upstream::Provider::as_str`] — the same lowercase identifier
+    /// `EnabledProviders`'s own field names and the `GET /admin/log?voter=`
+    /// facet use, so a client can round-trip a value from here straight back
+    /// into that filter.
+    pub provider_name: String,
+    pub status: VoterVerdictView,
+}
+
+impl From<&VoterRecord> for VoterResultView {
+    fn from(record: &VoterRecord) -> Self {
+        Self {
+            provider_name: record.provider.as_str().to_string(),
+            status: VoterVerdictView::from(record),
+        }
+    }
+}
+
+/// Milliseconds since the Unix epoch, saturating rather than panicking on a
+/// (practically unreachable) pre-epoch `SystemTime`.
+fn unix_millis(time: SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// SPEC.md §6/§8 `LogEntry` DTO — the body of `GET /admin/log`'s `entries`
+/// (T-54). Widens the internal, Phase-1-only [`LogEntry`] (four
+/// `decision_source` values, no `voter_scope`/`geoip_country` fields at all)
+/// into the full seven-value/placeholder-carrying shape `UI-SPEC.md` §1's
+/// "carry every field from day one" principle calls for — `crate::query_log`'s
+/// own module doc comment names this widening as this task's job, not
+/// something to build into the internal type itself (an illegal state for
+/// this phase — a `decision_source` this phase can't produce — stays
+/// unrepresentable there).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogEntryView {
+    pub timestamp_ms: u64,
+    pub domain: String,
+    pub qtype: QTypeView,
+    pub decision: DecisionView,
+    pub decision_source: DecisionSourceView,
+    /// Always [`VoterScopeView::Full`] this phase — see that type's own doc
+    /// comment.
+    pub voter_scope: VoterScopeView,
+    pub voters: Vec<VoterResultView>,
+    /// Always `None` this phase — T-79 (Фаза 2) hasn't built `GeoIP` yet.
+    pub geoip_country: Option<String>,
+    pub latency_ms: u64,
+}
+
+impl LogEntryView {
+    #[must_use]
+    pub(crate) fn from_entry(entry: &LogEntry) -> Self {
+        Self {
+            timestamp_ms: unix_millis(entry.timestamp),
+            domain: entry.domain.clone(),
+            qtype: QTypeView::from(entry.qtype),
+            decision: DecisionView::from(entry.decision),
+            decision_source: DecisionSourceView::from(entry.decision_source),
+            voter_scope: VoterScopeView::Full,
+            voters: entry.voters.iter().map(VoterResultView::from).collect(),
+            geoip_country: None,
+            latency_ms: entry.latency_ms,
+        }
+    }
+}
+
+/// The body of `GET /admin/log` (T-54).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogQueryResponse {
+    /// Newest-matching-entries-last (chronological order within the kept
+    /// window), capped at the request's `limit` (see `dispatch::
+    /// parse_log_query`) — never the full, unbounded search result: every
+    /// other input/output boundary in this crate is explicitly bounded
+    /// (`MAX_MESSAGE_SIZE`, `MAX_ADMIN_BODY_SIZE`, `MAX_OVERRIDES_FILE_SIZE`),
+    /// and a response whose size scales with live user traffic is no
+    /// exception (advisor-caught during planning).
+    pub entries: Vec<LogEntryView>,
+    /// Whether more entries matched the filter than `entries` actually
+    /// carries — lets the UI show an honest "showing latest N of M" instead
+    /// of silently truncating with no indication.
+    pub truncated: bool,
+}
+
 /// Reduces `entries` to [`AdminStats`]. `pub(crate)` — only `dispatch.rs`'s
 /// `GET /admin/status`/`POST /admin/config` handlers call this.
 #[must_use]
@@ -464,5 +703,180 @@ mod tests {
                 in_flight: 0,
             }
         );
+    }
+
+    // T-54: LogEntryView and its component enums. The DTO's exact wire
+    // strings are asserted via `serde_json::to_string` (not just via the
+    // enum variant's `Debug` form) - `SCREAMING_SNAKE_CASE`'s case-boundary
+    // behavior on a mixed-case variant name (`CcTldBlock`, `GeoIp`) isn't
+    // obvious from reading the derive alone, and this crate's own gotchas
+    // record more than one case of an assumed-safe serde behavior turning
+    // out wrong when actually run.
+
+    use super::{
+        DecisionSourceView, DecisionView, LogEntryView, QTypeView, VoterResultView, VoterScopeView,
+        VoterVerdictView,
+    };
+    use crate::quorum::{VoterRecord, VoterVerdict};
+    use crate::upstream::Provider;
+
+    fn json_of<T: serde::Serialize>(value: &T) -> String {
+        match serde_json::to_string(value) {
+            Ok(json) => json,
+            Err(err) => panic!("must serialize: {err}"),
+        }
+    }
+
+    #[test]
+    fn qtype_view_maps_a_aaaa_https_and_buckets_everything_else_as_other() {
+        assert_eq!(json_of(&QTypeView::from(RecordType::A)), "\"A\"");
+        assert_eq!(json_of(&QTypeView::from(RecordType::AAAA)), "\"AAAA\"");
+        assert_eq!(
+            json_of(&QTypeView::from(RecordType::HTTPS)),
+            "\"HTTPS_SVCB\""
+        );
+        assert_eq!(json_of(&QTypeView::from(RecordType::TXT)), "\"OTHER\"");
+        assert_eq!(json_of(&QTypeView::from(RecordType::MX)), "\"OTHER\"");
+    }
+
+    #[test]
+    fn decision_view_wire_strings_match_spec() {
+        assert_eq!(
+            json_of(&DecisionView::from(Decision::Allowed)),
+            "\"ALLOWED\""
+        );
+        assert_eq!(
+            json_of(&DecisionView::from(Decision::Blocked)),
+            "\"BLOCKED\""
+        );
+        assert_eq!(json_of(&DecisionView::from(Decision::Failed)), "\"FAILED\"");
+    }
+
+    #[test]
+    fn decision_source_view_wire_strings_match_spec_including_the_two_renamed_variants() {
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::Allowlist)),
+            "\"ALLOWLIST\""
+        );
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::Blocklist)),
+            "\"BLOCKLIST\""
+        );
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::Cache)),
+            "\"CACHE\""
+        );
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::Quorum)),
+            "\"QUORUM\""
+        );
+        // The two phase-5 variants aren't producible from the internal
+        // 4-variant DecisionSource (see DecisionSourceView::from's own
+        // exhaustive match) - constructed directly here purely to pin their
+        // wire string, which the explicit #[serde(rename)] overrides exist
+        // for.
+        assert_eq!(json_of(&DecisionSourceView::CcTldBlock), "\"CCTLD_BLOCK\"");
+        assert_eq!(json_of(&DecisionSourceView::GeoIp), "\"GEOIP\"");
+        assert_eq!(
+            json_of(&DecisionSourceView::RatingFilter),
+            "\"RATING_FILTER\""
+        );
+    }
+
+    #[test]
+    fn voter_scope_view_wire_strings_match_spec() {
+        assert_eq!(json_of(&VoterScopeView::Full), "\"FULL\"");
+        assert_eq!(json_of(&VoterScopeView::SecurityOnly), "\"SECURITY_ONLY\"");
+    }
+
+    #[test]
+    fn voter_verdict_view_is_internally_tagged_with_the_documented_status_key() {
+        assert_eq!(json_of(&VoterVerdictView::Block), "{\"status\":\"BLOCK\"}");
+        assert_eq!(
+            json_of(&VoterVerdictView::Allow { ip_count: 2 }),
+            "{\"status\":\"ALLOW\",\"ip_count\":2}"
+        );
+        assert_eq!(
+            json_of(&VoterVerdictView::Error {
+                message: "http".to_string()
+            }),
+            "{\"status\":\"ERROR\",\"message\":\"http\"}"
+        );
+        assert_eq!(
+            json_of(&VoterVerdictView::Pending),
+            "{\"status\":\"PENDING\"}"
+        );
+    }
+
+    fn voter_record(verdict: VoterVerdict) -> VoterRecord {
+        VoterRecord {
+            provider: Provider::Quad9,
+            verdict,
+            allow_ip_count: match verdict {
+                VoterVerdict::Allow => Some(3),
+                _ => None,
+            },
+            error_message: match verdict {
+                VoterVerdict::Error => Some("http"),
+                _ => None,
+            },
+        }
+    }
+
+    #[test]
+    fn voter_result_view_from_record_carries_the_provider_name_and_payload() {
+        let view = VoterResultView::from(&voter_record(VoterVerdict::Allow));
+        assert_eq!(view.provider_name, "quad9");
+        assert_eq!(view.status, VoterVerdictView::Allow { ip_count: 3 });
+    }
+
+    #[test]
+    fn voter_result_view_from_record_covers_every_backend_verdict() {
+        // Every VoterVerdict variant must map to *some* VoterVerdictView
+        // without panicking - a wildcard-free match (see
+        // `impl From<&VoterRecord> for VoterVerdictView`) makes this provable
+        // at compile time already; this test additionally pins the actual
+        // mapping for each one.
+        let cases = [
+            (VoterVerdict::Block, VoterVerdictView::Block),
+            (VoterVerdict::Allow, VoterVerdictView::Allow { ip_count: 3 }),
+            (VoterVerdict::Timeout, VoterVerdictView::Timeout),
+            (
+                VoterVerdict::Error,
+                VoterVerdictView::Error {
+                    message: "http".to_string(),
+                },
+            ),
+            (VoterVerdict::Canceled, VoterVerdictView::Canceled),
+            (VoterVerdict::Disabled, VoterVerdictView::Disabled),
+        ];
+        for (verdict, expected) in cases {
+            let record = voter_record(verdict);
+            assert_eq!(VoterVerdictView::from(&record), expected);
+        }
+    }
+
+    #[test]
+    fn log_entry_view_from_entry_widens_decision_source_and_placeholders_the_rest() {
+        let mut source_entry = entry(Decision::Blocked);
+        source_entry.decision_source = DecisionSource::Blocklist;
+        source_entry.voters = vec![voter_record(VoterVerdict::Block)];
+        source_entry.qtype = RecordType::AAAA;
+        source_entry.latency_ms = 42;
+
+        let view = LogEntryView::from_entry(&source_entry);
+
+        assert_eq!(view.domain, "example.com");
+        assert_eq!(view.qtype, QTypeView::Aaaa);
+        assert_eq!(view.decision, DecisionView::Blocked);
+        assert_eq!(view.decision_source, DecisionSourceView::Blocklist);
+        assert_eq!(
+            view.voter_scope,
+            VoterScopeView::Full,
+            "always FULL until T-109 (Фаза 4)"
+        );
+        assert_eq!(view.geoip_country, None, "always None until T-79 (Фаза 2)");
+        assert_eq!(view.voters.len(), 1);
+        assert_eq!(view.latency_ms, 42);
     }
 }

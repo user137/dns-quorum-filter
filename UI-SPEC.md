@@ -75,7 +75,7 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | Поле | Тип | Джерело | Контрол UI | Що приймає / валідація |
 |---|---|---|---|---|
 | Пошук по domain | `String` | §6 | текстове поле | підрядковий, регістронезалежний фільтр |
-| Фасет: заблоковані / дозволені | `enum{ALL,BLOCKED,ALLOWED}` | §6 | сегментований перемикач | одне з трьох — ⚠️ T-147 додав третє значення `decision` (`FAILED`), цей facet-enum ще не оновлено на четверте значення, залишено для T-52 |
+| Фасет: заблоковані / дозволені / не вдалося | `enum{ALL,ALLOWED,BLOCKED,FAILED}` | §6 | сегментований перемикач | одне з чотирьох — **реалізовано T-54** (`GET /admin/log?decision=`, `admin::DecisionView`); T-147's третє значення `FAILED` тепер має власний варіант замість застарілого 3-значного чернеткового enum'а |
 | Фасет: за voter'ом | `String?` | §6 | випадаючий список | назва провайдера з поточного `ProviderConfig` списку |
 | Рядок логу — `timestamp` | `DateTime` | §6 | колонка таблиці | лише читання |
 | Рядок логу — `domain` | `String` | §6 | колонка таблиці | лише читання, нормалізований вигляд |
@@ -149,11 +149,20 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 деталей:
 
 1. `LogEntry` — §3.2 таблиця вище; повна структура в `diagrams/ui-dto-model.md`.
+   **Реалізовано T-54** як `admin::LogEntryView` (`GET /admin/log`, HTTP-канал,
+   не Tauri IPC — §5's власна примітка нижче) — `timestamp`→`timestamp_ms`
+   (мілісекунди від епохи, не `DateTime`-об'єкт), решта полів 1:1.
 2. `VoterResult { provider_name, status: VoterStatus }` — `VoterStatus` має
-   **шість** варіантів (`Pending, Block, Allow(ip_count), Timeout,
-   Error(message), Canceled`) — див. ⚠️-примітку в `diagrams/ui-dto-model.md`
-   про розбіжність §6/§8 у самому SPEC.md, вирішену тут інтерпретацією, що
-   потребує підтвердження.
+   **сім** варіантів (`Pending, Block, Allow(ip_count), Timeout,
+   Error(message), Canceled, Disabled`) — розбіжність §6/§8 у самому SPEC.md
+   вирішена й підтверджена користувачем 2026-08-25 (DECISIONS.md,
+   `diagrams/ui-dto-model.md`). **Реалізовано T-54** як
+   `admin::VoterVerdictView` (internally tagged, `#[serde(tag = "status")]`) —
+   `Pending` лишається недосяжним із цього маршруту (зарезервований під
+   майбутній live-канал), `Allow`/`Error` payload походить із нового
+   `quorum::VoterRecord::allow_ip_count`/`error_message` (той самий T-54,
+   `error_message` — лише грубий `error_kind()`-лейбл, ніколи сирий текст
+   `UpstreamError::Http`, який ніс би URL-адресу запиту).
 3. `DecisionSource` enum — 7 значень: `ALLOWLIST, BLOCKLIST, CCTLD_BLOCK,
    CACHE, RATING_FILTER, QUORUM, GEOIP` (§6). Останні два з цього переліку за
    часом появи (`CCTLD_BLOCK`, `RATING_FILTER`) — Ф5, присутні в enum з Ф1
@@ -194,9 +203,9 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | `get_status()` | ⚠️ реалізовано T-52 як `AdminStatusResponse` (ширше за чернетковий `StatusIndicatorState` — включає `stats`) | Header (всі екрани) | Ф1 |
 | `get_dashboard_summary()` | статистика + прев'ю логу | Dashboard | Ф1 |
 | ~~`set_category_enabled(category, bool)`~~ → `set_providers(quad9, adguard)` | ⚠️ реалізовано T-52 з іншою назвою/сигнатурою — Ф1 має лише 2 провайдери, не категорії (T-148); category-рівень лишається пізнішою фазою | Dashboard, Провайдери | Ф1 |
-| `get_log(filter)` | `Vec<LogEntry>` | Лог запитів | Ф1 |
-| `clear_log()` | — | Лог запитів | Ф1 |
-| ~~`add_to_allowlist(domain)`~~ / ~~`add_to_blocklist(domain)`~~ → `POST /admin/overrides/add` | ⚠️ реалізовано T-47 як один злитий маршрут (`OverrideAddRequest{pattern, list}`), не два окремих — той самий `pattern` приймає і точний домен, і `*.domain` | Списки (Лог — ще ні, чекає T-54) | Ф1 |
+| ~~`get_log(filter)`~~ → `GET /admin/log?domain_contains=&decision=&voter=&limit=` | ⚠️ реалізовано T-54 — `LogQueryResponse{entries: Vec<LogEntryView>, truncated}`, не голий `Vec<LogEntry>`; `filter` розкладено на три незалежні query-параметри плюс `limit` (дефолт 200, хардкап 1000 — ринг-буфер сам більше не тримає), невизнане значення `decision`/`voter` — `400`, ніколи мовчазне "без фільтра" | Лог запитів | Ф1 |
+| ~~`clear_log()`~~ → `POST /admin/log/clear` | ⚠️ реалізовано T-54, той самий CSRF-гейт що й інші admin `POST` | Лог запитів | Ф1 |
+| ~~`add_to_allowlist(domain)`~~ / ~~`add_to_blocklist(domain)`~~ → `POST /admin/overrides/add` | ⚠️ реалізовано T-47 як один злитий маршрут (`OverrideAddRequest{pattern, list}`), не два окремих — той самий `pattern` приймає і точний домен, і `*.domain` | Списки (Лог — тепер теж, UI-екран лишається T-46) | Ф1 |
 | `remove_from_list(domain, list)` → `POST /admin/overrides/remove` | ⚠️ реалізовано T-47 — `OverrideRemoveRequest{domain, is_wildcard, list}`, повна трійка, не лише `domain` | Списки | Ф1 |
 | `get_override_lists()` → `GET /admin/overrides` | ⚠️ реалізовано T-47 як `OverrideListsResponse{allowlist, blocklist, conflicts}` — `conflicts` рахується сервером, не клієнтом | Списки | Ф1 |
 | `get_provider_config()` / `set_timeout_mode(mode)` / `set_doh_port(port)` | `ResolverSettings` — ⚠️ `set_timeout_mode` реалізовано T-52 (повертає `AdminStatusResponse`, не окремий `ResolverSettings`); `get_provider_config()`/`set_doh_port(port)` ще ні | Провайдери | Ф1 |

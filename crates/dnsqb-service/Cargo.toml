@@ -23,6 +23,7 @@ hyper = { version = "1.11.0", features = ["client", "http1", "http2", "server"] 
 hyper-util = { version = "0.1.20", default-features = false, features = ["http1", "http2", "server", "server-auto", "server-graceful", "tokio"] }
 moka = { version = "0.12", default-features = false, features = ["future"] }
 parking_lot = "0.12"
+percent-encoding = "2.3.2"
 rcgen = { version = "0.14.9", default-features = false, features = ["aws_lc_rs", "pem", "zeroize"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json"] }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }

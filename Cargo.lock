@@ -505,6 +505,7 @@ dependencies = [
  "hyper-util",
  "moka",
  "parking_lot",
+ "percent-encoding",
  "proptest",
  "rcgen",
  "reqwest",

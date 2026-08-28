@@ -66,6 +66,42 @@ impl Provider {
             Self::AdGuard => "https://dns.adguard-dns.com/dns-query",
         }
     }
+
+    /// The lowercase wire identifier this provider is known by across the
+    /// admin channel (`quorum::EnabledProviders`'s own field names, T-148;
+    /// `admin::VoterResultView::provider_name`/the `GET /admin/log?voter=`
+    /// facet, T-54) — the single source of truth both directions of that
+    /// round trip share, so they can't independently drift out of sync.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Quad9 => "quad9",
+            Self::AdGuard => "adguard",
+        }
+    }
+}
+
+/// `"quad9"`/`"adguard"` didn't match either [`Provider`] variant (T-54,
+/// `GET /admin/log?voter=` facet parsing) — payload-free, same discipline as
+/// this crate's other closed, coarse error enums (no arbitrary client input
+/// echoed back).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("not a recognized provider identifier")]
+pub struct ParseProviderError;
+
+impl std::str::FromStr for Provider {
+    type Err = ParseProviderError;
+
+    /// The exact inverse of [`Provider::as_str`] — round-trips through the
+    /// same two lowercase identifiers, nothing else (not the SPEC.md display
+    /// names, not case-insensitive matching).
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "quad9" => Ok(Self::Quad9),
+            "adguard" => Ok(Self::AdGuard),
+            _ => Err(ParseProviderError),
+        }
+    }
 }
 
 /// The baseline (non-filtering) resolver's `DoH` endpoint (SPEC.md §3.4) —
@@ -154,6 +190,29 @@ mod tests {
     use hickory_proto::op::{Message, Query};
     use hickory_proto::rr::{DNSClass, Name, RecordType};
     use std::str::FromStr;
+
+    // T-54: `as_str`/`FromStr` must be exact inverses - this is the round
+    // trip `GET /admin/log?voter=` and `VoterResultView::provider_name` both
+    // depend on.
+    #[test]
+    fn as_str_and_from_str_round_trip_for_every_provider() {
+        for provider in [Provider::Quad9, Provider::AdGuard] {
+            assert_eq!(Provider::from_str(provider.as_str()), Ok(provider));
+        }
+    }
+
+    #[test]
+    fn from_str_rejects_an_unrecognized_identifier() {
+        assert!(
+            Provider::from_str("Quad9").is_err(),
+            "must not accept display-case names"
+        );
+        assert!(Provider::from_str("").is_err());
+        assert!(
+            Provider::from_str("quad9 ").is_err(),
+            "must not trim whitespace"
+        );
+    }
 
     // T-31: proves the keep-alive/pool builder options are accepted by the
     // `rustls`/HTTP-2 backend. Doesn't prove connection reuse actually

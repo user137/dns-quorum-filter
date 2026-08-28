@@ -9,7 +9,8 @@ internally tagged enum через serde, дзеркальний до TS discrimi
 ```mermaid
 classDiagram
     class LogEntry {
-        +DateTime timestamp
+        <<T-54, реалізовано як admin::LogEntryView>>
+        +u64 timestamp_ms
         +String domain
         +QType qtype
         +Decision decision
@@ -20,19 +21,20 @@ classDiagram
         +u32 latency_ms
     }
     class QType {
-        <<enum>>
+        <<enum, T-54 реалізовано як admin::QTypeView>>
         A
         AAAA
         HTTPS_SVCB
         OTHER
     }
     class Decision {
-        <<enum>>
+        <<enum, T-147 додав FAILED, T-54 реалізовано як admin::DecisionView>>
         ALLOWED
         BLOCKED
+        FAILED
     }
     class DecisionSource {
-        <<enum>>
+        <<enum, T-54 реалізовано як admin::DecisionSourceView>>
         ALLOWLIST
         BLOCKLIST
         CCTLD_BLOCK
@@ -42,16 +44,17 @@ classDiagram
         GEOIP
     }
     class VoterScope {
-        <<enum>>
+        <<enum, T-54 реалізовано як admin::VoterScopeView, завжди FULL до Ф4 (T-109)>>
         FULL
         SECURITY_ONLY
     }
     class VoterResult {
+        <<T-54, реалізовано як admin::VoterResultView>>
         +String provider_name
         +VoterStatus status
     }
     class VoterStatus {
-        <<tagged union>>
+        <<tagged union, T-54 реалізовано як admin::VoterVerdictView (serde tag="status")>>
         Pending
         Block
         Allow(ip_count: u32)
@@ -285,6 +288,43 @@ T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна
 `CacheConfigUpdate` (тіло запиту) відрізняються лише полем `persisted` — той самий патерн, що й
 `OverrideListsResponse` вище: відповідь завжди відображає живий стан, значення заявки не
 обов'язково збігаються з ним, якщо валідація відхилила (`clamp_min_secs > clamp_max_secs`).
+
+## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`VoterScope`/`QType` — реальна реалізація (T-54)
+
+`GET /admin/log`/`POST /admin/log/clear` (SPEC.md §0 рядок 12b) — перший log-експонуючий маршрут
+на адмін-каналі, реалізує весь блок DTO вище як `admin::LogEntryView`/`VoterResultView`/
+`VoterVerdictView`/`DecisionSourceView`/`DecisionView`/`VoterScopeView`/`QTypeView`. Внутрішній
+backend-тип `query_log::LogEntry` (вужчий, лише 4 значення `decision_source`, без `voter_scope`/
+`geoip_country` — див. `query_log.rs`'s власний doc-коментар) конвертується в `LogEntryView` одним
+методом (`LogEntryView::from_entry`), не дублюється по кількох маршрутах — `voter_scope` завжди
+`FULL` (T-109 ще не існує), `geoip_country` завжди `null` (T-79 ще не існує), решта полів — пряме
+відображення.
+
+**`DecisionSourceView`'s два варіанти (`CcTldBlock`/`GeoIp`) потребують явного `#[serde(rename)]`**
+— автоматична `SCREAMING_SNAKE_CASE`-конверсія serde дала б `CC_TLD_BLOCK`/`GEO_IP`, не
+SPEC.md's власні `CCTLD_BLOCK`/`GEOIP` — перевірено емпірично (`serde_json::to_string` у тесті,
+не лише вручну простежений алгоритм), не припущено.
+
+**`VoterVerdictView::Allow{ip_count}`/`Error{message}` — реальні дані, не заглушка.** Внутрішній
+`quorum::VoterRecord` (T-147) до цього завдання ніс лише `{provider, verdict}` — без даних для цих
+двох payload-полів. T-54 додав `VoterRecord::allow_ip_count: Option<u32>` (кількість A/AAAA записів
+у відповіді voter'а, коли `verdict == Allow`) і `VoterRecord::error_message: Option<&'static str>`
+(грубий `error_kind()`-лейбл, коли `verdict == Error`) — обчислюються в `quorum::voter_record`, де
+вже є доступ і до `Message`, і до `UpstreamError`. `error_message` **ніколи** не несе сирий текст
+`UpstreamError::Http` (той embed'ить URL запиту, отже base64url-закодований домен — той самий клас
+витоку, що вже задокументований для `reqwest::Error` в CLAUDE.md's gotchas) — лише закритий,
+безпечний лейбл (`"http"`/`"encode"`/`"decode"`). `VoterVerdictView::Pending` лишається структурно
+недосяжним із цього маршруту (`impl From<&VoterRecord> for VoterVerdictView` — тотальний match над
+шістьма бекенд-варіантами `VoterVerdict`, без гілки для `Pending` взагалі) — той самий сьомий
+варіант, зарезервований під майбутній live-канал, який ще не існує (див. розділ вище,
+"Вирішено 2026-08-25").
+
+`GET /admin/log`'s відповідь — `LogQueryResponse{entries, truncated}`, не голий `Vec<LogEntryView>`:
+результат завжди обмежений (`?limit=`, дефолт 200, хардкап 1000 — розмір самого ring buffer'а),
+`truncated` каже клієнту чесно, чи щось відсікли. Три фасети (`domain_contains`/`decision`/`voter`)
+йдуть як query-параметри, не JSON-тіло (це `GET`); невизнане значення `decision`/`voter` — `400`,
+ніколи мовчазне "без фільтра" (типова цю-помилку-в-ALL-пастка, той самий клас, що T-148's
+disabled-provider-defaults-to-`TimedOut` баг уже називав для цього проєкту).
 
 ## ⚠️ GAP — `VoterScope` більше не однозначний (SPEC.md §5.1.1, T-138)
 

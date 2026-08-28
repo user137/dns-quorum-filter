@@ -528,6 +528,8 @@ mod tests {
         quad9_entry.voters = vec![VoterRecord {
             provider: Provider::Quad9,
             verdict: VoterVerdict::Allow,
+            allow_ip_count: Some(1),
+            error_message: None,
         }];
         log.push(quad9_entry);
         let mut adguard_entry = entry_at(now);
@@ -535,6 +537,8 @@ mod tests {
         adguard_entry.voters = vec![VoterRecord {
             provider: Provider::AdGuard,
             verdict: VoterVerdict::Allow,
+            allow_ip_count: Some(1),
+            error_message: None,
         }];
         log.push(adguard_entry);
 
@@ -591,10 +595,14 @@ mod tests {
             VoterRecord {
                 provider: Provider::Quad9,
                 verdict: VoterVerdict::Disabled,
+                allow_ip_count: None,
+                error_message: None,
             },
             VoterRecord {
                 provider: Provider::AdGuard,
                 verdict: VoterVerdict::Allow,
+                allow_ip_count: Some(1),
+                error_message: None,
             },
         ];
         log.push(disabled_entry);

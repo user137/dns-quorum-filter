@@ -111,6 +111,20 @@ pub struct VoterRecord {
     pub provider: Provider,
     /// That provider's outcome.
     pub verdict: VoterVerdict,
+    /// Number of A/AAAA records in this voter's response (T-54, DTO
+    /// `admin::VoterVerdictView::Allow { ip_count }`) — set only when
+    /// `verdict == VoterVerdict::Allow`, `None` for every other verdict
+    /// (there's no response, or no *usable* one, to count).
+    pub allow_ip_count: Option<u32>,
+    /// Coarse error-kind label (`error_kind()`) — set only when
+    /// `verdict == VoterVerdict::Error` (T-54, DTO `admin::VoterVerdictView::
+    /// Error { message }`). Deliberately never the raw `UpstreamError::Http`
+    /// `Display` text: that embeds the outgoing request URL, which embeds
+    /// the queried domain as base64url (this crate's own gotcha notes flag
+    /// exactly this leak class for `reqwest::Error`) — `error_kind()` exists
+    /// specifically to give a safe, coarse substitute. `None` for every
+    /// other verdict.
+    pub error_message: Option<&'static str>,
 }
 
 fn is_null_ip(record: &Record) -> bool {
@@ -240,6 +254,18 @@ fn known_signal(
 /// not-yet-arrived one is, but the two must never collapse into the same
 /// verdict: `Disabled` is administrative, `Canceled` means the provider was
 /// at least eligible to be asked.
+/// Number of A/AAAA answer records in `message` — the `VoterRecord::
+/// allow_ip_count` payload for an `Allow` verdict (T-54). Saturates at
+/// `u32::MAX` rather than panicking on an implausible answer count.
+fn count_ip_answers(message: &Message) -> u32 {
+    let count = message
+        .answers
+        .iter()
+        .filter(|record| matches!(record.data, RData::A(_) | RData::AAAA(_)))
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
 fn voter_record(
     provider: Provider,
     enabled: bool,
@@ -251,19 +277,30 @@ fn voter_record(
         return VoterRecord {
             provider,
             verdict: VoterVerdict::Disabled,
+            allow_ip_count: None,
+            error_message: None,
         };
     }
-    let verdict = match outcome {
-        None => VoterVerdict::Canceled,
-        Some(VoterOutcome::TimedOut) => VoterVerdict::Timeout,
-        Some(VoterOutcome::Errored(_)) => VoterVerdict::Error,
-        Some(VoterOutcome::Responded(_)) => match known_signal(provider, outcome, baseline, mode) {
-            Some(Signal::Blocked) => VoterVerdict::Block,
-            Some(Signal::NotBlocked) => VoterVerdict::Allow,
-            None | Some(Signal::NeedsBaseline) => VoterVerdict::Canceled,
-        },
+    let (verdict, allow_ip_count, error_message) = match outcome {
+        None => (VoterVerdict::Canceled, None, None),
+        Some(VoterOutcome::TimedOut) => (VoterVerdict::Timeout, None, None),
+        Some(VoterOutcome::Errored(err)) => (VoterVerdict::Error, None, Some(error_kind(err))),
+        Some(VoterOutcome::Responded(message)) => {
+            match known_signal(provider, outcome, baseline, mode) {
+                Some(Signal::Blocked) => (VoterVerdict::Block, None, None),
+                Some(Signal::NotBlocked) => {
+                    (VoterVerdict::Allow, Some(count_ip_answers(message)), None)
+                }
+                None | Some(Signal::NeedsBaseline) => (VoterVerdict::Canceled, None, None),
+            }
+        }
     };
-    VoterRecord { provider, verdict }
+    VoterRecord {
+        provider,
+        verdict,
+        allow_ip_count,
+        error_message,
+    }
 }
 
 /// Both Phase-1 voters' [`VoterRecord`]s (T-147) — never baseline, see
@@ -720,8 +757,8 @@ fn finalize_outcome(
 #[cfg(test)]
 mod tests {
     use super::{
-        combine, is_blocked, requires_quorum, resolve, EnabledProviders, Provider, QuorumVerdict,
-        VoterVerdict,
+        combine, is_blocked, requires_quorum, resolve, voter_record, EnabledProviders, Provider,
+        QuorumVerdict, VoterVerdict,
     };
     use crate::timeout::{TimeoutConfig, TimeoutMode, VoterOutcome};
     use crate::upstream::{DohClient, UpstreamError};
@@ -790,6 +827,80 @@ mod tests {
             RData::A(A(Ipv4Addr::UNSPECIFIED)),
         ));
         message
+    }
+
+    // T-54: VoterRecord's allow_ip_count/error_message payloads - these feed
+    // admin::VoterVerdictView::Allow{ip_count}/Error{message} directly on
+    // the wire, so a wrong count/label here is a wrong DTO value, not just
+    // an internal detail.
+
+    #[test]
+    fn voter_record_allow_carries_the_answer_ip_count() {
+        let mut message = allow_message();
+        message.answers.push(Record::from_rdata(
+            Name::root(),
+            60,
+            RData::A(A(Ipv4Addr::new(1, 2, 3, 4))),
+        ));
+        let record = voter_record(
+            Provider::Quad9,
+            true,
+            Some(&VoterOutcome::Responded(message)),
+            Some(&VoterOutcome::Responded(allow_message())),
+            TimeoutMode::FailOpen,
+        );
+        assert_eq!(record.verdict, VoterVerdict::Allow);
+        assert_eq!(record.allow_ip_count, Some(2));
+        assert_eq!(record.error_message, None);
+    }
+
+    #[test]
+    fn voter_record_block_and_timeout_carry_no_payload() {
+        let blocked = voter_record(
+            Provider::AdGuard,
+            true,
+            Some(&VoterOutcome::Responded(null_ip_message())),
+            Some(&VoterOutcome::Responded(allow_message())),
+            TimeoutMode::FailOpen,
+        );
+        assert_eq!(blocked.verdict, VoterVerdict::Block);
+        assert_eq!(blocked.allow_ip_count, None);
+        assert_eq!(blocked.error_message, None);
+
+        let timed_out = voter_record(
+            Provider::Quad9,
+            true,
+            Some(&VoterOutcome::TimedOut),
+            None,
+            TimeoutMode::FailOpen,
+        );
+        assert_eq!(timed_out.verdict, VoterVerdict::Timeout);
+        assert_eq!(timed_out.allow_ip_count, None);
+        assert_eq!(timed_out.error_message, None);
+    }
+
+    #[test]
+    fn voter_record_error_carries_a_coarse_error_kind_never_the_raw_upstream_error() {
+        let record = voter_record(
+            Provider::Quad9,
+            true,
+            Some(&VoterOutcome::Errored(UpstreamError::Decode(
+                "malformed response".to_string().into(),
+            ))),
+            None,
+            TimeoutMode::FailOpen,
+        );
+        assert_eq!(record.verdict, VoterVerdict::Error);
+        assert_eq!(record.error_message, Some("decode"));
+        assert_eq!(record.allow_ip_count, None);
+    }
+
+    #[test]
+    fn voter_record_disabled_carries_no_payload() {
+        let record = voter_record(Provider::AdGuard, false, None, None, TimeoutMode::FailOpen);
+        assert_eq!(record.verdict, VoterVerdict::Disabled);
+        assert_eq!(record.allow_ip_count, None);
+        assert_eq!(record.error_message, None);
     }
 
     // T-61: is_blocked() per provider (unchanged behavior).
