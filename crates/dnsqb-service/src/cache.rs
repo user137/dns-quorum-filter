@@ -1,12 +1,11 @@
 //! Per-entry-TTL quorum-verdict cache (SPEC.md §4, §4.1 — T-32, T-34, T-36).
 //!
-//! Not yet wired to `quorum::resolve`/the request pipeline: building a
-//! `CacheEntry` from a live `QuorumVerdict` + upstream `Message` needs to
-//! branch on positive-answer (`chain_cache_ttl`, this module) vs.
-//! NXDOMAIN/NODATA (`negative_cache_ttl`, from the authority-section SOA —
-//! `lib.rs`), and nothing in the project extracts an authority-section SOA
-//! yet. That integration is T-39/pipeline-wiring scope, once the pipeline
-//! actually has one to hand it — see TASKS.md.
+//! Wired into the live request pipeline since T-39 (`pipeline::handle_query`
+//! branches positive-answer `chain_cache_ttl` vs. NXDOMAIN/NODATA
+//! `negative_cache_ttl` there). `CacheConfig` itself was still startup-
+//! hardcoded to [`CacheConfig::default`] until T-153, which added
+//! [`CacheConfig::from_secs`] as the validated boundary a live admin-channel
+//! write goes through — see that function's own doc comment.
 
 use crate::normalize_domain;
 use hickory_proto::rr::{Record, RecordType};
@@ -93,7 +92,7 @@ impl CacheEntry {
 /// - `stale_grace` — RFC 8767 §5's stale-timer window (T-28).
 /// - `max_capacity` — project-chosen entry-count bound for `moka`'s LRU-like
 ///   eviction (SPEC.md §4).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheConfig {
     /// Lower clamp bound for upstream-derived TTLs.
     pub clamp_min: Duration,
@@ -128,6 +127,84 @@ impl Default for CacheConfig {
     }
 }
 
+/// Errors validating raw seconds/count into a [`CacheConfig`] (T-153).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CacheConfigError {
+    /// `clamp_min_secs > clamp_max_secs` — rejected here rather than left to
+    /// surface as a panic in [`clamp_ttl`] (which is itself made
+    /// structurally non-panicking regardless, see its own doc comment; this
+    /// is the loud, honest rejection at the boundary, not the only defense).
+    #[error("cache clamp_min must not exceed clamp_max")]
+    ClampMinExceedsMax,
+}
+
+impl CacheConfig {
+    /// The *only* validated path from untrusted raw integers (a
+    /// `resolver_config.toml` `[cache]` table, an admin-channel POST body)
+    /// into a `CacheConfig` (T-153). `config.rs`'s `ResolverConfig::load` and
+    /// `dispatch.rs`'s `POST /admin/cache-config/apply` handler both call
+    /// this rather than each re-implementing the `clamp_min <= clamp_max`
+    /// check — two independent copies of that check would risk drifting,
+    /// which matters here because [`clamp_ttl`] depends on it holding.
+    /// Struct-literal construction (used throughout this crate's own tests)
+    /// is unaffected — this is additive, not a replacement.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheConfigError::ClampMinExceedsMax`] if
+    /// `clamp_min_secs > clamp_max_secs`.
+    pub fn from_secs(
+        clamp_min_secs: u64,
+        clamp_max_secs: u64,
+        block_verdict_ttl_secs: u64,
+        stale_grace_secs: u64,
+        max_capacity: u64,
+    ) -> Result<Self, CacheConfigError> {
+        if clamp_min_secs > clamp_max_secs {
+            return Err(CacheConfigError::ClampMinExceedsMax);
+        }
+        Ok(Self {
+            clamp_min: Duration::from_secs(clamp_min_secs),
+            clamp_max: Duration::from_secs(clamp_max_secs),
+            block_verdict_ttl: Duration::from_secs(block_verdict_ttl_secs),
+            stale_grace: Duration::from_secs(stale_grace_secs),
+            max_capacity,
+        })
+    }
+
+    /// The reverse of [`Self::from_secs`] — whole-second counts for
+    /// persisting back to TOML or echoing in an admin-channel response.
+    /// Sub-second precision is never produced by `from_secs`, so this is a
+    /// lossless round trip for any `CacheConfig` built that way (not
+    /// necessarily for one built via a struct literal with a non-whole-second
+    /// `Duration`, which nothing in this crate does).
+    #[must_use]
+    pub fn to_secs(&self) -> CacheConfigSecs {
+        CacheConfigSecs {
+            clamp_min_secs: self.clamp_min.as_secs(),
+            clamp_max_secs: self.clamp_max.as_secs(),
+            block_verdict_ttl_secs: self.block_verdict_ttl.as_secs(),
+            stale_grace_secs: self.stale_grace.as_secs(),
+            max_capacity: self.max_capacity,
+        }
+    }
+}
+
+/// Whole-second view of a [`CacheConfig`], returned by [`CacheConfig::to_secs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheConfigSecs {
+    /// See [`CacheConfig::clamp_min`].
+    pub clamp_min_secs: u64,
+    /// See [`CacheConfig::clamp_max`].
+    pub clamp_max_secs: u64,
+    /// See [`CacheConfig::block_verdict_ttl`].
+    pub block_verdict_ttl_secs: u64,
+    /// See [`CacheConfig::stale_grace`].
+    pub stale_grace_secs: u64,
+    /// See [`CacheConfig::max_capacity`].
+    pub max_capacity: u64,
+}
+
 /// RFC 2181/2308-derived TTL clamping (T-34, SPEC.md §4.1) — applied only to
 /// upstream-controlled raw seconds (`chain_cache_ttl`/`negative_cache_ttl`
 /// output), never to `block_verdict_ttl` or `stale_grace`. Takes the whole
@@ -145,12 +222,25 @@ impl Default for CacheConfig {
 /// caching and answer the client directly from the fresh response
 /// (`Cache::insert` already does this itself; `is_cacheable` is there for
 /// callers who want to branch earlier).
+///
+/// Deliberately `.max(min).min(max)`, not `std::cmp::Ord::clamp` (T-153) —
+/// `Ord::clamp` asserts `min <= max` unconditionally (release builds
+/// included) and panics otherwise. `CacheConfig::from_secs` already rejects
+/// an inverted `clamp_min`/`clamp_max` at every validated construction path,
+/// but relying on that alone would make this line's own safety a fact
+/// provable only by tracing every caller, not from the line itself — exactly
+/// the bounds-safety shape this project avoids elsewhere. `.max(min).min
+/// (max)` gives identical output to `.clamp()` for any valid config, and for
+/// an inverted one deterministically returns `max` instead of panicking
+/// (`x.max(min) >= min > max`, then `.min(max) == max`).
 #[must_use]
 pub fn clamp_ttl(raw_seconds: u32, config: &CacheConfig) -> Duration {
     if raw_seconds == 0 {
         return Duration::ZERO;
     }
-    Duration::from_secs(u64::from(raw_seconds)).clamp(config.clamp_min, config.clamp_max)
+    Duration::from_secs(u64::from(raw_seconds))
+        .max(config.clamp_min)
+        .min(config.clamp_max)
 }
 
 /// SPEC.md §4.1 (T-36): minimum TTL across the whole answer section — every
@@ -300,8 +390,8 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::{
-        chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheExpiry,
-        CacheKey, Verdict,
+        chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError, CacheEntry,
+        CacheExpiry, CacheKey, Verdict,
     };
     use hickory_proto::rr::rdata::A;
     use hickory_proto::rr::{Name, RData, Record, RecordType};
@@ -354,6 +444,42 @@ mod tests {
         // unreachable from any real upstream-derived value.
         let config = CacheConfig::default();
         assert_eq!(clamp_ttl(0, &config), Duration::ZERO);
+    }
+
+    #[test]
+    fn clamp_ttl_never_panics_on_an_inverted_config() {
+        // Struct-literal construction deliberately bypasses `from_secs`'s own
+        // validation, to prove `clamp_ttl` itself is safe regardless of
+        // caller discipline (T-153) - not just that the validated
+        // construction path rejects this shape (a separate test below).
+        let inverted = CacheConfig {
+            clamp_min: Duration::from_secs(100),
+            clamp_max: Duration::from_secs(10),
+            ..CacheConfig::default()
+        };
+        assert_eq!(clamp_ttl(50, &inverted), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn from_secs_rejects_an_inverted_clamp_range() {
+        assert_eq!(
+            CacheConfig::from_secs(100, 10, 100, 100, 10_000),
+            Err(CacheConfigError::ClampMinExceedsMax)
+        );
+    }
+
+    #[test]
+    fn from_secs_then_to_secs_round_trips() {
+        let config = match CacheConfig::from_secs(30, 3600, 3600, 86_400, 5_000) {
+            Ok(config) => config,
+            Err(err) => panic!("valid input must not be rejected: {err}"),
+        };
+        let secs = config.to_secs();
+        assert_eq!(secs.clamp_min_secs, 30);
+        assert_eq!(secs.clamp_max_secs, 3600);
+        assert_eq!(secs.block_verdict_ttl_secs, 3600);
+        assert_eq!(secs.stale_grace_secs, 86_400);
+        assert_eq!(secs.max_capacity, 5_000);
     }
 
     #[test]

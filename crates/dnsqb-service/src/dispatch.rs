@@ -23,11 +23,12 @@
 //! without colliding.
 
 use crate::admin::{
-    compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse, OverrideAddRequest,
-    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
+    compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse, CacheConfigUpdate,
+    CacheConfigView, OverrideAddRequest, OverrideDomainView, OverrideListsResponse,
+    OverrideRemoveRequest,
 };
 use crate::admin_ui;
-use crate::cache::{Cache, CacheConfig};
+use crate::cache::{Cache, CacheConfig, CacheConfigError};
 use crate::config::ResolverConfig;
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
@@ -71,6 +72,8 @@ const ADMIN_SHUTDOWN_PATH: &str = "/admin/shutdown";
 const ADMIN_OVERRIDES_PATH: &str = "/admin/overrides";
 const ADMIN_OVERRIDES_ADD_PATH: &str = "/admin/overrides/add";
 const ADMIN_OVERRIDES_REMOVE_PATH: &str = "/admin/overrides/remove";
+const ADMIN_CACHE_CONFIG_PATH: &str = "/admin/cache-config";
+const ADMIN_CACHE_CONFIG_APPLY_PATH: &str = "/admin/cache-config/apply";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
@@ -93,6 +96,8 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_OVERRIDES_PATH, &[Method::GET]),
     (ADMIN_OVERRIDES_ADD_PATH, &[Method::POST]),
     (ADMIN_OVERRIDES_REMOVE_PATH, &[Method::POST]),
+    (ADMIN_CACHE_CONFIG_PATH, &[Method::GET]),
+    (ADMIN_CACHE_CONFIG_APPLY_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
@@ -245,6 +250,28 @@ pub struct OverridesState {
     pub invalid: Vec<InvalidEntry>,
 }
 
+/// The live cache instance plus the config it was built from (T-153) —
+/// bundled because a cache-config change can't be applied to an existing
+/// `moka::Cache` in place: `moka::future::Cache::policy()` only exposes a
+/// read-only snapshot (confirmed by reading `moka` 0.12.16's own source,
+/// `policy.rs`/`future/cache.rs` — `Policy::max_capacity` is a getter, no
+/// setter anywhere in the crate, and the `Expiry` policy is baked into the
+/// `CacheBuilder` at construction with no equivalent live-swap API). A
+/// config change always builds a brand-new `Cache` and swaps both fields
+/// atomically (via [`AppState::cache`]'s `RwLock<Arc<_>>`), so the instance
+/// and the config it reports via `/admin/cache-config` never disagree, and a
+/// query holding an `Arc::clone` of the old value finishes safely against
+/// the orphaned instance rather than racing a live mutation.
+///
+/// `pub` (same reasoning as [`PersistTarget`]/[`OverridesState`]): `main.rs`
+/// builds one to hand to [`AppState::new`].
+pub struct CacheState {
+    /// The live cache.
+    pub cache: Cache,
+    /// The config it was built from.
+    pub config: CacheConfig,
+}
+
 /// The two on-disk config files' paths, always resolved together from one
 /// `app_data_dir()` call in `main.rs` — bundled as one field on
 /// [`PersistTarget`] rather than two independent `Option<PathBuf>`s so
@@ -298,13 +325,20 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // lock instead of either holding the lock across the `.await` below or
     // cloning the whole list on every query (T-149).
     let overrides_state = Arc::clone(&state.overrides.read());
+    // Same snapshot discipline as `overrides_state` above (T-153) - a config
+    // change swaps in a whole new `CacheState` (see its own doc comment for
+    // why a live in-place update isn't possible), so this must be one
+    // `Arc::clone` under the lock, not two separate field reads that could
+    // straddle a swap and pair a stale `Cache` with a fresh `CacheConfig` or
+    // vice versa.
+    let cache_state = Arc::clone(&state.cache.read());
     let response = match handle_query(
         &query,
         &state.client,
         &overrides_state.lists,
         settings.providers,
-        &state.cache,
-        &state.cache_config,
+        &cache_state.cache,
+        &cache_state.config,
         &settings.timeout,
     )
     .await
@@ -348,8 +382,7 @@ pub struct AppState<C: DohClient + Sync> {
     client: C,
     overrides: RwLock<Arc<OverridesState>>,
     runtime: RwLock<RuntimeSettings>,
-    cache: Cache,
-    cache_config: CacheConfig,
+    cache: RwLock<Arc<CacheState>>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -367,25 +400,40 @@ pub struct AppState<C: DohClient + Sync> {
     /// the kind of claim this project verifies empirically before relying on
     /// — `watch` has no equivalent ambiguity, so no probe was needed.
     shutdown_tx: watch::Sender<bool>,
-    /// Orders `POST /admin/config`'s live-write + disk-persist sequence
-    /// across concurrent requests (T-58) — `ResolverConfig::save` is a plain
-    /// `fs::write`, not atomic, and happens *after* `runtime`'s write lock is
-    /// released (deliberately: holding `runtime` across a blocking disk
-    /// write would stall every in-flight query's `state.runtime.read()`
-    /// too). Without this, two near-simultaneous `POST /admin/config` calls
-    /// (e.g. two quick clicks in the web UI) can persist to disk in the
-    /// opposite order from the order their in-memory writes landed, leaving
-    /// the on-disk file not matching the live settings. **Invariant:
-    /// `persist_lock` is always acquired before `runtime`, never after** —
-    /// `apply_admin_reset` doesn't take *this* lock at all (it only reads
-    /// `resolver_config.toml` and does one atomic in-memory swap of
-    /// `runtime`, no disk write of that file to order), so nothing today
-    /// acquires them in the reverse order; keep it that way if a future
-    /// change adds a disk write to `/admin/reset`. **This reasoning is
-    /// specific to `runtime`/`resolver_config.toml` — it does not carry over
-    /// to `overrides_persist_lock` below, which `apply_admin_reset` *does*
-    /// need** (different field, different failure mode; see that lock's own
-    /// doc comment, T-47 advisor catch).
+    /// Orders `POST /admin/config`'s and `POST /admin/cache-config/apply`'s
+    /// (T-153) live-write + disk-persist sequences across concurrent
+    /// requests (T-58) — `ResolverConfig::save` is a plain `fs::write`, not
+    /// atomic, and happens *after* `runtime`'s (or `cache`'s) write lock is
+    /// released (deliberately: holding either across a blocking disk write
+    /// would stall every in-flight query's own read of that field too).
+    /// **Shared by both routes, not two independent locks, because both
+    /// write into the *same* physical file** (`resolver_config.toml` now
+    /// carries `providers`/`timeout_mode` *and* `[cache]`, T-153) — two
+    /// separate locks guarding writes into one file would reproduce the
+    /// exact disk-vs-live divergence this lock exists to prevent, just
+    /// between two different routes instead of two calls to the same one.
+    /// Each handler's `save()` call snapshots **both** `runtime` and `cache`
+    /// (not just the field it's changing) while still holding this lock, so
+    /// the file it writes always reflects the other field's current live
+    /// value too, never a stale/default one. Without this, two
+    /// near-simultaneous admin POSTs (e.g. two quick clicks in the web UI)
+    /// can persist to disk in the opposite order from the order their
+    /// in-memory writes landed, leaving the on-disk file not matching the
+    /// live settings. **Invariant: `persist_lock` is always acquired before
+    /// `runtime`/`cache`, never after.** **`apply_admin_reset` also takes
+    /// this lock (T-153) across its whole load-then-commit sequence** —
+    /// unlike the state before T-153, reset now writes both `runtime` *and*
+    /// `cache` in memory after reading the same file this lock guards, so
+    /// without it a concurrent admin POST could commit its own disk write
+    /// between reset's read and reset's memory-write, leaving memory holding
+    /// stale values while disk holds the new ones until restart (the same
+    /// class of bug `overrides_persist_lock` below already exists to
+    /// prevent for `overrides.toml`, now true here too because reset gained
+    /// a second in-memory field with a shared on-disk file). No deadlock
+    /// risk from `apply_admin_reset` holding both `persist_lock` and
+    /// `overrides_persist_lock` at once: it is the only function that ever
+    /// holds both, always acquired in the same order, and no other function
+    /// holds either concurrently with the other.
     persist_lock: Mutex<()>,
     /// Same purpose as `persist_lock`, for `POST /admin/overrides/add`/
     /// `remove` (T-47) — a **separate** lock, not a shared one:
@@ -414,14 +462,17 @@ impl<C: DohClient + Sync> AppState<C> {
     /// every per-query read to clone it — taken as one [`OverridesState`]
     /// (T-47), not two separate parameters, so that swap stays atomic across
     /// both fields (not just the parsed list) and this constructor stays
-    /// under `clippy::too_many_arguments`.
+    /// under `clippy::too_many_arguments`. `cache` is taken as one
+    /// [`CacheState`] (T-153) for the same reason — a cache-config change
+    /// can only ever be applied by rebuilding the whole `Cache` instance
+    /// alongside its config, never one field alone (see [`CacheState`]'s own
+    /// doc comment).
     #[must_use]
     pub fn new(
         client: C,
         overrides: OverridesState,
         runtime: RuntimeSettings,
-        cache: Cache,
-        cache_config: CacheConfig,
+        cache: CacheState,
         query_log: QueryLog,
         persist: PersistTarget,
     ) -> Self {
@@ -430,8 +481,7 @@ impl<C: DohClient + Sync> AppState<C> {
             client,
             overrides: RwLock::new(Arc::new(overrides)),
             runtime: RwLock::new(runtime),
-            cache,
-            cache_config,
+            cache: RwLock::new(Arc::new(cache)),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
@@ -530,11 +580,16 @@ fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) ->
 /// in-memory update must not be reported as failed just because the disk
 /// write was).
 ///
-/// `state.persist_lock` (T-58) is held for the whole write-then-persist
-/// sequence, acquired *before* `runtime`'s own lock — see its own doc
-/// comment for why this is what keeps concurrent `POST /admin/config` calls'
-/// disk-write order matching their in-memory-write order, without holding
-/// `runtime` itself across the blocking `fs::write`.
+/// `state.persist_lock` (T-58, shared with the cache-config route since
+/// T-153 — see the field's own doc comment) is held for the whole
+/// write-then-persist sequence, acquired *before* `runtime`'s own lock — see
+/// its own doc comment for why this is what keeps concurrent admin-channel
+/// POSTs' disk-write order matching their in-memory-write order, without
+/// holding `runtime` itself across the blocking `fs::write`. Also reads
+/// `state.cache`'s current config (not just `runtime`) while still holding
+/// the lock, so the file this writes reflects the cache config's live value
+/// too, not a stale/default one — see `persist_lock`'s own doc comment for
+/// why this cross-field read has to happen here.
 fn apply_admin_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: AdminConfigUpdate,
@@ -552,6 +607,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         guard.timeout.mode = update.timeout_mode;
         *guard
     };
+    let cache_config = state.cache.read().config;
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => {
             let config = ResolverConfig {
@@ -559,6 +615,7 @@ fn apply_admin_config<C: DohClient + Sync>(
                 timeout_mode: settings.timeout.mode,
                 timeout_ms: timeout_ms(settings.timeout.duration),
                 providers: settings.providers,
+                cache: cache_config,
             };
             match config.save(&paths.config) {
                 Ok(()) => true,
@@ -667,6 +724,20 @@ enum AdminResetError {
 /// discarding the reset the user just asked for (the same lost-update shape
 /// [`apply_overrides_change`] itself guards against between two adds, just
 /// between this route and that one).
+///
+/// **`state.persist_lock` is also held for this same sequence (T-153,
+/// advisor-caught before commit — the mirror-image gap of the catch above,
+/// one field over)** — reset now writes both `state.runtime` and
+/// `state.cache` in memory from a `resolver_config.toml` read, and
+/// `persist_lock` is what orders every other writer of that same file
+/// (`apply_admin_config`, the new cache-config route). Without it: reset
+/// reads the file, then (gap) a concurrent admin POST commits its own
+/// memory-write and disk-write under `persist_lock`, then reset's own
+/// memory-write lands *after* — leaving memory holding reset's stale values
+/// while disk holds the concurrent POST's new ones, diverged until restart.
+/// No deadlock risk holding both locks here: this is the only function that
+/// ever holds both, always in this order, and no other function holds
+/// either concurrently with the other.
 fn apply_admin_reset<C: DohClient + Sync>(
     state: &AppState<C>,
 ) -> Result<AdminStatusResponse, AdminResetError> {
@@ -675,6 +746,7 @@ fn apply_admin_reset<C: DohClient + Sync>(
         .paths
         .as_ref()
         .ok_or(AdminResetError::NoAppData)?;
+    let _persist_guard = state.persist_lock.lock();
     let _overrides_persist_guard = state.overrides_persist_lock.lock();
     let config = ResolverConfig::load(&paths.config).map_err(AdminResetError::Config)?;
     let (overrides, invalid) =
@@ -714,7 +786,20 @@ fn apply_admin_reset<C: DohClient + Sync>(
         lists: overrides,
         invalid,
     });
-    state.cache.clear();
+    // A fresh `Cache::new(&config.cache)` swap (T-153), not the plain
+    // `Cache::clear()` this used before — strictly safer, not just
+    // equivalent: a query racing the old `clear()` could still insert into
+    // the live cache in the gap between clearing and the racing query's own
+    // insert; a query racing this swap either finishes against the `Arc`-
+    // cloned old `CacheState` it already snapshotted (simply dropped once
+    // unreferenced) or observes the new one, never a torn mix. Rebuilding
+    // unconditionally (even when `config.cache` didn't actually change) is
+    // simpler than branching on whether it did, for no real cost — reset is
+    // already a full state reload, not a per-query hot path.
+    *state.cache.write() = Arc::new(CacheState {
+        cache: Cache::new(&config.cache),
+        config: config.cache,
+    });
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -827,7 +912,7 @@ fn apply_overrides_change<C: DohClient + Sync>(
         invalid: before.invalid.clone(),
     });
     *state.overrides.write() = Arc::clone(&after);
-    invalidate_changed(&state.cache, &before.lists, &after.lists);
+    invalidate_changed(&state.cache.read().cache, &before.lists, &after.lists);
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => match after.lists.save(&paths.overrides, &after.invalid) {
             Ok(()) => true,
@@ -909,6 +994,96 @@ where
     match apply_overrides_change(state, |current| {
         Ok(current.with_entry_removed(&request.domain, request.is_wildcard, request.list))
     }) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// `GET /admin/cache-config` (T-153) — method allowlisting happens centrally
+/// in [`serve`]'s `ROUTES` check, not re-checked here. Read-only, no CSRF
+/// gate needed (same as `GET /admin/status`/`/admin/overrides`).
+fn serve_admin_cache_config<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
+    json_response(&CacheConfigView::from_config(
+        &state.cache.read().config,
+        true,
+    ))
+}
+
+/// Applies `update` to `state`'s live cache config (T-153): validates,
+/// rebuilds the whole `Cache` (see [`CacheState`]'s own doc comment for why
+/// a config change can't be applied to an existing `moka::Cache` in place),
+/// swaps it in, persists to `state.persist.paths.config` if configured, and
+/// returns the resulting view.
+///
+/// `state.persist_lock` is held for the whole validate-swap-persist
+/// sequence, acquired *before* `cache`'s own lock — same shared-file
+/// reasoning as [`apply_admin_config`], see `persist_lock`'s own doc
+/// comment. Also reads `state.runtime`'s current settings (not just
+/// `cache`) while still holding the lock, so the file this writes reflects
+/// `providers`/`timeout_mode`'s live values too, not stale/default ones —
+/// same cross-field-read requirement `apply_admin_config` has in the other
+/// direction.
+fn apply_cache_config<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: CacheConfigUpdate,
+) -> Result<CacheConfigView, CacheConfigError> {
+    let _persist_guard = state.persist_lock.lock();
+    let new_config = update.into_config()?;
+    *state.cache.write() = Arc::new(CacheState {
+        cache: Cache::new(&new_config),
+        config: new_config,
+    });
+    let runtime = *state.runtime.read();
+    let persisted = match state.persist.paths.as_ref() {
+        Some(paths) => {
+            let config = ResolverConfig {
+                port: state.persist.port,
+                timeout_mode: runtime.timeout.mode,
+                timeout_ms: timeout_ms(runtime.timeout.duration),
+                providers: runtime.providers,
+                cache: new_config,
+            };
+            match config.save(&paths.config) {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("failed to persist an admin cache-config change to disk: {err}");
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+    Ok(CacheConfigView::from_config(&new_config, persisted))
+}
+
+/// `POST /admin/cache-config/apply` (T-153) — method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check, not re-checked here. Same CSRF
+/// gate and body-size cap as `/admin/config`. A `clamp_min_secs >
+/// clamp_max_secs` update is `400` (see [`CacheConfigUpdate::into_config`]).
+async fn serve_admin_cache_config_apply<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(update) = serde_json::from_slice::<CacheConfigUpdate>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_cache_config(state, update) {
         Ok(response) => json_response(&response),
         Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
@@ -1058,6 +1233,8 @@ where
         ADMIN_OVERRIDES_PATH => serve_admin_overrides(&state),
         ADMIN_OVERRIDES_ADD_PATH => serve_admin_overrides_add(req, &state).await,
         ADMIN_OVERRIDES_REMOVE_PATH => serve_admin_overrides_remove(req, &state).await,
+        ADMIN_CACHE_CONFIG_PATH => serve_admin_cache_config(&state),
+        ADMIN_CACHE_CONFIG_APPLY_PATH => serve_admin_cache_config_apply(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
@@ -1073,12 +1250,12 @@ where
 mod tests {
     use super::{
         content_type_is_dns_message, resolve_doh_request, serve, wire_bytes_from_get, AppState,
-        DohRequestError, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
+        CacheState, DohRequestError, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
         MAX_MESSAGE_SIZE,
     };
     use crate::admin::{
-        AdminConfigUpdate, AdminStatusResponse, OverrideAddRequest, OverrideListsResponse,
-        OverrideRemoveRequest,
+        AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
+        OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::ResolverConfig;
@@ -1420,8 +1597,10 @@ mod tests {
                 providers: EnabledProviders::default(),
                 timeout: TimeoutConfig::default(),
             },
-            Cache::new(&CacheConfig::default()),
-            CacheConfig::default(),
+            CacheState {
+                cache: Cache::new(&CacheConfig::default()),
+                config: CacheConfig::default(),
+            },
             QueryLog::default(),
             persist,
         ))
@@ -2406,8 +2585,10 @@ mod tests {
                 providers: EnabledProviders::default(),
                 timeout: TimeoutConfig::default(),
             },
-            Cache::new(&CacheConfig::default()),
-            CacheConfig::default(),
+            CacheState {
+                cache: Cache::new(&CacheConfig::default()),
+                config: CacheConfig::default(),
+            },
             QueryLog::default(),
             PersistTarget {
                 port: 8443,
@@ -2466,7 +2647,8 @@ mod tests {
         let Ok(key) = CacheKey::new("cache-inval.test", RecordType::A) else {
             panic!("valid fixture domain");
         };
-        state
+        let cache_state = Arc::clone(&state.cache.read());
+        cache_state
             .cache
             .insert(
                 key.clone(),
@@ -2476,7 +2658,7 @@ mod tests {
                 ),
             )
             .await;
-        assert!(state.cache.get(&key).await.is_some());
+        assert!(cache_state.cache.get(&key).await.is_some());
 
         let response = match serve(
             admin_overrides_add_request("cache-inval.test", ListKind::Blocklist),
@@ -2489,7 +2671,7 @@ mod tests {
         };
         assert_eq!(response.status(), StatusCode::OK);
         assert!(
-            state.cache.get(&key).await.is_none(),
+            cache_state.cache.get(&key).await.is_none(),
             "adding a blocklist entry must invalidate the domain's cached verdict"
         );
     }
@@ -2592,6 +2774,320 @@ mod tests {
             Some(&header::HeaderValue::from_static(
                 "text/html; charset=utf-8"
             ))
+        );
+    }
+
+    fn admin_cache_config_apply_request(update: CacheConfigUpdate) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&update) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/cache-config/apply")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    fn non_default_cache_config_update() -> CacheConfigUpdate {
+        CacheConfigUpdate {
+            clamp_min_secs: 45,
+            clamp_max_secs: 1800,
+            block_verdict_ttl_secs: 1800,
+            stale_grace_secs: 43_200,
+            max_capacity: 2_500,
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_admin_cache_config_returns_the_default_live_settings() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/cache-config")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<CacheConfigView>(&bytes) else {
+            panic!("response body must decode as CacheConfigView");
+        };
+        let defaults = CacheConfig::default().to_secs();
+        assert_eq!(view.clamp_min_secs, defaults.clamp_min_secs);
+        assert_eq!(view.clamp_max_secs, defaults.clamp_max_secs);
+        assert_eq!(view.max_capacity, defaults.max_capacity);
+        assert!(view.persisted);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_updates_the_live_settings() {
+        let state = state_with(no_op_client());
+        let update = non_default_cache_config_update();
+        let response = match serve(admin_cache_config_apply_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<CacheConfigView>(&bytes) else {
+            panic!("response body must decode as CacheConfigView");
+        };
+        assert_eq!(view.clamp_min_secs, update.clamp_min_secs);
+        assert_eq!(view.clamp_max_secs, update.clamp_max_secs);
+        assert_eq!(view.block_verdict_ttl_secs, update.block_verdict_ttl_secs);
+        assert_eq!(view.stale_grace_secs, update.stale_grace_secs);
+        assert_eq!(view.max_capacity, update.max_capacity);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_rejects_an_inverted_clamp_range() {
+        let state = state_with(no_op_client());
+        let update = CacheConfigUpdate {
+            clamp_min_secs: 100,
+            clamp_max_secs: 10,
+            ..non_default_cache_config_update()
+        };
+        let response = match serve(admin_cache_config_apply_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Same CSRF concern as `/admin/config`/`/admin/overrides/add` (T-52/T-47)
+    // - see `content_type_is_json`'s own doc comment.
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_rejects_a_missing_content_type() {
+        let Ok(json) = serde_json::to_vec(&non_default_cache_config_update()) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/cache-config/apply")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_persists_a_change_to_disk_when_a_config_path_is_set() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let update = non_default_cache_config_update();
+        let response = match serve(admin_cache_config_apply_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<CacheConfigView>(&bytes) else {
+            panic!("response body must decode as CacheConfigView");
+        };
+        assert!(view.persisted);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        let loaded_secs = loaded.cache.to_secs();
+        assert_eq!(loaded_secs.clamp_min_secs, update.clamp_min_secs);
+        assert_eq!(loaded_secs.max_capacity, update.max_capacity);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_reports_not_persisted_when_no_config_path_is_set() {
+        let state = state_with(no_op_client());
+        let response = match serve(
+            admin_cache_config_apply_request(non_default_cache_config_update()),
+            state,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<CacheConfigView>(&bytes) else {
+            panic!("response body must decode as CacheConfigView");
+        };
+        assert!(!view.persisted);
+    }
+
+    // The real flush property (T-153, advisor-caught before implementing: a
+    // naive "insert then apply then assert cache.get is None" test would
+    // pass trivially against any brand-new empty Cache and prove only that
+    // the swap happened, nothing about whether a query actually stops being
+    // served from cache). Runs the same query twice via the real
+    // resolve_doh_request/handle_query path against a MockClient whose
+    // `calls` counter (already used elsewhere in this file to prove
+    // cancellation/pass-through) increments once per upstream query: the
+    // second identical query must re-query upstream (quad9+adguard+baseline,
+    // 3 calls) after a cache-config apply, not silently hit a cache entry
+    // that survived the swap.
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_forces_a_fresh_upstream_query_not_a_stale_cache_hit() {
+        let ip = Ipv4Addr::new(5, 6, 7, 8);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+        let wire_bytes = query_bytes("cache-flush.test", RecordType::A);
+
+        let first = match resolve_doh_request(&wire_bytes, &state).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("must resolve: {err}"),
+        };
+        let _ = first;
+        let calls_after_first = state.client.calls.load(Ordering::SeqCst);
+        assert!(calls_after_first > 0, "the first query must hit upstream");
+
+        // Same domain again, still no config change - must be a cache hit,
+        // no new upstream calls.
+        let second = match resolve_doh_request(&wire_bytes, &state).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("must resolve: {err}"),
+        };
+        let _ = second;
+        assert_eq!(
+            state.client.calls.load(Ordering::SeqCst),
+            calls_after_first,
+            "an unchanged cache-config must still serve the second identical query from cache"
+        );
+
+        let apply_response = match serve(
+            admin_cache_config_apply_request(non_default_cache_config_update()),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(apply_response.status(), StatusCode::OK);
+
+        let third = match resolve_doh_request(&wire_bytes, &state).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("must resolve: {err}"),
+        };
+        let _ = third;
+        assert!(
+            state.client.calls.load(Ordering::SeqCst) > calls_after_first,
+            "a cache-config apply must flush the cache - the same query afterward must \
+             re-query upstream, not silently hit an entry that survived the swap"
+        );
+    }
+
+    // Same discipline as `concurrent_admin_config_posts_leave_disk_matching_
+    // live_settings` (T-58) and `concurrent_admin_overrides_add_posts_lose_
+    // no_updates` (T-47), applied one level up: `/admin/config` and
+    // `/admin/cache-config/apply` now write into the *same* file
+    // (`resolver_config.toml`) via the *same* shared `persist_lock` (T-153).
+    // Empirically confirmed the same way those two were, not assumed from
+    // the lock alone: with the cache-config route's `_persist_guard` acquire
+    // temporarily removed, this test failed 1/20 runs on this dev machine
+    // (looped, `cargo test -- --exact` per run) - a narrower window than
+    // T-58's 16/20 (this handler does far less work between the two
+    // independent lock acquisitions it would otherwise race on, so the
+    // interleaving is rarer, not absent); with the shared lock restored,
+    // 20/20 passed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_admin_config_and_cache_config_posts_leave_disk_matching_both_live_fields() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+
+        let config_update = AdminConfigUpdate {
+            providers: EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+            timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+        };
+        let cache_update = non_default_cache_config_update();
+
+        let config_state = Arc::clone(&state);
+        let config_handle = tokio::spawn(async move {
+            match serve(admin_config_request(config_update), config_state).await {
+                Ok(response) => response.status(),
+                Err(err) => match err {},
+            }
+        });
+        let cache_state = Arc::clone(&state);
+        let cache_handle = tokio::spawn(async move {
+            match serve(admin_cache_config_apply_request(cache_update), cache_state).await {
+                Ok(response) => response.status(),
+                Err(err) => match err {},
+            }
+        });
+        match config_handle.await {
+            Ok(status) => assert_eq!(status, StatusCode::OK),
+            Err(err) => panic!("admin config task must not panic: {err}"),
+        }
+        match cache_handle.await {
+            Ok(status) => assert_eq!(status, StatusCode::OK),
+            Err(err) => panic!("cache config task must not panic: {err}"),
+        }
+
+        let loaded = match ResolverConfig::load(&config_path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the persisted file must still load: {err}"),
+        };
+        assert_eq!(
+            loaded.providers, config_update.providers,
+            "the providers change must survive a concurrent cache-config write"
+        );
+        assert_eq!(
+            loaded.timeout_mode, config_update.timeout_mode,
+            "the timeout-mode change must survive a concurrent cache-config write"
+        );
+        let loaded_cache_secs = loaded.cache.to_secs();
+        assert_eq!(
+            loaded_cache_secs.clamp_min_secs, cache_update.clamp_min_secs,
+            "the cache-config change must survive a concurrent admin-config write"
+        );
+        assert_eq!(
+            loaded_cache_secs.max_capacity, cache_update.max_capacity,
+            "the cache-config change must survive a concurrent admin-config write"
         );
     }
 
@@ -2701,6 +3197,8 @@ mod tests {
         ("/admin/overrides", &[Method::GET]),
         ("/admin/overrides/add", &[Method::POST]),
         ("/admin/overrides/remove", &[Method::POST]),
+        ("/admin/cache-config", &[Method::GET]),
+        ("/admin/cache-config/apply", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),

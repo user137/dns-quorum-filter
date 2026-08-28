@@ -32,6 +32,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cache::CacheConfig;
 use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutMode;
 
@@ -69,6 +70,14 @@ pub enum ConfigError {
     /// not after.
     #[error("resolver config file exceeds the {MAX_CONFIG_FILE_SIZE}-byte size limit")]
     TooLarge,
+    /// The `[cache]` table's `clamp_min_secs` exceeds `clamp_max_secs`
+    /// (T-153) — rejected at load, same as `ZeroPort`/`ZeroTimeout` above,
+    /// rather than constructing a `CacheConfig` that would later make
+    /// `cache::clamp_ttl`'s own `Ord`-based clamp panic on every query. See
+    /// `cache::CacheConfig::from_secs`, the single validated path this and
+    /// the admin-channel write handler both go through.
+    #[error("cache config clamp_min_secs must not exceed clamp_max_secs")]
+    CacheClampMinExceedsMax,
 }
 
 /// Upper bound on `resolver_config.toml`'s on-disk size, checked in
@@ -104,6 +113,11 @@ pub struct ResolverConfig {
     /// any_enabled`] being `false` is SPEC.md §3/§8.1's explicit
     /// pass-through case, not fail-closed and not a silent no-op.
     pub providers: EnabledProviders,
+    /// Cache TTL clamps/capacity (T-153) — reuses `cache::CacheConfig`
+    /// directly rather than a parallel config-only copy, same reasoning
+    /// already established for `providers` above: a second type here could
+    /// drift from what `cache::clamp_ttl`/`Cache::new` actually honor.
+    pub cache: CacheConfig,
 }
 
 impl Default for ResolverConfig {
@@ -114,6 +128,7 @@ impl Default for ResolverConfig {
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,
             providers: EnabledProviders::default(),
+            cache: CacheConfig::default(),
         }
     }
 }
@@ -167,12 +182,25 @@ impl ResolverConfig {
         if file.timeout_ms == 0 {
             return Err(ConfigError::ZeroTimeout);
         }
+        let cache = match CacheConfig::from_secs(
+            file.cache.clamp_min_secs,
+            file.cache.clamp_max_secs,
+            file.cache.block_verdict_ttl_secs,
+            file.cache.stale_grace_secs,
+            file.cache.max_capacity,
+        ) {
+            Ok(cache) => cache,
+            Err(crate::cache::CacheConfigError::ClampMinExceedsMax) => {
+                return Err(ConfigError::CacheClampMinExceedsMax)
+            }
+        };
 
         Ok(Self {
             port: file.port,
             timeout_mode: file.timeout_mode,
             timeout_ms: file.timeout_ms,
             providers: file.providers,
+            cache,
         })
     }
 
@@ -195,11 +223,19 @@ impl ResolverConfig {
     /// expected for this struct's field types) or [`ConfigError::Io`] if the
     /// write itself fails.
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
+        let cache_secs = self.cache.to_secs();
         let file = ResolverConfigFile {
             port: self.port,
             timeout_mode: self.timeout_mode,
             timeout_ms: self.timeout_ms,
             providers: self.providers,
+            cache: CacheConfigFile {
+                clamp_min_secs: cache_secs.clamp_min_secs,
+                clamp_max_secs: cache_secs.clamp_max_secs,
+                block_verdict_ttl_secs: cache_secs.block_verdict_ttl_secs,
+                stale_grace_secs: cache_secs.stale_grace_secs,
+                max_capacity: cache_secs.max_capacity,
+            },
         };
         let toml = toml::to_string(&file).map_err(ConfigError::TomlSerialize)?;
         fs::write(path, toml).map_err(ConfigError::Io)
@@ -219,23 +255,60 @@ struct ResolverConfigFile {
     timeout_mode: TimeoutMode,
     timeout_ms: u32,
     providers: EnabledProviders,
+    cache: CacheConfigFile,
 }
 
 impl Default for ResolverConfigFile {
     fn default() -> Self {
         let defaults = ResolverConfig::default();
+        let cache_secs = defaults.cache.to_secs();
         Self {
             port: defaults.port,
             timeout_mode: defaults.timeout_mode,
             timeout_ms: defaults.timeout_ms,
             providers: defaults.providers,
+            cache: CacheConfigFile {
+                clamp_min_secs: cache_secs.clamp_min_secs,
+                clamp_max_secs: cache_secs.clamp_max_secs,
+                block_verdict_ttl_secs: cache_secs.block_verdict_ttl_secs,
+                stale_grace_secs: cache_secs.stale_grace_secs,
+                max_capacity: cache_secs.max_capacity,
+            },
+        }
+    }
+}
+
+/// TOML-facing shape for `cache::CacheConfig` (T-153) — seconds as `u64`,
+/// mirroring how `ResolverConfigFile.timeout_ms` is a plain integer while the
+/// live `TimeoutConfig` holds a real `Duration`. `CacheConfig` itself stays
+/// serde-free; [`CacheConfig::from_secs`]/[`CacheConfig::to_secs`] are the
+/// only conversion between the two.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct CacheConfigFile {
+    clamp_min_secs: u64,
+    clamp_max_secs: u64,
+    block_verdict_ttl_secs: u64,
+    stale_grace_secs: u64,
+    max_capacity: u64,
+}
+
+impl Default for CacheConfigFile {
+    fn default() -> Self {
+        let secs = CacheConfig::default().to_secs();
+        Self {
+            clamp_min_secs: secs.clamp_min_secs,
+            clamp_max_secs: secs.clamp_max_secs,
+            block_verdict_ttl_secs: secs.block_verdict_ttl_secs,
+            stale_grace_secs: secs.stale_grace_secs,
+            max_capacity: secs.max_capacity,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfigError, ResolverConfig};
+    use super::{CacheConfig, ConfigError, ResolverConfig};
     use crate::quorum::EnabledProviders;
     use crate::timeout::TimeoutMode;
     use std::fs;
@@ -280,6 +353,7 @@ mod tests {
                     quad9: false,
                     adguard: false,
                 },
+                cache: CacheConfig::default(),
             }
         );
     }
@@ -425,6 +499,10 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_a_non_default_config() {
         let (_dir, path) = temp_config_path();
+        let cache = match CacheConfig::from_secs(60, 7200, 7200, 172_800, 20_000) {
+            Ok(cache) => cache,
+            Err(err) => panic!("valid input must not be rejected: {err}"),
+        };
         let config = ResolverConfig {
             port: 9443,
             timeout_mode: TimeoutMode::FailClosed,
@@ -433,6 +511,7 @@ mod tests {
                 quad9: false,
                 adguard: true,
             },
+            cache,
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -474,5 +553,74 @@ mod tests {
             ResolverConfig::load(&path),
             Err(ConfigError::ZeroTimeout)
         ));
+    }
+
+    // T-153: [cache] follows the same nested-table conventions [providers]
+    // already established (T-148) - partial table fills the rest from
+    // default, typo'd key is a loud error, not silently ignored.
+
+    #[test]
+    fn load_of_a_partial_cache_table_fills_the_rest_from_default() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[cache]\nmax_capacity = 500\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a partial [cache] table must still load: {err}"),
+        };
+        let defaults = CacheConfig::default().to_secs();
+        let secs = config.cache.to_secs();
+        assert_eq!(secs.max_capacity, 500);
+        assert_eq!(secs.clamp_min_secs, defaults.clamp_min_secs);
+        assert_eq!(secs.clamp_max_secs, defaults.clamp_max_secs);
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_key_inside_the_cache_table() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[cache]\nclmap_min_secs = 60\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_cache_clamp_min_exceeding_clamp_max() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[cache]\nclamp_min_secs = 100\nclamp_max_secs = 10\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::CacheClampMinExceedsMax)
+        ));
+    }
+
+    #[test]
+    fn save_then_load_round_trips_a_non_default_cache_config() {
+        let (_dir, path) = temp_config_path();
+        let cache = match CacheConfig::from_secs(45, 1800, 1800, 43_200, 2_500) {
+            Ok(cache) => cache,
+            Err(err) => panic!("valid input must not be rejected: {err}"),
+        };
+        let config = ResolverConfig {
+            cache,
+            ..ResolverConfig::default()
+        };
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to load what was just saved: {err}"),
+        };
+        assert_eq!(loaded, config);
     }
 }

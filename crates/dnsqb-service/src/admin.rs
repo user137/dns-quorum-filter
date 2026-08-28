@@ -31,6 +31,7 @@
 //! untested. The full chain is covered by T-52's manual end-to-end smoke
 //! test (TASKS-DONE.md).
 
+use crate::cache::{CacheConfig, CacheConfigError};
 use crate::overrides::ListKind;
 use crate::query_log::{Decision, LogEntry};
 use crate::quorum::EnabledProviders;
@@ -173,6 +174,85 @@ pub struct OverrideRemoveRequest {
     pub is_wildcard: bool,
     /// Which list to remove it from.
     pub list: ListKind,
+}
+
+/// The body of `GET /admin/cache-config`, and echoed back by
+/// `POST /admin/cache-config/apply` after applying a change (T-153) — same
+/// "always return the fresh live state" shape as [`AdminStatusResponse`]/
+/// [`OverrideListsResponse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheConfigView {
+    /// Lower clamp bound for upstream-derived TTLs, in seconds.
+    pub clamp_min_secs: u64,
+    /// Upper clamp bound for upstream-derived TTLs, in seconds.
+    pub clamp_max_secs: u64,
+    /// Cache lifetime for a `Block` verdict, in seconds.
+    pub block_verdict_ttl_secs: u64,
+    /// RFC 8767 §5 stale-timer grace window, in seconds.
+    pub stale_grace_secs: u64,
+    /// Maximum number of entries the cache will hold.
+    pub max_capacity: u64,
+    /// Whether the values above were also written to `resolver_config.toml`
+    /// on this call — same convention as [`AdminStatusResponse::persisted`]/
+    /// [`OverrideListsResponse::persisted`].
+    pub persisted: bool,
+}
+
+impl CacheConfigView {
+    /// Builds a view from a live [`CacheConfig`] plus the caller's
+    /// `persisted` verdict (the caller's to state — always `true` for a
+    /// plain `GET`, same convention `admin_status`/`overrides_view` in
+    /// `dispatch.rs` already use).
+    #[must_use]
+    pub(crate) fn from_config(config: &CacheConfig, persisted: bool) -> Self {
+        let secs = config.to_secs();
+        Self {
+            clamp_min_secs: secs.clamp_min_secs,
+            clamp_max_secs: secs.clamp_max_secs,
+            block_verdict_ttl_secs: secs.block_verdict_ttl_secs,
+            stale_grace_secs: secs.stale_grace_secs,
+            max_capacity: secs.max_capacity,
+            persisted,
+        }
+    }
+}
+
+/// `POST /admin/cache-config/apply`'s body (T-153) — same 5 fields as
+/// [`CacheConfigView`] minus `persisted` (nothing to echo before the change
+/// is applied).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheConfigUpdate {
+    /// See [`CacheConfigView::clamp_min_secs`].
+    pub clamp_min_secs: u64,
+    /// See [`CacheConfigView::clamp_max_secs`].
+    pub clamp_max_secs: u64,
+    /// See [`CacheConfigView::block_verdict_ttl_secs`].
+    pub block_verdict_ttl_secs: u64,
+    /// See [`CacheConfigView::stale_grace_secs`].
+    pub stale_grace_secs: u64,
+    /// See [`CacheConfigView::max_capacity`].
+    pub max_capacity: u64,
+}
+
+impl CacheConfigUpdate {
+    /// Validates and converts this update into a live [`CacheConfig`] — the
+    /// same [`CacheConfig::from_secs`] boundary `config.rs`'s file loader
+    /// goes through, so an admin POST and a hand-edited TOML file are
+    /// rejected by exactly the same rule (T-153).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CacheConfigError::ClampMinExceedsMax`] if
+    /// `clamp_min_secs > clamp_max_secs`.
+    pub(crate) fn into_config(self) -> Result<CacheConfig, CacheConfigError> {
+        CacheConfig::from_secs(
+            self.clamp_min_secs,
+            self.clamp_max_secs,
+            self.block_verdict_ttl_secs,
+            self.stale_grace_secs,
+            self.max_capacity,
+        )
+    }
 }
 
 /// Reduces `entries` to [`AdminStats`]. `pub(crate)` — only `dispatch.rs`'s

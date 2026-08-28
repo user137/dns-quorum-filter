@@ -12,8 +12,8 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, InvalidEntry, OverrideLists, OverridesState, PersistPaths, PersistTarget,
-    QueryLog, ReqwestDohClient, ResolverConfig, RuntimeSettings, TimeoutConfig,
+    CacheState, InvalidEntry, OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLog,
+    ReqwestDohClient, ResolverConfig, RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -95,8 +95,11 @@ async fn main() {
         }),
     };
 
-    // No config-driven sizing yet - T-146 (SPEC.md §6's own stated defaults:
-    // 1000 entries or 24 hours).
+    // Cache TTL/capacity config is now live-editable (T-153) - built from
+    // whatever `resolver_config.toml`'s own `[cache]` table resolved to
+    // (defaults if absent), not a hardcoded `CacheConfig::default()`.
+    // Query-log sizing itself stays config-free - T-146 (SPEC.md §6's own
+    // stated defaults: 1000 entries or 24 hours).
     let state = Arc::new(AppState::new(
         client,
         OverridesState {
@@ -104,8 +107,10 @@ async fn main() {
             invalid: invalid_overrides,
         },
         runtime,
-        Cache::new(&CacheConfig::default()),
-        CacheConfig::default(),
+        CacheState {
+            cache: Cache::new(&resolver_config.cache),
+            config: resolver_config.cache,
+        },
         QueryLog::default(),
         persist,
     ));

@@ -139,6 +139,23 @@ classDiagram
         +u64 blocked
         +u64 in_flight
     }
+    class CacheConfigView {
+        <<T-153, реалізовано>>
+        +u64 clamp_min_secs
+        +u64 clamp_max_secs
+        +u64 block_verdict_ttl_secs
+        +u64 stale_grace_secs
+        +u64 max_capacity
+        +bool persisted
+    }
+    class CacheConfigUpdate {
+        <<T-153, реалізовано>>
+        +u64 clamp_min_secs
+        +u64 clamp_max_secs
+        +u64 block_verdict_ttl_secs
+        +u64 stale_grace_secs
+        +u64 max_capacity
+    }
 
     class GeoIPConfig {
         +List~String~ blocked_countries
@@ -257,6 +274,17 @@ T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна
 `OverrideLists::with_entry_added`, не клієнтом. `POST /admin/overrides/remove`'s тіло —
 `OverrideRemoveRequest { domain, is_wildcard, list }` — повна трійка, не лише `domain`: домен може
 мати одночасно і точний, і wildcard-запис в одному списку.
+
+## `CacheConfigView`/`CacheConfigUpdate` — нова пара DTO, не в жодній чернетці (T-153)
+
+`GET /admin/cache-config`/`POST /admin/cache-config/apply` — окремий маршрут від
+`/admin/config`/`AdminStatusResponse`, не додаток до нього: поля кешу (SPEC.md §4.1) живуть на
+своєму власному DTO навмисно, щоб звичайний `POST /admin/config` (тумблер провайдера/режиму
+таймауту) ніколи не мусив нести й застосовувати поточний кеш-конфіг як побічний, непов'язаний
+ефект — див. `CONFIGURATION.md`'s опис цього ж рішення. `CacheConfigView` (відповідь) і
+`CacheConfigUpdate` (тіло запиту) відрізняються лише полем `persisted` — той самий патерн, що й
+`OverrideListsResponse` вище: відповідь завжди відображає живий стан, значення заявки не
+обов'язково збігаються з ним, якщо валідація відхилила (`clamp_min_secs > clamp_max_secs`).
 
 ## ⚠️ GAP — `VoterScope` більше не однозначний (SPEC.md §5.1.1, T-138)
 

@@ -200,6 +200,7 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | `remove_from_list(domain, list)` → `POST /admin/overrides/remove` | ⚠️ реалізовано T-47 — `OverrideRemoveRequest{domain, is_wildcard, list}`, повна трійка, не лише `domain` | Списки | Ф1 |
 | `get_override_lists()` → `GET /admin/overrides` | ⚠️ реалізовано T-47 як `OverrideListsResponse{allowlist, blocklist, conflicts}` — `conflicts` рахується сервером, не клієнтом | Списки | Ф1 |
 | `get_provider_config()` / `set_timeout_mode(mode)` / `set_doh_port(port)` | `ResolverSettings` — ⚠️ `set_timeout_mode` реалізовано T-52 (повертає `AdminStatusResponse`, не окремий `ResolverSettings`); `get_provider_config()`/`set_doh_port(port)` ще ні | Провайдери | Ф1 |
+| — (нова, не в цій чернетці) → `GET /admin/cache-config` / `POST /admin/cache-config/apply` | ⚠️ реалізовано T-153 як `CacheConfigView`/`CacheConfigUpdate` (5 полів TTL-меж/ємності, SPEC.md §4.1) — окремий маршрут від `set_timeout_mode`, навмисно не злитий у `AdminConfigUpdate`, щоб звичайний тумблер провайдера не тягнув за собою скидання кешу як побічний ефект. Секція "Кеш" на `/admin/ui` — окрема картка, не частина "Розширені" (та секція ще не існує в реалізованому UI) | Кеш (нова секція, backend-роут реалізовано T-153; UI-картка — той самий зріз, другий коміт) | Ф1 |
 | `add_custom_provider(name, url)` | — | Провайдери | Ф2 |
 | `get_geoip_config()` / `set_blocked_countries(list)` | `GeoIPConfig` | GeoIP | Ф2 |
 | `get_geoip_db_status()` | дата оновлення | GeoIP | Ф2 |
