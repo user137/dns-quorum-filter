@@ -8,6 +8,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Поза фазами, T-134 done (TASKS-DONE.md, docs-only, no code): investigated a technical mitigation
+for silent browser DoH fallback (SPEC.md §"Відкриті питання" п.10), the same "research, not
+implementation" precedent as T-14/T-141. An advisor review before starting split what looked like
+one batchable pair (T-133+T-134) into a real one and a false one: T-133 asks for a literal legal
+determination ("юридична перевірка" of Quad9/AdGuard ToS) — a research pass, however sourced,
+can't produce that, so closing it under this task's number would be a false close on exactly the
+axis this project is strictest about; T-133 stays untouched, open. T-134 was reframed as missing
+design input for T-56 (the open state-indicator task), not standalone research. Two
+live-WebSearch-confirmed findings, dated 2026-08-28 since 2026 currency isn't verifiable from
+training data (same discipline as T-66/T-141): (1) Firefox has a direct analog of the Chrome-only
+enterprise policy SPEC.md's п.10 already named — the `DNSOverHTTPS` policy (`Locked` +
+`network.trr.mode`/`network.trr.uri`, mode 3 = TRR-only) mirrors Chrome's `DnsOverHttpsMode=secure`,
+same admin-level-privilege caveat. (2) For the actually-useful, non-enterprise half T-56 needs: no
+passive signal on `dnsqb-service`'s own side (log-window silence) can distinguish "browser silently
+fell back" from "user is idle" — fundamentally ambiguous server-side. The one technique found with
+real precedent (the DNS-leak-test-page class other DoH providers use) is an active client-side
+canary probe from `/admin/ui` — a hostname only correctly resolvable through `dnsqb-service`'s own
+resolver, fetched by the served page's own JS — plausible because Chrome's ordinary page-level DNS
+resolution (not just navigation) does route through a configured custom DoH provider, confirmed via
+WebSearch, not assumed. **A second closing-advisor-review pass caught the write-up naming a
+non-existent primitive**: the first draft said the canary domain would come from "an override entry
+mapped to a fixed synthetic IP" — checked, not assumed, and false — `overrides::OverrideLists::
+decision` only returns a binary `Option<ListKind>` (Allow/Block), and `wire::build_block_response`
+hardcodes `0.0.0.0`/`::`; nothing in the pipeline can bind an arbitrary domain to an arbitrary fixed
+IP today. Fixed by naming the missing primitive explicitly instead of asserting a ready path — a
+new, undesigned route/mechanism, not an override-list extension. Also explicitly **not verified
+empirically** this pass (needs a scratch probe before being trusted, this project's standing bar)
+and Firefox's own TRR behavior at page-fetch level wasn't separately confirmed. Firefox's own
+reverse-canary domain (`use-application-dns.net`) was checked and deliberately not reused — it
+tests whether the *network* blocks DoH via the native resolver, the opposite direction from what
+T-56 needs. T-98 (Chrome policy doc verification) explicitly not absorbed — stays Phase 3. SPEC.md's
+п.10 gained one appended paragraph (not rewritten); T-56 (TASKS.md) now points at the canary-probe
+candidate as unverified design input naming a missing primitive, not a ready plan.
+
 Поза фазами, T-139 done (TASKS-DONE.md, one commit, docs+static-asset only, no Rust code): closed
 the remaining scope of a task already narrowed once before (T-52's dashboard already covers
 processed/blocked/in-flight counts) — a blocked-percentage stat on `/admin/ui`, purely derived
