@@ -9,6 +9,7 @@
 const statusPill = document.getElementById("status-pill");
 const statusText = document.getElementById("status-text");
 const appBody = document.getElementById("app-body");
+const overridesBody = document.getElementById("overrides-body");
 
 function setPill(ok, text) {
   statusPill.classList.toggle("is-bad", !ok);
@@ -209,3 +210,188 @@ refresh();
 // rendered value the server's actual live response, same "no local
 // optimistic state" philosophy as every other render() call here.
 setInterval(refresh, 2000);
+
+// T-47: the override-list editor. Deliberately NOT part of refresh()/render()
+// above and NOT on the 2s poll - #overrides-body is a separate DOM subtree
+// from #app-body specifically so a free-text "add domain" input in progress
+// never gets wiped by an unrelated timer tick (index.html's own comment on
+// the container explains this). Fetches once on load, and again after every
+// add/remove action - not on a timer, since nothing else changes this list.
+
+async function getOverrides() {
+  const response = await fetch("/admin/overrides");
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function addOverride(pattern, list) {
+  const response = await fetch("/admin/overrides/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pattern, list }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function removeOverride(domain, isWildcard, list) {
+  const response = await fetch("/admin/overrides/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain, is_wildcard: isWildcard, list }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// Built via DOM methods (createElement/textContent), not the string-
+// interpolated innerHTML pattern render() uses above - admin_ui.rs's own
+// module doc comment flags exactly this gap for a future screen that
+// renders a domain into innerHTML (this page's CSP doesn't set Trusted
+// Types, so string interpolation here would need manual escaping instead
+// of construction-time safety). This is that screen.
+function overrideListItem(entry, list, conflicts) {
+  const li = document.createElement("li");
+  li.className = "override-item";
+  const label = document.createElement("span");
+  label.textContent = entry.is_wildcard ? `*.${entry.domain}` : entry.domain;
+  li.appendChild(label);
+  if (conflicts.includes(entry.domain)) {
+    li.classList.add("conflict");
+    const note = document.createElement("span");
+    note.className = "conflict-note";
+    // SPEC.md §5: allowlist wins on conflict - the UI must show this, not
+    // silently apply it. Shown on both the allowlist and blocklist entry
+    // for the same domain, not just one side.
+    note.textContent = "конфлікт: домен є і в allowlist, і в blocklist — allowlist має пріоритет";
+    li.appendChild(note);
+  }
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "override-remove";
+  removeBtn.textContent = "Видалити";
+  removeBtn.addEventListener("click", async () => {
+    try {
+      await removeOverride(entry.domain, entry.is_wildcard, list);
+      await refreshOverrides();
+    } catch (err) {
+      renderOverridesError(err);
+    }
+  });
+  li.appendChild(removeBtn);
+  return li;
+}
+
+function renderOverrides(data) {
+  overridesBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Списки виключень";
+  overridesBody.appendChild(heading);
+
+  // T-47, advisor-caught: an add/remove that live-applies but fails to
+  // persist must be visible, not just silently reflected in the response -
+  // otherwise a restart could silently drop a filtering rule the user
+  // thinks they already saved (the same failure class AdminStatusResponse's
+  // own `persisted` field exists to prevent for resolver_config.toml).
+  if (!data.persisted) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    overridesBody.appendChild(notPersisted);
+  }
+
+  const addRow = document.createElement("div");
+  addRow.className = "override-add-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "example.com або *.example.com";
+  const select = document.createElement("select");
+  const allowOpt = document.createElement("option");
+  allowOpt.value = "allowlist";
+  allowOpt.textContent = "Дозволити";
+  const blockOpt = document.createElement("option");
+  blockOpt.value = "blocklist";
+  blockOpt.textContent = "Блокувати";
+  select.appendChild(allowOpt);
+  select.appendChild(blockOpt);
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Додати";
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+
+  async function submitAdd() {
+    const pattern = input.value.trim();
+    if (!pattern) {
+      return;
+    }
+    try {
+      errorLine.textContent = "";
+      await addOverride(pattern, select.value);
+      await refreshOverrides();
+    } catch (err) {
+      errorLine.textContent = `Не вдалося додати "${pattern}": ${(err && err.message) || String(err)}`;
+    }
+  }
+  addBtn.addEventListener("click", submitAdd);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submitAdd();
+    }
+  });
+
+  addRow.appendChild(input);
+  addRow.appendChild(select);
+  addRow.appendChild(addBtn);
+  overridesBody.appendChild(addRow);
+  overridesBody.appendChild(errorLine);
+
+  const allowHeading = document.createElement("h4");
+  allowHeading.textContent = "Allowlist";
+  overridesBody.appendChild(allowHeading);
+  const allowList = document.createElement("ul");
+  allowList.className = "override-list";
+  data.allowlist.forEach((entry) =>
+    allowList.appendChild(overrideListItem(entry, "allowlist", data.conflicts))
+  );
+  overridesBody.appendChild(allowList);
+
+  const blockHeading = document.createElement("h4");
+  blockHeading.textContent = "Blocklist";
+  overridesBody.appendChild(blockHeading);
+  const blockList = document.createElement("ul");
+  blockList.className = "override-list";
+  data.blocklist.forEach((entry) =>
+    blockList.appendChild(overrideListItem(entry, "blocklist", data.conflicts))
+  );
+  overridesBody.appendChild(blockList);
+}
+
+function renderOverridesError(err) {
+  overridesBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Списки виключень";
+  overridesBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  overridesBody.appendChild(panel);
+}
+
+async function refreshOverrides() {
+  try {
+    renderOverrides(await getOverrides());
+  } catch (err) {
+    renderOverridesError(err);
+  }
+}
+
+refreshOverrides();

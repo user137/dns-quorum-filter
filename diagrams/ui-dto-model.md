@@ -62,14 +62,37 @@ classDiagram
     }
 
     class OverrideEntry {
+        <<draft, not a wire DTO — see OverrideDomainView>>
         +String domain
         +bool is_wildcard
         +ListKind list
     }
     class ListKind {
-        <<enum>>
+        <<enum, T-47, реалізовано>>
         ALLOWLIST
         BLOCKLIST
+    }
+    class OverrideDomainView {
+        <<T-47, реалізовано>>
+        +String domain
+        +bool is_wildcard
+    }
+    class OverrideListsResponse {
+        <<T-47, реалізовано>>
+        +List~OverrideDomainView~ allowlist
+        +List~OverrideDomainView~ blocklist
+        +List~String~ conflicts
+    }
+    class OverrideAddRequest {
+        <<T-47, реалізовано>>
+        +String pattern
+        +ListKind list
+    }
+    class OverrideRemoveRequest {
+        <<T-47, реалізовано>>
+        +String domain
+        +bool is_wildcard
+        +ListKind list
     }
 
     class Category {
@@ -140,6 +163,10 @@ classDiagram
     LogEntry --> VoterScope
     LogEntry --> QType
     OverrideEntry --> ListKind
+    OverrideListsResponse --> OverrideDomainView : allowlist/blocklist
+    OverrideListsResponse --> ListKind
+    OverrideAddRequest --> ListKind
+    OverrideRemoveRequest --> ListKind
     ProviderConfig --> Category
 ```
 
@@ -211,6 +238,25 @@ JSON-полем.
 з окремою структурою) — це паралельна, вже реально повернута форма для того, що T-52 встиг покрити.
 T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна точка звести це до однієї форми, не
 раніше.
+
+## `OverrideDomainView`/`OverrideListsResponse` — реальна реалізація, відмінна від чернеткового `OverrideEntry` (T-47)
+
+`OverrideEntry` (вище) — внутрішній backend-тип (`overrides.rs`), не сама DTO-форма на дроті:
+`GET /admin/overrides`/`POST /admin/overrides/add`/`POST /admin/overrides/remove` (SPEC.md §0
+рядок 12b) повертають `OverrideListsResponse` — списки вже розділені на `allowlist`/`blocklist`
+(поле `list` із `OverrideEntry` стає зайвим, щойно запис опинився у правильному масиві) плюс
+`conflicts: List~String~`, обчислений сервером із наявного `OverrideLists::conflicts()` (SPEC.md
+§5's вимога явно показувати конфлікт allowlist/blocklist, а не мовчки застосовувати). Це свідома
+проєкція, не дублікат `OverrideEntry`, який міг би розійтись — та ж причина, що вже пояснена вище
+для `AdminStatusResponse`, а не той відкритий T-53 напруг ("DTO замість прямої експозиції
+внутрішніх структур", досі невирішений для `AdminConfigUpdate`/`EnabledProviders`) — тут проєкція
+з реальною зміною форми (розщеплення по списку), не пряме перевикористання.
+
+`POST /admin/overrides/add`'s тіло — `OverrideAddRequest { pattern, list }`: `pattern` може
+нести провідний `*.` (той самий формат, що й `overrides.toml`), парситься сервером через
+`OverrideLists::with_entry_added`, не клієнтом. `POST /admin/overrides/remove`'s тіло —
+`OverrideRemoveRequest { domain, is_wildcard, list }` — повна трійка, не лише `domain`: домен може
+мати одночасно і точний, і wildcard-запис в одному списку.
 
 ## ⚠️ GAP — `VoterScope` більше не однозначний (SPEC.md §5.1.1, T-138)
 

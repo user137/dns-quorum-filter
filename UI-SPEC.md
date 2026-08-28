@@ -175,10 +175,12 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 > HTTP-маршрути `dnsqb-service`'s адмін-каналу (`GET /admin/status`, `POST
 > /admin/config`, `POST /admin/reset`, `POST /admin/shutdown` — CONFIGURATION.md),
 > викликані і треєм (`dnsqb-tray`), і вбудованим веб-UI (`/admin/ui`), не
-> Tauri-командою через `invoke()`. Таблиця нижче лишається чернеткою для
-> **непоставлених** екранів (Лог, Списки, GeoIP, Розширені — T-46/T-47/T-58/T-77
-> та ін.) — коли ці екрани будуються, вони теж, найімовірніше, стануть HTTP-
-> маршрутами на тому самому адмін-каналі, не Tauri-командами; форма нижче
+> Tauri-командою через `invoke()`. **Списки** (T-47) — третій реально поставлений
+> екран, тим самим патерном: HTTP-маршрути (`GET /admin/overrides`, `POST
+> /admin/overrides/add`/`remove`), позначені ⚠️ нижче. Таблиця нижче лишається
+> чернеткою для решти **непоставлених** екранів (Лог, GeoIP, Розширені —
+> T-46/T-58/T-77 та ін.) — коли вони будуються, теж, найімовірніше, стануть
+> HTTP-маршрутами на тому самому адмін-каналі, не Tauri-командами; форма нижче
 > залишена як інвентар потрібних операцій, не буквальний майбутній
 > API-контракт.
 
@@ -194,10 +196,9 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | ~~`set_category_enabled(category, bool)`~~ → `set_providers(quad9, adguard)` | ⚠️ реалізовано T-52 з іншою назвою/сигнатурою — Ф1 має лише 2 провайдери, не категорії (T-148); category-рівень лишається пізнішою фазою | Dashboard, Провайдери | Ф1 |
 | `get_log(filter)` | `Vec<LogEntry>` | Лог запитів | Ф1 |
 | `clear_log()` | — | Лог запитів | Ф1 |
-| `add_to_allowlist(domain)` | — | Лог, Списки | Ф1 |
-| `add_to_blocklist(domain)` | — | Лог, Списки | Ф1 |
-| `remove_from_list(domain, list)` | — | Списки | Ф1 |
-| `get_override_lists()` | `{allowlist, blocklist}` | Списки | Ф1 |
+| ~~`add_to_allowlist(domain)`~~ / ~~`add_to_blocklist(domain)`~~ → `POST /admin/overrides/add` | ⚠️ реалізовано T-47 як один злитий маршрут (`OverrideAddRequest{pattern, list}`), не два окремих — той самий `pattern` приймає і точний домен, і `*.domain` | Списки (Лог — ще ні, чекає T-54) | Ф1 |
+| `remove_from_list(domain, list)` → `POST /admin/overrides/remove` | ⚠️ реалізовано T-47 — `OverrideRemoveRequest{domain, is_wildcard, list}`, повна трійка, не лише `domain` | Списки | Ф1 |
+| `get_override_lists()` → `GET /admin/overrides` | ⚠️ реалізовано T-47 як `OverrideListsResponse{allowlist, blocklist, conflicts}` — `conflicts` рахується сервером, не клієнтом | Списки | Ф1 |
 | `get_provider_config()` / `set_timeout_mode(mode)` / `set_doh_port(port)` | `ResolverSettings` — ⚠️ `set_timeout_mode` реалізовано T-52 (повертає `AdminStatusResponse`, не окремий `ResolverSettings`); `get_provider_config()`/`set_doh_port(port)` ще ні | Провайдери | Ф1 |
 | `add_custom_provider(name, url)` | — | Провайдери | Ф2 |
 | `get_geoip_config()` / `set_blocked_countries(list)` | `GeoIPConfig` | GeoIP | Ф2 |

@@ -22,12 +22,17 @@
 //! future `/health` (T-86). `/health` itself is still free to add later
 //! without colliding.
 
-use crate::admin::{compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse};
+use crate::admin::{
+    compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse, OverrideAddRequest,
+    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
+};
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig};
 use crate::config::ResolverConfig;
-use crate::overrides::{OverrideError, OverrideLists};
-use crate::pipeline::{handle_query, proxy_to_single_upstream, PipelineOutcome};
+use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
+use crate::pipeline::{
+    handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome,
+};
 use crate::query_log::{LogEntry, QueryLog};
 use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutConfig;
@@ -63,6 +68,9 @@ const ADMIN_STATUS_PATH: &str = "/admin/status";
 const ADMIN_CONFIG_PATH: &str = "/admin/config";
 const ADMIN_RESET_PATH: &str = "/admin/reset";
 const ADMIN_SHUTDOWN_PATH: &str = "/admin/shutdown";
+const ADMIN_OVERRIDES_PATH: &str = "/admin/overrides";
+const ADMIN_OVERRIDES_ADD_PATH: &str = "/admin/overrides/add";
+const ADMIN_OVERRIDES_REMOVE_PATH: &str = "/admin/overrides/remove";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
@@ -82,6 +90,9 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_CONFIG_PATH, &[Method::POST]),
     (ADMIN_RESET_PATH, &[Method::POST]),
     (ADMIN_SHUTDOWN_PATH, &[Method::POST]),
+    (ADMIN_OVERRIDES_PATH, &[Method::GET]),
+    (ADMIN_OVERRIDES_ADD_PATH, &[Method::POST]),
+    (ADMIN_OVERRIDES_REMOVE_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
@@ -212,6 +223,28 @@ pub struct PersistTarget {
     pub paths: Option<PersistPaths>,
 }
 
+/// The parsed override lists plus the raw lines that failed to parse when
+/// they were last loaded from disk (T-47) — bundled so a swap into
+/// [`AppState::overrides`] is atomic across both, and so [`OverrideLists::
+/// save`] can write `invalid` back verbatim instead of silently deleting a
+/// user's own (typo'd) filtering intent the next time any entry is added or
+/// removed through the admin channel. `OverrideLists` alone only ever holds
+/// successfully-parsed entries — without this bundle, nothing downstream of
+/// `load()`/`/admin/reset` would even know an invalid line still exists.
+///
+/// `pub` (same reasoning as [`PersistTarget`]/[`RuntimeSettings`]): `main.rs`
+/// builds one from [`OverrideLists::load`]'s own return value and hands it to
+/// [`AppState::new`] — bundling it here is also what keeps that constructor
+/// under `clippy::too_many_arguments` without an `#[allow(...)]`, same
+/// structural fix T-147/T-148 already established for this file.
+pub struct OverridesState {
+    /// The successfully-parsed entries.
+    pub lists: OverrideLists,
+    /// Lines that failed to parse, kept only so a later [`OverrideLists::
+    /// save`] can write them back verbatim.
+    pub invalid: Vec<InvalidEntry>,
+}
+
 /// The two on-disk config files' paths, always resolved together from one
 /// `app_data_dir()` call in `main.rs` — bundled as one field on
 /// [`PersistTarget`] rather than two independent `Option<PathBuf>`s so
@@ -260,15 +293,15 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // same "no `.await` under the lock" precedent `query_log.rs` already
     // established for its own `RwLock`).
     let settings = *state.runtime.read();
-    // Same snapshot discipline as `settings` above, but `OverrideLists`
+    // Same snapshot discipline as `settings` above, but `OverridesState`
     // isn't `Copy` (Vec-backed) - `Arc::clone` bumps a refcount under the
     // lock instead of either holding the lock across the `.await` below or
     // cloning the whole list on every query (T-149).
-    let overrides = Arc::clone(&state.overrides.read());
+    let overrides_state = Arc::clone(&state.overrides.read());
     let response = match handle_query(
         &query,
         &state.client,
-        &overrides,
+        &overrides_state.lists,
         settings.providers,
         &state.cache,
         &state.cache_config,
@@ -313,7 +346,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
 /// `upstream::ReqwestDohClient`.
 pub struct AppState<C: DohClient + Sync> {
     client: C,
-    overrides: RwLock<Arc<OverrideLists>>,
+    overrides: RwLock<Arc<OverridesState>>,
     runtime: RwLock<RuntimeSettings>,
     cache: Cache,
     cache_config: CacheConfig,
@@ -344,11 +377,30 @@ pub struct AppState<C: DohClient + Sync> {
     /// opposite order from the order their in-memory writes landed, leaving
     /// the on-disk file not matching the live settings. **Invariant:
     /// `persist_lock` is always acquired before `runtime`, never after** —
-    /// `apply_admin_reset` doesn't take this lock at all (it only reads
-    /// files and does one atomic in-memory swap, no disk write to order), so
-    /// nothing today acquires them in the reverse order; keep it that way if
-    /// a future change adds a disk write to `/admin/reset`.
+    /// `apply_admin_reset` doesn't take *this* lock at all (it only reads
+    /// `resolver_config.toml` and does one atomic in-memory swap of
+    /// `runtime`, no disk write of that file to order), so nothing today
+    /// acquires them in the reverse order; keep it that way if a future
+    /// change adds a disk write to `/admin/reset`. **This reasoning is
+    /// specific to `runtime`/`resolver_config.toml` — it does not carry over
+    /// to `overrides_persist_lock` below, which `apply_admin_reset` *does*
+    /// need** (different field, different failure mode; see that lock's own
+    /// doc comment, T-47 advisor catch).
     persist_lock: Mutex<()>,
+    /// Same purpose as `persist_lock`, for `POST /admin/overrides/add`/
+    /// `remove` (T-47) — a **separate** lock, not a shared one:
+    /// `overrides.toml`/`resolver_config.toml` are independent resources
+    /// with independent files, and sharing one lock would make an override
+    /// edit block behind an unrelated config toggle (or vice versa) for no
+    /// reason. Same invariant: always acquired before `overrides`'s own
+    /// `RwLock`, never after. **Unlike `persist_lock`, `apply_admin_reset`
+    /// *does* take this one** (advisor-caught before commit) — reset's new
+    /// `OverrideLists` comes from disk, not from a read of `state.overrides`,
+    /// but its write to that field still races a concurrent add/remove's own
+    /// read-modify-write unless both go through the same lock; `persist_lock`
+    /// has no equivalent concern because reset never writes
+    /// `resolver_config.toml` back to disk, only `state.runtime` in memory.
+    overrides_persist_lock: Mutex<()>,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
@@ -359,11 +411,14 @@ impl<C: DohClient + Sync> AppState<C> {
     /// change shape even though the storage underneath now supports live
     /// updates. `overrides` is likewise wrapped (`RwLock<Arc<_>>`, T-149) so
     /// `/admin/reset` can swap the whole list atomically without forcing
-    /// every per-query read to clone it.
+    /// every per-query read to clone it — taken as one [`OverridesState`]
+    /// (T-47), not two separate parameters, so that swap stays atomic across
+    /// both fields (not just the parsed list) and this constructor stays
+    /// under `clippy::too_many_arguments`.
     #[must_use]
     pub fn new(
         client: C,
-        overrides: OverrideLists,
+        overrides: OverridesState,
         runtime: RuntimeSettings,
         cache: Cache,
         cache_config: CacheConfig,
@@ -382,6 +437,7 @@ impl<C: DohClient + Sync> AppState<C> {
             in_flight: AtomicU64::new(0),
             shutdown_tx,
             persist_lock: Mutex::new(()),
+            overrides_persist_lock: Mutex::new(()),
         }
     }
 
@@ -600,6 +656,17 @@ enum AdminResetError {
 /// reverse order leaves a window where a query racing this reset could
 /// repopulate the cache from the *old* overrides between the clear and the
 /// swap; swap-then-clear can't produce that.
+///
+/// **`state.overrides_persist_lock` is held for the whole reload-then-commit
+/// sequence (T-47, advisor-caught before commit)** — reset's new value comes
+/// from disk, not from a read of `state.overrides`, but the lock still has
+/// to cover this function's own write to that field: without it, a
+/// concurrent `POST /admin/overrides/add` could read the *pre-reset*
+/// `OverrideLists` as its `before`, then swap in `pre-reset-base +
+/// new-entry` after reset already committed a freshly-loaded list — silently
+/// discarding the reset the user just asked for (the same lost-update shape
+/// [`apply_overrides_change`] itself guards against between two adds, just
+/// between this route and that one).
 fn apply_admin_reset<C: DohClient + Sync>(
     state: &AppState<C>,
 ) -> Result<AdminStatusResponse, AdminResetError> {
@@ -608,12 +675,18 @@ fn apply_admin_reset<C: DohClient + Sync>(
         .paths
         .as_ref()
         .ok_or(AdminResetError::NoAppData)?;
+    let _overrides_persist_guard = state.overrides_persist_lock.lock();
     let config = ResolverConfig::load(&paths.config).map_err(AdminResetError::Config)?;
     let (overrides, invalid) =
         OverrideLists::load(&paths.overrides).map_err(AdminResetError::Overrides)?;
     if !invalid.is_empty() {
+        // Not dropped (T-47) - kept in `OverridesState.invalid` below so a
+        // later `save()` (triggered by an unrelated admin-channel edit)
+        // writes these raw lines back verbatim instead of silently losing
+        // them. Still warned here - the operator should know a line in the
+        // file they just asked to reload from didn't parse.
         tracing::warn!(
-            "{} override-list entr{} rejected as invalid on reset, ignored",
+            "{} override-list entr{} rejected as invalid on reset, kept for the next save",
             invalid.len(),
             if invalid.len() == 1 { "y" } else { "ies" }
         );
@@ -637,7 +710,10 @@ fn apply_admin_reset<C: DohClient + Sync>(
             duration: Duration::from_millis(config.timeout_ms.into()),
         },
     };
-    *state.overrides.write() = Arc::new(overrides);
+    *state.overrides.write() = Arc::new(OverridesState {
+        lists: overrides,
+        invalid,
+    });
     state.cache.clear();
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
@@ -676,6 +752,165 @@ where
             tracing::warn!("admin reset failed: {err}");
             status_response(StatusCode::INTERNAL_SERVER_ERROR)
         }
+    }
+}
+
+/// Builds the current [`OverrideListsResponse`] from `overrides` (T-47) —
+/// shared by `GET /admin/overrides` and the response the two mutating routes
+/// below echo back after applying a change, same "always return the fresh
+/// live state" shape as [`admin_status`]. `persisted` is the caller's to
+/// state, same convention as `admin_status`'s own parameter — always `true`
+/// for a plain `GET` (nothing changed, so nothing could fail to persist).
+fn overrides_view(overrides: &OverrideLists, persisted: bool) -> OverrideListsResponse {
+    let view_of = |list: ListKind| {
+        overrides
+            .entries()
+            .iter()
+            .filter(|entry| entry.list == list)
+            .map(|entry| OverrideDomainView {
+                domain: entry.domain.clone(),
+                is_wildcard: entry.is_wildcard,
+            })
+            .collect()
+    };
+    OverrideListsResponse {
+        allowlist: view_of(ListKind::Allowlist),
+        blocklist: view_of(ListKind::Blocklist),
+        conflicts: overrides
+            .conflicts()
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        persisted,
+    }
+}
+
+/// `GET /admin/overrides` (T-47) — method allowlisting happens centrally in
+/// [`serve`]'s `ROUTES` check, not re-checked here. Read-only, no CSRF gate
+/// needed (same as `GET /admin/status`).
+fn serve_admin_overrides<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
+    json_response(&overrides_view(&state.overrides.read().lists, true))
+}
+
+/// Applies `compute_new` to `state`'s live override lists (T-47) and returns
+/// the fresh view — shared by `POST /admin/overrides/add` and `POST
+/// /admin/overrides/remove`, which differ only in how the new list is
+/// computed. `state.overrides_persist_lock` is held for the whole
+/// swap-then-persist sequence, acquired *before* `overrides`'s own lock —
+/// same reasoning as [`apply_admin_config`]'s `persist_lock`. [`apply_admin_reset`]
+/// takes the same lock across its own swap of this field, so the two routes
+/// can never interleave their reads and writes of `state.overrides` (see
+/// that function's own doc comment).
+///
+/// Swap-then-invalidate, not the reverse — same reasoning
+/// [`apply_admin_reset`]'s own doc comment already states: a query racing
+/// this change must never repopulate the cache from the stale list in a gap
+/// between clearing and swapping.
+///
+/// `after` is built locally and never re-read from `state.overrides`
+/// (advisor-caught before commit) — a re-read after releasing the write
+/// guard would only coincidentally match what this call just computed; under
+/// the lock it's redundant, and without it (if a future writer ever touched
+/// `state.overrides` without taking `overrides_persist_lock`) it would let
+/// `invalidate_changed`/`save`/the returned view silently operate on a value
+/// this request never produced — same class of bug T-52's own
+/// `apply_admin_config` already fixed once for `runtime`.
+fn apply_overrides_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    compute_new: impl FnOnce(&OverrideLists) -> Result<OverrideLists, InvalidReason>,
+) -> Result<OverrideListsResponse, InvalidReason> {
+    let _persist_guard = state.overrides_persist_lock.lock();
+    let before = Arc::clone(&state.overrides.read());
+    let new_lists = compute_new(&before.lists)?;
+    let after = Arc::new(OverridesState {
+        lists: new_lists,
+        invalid: before.invalid.clone(),
+    });
+    *state.overrides.write() = Arc::clone(&after);
+    invalidate_changed(&state.cache, &before.lists, &after.lists);
+    let persisted = match state.persist.paths.as_ref() {
+        Some(paths) => match after.lists.save(&paths.overrides, &after.invalid) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!("failed to persist an admin override-list change to disk: {err}");
+                false
+            }
+        },
+        None => false,
+    };
+    Ok(overrides_view(&after.lists, persisted))
+}
+
+/// `POST /admin/overrides/add` (T-47) — method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check, not re-checked here. Same CSRF
+/// gate and body-size cap as `/admin/config`. An unparseable `pattern` is
+/// `400`; the add itself is idempotent
+/// (see [`OverrideLists::with_entry_added`]).
+async fn serve_admin_overrides_add<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(request) = serde_json::from_slice::<OverrideAddRequest>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_overrides_change(state, |current| {
+        current.with_entry_added(&request.pattern, request.list)
+    }) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// `POST /admin/overrides/remove` (T-47) — method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check, not re-checked here. Same CSRF
+/// gate and body-size cap as `/admin/config`. Removal is infallible
+/// (see [`OverrideLists::with_entry_removed`]) — the `Err` arm below is
+/// structurally unreachable for this call site, kept only because
+/// [`apply_overrides_change`]'s signature is shared with the add route.
+async fn serve_admin_overrides_remove<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(request) = serde_json::from_slice::<OverrideRemoveRequest>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_overrides_change(state, |current| {
+        Ok(current.with_entry_removed(&request.domain, request.is_wildcard, request.list))
+    }) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
 }
 
@@ -820,6 +1055,9 @@ where
         ADMIN_CONFIG_PATH => serve_admin_config(req, &state).await,
         ADMIN_RESET_PATH => serve_admin_reset(req, &state).await,
         ADMIN_SHUTDOWN_PATH => serve_admin_shutdown(req, &state).await,
+        ADMIN_OVERRIDES_PATH => serve_admin_overrides(&state),
+        ADMIN_OVERRIDES_ADD_PATH => serve_admin_overrides_add(req, &state).await,
+        ADMIN_OVERRIDES_REMOVE_PATH => serve_admin_overrides_remove(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
@@ -835,12 +1073,16 @@ where
 mod tests {
     use super::{
         content_type_is_dns_message, resolve_doh_request, serve, wire_bytes_from_get, AppState,
-        DohRequestError, PersistPaths, PersistTarget, RuntimeSettings, MAX_MESSAGE_SIZE,
+        DohRequestError, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
+        MAX_MESSAGE_SIZE,
     };
-    use crate::admin::{AdminConfigUpdate, AdminStatusResponse};
-    use crate::cache::{Cache, CacheConfig};
+    use crate::admin::{
+        AdminConfigUpdate, AdminStatusResponse, OverrideAddRequest, OverrideListsResponse,
+        OverrideRemoveRequest,
+    };
+    use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::ResolverConfig;
-    use crate::overrides::OverrideLists;
+    use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::QueryLog;
     use crate::quorum::EnabledProviders;
     use crate::timeout::TimeoutConfig;
@@ -1157,9 +1399,23 @@ mod tests {
     }
 
     fn state_with_persist(client: MockClient, persist: PersistTarget) -> Arc<AppState<MockClient>> {
+        state_with_overrides_and_persist(client, OverrideLists::empty(), persist)
+    }
+
+    /// Like [`state_with_persist`], but with pre-populated override lists
+    /// (T-47) — tests exercising `/admin/overrides` need an existing entry
+    /// to remove/observe conflicts against, not just an empty starting list.
+    fn state_with_overrides_and_persist(
+        client: MockClient,
+        overrides: OverrideLists,
+        persist: PersistTarget,
+    ) -> Arc<AppState<MockClient>> {
         Arc::new(AppState::new(
             client,
-            OverrideLists::empty(),
+            OverridesState {
+                lists: overrides,
+                invalid: Vec::new(),
+            },
             RuntimeSettings {
                 providers: EnabledProviders::default(),
                 timeout: TimeoutConfig::default(),
@@ -1933,6 +2189,390 @@ mod tests {
         );
     }
 
+    fn admin_overrides_add_request(pattern: &str, list: ListKind) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&OverrideAddRequest {
+            pattern: pattern.to_string(),
+            list,
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/overrides/add")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    fn admin_overrides_remove_request(
+        domain: &str,
+        is_wildcard: bool,
+        list: ListKind,
+    ) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&OverrideRemoveRequest {
+            domain: domain.to_string(),
+            is_wildcard,
+            list,
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/overrides/remove")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    #[tokio::test]
+    async fn serve_admin_overrides_returns_the_current_lists_and_conflicts() {
+        let overrides = OverrideLists::from_entries_for_test(vec![
+            OverrideEntry {
+                domain: "example.com".to_string(),
+                is_wildcard: false,
+                list: ListKind::Allowlist,
+            },
+            OverrideEntry {
+                domain: "example.com".to_string(),
+                is_wildcard: false,
+                list: ListKind::Blocklist,
+            },
+        ]);
+        let state = state_with_overrides_and_persist(
+            no_op_client(),
+            overrides,
+            PersistTarget {
+                port: 8443,
+                paths: None,
+            },
+        );
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/overrides")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<OverrideListsResponse>(&bytes) else {
+            panic!("response body must decode as OverrideListsResponse");
+        };
+        assert_eq!(body.allowlist.len(), 1);
+        assert_eq!(body.blocklist.len(), 1);
+        assert_eq!(body.conflicts, vec!["example.com".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_overrides_add_appends_a_new_entry_and_it_is_visible_on_the_next_get() {
+        let state = state_with(no_op_client());
+        let response = match serve(
+            admin_overrides_add_request("example.com", ListKind::Blocklist),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<OverrideListsResponse>(&bytes) else {
+            panic!("response body must decode as OverrideListsResponse");
+        };
+        assert_eq!(body.blocklist.len(), 1);
+        assert_eq!(body.blocklist[0].domain, "example.com");
+        assert!(!body.blocklist[0].is_wildcard);
+        // T-47, advisor-caught: `state_with` sets `paths: None`, so this
+        // change live-applies but can't persist - the response must say so,
+        // the same "in-memory change succeeded, disk write didn't" honesty
+        // `AdminConfigUpdate`'s own `persisted` field already established.
+        assert!(!body.persisted);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_overrides_add_rejects_an_invalid_pattern() {
+        let state = state_with(no_op_client());
+        let response = match serve(
+            admin_overrides_add_request("*.*.broken.example", ListKind::Blocklist),
+            state,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Same CSRF concern as `/admin/config` (T-52) - see
+    // `content_type_is_json`'s own doc comment. A missing/`text/plain`
+    // `Content-Type` is a CORS *simple* request with no preflight, so this
+    // gate is the whole defense, not a format nicety.
+    #[tokio::test]
+    async fn serve_admin_overrides_add_rejects_a_missing_content_type() {
+        let Ok(json) = serde_json::to_vec(&OverrideAddRequest {
+            pattern: "example.com".to_string(),
+            list: ListKind::Blocklist,
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/overrides/add")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_overrides_remove_removes_the_matching_entry() {
+        let overrides = OverrideLists::from_entries_for_test(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+        let state = state_with_overrides_and_persist(
+            no_op_client(),
+            overrides,
+            PersistTarget {
+                port: 8443,
+                paths: None,
+            },
+        );
+        let response = match serve(
+            admin_overrides_remove_request("example.com", false, ListKind::Blocklist),
+            state,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<OverrideListsResponse>(&bytes) else {
+            panic!("response body must decode as OverrideListsResponse");
+        };
+        assert!(body.blocklist.is_empty());
+    }
+
+    // T-47, advisor-caught before implementing: `OverrideLists` only ever
+    // holds successfully-*parsed* entries - a save() triggered by an
+    // unrelated add must not silently delete a pre-existing line that failed
+    // to parse. Proves the raw line survives a save()+reload round trip
+    // through the actual admin route, not just through `OverrideLists::save`
+    // directly (already covered in `overrides.rs`'s own unit test).
+    #[tokio::test]
+    async fn serve_admin_overrides_add_persists_and_preserves_a_pre_existing_invalid_line() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &overrides_path,
+            "blocklist = [\"already-here.test\", \"*.*.broken.example\"]\n",
+        ) {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+        let (overrides, invalid) = match OverrideLists::load(&overrides_path) {
+            Ok(result) => result,
+            Err(err) => panic!("fixture file must load: {err}"),
+        };
+        assert_eq!(invalid.len(), 1, "fixture must contain one invalid line");
+        let state = Arc::new(AppState::new(
+            no_op_client(),
+            OverridesState {
+                lists: overrides,
+                invalid,
+            },
+            RuntimeSettings {
+                providers: EnabledProviders::default(),
+                timeout: TimeoutConfig::default(),
+            },
+            Cache::new(&CacheConfig::default()),
+            CacheConfig::default(),
+            QueryLog::default(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: dir.path().join("resolver_config.toml"),
+                    overrides: overrides_path.clone(),
+                }),
+            },
+        ));
+
+        let response = match serve(
+            admin_overrides_add_request("new.example.com", ListKind::Allowlist),
+            state,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<OverrideListsResponse>(&bytes) else {
+            panic!("response body must decode as OverrideListsResponse");
+        };
+        assert!(body.persisted, "a real path is set, so this must persist");
+
+        let (reloaded, reloaded_invalid) = match OverrideLists::load(&overrides_path) {
+            Ok(result) => result,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        let block_decision = match reloaded.decision("already-here.test") {
+            Ok(decision) => decision,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        assert_eq!(
+            block_decision,
+            Some(ListKind::Blocklist),
+            "the pre-existing valid entry must survive"
+        );
+        let allow_decision = match reloaded.decision("new.example.com") {
+            Ok(decision) => decision,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        assert_eq!(allow_decision, Some(ListKind::Allowlist));
+        assert_eq!(
+            reloaded_invalid.len(),
+            1,
+            "the pre-existing invalid line must survive the save, not be silently dropped"
+        );
+        assert_eq!(reloaded_invalid[0].raw, "*.*.broken.example");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_overrides_add_invalidates_a_cached_verdict_for_the_newly_blocked_domain() {
+        let state = state_with(no_op_client());
+        let Ok(key) = CacheKey::new("cache-inval.test", RecordType::A) else {
+            panic!("valid fixture domain");
+        };
+        state
+            .cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    std::time::Duration::from_secs(300),
+                ),
+            )
+            .await;
+        assert!(state.cache.get(&key).await.is_some());
+
+        let response = match serve(
+            admin_overrides_add_request("cache-inval.test", ListKind::Blocklist),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            state.cache.get(&key).await.is_none(),
+            "adding a blocklist entry must invalidate the domain's cached verdict"
+        );
+    }
+
+    // Same discipline as `concurrent_admin_config_posts_leave_disk_matching_
+    // live_settings` (T-58), applied to `overrides_persist_lock` - but the
+    // property this asserts is the *stronger* one an advisor review flagged
+    // as the actual risk here: without the lock, two concurrent adds both
+    // read the same base list, each computes base+own-entry, and the second
+    // swap silently discards the first add - a genuine lost update, not just
+    // a disk/memory mismatch (both would still consistently show the losing
+    // state, so a weaker "disk matches live" assertion wouldn't catch it).
+    // Empirically confirmed, not assumed: with `overrides_persist_lock`
+    // temporarily reverted to a no-op, this test failed most runs under
+    // real OS-thread contention; with the lock in place, it passes
+    // consistently.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_admin_overrides_add_posts_lose_no_updates() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let overrides_path = dir.path().join("overrides.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: dir.path().join("resolver_config.toml"),
+                    overrides: overrides_path.clone(),
+                }),
+            },
+        );
+
+        let domains = ["a.example.com", "b.example.com", "c.example.com"];
+        let mut handles = Vec::new();
+        for domain in domains {
+            let state = Arc::clone(&state);
+            handles.push(tokio::spawn(async move {
+                match serve(
+                    admin_overrides_add_request(domain, ListKind::Blocklist),
+                    state,
+                )
+                .await
+                {
+                    Ok(response) => response.status(),
+                    Err(err) => match err {},
+                }
+            }));
+        }
+        for handle in handles {
+            match handle.await {
+                Ok(status) => assert_eq!(status, StatusCode::OK),
+                Err(err) => panic!("admin overrides add task must not panic: {err}"),
+            }
+        }
+
+        let live = Arc::clone(&state.overrides.read());
+        let (reloaded, _) = match OverrideLists::load(&overrides_path) {
+            Ok(result) => result,
+            Err(err) => panic!("the persisted file must still load: {err}"),
+        };
+        for domain in domains {
+            let live_decision = match live.lists.decision(domain) {
+                Ok(decision) => decision,
+                Err(err) => panic!("expected Ok: {err}"),
+            };
+            assert_eq!(
+                live_decision,
+                Some(ListKind::Blocklist),
+                "{domain} must be present in the live list - a lost update if missing"
+            );
+            let disk_decision = match reloaded.decision(domain) {
+                Ok(decision) => decision,
+                Err(err) => panic!("expected Ok: {err}"),
+            };
+            assert_eq!(
+                disk_decision,
+                Some(ListKind::Blocklist),
+                "{domain} must be present in the persisted file"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn serve_routes_admin_ui_to_the_embedded_html_document() {
         let Ok(req) = Request::builder()
@@ -2058,6 +2698,9 @@ mod tests {
         ("/admin/config", &[Method::POST]),
         ("/admin/reset", &[Method::POST]),
         ("/admin/shutdown", &[Method::POST]),
+        ("/admin/overrides", &[Method::GET]),
+        ("/admin/overrides/add", &[Method::POST]),
+        ("/admin/overrides/remove", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),

@@ -12,8 +12,8 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheConfig, OverrideLists, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient,
-    ResolverConfig, RuntimeSettings, TimeoutConfig,
+    CacheConfig, InvalidEntry, OverrideLists, OverridesState, PersistPaths, PersistTarget,
+    QueryLog, ReqwestDohClient, ResolverConfig, RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -70,7 +70,7 @@ async fn main() {
         }
     };
 
-    let overrides = load_overrides(app_data.as_deref());
+    let (overrides, invalid_overrides) = load_overrides(app_data.as_deref());
 
     let runtime = RuntimeSettings {
         providers: resolver_config.providers,
@@ -99,7 +99,10 @@ async fn main() {
     // 1000 entries or 24 hours).
     let state = Arc::new(AppState::new(
         client,
-        overrides,
+        OverridesState {
+            lists: overrides,
+            invalid: invalid_overrides,
+        },
         runtime,
         Cache::new(&CacheConfig::default()),
         CacheConfig::default(),
@@ -197,17 +200,21 @@ async fn serve_until_shutdown(
 }
 
 /// Loads `overrides.toml` from `app_data` (SPEC.md §5: a plain,
-/// manually-edited TOML file, T-145 — T-46/T-47's UI writer is later work).
+/// manually-edited TOML file, T-145; T-47 added a live UI writer on top).
 /// `OverrideLists::load` already treats a missing file as "no overrides
 /// yet," so a first run with no file present starts empty rather than
 /// failing. A missing `app_data` (the app-data directory couldn't be
 /// resolved) is not fatal either — SPEC.md's user-safety principle:
 /// starting with no overrides is strictly better than refusing to start at
 /// all.
-fn load_overrides(app_data: Option<&Path>) -> OverrideLists {
+///
+/// Returns the invalid (unparseable) lines alongside the parsed lists
+/// (T-47) — `AppState` keeps both so a later admin-channel edit's `save()`
+/// writes them back verbatim instead of silently deleting them.
+fn load_overrides(app_data: Option<&Path>) -> (OverrideLists, Vec<InvalidEntry>) {
     let Some(dir) = app_data else {
         tracing::warn!("no app-data directory available, starting with empty override lists");
-        return OverrideLists::empty();
+        return (OverrideLists::empty(), Vec::new());
     };
     let toml_path = dir.join("overrides.toml");
     warn_if_legacy_json_sibling_exists(&toml_path, &dir.join("overrides.json"));
@@ -215,16 +222,16 @@ fn load_overrides(app_data: Option<&Path>) -> OverrideLists {
         Ok((overrides, invalid)) => {
             if !invalid.is_empty() {
                 tracing::warn!(
-                    "{} override-list entr{} rejected as invalid, ignored",
+                    "{} override-list entr{} rejected as invalid, kept for the next save",
                     invalid.len(),
                     if invalid.len() == 1 { "y" } else { "ies" }
                 );
             }
-            overrides
+            (overrides, invalid)
         }
         Err(err) => {
             tracing::warn!("failed to load override lists ({err}), starting with none");
-            OverrideLists::empty()
+            (OverrideLists::empty(), Vec::new())
         }
     }
 }

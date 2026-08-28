@@ -12,6 +12,14 @@
   <div id="app-body">
     <p>Завантаження…</p>
   </div>
+  <!-- T-47: kept outside #app-body, which the 2s status poll fully
+       replaces - a free-text "add domain" input living inside that
+       container would lose in-progress typing every refresh. This section
+       has its own independent fetch/render cycle instead (see main.js). -->
+  <div id="overrides-body" class="card">
+    <h3>Списки виключень</h3>
+    <p>Завантаження…</p>
+  </div>
   <script src="/admin/ui/main.js"></script>
 </body>
 </html>

@@ -8,6 +8,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-fifth slice done (T-47 — TASKS-DONE.md, one commit): the override-list editor on
+`/admin/ui` (allowlist/blocklist, add/remove, conflict highlighting) — the first real write path
+for `overrides.toml`, which previously had only `load()` (T-37) and no route exposing it to any
+client. This also removes the `save()` blocker T-46 shared with this task; T-46 itself stays open,
+now blocked only on the still-missing log screen/route (T-54). Plan-mode + advisor review of the
+plan *before* implementing (not just after) caught a real gap before any code existed: `OverrideLists`
+only ever holds successfully-*parsed* entries — a naive `save()` serializing just those would
+silently delete any pre-existing typo'd line from disk the moment an unrelated `add` fires,
+`InvalidEntry.raw`'s own doc comment had already named this exact future caller. Fixed structurally:
+new `dispatch::OverridesState { lists: OverrideLists, invalid: Vec<InvalidEntry> }` (`pub`, same
+"bundle what's always swapped together" reasoning as `PersistPaths`, and the same
+`clippy::too_many_arguments` fix T-147/T-148 already established) replaces `AppState.overrides:
+RwLock<Arc<OverrideLists>>` with `RwLock<Arc<OverridesState>>`; `OverrideLists::save(path, invalid)`
+takes the invalid lines as an explicit parameter and writes them back verbatim. Verified empirically,
+not just by unit test: hand-wrote a malformed `overrides.toml` line, loaded it via a real
+`POST /admin/reset`, added a new domain through the actual running `/admin/ui` in Chrome, and
+confirmed the malformed line survived on disk alongside the new entry. Two more advisor catches on
+the same plan review: the serialize-error variant (`OverrideError::Serialize`) is payload-free,
+mirroring the already-established `Parse` variant, rather than assuming (unverified) that
+`toml::ser::Error` doesn't echo its input the way the deserialize side was empirically proven to;
+and `save()` checks the serialized size against `MAX_OVERRIDES_FILE_SIZE` before writing, closing
+a gap where a UI-grown list could write a file `load()` would then refuse to read back. New
+`OverrideLists::with_entry_added`/`with_entry_removed` (pure, reuse the existing `parse_pattern`,
+return a new value rather than mutating) and three new routes (`GET /admin/overrides`,
+`POST /admin/overrides/add`/`remove`, added to both `ROUTES` and T-59's `EXPECTED_ADMIN_ROUTES`
+snapshot test) with their own `overrides_persist_lock` (deliberately separate from the existing
+`persist_lock`, an independent resource with its own file). **A second advisor catch on the
+concurrency test itself**: T-58's own concurrent-write test only proves disk matches live state —
+the weaker property here, since two concurrent adds without a lock would both read the same base
+list and the second swap would silently discard the first (a genuine lost update, not just a
+disk/memory mismatch, since both would still consistently show the losing state). The new test
+asserts the stronger property (all N concurrent adds present in both live state and on disk) and
+was empirically confirmed as a real regression test the same way T-58's was: 20/20 failures with
+the lock reverted, 20/20 passes with it restored. New DTOs `OverrideDomainView`/
+`OverrideListsResponse` in `admin.rs` — a genuine projection (split by list, `list` tag redundant
+once split), not a reuse of the internal `OverrideEntry` type, leaving T-53's open DTO-duplication
+question exactly as unresolved as before. UI (`index.html`/`main.js`/`style.css`): the new section
+lives outside `#app-body` (which the 2s status poll fully replaces) specifically so a free-text
+"add domain" input never loses in-progress typing to an unrelated timer tick; list rows render via
+`document.createElement`/`textContent`, not the string-interpolated `innerHTML` pattern the rest of
+the page uses — `admin_ui.rs`'s own module doc comment had already flagged this exact gap for a
+future domain-rendering screen, closed here rather than deferred again. Live Chrome verification:
+add/add-conflicting/remove all confirmed via real clicks and screenshots, console clean, disk state
+checked after each step. **Not verified this slice**: a full live DoH round-trip proving cache
+invalidation (the mechanism is proven via a real `Cache` instance in a dispatch-level unit test
+instead — a live round-trip would need hand-built DNS wire bytes, named as a real gap, not hidden).
+CONFIGURATION.md/UI-SPEC.md/`diagrams/ui-dto-model.md` updated to match (ground-truth ritual run,
+one diagram touched, four new DTO classes added). **A second, closing advisor review of the
+finished diff (before commit) caught two more real gaps**, neither visible to any gate or test that
+already existed: `apply_admin_reset` wrote `state.overrides` without taking `overrides_persist_lock`
+at all, so a concurrent `/admin/reset` and `POST /admin/overrides/add` could interleave into the
+same lost-update shape the add/add concurrency test had already fixed, just between two different
+routes — fixed by having reset take the same lock across its own reload-then-commit sequence, both
+locks' doc comments updated so the next reader doesn't re-derive the old (now wrong) "reset takes no
+lock" conclusion from `persist_lock`'s comment. Relatedly, `apply_overrides_change` re-read
+`state.overrides` after writing it (`after = Arc::clone(&state.overrides.read())`) instead of using
+the value it had just computed — redundant under the lock, but a latent bug if any future writer
+ever bypassed it; fixed by keeping `after` as a local value. Second: `OverrideListsResponse` had no
+`persisted` field, so a save failure (permissions, disk full, no path configured) live-applied
+silently with no way for the caller to know it wouldn't survive a restart — the exact "add a
+blocklist rule, restart, filtering is silently gone" failure class this project has fixed three
+times before without ever writing it down as a pattern (T-57, T-149, T-139). Fixed the same way
+`apply_admin_config` already does it (`persisted: bool`, set from the real save result), plus one
+`main.js` warning line rendered when it's `false`.
+
 Поза фазами, T-54 checked against its own premise (TASKS.md annotation, docs-only, no code,
 separate commit from T-134 above — a close and a non-close annotation don't belong in one commit,
 this repo's own `git log -S` habit of mining history for "was this already done?" depends on that):

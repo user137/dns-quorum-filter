@@ -31,6 +31,7 @@
 //! untested. The full chain is covered by T-52's manual end-to-end smoke
 //! test (TASKS-DONE.md).
 
+use crate::overrides::ListKind;
 use crate::query_log::{Decision, LogEntry};
 use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutMode;
@@ -104,6 +105,74 @@ pub struct AdminConfigUpdate {
     pub providers: EnabledProviders,
     /// The desired timeout mode.
     pub timeout_mode: TimeoutMode,
+}
+
+/// One override-list entry as shown to a client (T-47) — a projection of
+/// [`crate::overrides::OverrideEntry`], not a reuse of it directly: once an
+/// entry is already split into `OverrideListsResponse::allowlist`/
+/// `blocklist`, the internal type's `list` tag is redundant, so this is a
+/// genuine shape change (same class of DTO as [`AdminStats`] above), not a
+/// duplicate the T-53 open question (whether admin DTOs should ever reuse
+/// internal types directly) is about — that question is left exactly as
+/// open as it already was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideDomainView {
+    /// Normalized domain (never carries a `*.` prefix — see `is_wildcard`).
+    pub domain: String,
+    /// Whether this entry also matches subdomains (suffix match).
+    pub is_wildcard: bool,
+}
+
+/// The body of `GET /admin/overrides`, and echoed back by `POST
+/// /admin/overrides/add`/`POST /admin/overrides/remove` after applying a
+/// change (T-47) — same "always return the fresh live state" shape as
+/// [`AdminStatusResponse`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideListsResponse {
+    /// Every current allowlist entry.
+    pub allowlist: Vec<OverrideDomainView>,
+    /// Every current blocklist entry.
+    pub blocklist: Vec<OverrideDomainView>,
+    /// Domains present as a literal entry in both lists (SPEC.md §5,
+    /// UI-SPEC.md §3.3) — allowlist wins at resolution time, but the UI must
+    /// show this, not silently apply it.
+    pub conflicts: Vec<String>,
+    /// Whether the change that produced this response was also written to
+    /// `overrides.toml` on disk. Always `true` for a plain `GET`. A `POST
+    /// /admin/overrides/add`/`remove` that live-applies but fails to persist
+    /// still returns `false` here rather than an error — the in-memory
+    /// change already took effect and must not be reported as failed, but
+    /// the caller needs to know it won't survive a restart (advisor-caught
+    /// before commit: the first draft omitted this field, the same silent-
+    /// data-loss shape `AdminStatusResponse::persisted` already exists to
+    /// prevent for `resolver_config.toml`).
+    pub persisted: bool,
+}
+
+/// `POST /admin/overrides/add`'s body (T-47). `pattern` may carry a leading
+/// `*.` (the same wildcard convention `overrides.toml`'s own file format
+/// uses) — parsed and normalized server-side by
+/// [`crate::overrides::OverrideLists::with_entry_added`], not here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideAddRequest {
+    /// A raw domain pattern, e.g. `"example.com"` or `"*.example.com"`.
+    pub pattern: String,
+    /// Which list to add it to.
+    pub list: ListKind,
+}
+
+/// `POST /admin/overrides/remove`'s body (T-47) — identifies the entry by
+/// the full `(domain, is_wildcard, list)` tuple, not just `domain`, since a
+/// domain can legitimately have both an exact and a wildcard entry in the
+/// same list at once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverrideRemoveRequest {
+    /// The normalized domain (as shown in [`OverrideDomainView::domain`]).
+    pub domain: String,
+    /// Whether the entry to remove is the wildcard one.
+    pub is_wildcard: bool,
+    /// Which list to remove it from.
+    pub list: ListKind,
 }
 
 /// Reduces `entries` to [`AdminStats`]. `pub(crate)` — only `dispatch.rs`'s

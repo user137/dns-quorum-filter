@@ -18,17 +18,23 @@
 //! one layer up.
 
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
 use hickory_proto::ProtoError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::normalize_domain;
 
 /// Which override list an entry belongs to (SPEC.md §5, `diagrams/ui-dto-model.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Serialize`/`Deserialize` (T-47, `#[serde(rename_all = "snake_case")]` →
+/// `"allowlist"`/`"blocklist"` on the wire) — the admin channel's override
+/// add/remove requests carry this directly, matching UI-SPEC's own naming
+/// convention for the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ListKind {
     /// Domain is always allowed, regardless of the quorum verdict.
     Allowlist,
@@ -96,6 +102,13 @@ pub enum InvalidReason {
 /// reaching it requires deliberate field access, not an accidental log/debug
 /// print (same shape as `upstream::UpstreamError`/`error_kind()`, CLAUDE.md
 /// gotchas).
+///
+/// `Clone` (T-47): `AppState` keeps a live `Vec<InvalidEntry>` alongside the
+/// parsed lists so a `save()` triggered by an unrelated admin-channel edit
+/// can write these raw lines back verbatim instead of silently deleting
+/// them - the read side of that (an `Arc`-shared snapshot) needs to hand a
+/// caller its own owned copy.
+#[derive(Clone)]
 pub struct InvalidEntry {
     /// The raw, unparsed line from the file.
     pub raw: String,
@@ -134,9 +147,23 @@ pub enum OverrideError {
     Parse,
     /// The file exceeds [`MAX_OVERRIDES_FILE_SIZE`] — rejected before being
     /// read into memory (SPEC.md §8.1: "ліміт розміру, не необмежена
-    /// алокація"), not after.
+    /// алокація"), not after. [`OverrideLists::save`] (T-47) also returns
+    /// this if the *serialized* result would exceed the same limit, before
+    /// writing anything — otherwise a manually-grown list could write a file
+    /// this same `load` then refuses to read back.
     #[error("override list file exceeds the {MAX_OVERRIDES_FILE_SIZE}-byte size limit")]
     TooLarge,
+    /// [`OverrideLists::save`] (T-47) failed to serialize the lists to TOML.
+    ///
+    /// Deliberately carries **no** payload, same reasoning as [`Self::Parse`]
+    /// — this module's whole discipline around this file is "don't assume an
+    /// error type doesn't echo input, make the payload-free variant
+    /// structurally incapable of it" (see this module's own doc comment for
+    /// the empirical confirmation on the deserialize side); there's no
+    /// principled reason to trust the serialize direction more just because
+    /// a leak there is less likely in practice.
+    #[error("failed to serialize override lists to TOML")]
+    Serialize,
 }
 
 /// Upper bound on `overrides.toml`'s on-disk size, checked in [`OverrideLists::
@@ -163,7 +190,12 @@ pub(crate) const MAX_OVERRIDES_FILE_SIZE: u64 = 10 * 1024 * 1024;
 /// `#[serde(default)]` — that would be silent total loss of a list, a worse
 /// outcome than the single-bad-domain case design decision 9 guards against,
 /// and undetectable by the caller (caught by advisor review before commit).
-#[derive(Debug, Deserialize)]
+///
+/// `Serialize` (T-47): [`OverrideLists::save`] builds one of these from the
+/// current parsed entries plus any still-invalid raw lines, then serializes
+/// it — the same translation-layer role in the write direction that
+/// `Deserialize` already plays in the read direction.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OverrideListsFile {
     #[serde(default)]
@@ -374,6 +406,113 @@ impl OverrideLists {
             }
         }
         Ok((Self { entries }, invalid))
+    }
+
+    /// Every currently-loaded entry, both lists together (T-47) — the read
+    /// side `GET /admin/overrides` and [`Self::save`] both need.
+    #[must_use]
+    pub fn entries(&self) -> &[OverrideEntry] {
+        &self.entries
+    }
+
+    /// Returns a new [`OverrideLists`] with one more entry, parsed from
+    /// `raw_pattern` the same way [`Self::load`]'s file lines are (T-47,
+    /// reuses [`parse_pattern`] — no separate wildcard/normalization logic
+    /// for the admin-channel add path).
+    ///
+    /// Idempotent: adding a pattern that already resolves to an identical
+    /// `(domain, is_wildcard, list)` entry returns an unchanged clone rather
+    /// than a duplicate. Deliberately does **not** reject a pattern that
+    /// would create an allowlist/blocklist conflict with an existing entry —
+    /// SPEC.md §5 requires the UI to *show* such a conflict, not for adding
+    /// to refuse it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidReason`] if `raw_pattern` doesn't parse (same rules
+    /// as [`Self::load`]).
+    pub fn with_entry_added(
+        &self,
+        raw_pattern: &str,
+        list: ListKind,
+    ) -> Result<Self, InvalidReason> {
+        let (domain, is_wildcard) = parse_pattern(raw_pattern)?;
+        let mut entries = self.entries.clone();
+        let already_present = entries
+            .iter()
+            .any(|e| e.domain == domain && e.is_wildcard == is_wildcard && e.list == list);
+        if !already_present {
+            entries.push(OverrideEntry {
+                domain,
+                is_wildcard,
+                list,
+            });
+        }
+        Ok(Self { entries })
+    }
+
+    /// Returns a new [`OverrideLists`] with the entry matching
+    /// `(domain, is_wildcard, list)` removed (T-47) — the full tuple, not
+    /// just `domain`, since a domain can legitimately have both an exact and
+    /// a wildcard entry in the same list at once. Infallible and idempotent:
+    /// removing an entry that isn't present returns an unchanged clone.
+    #[must_use]
+    pub fn with_entry_removed(&self, domain: &str, is_wildcard: bool, list: ListKind) -> Self {
+        let entries = self
+            .entries
+            .iter()
+            .filter(|e| !(e.domain == domain && e.is_wildcard == is_wildcard && e.list == list))
+            .cloned()
+            .collect();
+        Self { entries }
+    }
+
+    /// Persists the current entries, plus any still-unparseable raw lines
+    /// from the last [`Self::load`]/`/admin/reset` (T-47), to `path` as TOML
+    /// — the write-side counterpart to [`Self::load`], mirroring
+    /// `config::ResolverConfig::save`'s shape exactly.
+    ///
+    /// `invalid` is a caller-supplied parameter, not a field on this type —
+    /// `OverrideLists` only ever holds successfully-parsed entries, so
+    /// without this parameter a `save()` triggered by an unrelated add/
+    /// remove would silently erase every pre-existing typo'd line from disk.
+    /// The caller (`dispatch.rs`'s `AppState`) is the one that actually
+    /// tracks `invalid` across reloads.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OverrideError::Serialize`] if serialization fails (not
+    /// expected for these field types), [`OverrideError::TooLarge`] if the
+    /// serialized result would exceed [`MAX_OVERRIDES_FILE_SIZE`] (checked
+    /// before anything is written), or [`OverrideError::Io`] if the write
+    /// itself fails.
+    pub fn save(&self, path: &Path, invalid: &[InvalidEntry]) -> Result<(), OverrideError> {
+        let mut file = OverrideListsFile {
+            allowlist: Vec::new(),
+            blocklist: Vec::new(),
+        };
+        for entry in &self.entries {
+            let pattern = if entry.is_wildcard {
+                format!("*.{}", entry.domain)
+            } else {
+                entry.domain.clone()
+            };
+            match entry.list {
+                ListKind::Allowlist => file.allowlist.push(pattern),
+                ListKind::Blocklist => file.blocklist.push(pattern),
+            }
+        }
+        for entry in invalid {
+            match entry.list {
+                ListKind::Allowlist => file.allowlist.push(entry.raw.clone()),
+                ListKind::Blocklist => file.blocklist.push(entry.raw.clone()),
+            }
+        }
+        let toml = toml::to_string(&file).map_err(|_| OverrideError::Serialize)?;
+        if u64::try_from(toml.len()).unwrap_or(u64::MAX) > MAX_OVERRIDES_FILE_SIZE {
+            return Err(OverrideError::TooLarge);
+        }
+        fs::write(path, toml).map_err(OverrideError::Io)
     }
 }
 
@@ -744,6 +883,160 @@ mod tests {
             !debug_output.contains(telltale),
             "Debug output must not contain the raw pattern text: {debug_output}"
         );
+    }
+
+    #[test]
+    fn entries_returns_every_entry_from_both_lists() {
+        let lists = OverrideLists {
+            entries: vec![
+                entry("a.example.com", false, ListKind::Allowlist),
+                entry("b.example.com", true, ListKind::Blocklist),
+            ],
+        };
+        assert_eq!(lists.entries().len(), 2);
+    }
+
+    #[test]
+    fn with_entry_added_appends_a_new_entry_without_mutating_the_original() {
+        let lists = OverrideLists::empty();
+        let updated = match lists.with_entry_added("example.com", ListKind::Blocklist) {
+            Ok(updated) => updated,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        assert_eq!(
+            updated.entries(),
+            [entry("example.com", false, ListKind::Blocklist)]
+        );
+        assert!(lists.entries().is_empty());
+    }
+
+    #[test]
+    fn with_entry_added_is_idempotent_on_an_exact_duplicate() {
+        let lists = OverrideLists {
+            entries: vec![entry("example.com", false, ListKind::Blocklist)],
+        };
+        let updated = match lists.with_entry_added("example.com", ListKind::Blocklist) {
+            Ok(updated) => updated,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        assert_eq!(updated.entries().len(), 1);
+    }
+
+    #[test]
+    fn with_entry_added_rejects_an_invalid_pattern() {
+        let lists = OverrideLists::empty();
+        assert!(lists
+            .with_entry_added("*.*.broken.example", ListKind::Blocklist)
+            .is_err());
+    }
+
+    #[test]
+    fn with_entry_removed_removes_only_the_matching_entry() {
+        let lists = OverrideLists {
+            entries: vec![
+                entry("example.com", false, ListKind::Blocklist),
+                entry("other.com", false, ListKind::Blocklist),
+            ],
+        };
+        let updated = lists.with_entry_removed("example.com", false, ListKind::Blocklist);
+        assert_eq!(
+            updated.entries(),
+            [entry("other.com", false, ListKind::Blocklist)]
+        );
+    }
+
+    #[test]
+    fn with_entry_removed_distinguishes_exact_from_wildcard_entries_for_the_same_domain() {
+        // A domain can legitimately have both an exact and a wildcard entry
+        // in the same list at once - removal must target the full tuple,
+        // not just `domain`.
+        let lists = OverrideLists {
+            entries: vec![
+                entry("example.com", false, ListKind::Blocklist),
+                entry("example.com", true, ListKind::Blocklist),
+            ],
+        };
+        let updated = lists.with_entry_removed("example.com", false, ListKind::Blocklist);
+        assert_eq!(
+            updated.entries(),
+            [entry("example.com", true, ListKind::Blocklist)]
+        );
+    }
+
+    #[test]
+    fn with_entry_removed_is_a_noop_when_no_entry_matches() {
+        let lists = OverrideLists {
+            entries: vec![entry("example.com", false, ListKind::Blocklist)],
+        };
+        let updated = lists.with_entry_removed("absent.com", false, ListKind::Blocklist);
+        assert_eq!(updated.entries(), lists.entries());
+    }
+
+    #[test]
+    fn save_then_load_round_trips_entries_and_preserves_invalid_lines() {
+        // The invalid line round-trips as *still invalid* after reload
+        // (it's the same unparseable text) - that's the actual property
+        // being proven: save() must not silently drop it just because it
+        // wasn't part of `OverrideLists`'s own successfully-parsed entries.
+        let lists = OverrideLists {
+            entries: vec![
+                entry("example.com", false, ListKind::Allowlist),
+                entry("bad.example.net", true, ListKind::Blocklist),
+            ],
+        };
+        let invalid = vec![InvalidEntry {
+            raw: "*.*.broken.example".to_string(),
+            list: ListKind::Blocklist,
+            reason: InvalidReason::UnexpectedWildcard,
+        }];
+        let file = match tempfile::NamedTempFile::new() {
+            Ok(file) => file,
+            Err(err) => panic!("failed to create temp file: {err}"),
+        };
+        if let Err(err) = lists.save(file.path(), &invalid) {
+            panic!("expected Ok: {err}");
+        }
+        let (loaded, loaded_invalid) = match OverrideLists::load(file.path()) {
+            Ok(result) => result,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        let allow_decision = match loaded.decision("example.com") {
+            Ok(decision) => decision,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        assert_eq!(allow_decision, Some(ListKind::Allowlist));
+        let block_decision = match loaded.decision("sub.bad.example.net") {
+            Ok(decision) => decision,
+            Err(err) => panic!("expected Ok: {err}"),
+        };
+        assert_eq!(block_decision, Some(ListKind::Blocklist));
+        assert_eq!(loaded_invalid.len(), 1);
+        assert_eq!(loaded_invalid[0].raw, "*.*.broken.example");
+        assert_eq!(loaded_invalid[0].list, ListKind::Blocklist);
+    }
+
+    #[test]
+    fn save_rejects_when_serialized_result_exceeds_the_size_limit() {
+        // Uses a single huge `InvalidEntry.raw` (arbitrary text, no domain
+        // parsing needed) to reach the size boundary cheaply, the same
+        // repeated-fixture trick `load_rejects_a_file_one_byte_over_the_
+        // size_limit` already uses on the read side - a real ~10 MiB fixture
+        // built from valid domain entries would need hundreds of thousands
+        // of them for no added coverage.
+        let lists = OverrideLists::empty();
+        let huge_raw =
+            "d".repeat(usize::try_from(super::MAX_OVERRIDES_FILE_SIZE + 1).unwrap_or(usize::MAX));
+        let invalid = vec![InvalidEntry {
+            raw: huge_raw,
+            list: ListKind::Blocklist,
+            reason: InvalidReason::InvalidDomain,
+        }];
+        // Never reached - `save` checks size before any filesystem write.
+        let unused_path = std::path::Path::new("unused.toml");
+        match lists.save(unused_path, &invalid) {
+            Err(OverrideError::TooLarge) => {}
+            other => panic!("expected OverrideError::TooLarge, got {other:?}"),
+        }
     }
 
     #[test]
