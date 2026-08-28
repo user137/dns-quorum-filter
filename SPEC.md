@@ -130,11 +130,22 @@ localhost, а не всього інтернету. Blast radius менший н
   довірений сертифікат після видалення програми — окремий баг безпеки.
 
 Встановлення в trust store (єдиний момент потреби підвищених прав — одноразово):
-- **Windows** — Certificate Store (`certutil` / `CertAddCertificateContextToStore`).
-- **macOS** — Keychain (`security add-trusted-cert`).
-- **Linux** — розкол між цілями: Chrome/Chromium і Firefox тримають окремі NSS DB
-  (`~/.pki/nss/db` і профільна NSS DB Firefox), плюс системний store. Нетривіально —
-  окремий epic, див. "Поза межами MVP".
+- **Windows** — Certificate Store (`certutil` / `CertAddCertificateContextToStore`), довіра
+  Chrome/Edge (обидва читають системний store). Емпірично підтверджено 2026-08-29: самопідписаний
+  leaf-сертифікат для Chrome треба саме в `Root` (Trusted Root Certification Authorities), не в
+  `TrustedPeople` — останнє не спрацювало на живому тесті, хоча концептуально мало б підійти для
+  довіри одному конкретному end-entity-сертифікату без CA-прав; `-user Root` не потребує адмін-прав,
+  але показує одноразовий діалог підтвердження від самої ОС.
+- **macOS** — Keychain (`security add-trusted-cert`), довіра Safari/Chrome.
+- **Firefox — окрема NSS-база на КОЖНІЙ платформі, не лише Linux.** Firefox ніколи не читає
+  системний trust store (ні Windows Certificate Store, ні macOS Keychain) — власна NSS-база
+  (`cert9.db`) у кожному профілі користувача, крос-платформно. Два механізми: (1) NSS-власний
+  `certutil` (інший бінарник, ніж Windows' `certutil.exe`, з пакета NSS/`nss-tools`) напряму пише в
+  профіль; (2) Mozilla Enterprise Policy — `policies.json` із ключем `Certificates.Install`,
+  офіційно підтримуваний механізм, Firefox сам імпортує сертифікат при старті, не потребує NSS-
+  бібліотеки в застосунку. Жоден з двох не автоматизований на Ф1 (нижче, T-132) — ручна інструкція.
+- **Linux** — додатково до Firefox-розколу вище, Chrome/Chromium на Linux теж тримає окрему NSS DB
+  (`~/.pki/nss/db`), не системний store. Нетривіально — окремий epic, див. "Поза межами MVP".
 
 ### 3. Quorum resolver
 
