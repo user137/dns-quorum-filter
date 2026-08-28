@@ -142,3 +142,22 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .override-item span:first-child { flex: 1 1 auto; word-break: break-all; }
 .override-item .conflict-note { color: var(--warn); font-size: 11.5px; }
 .override-item.conflict { background: var(--warn-soft); border-radius: 6px; padding-left: 0.4rem; }
+
+/* T-153: cache TTL/capacity editor (#cache-config-body, main.js) */
+.cache-config-flush-notice { font-size: 11.5px; color: var(--text-muted); margin: 0 0 0.6rem; }
+.cache-config-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.6rem; }
+.cache-config-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+  font-size: 12.8px;
+}
+.cache-config-row span { flex: 1 1 auto; }
+.cache-config-row input {
+  width: 8rem; padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: var(--paper); color: var(--text); font-size: 12.8px;
+}
+.cache-config-apply {
+  padding: 0.35rem 0.7rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-raised); color: var(--text); font-size: 12.3px;
+  cursor: pointer;
+}

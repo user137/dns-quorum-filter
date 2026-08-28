@@ -10,6 +10,7 @@ const statusPill = document.getElementById("status-pill");
 const statusText = document.getElementById("status-text");
 const appBody = document.getElementById("app-body");
 const overridesBody = document.getElementById("overrides-body");
+const cacheConfigBody = document.getElementById("cache-config-body");
 
 function setPill(ok, text) {
   statusPill.classList.toggle("is-bad", !ok);
@@ -367,3 +368,136 @@ async function refreshOverrides() {
 }
 
 refreshOverrides();
+
+// T-153: cache TTL/capacity editor. Same reasoning as the overrides section
+// above - a separate #cache-config-body DOM subtree, not part of
+// refresh()/render(), not on the 2s poll, own fetch/render cycle - number
+// inputs the user is actively editing must not lose their value to an
+// unrelated timer tick.
+
+async function getCacheConfig() {
+  const response = await fetch("/admin/cache-config");
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function applyCacheConfig(update) {
+  const response = await fetch("/admin/cache-config/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(update),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+const CACHE_CONFIG_FIELDS = [
+  { key: "clamp_min_secs", label: "Мін. TTL апстріму (с)" },
+  { key: "clamp_max_secs", label: "Макс. TTL апстріму (с)" },
+  { key: "block_verdict_ttl_secs", label: "TTL для BLOCK-вердикту (с)" },
+  { key: "stale_grace_secs", label: "Вікно stale-if-error (с)" },
+  { key: "max_capacity", label: "Максимум записів у кеші" },
+];
+
+function renderCacheConfig(data) {
+  cacheConfigBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Кеш";
+  cacheConfigBody.appendChild(heading);
+
+  // Same "silent data loss" concern as #overrides-body's own persisted
+  // warning (T-47) - a live-applied change that failed to persist must be
+  // visible, not just silently reflected in the response.
+  if (!data.persisted) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    cacheConfigBody.appendChild(notPersisted);
+  }
+
+  // T-153: a config change rebuilds the whole cache (moka has no live
+  // setter for max_capacity/its expiry policy - see CONFIGURATION.md's own
+  // explanation of why) - shown here so "Застосувати" isn't a surprise.
+  const flushNotice = document.createElement("p");
+  flushNotice.className = "cache-config-flush-notice";
+  flushNotice.textContent =
+    "Застосування цих значень повністю скидає поточний кеш вердиктів.";
+  cacheConfigBody.appendChild(flushNotice);
+
+  const inputs = {};
+  const form = document.createElement("div");
+  form.className = "cache-config-form";
+  CACHE_CONFIG_FIELDS.forEach(({ key, label }) => {
+    const row = document.createElement("label");
+    row.className = "cache-config-row";
+    const span = document.createElement("span");
+    span.textContent = label;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.step = "1";
+    input.value = String(data[key]);
+    inputs[key] = input;
+    row.appendChild(span);
+    row.appendChild(input);
+    form.appendChild(row);
+  });
+  cacheConfigBody.appendChild(form);
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+
+  const applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "cache-config-apply";
+  applyBtn.textContent = "Застосувати";
+  applyBtn.addEventListener("click", async () => {
+    const update = {};
+    CACHE_CONFIG_FIELDS.forEach(({ key }) => {
+      update[key] = Number(inputs[key].value);
+    });
+    // Client-side mirror of the server's own from_secs() check - belt and
+    // suspenders, not a replacement for it (the server still rejects an
+    // inverted range independently).
+    if (update.clamp_min_secs > update.clamp_max_secs) {
+      errorLine.textContent =
+        "Мін. TTL апстріму не може перевищувати макс. TTL апстріму.";
+      return;
+    }
+    try {
+      errorLine.textContent = "";
+      renderCacheConfig(await applyCacheConfig(update));
+    } catch (err) {
+      errorLine.textContent = `Не вдалося застосувати: ${(err && err.message) || String(err)}`;
+    }
+  });
+  cacheConfigBody.appendChild(applyBtn);
+  cacheConfigBody.appendChild(errorLine);
+}
+
+function renderCacheConfigError(err) {
+  cacheConfigBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Кеш";
+  cacheConfigBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  cacheConfigBody.appendChild(panel);
+}
+
+async function refreshCacheConfig() {
+  try {
+    renderCacheConfig(await getCacheConfig());
+  } catch (err) {
+    renderCacheConfigError(err);
+  }
+}
+
+refreshCacheConfig();

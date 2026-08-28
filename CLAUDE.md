@@ -8,6 +8,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-sixth slice done (T-153 — TASKS-DONE.md, **two commits**, advisor-recommended split
+given the size — backend fully green standalone before the UI card landed, same split precedent as
+T-52/T-149): `cache::CacheConfig`'s five fields (`clamp_min`/`clamp_max`/`block_verdict_ttl`/
+`stale_grace`/`max_capacity`, SPEC.md §4.1) gained the same "TOML-start + live admin-channel write"
+path `providers`/`timeout_mode` already had (T-52/T-144) — a new `[cache]` table in
+`resolver_config.toml` plus a **separate** `GET /admin/cache-config`/`POST /admin/cache-config/apply`
+route (not folded into `AdminConfigUpdate` — an ordinary provider/timeout toggle must never carry
+and thereby flush the cache config as a side effect). **Key finding verified by reading vendored
+source before designing anything on top of it**: `moka::future::Cache` has no live setter for
+`max_capacity`/its `Expiry` policy (`Cache::policy()` is a read-only snapshot, `moka` 0.12.16) — a
+cache-config change therefore always rebuilds a whole new `Cache` and swaps it in, never patches
+one field in place. New `dispatch::CacheState { cache, config }`, `AppState.cache` retyped to
+`RwLock<Arc<CacheState>>` (same snapshot-read shape already used for `overrides`). **Advisor review
+of the plan caught two real bugs before any code existed**: (1) `cache::clamp_ttl`'s `Duration::
+clamp(min, max)` panics unconditionally (release included) if `min > max` — relying on boundary
+validation alone to prevent that would be exactly the "safe only by a hand-traced cross-module
+invariant" anti-pattern global CLAUDE.md's bounds-safety rule forbids; fixed structurally
+(`.max(min).min(max)`, never panics regardless of caller discipline), empirically confirmed both
+ways (reverted to `.clamp()`, watched the new test panic with `assertion failed: min <= max`;
+restored, 260/260 green). (2) One validating constructor owned by `cache.rs`
+(`CacheConfig::from_secs`/`to_secs()`), not duplicated in `config.rs` and `dispatch.rs` separately —
+both callers go through the same `clamp_min <= clamp_max` check `clamp_ttl` depends on structurally
+holding. **A third bug, also advisor-caught**: `/admin/config` and the new cache-config route now
+write into the *same* `resolver_config.toml` — two independent locks guarding that one file would
+reproduce the exact disk-vs-live divergence T-58's `persist_lock` already exists to prevent, one
+level up. Fixed by sharing `persist_lock` between both routes, each `save()` snapshotting the
+*other* field's live value too so the file always reflects both. **`apply_admin_reset` also had to
+start acquiring `persist_lock`** (the mirror-image gap of T-47's `overrides_persist_lock` catch, one
+field over) — empirically confirmed via revert-and-loop (1/20 failures reverted, a narrower window
+than T-58's 16/20 since this handler does far less work between the two lock acquisitions it would
+otherwise race on; 20/20 restored) — and reset now rebuilds the cache via `Cache::new(&config.cache)`
+instead of a plain `clear()`, strictly safer against a racing query (finishes against the orphaned
+`Arc`-cloned old instance rather than racing a live mutation). **A fourth catch**: the first-draft
+flush test ("insert, apply, assert `cache.get` is `None`") would pass vacuously against any
+brand-new empty `Cache` — replaced with a real property test via `resolve_doh_request` against a
+`MockClient` call counter, proving the second identical query actually re-queries upstream after an
+apply, not just that the swap happened. UI card ("Кеш", a standalone section — T-153's own text left
+this open, decided explicitly since no "Розширені" section exists yet to fold it into) mirrors T-47's
+overrides card exactly: outside the 2s-polled `#app-body`, own fetch/render cycle, client-side
+mirror of the server's `clamp_min <= clamp_max` check (belt-and-suspenders, not a replacement).
+Manually verified against the running binary (both commits): GET/POST round-trip, persistence to
+disk, inverted range → 400, missing Content-Type → 415, a real DoH query still resolves after the
+cache swap, clean graceful shutdown; live Chrome pass on the UI card confirmed persisted values
+load on open, edit+apply round-trips through the real backend and persists to disk (checked by
+reading the file), and the client-side validator blocks an invalid submission without touching the
+server, console clean throughout. `CONFIGURATION.md`/`UI-SPEC.md`/`diagrams/ui-dto-model.md`
+updated (new `[cache]` table docs including the "this flushes the cache" warning, new DTO classes
+`CacheConfigView`/`CacheConfigUpdate`).
+
 Фаза 1, twenty-fifth slice done (T-47 — TASKS-DONE.md, one commit): the override-list editor on
 `/admin/ui` (allowlist/blocklist, add/remove, conflict highlighting) — the first real write path
 for `overrides.toml`, which previously had only `load()` (T-37) and no route exposing it to any
