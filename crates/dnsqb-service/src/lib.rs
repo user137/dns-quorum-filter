@@ -140,7 +140,8 @@ pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
 };
 pub use cache::{
-    chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
+    chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError,
+    CacheConfigSecs, CacheEntry, CacheKey, Verdict,
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use config::{ConfigError, ResolverConfig};

@@ -45,9 +45,19 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
 слухача) `GET /admin/status` і `POST /admin/config` дають живий контроль над
 `providers`/`timeout_mode`: зміна застосовується миттєво (без рестарту) і персистується назад у
 `resolver_config.toml`, якщо той успішно завантажився при старті. `POST /admin/reset` (T-149) —
-м'який reset: перечитує обидва TOML-файли з диска, очищує кеш і лог запитів; **не** рестарт
-OS-процесу. Деталі й формат у
+м'який reset: перечитує обидва TOML-файли з диска, перебудовує кеш із щойно перечитаного
+`[cache]` (T-153 — не просто `clear()`, див. `apply_admin_reset`'s власний doc comment) і
+очищує лог запитів; **не** рестарт OS-процесу. Деталі й формат у
 [`CONFIGURATION.md`](CONFIGURATION.md#адмін-канал--живий-запис-providerstimeout_mode-t-52).
+
+`GET /admin/overrides` і `POST /admin/overrides/add`/`/admin/overrides/remove` (T-47) — той самий
+канал, окремий `overrides_persist_lock` (незалежний ресурс, окремий файл `overrides.toml`), живий
+запис allowlist/blocklist. `GET /admin/cache-config` і `POST /admin/cache-config/apply` (T-153) —
+живе редагування `CacheConfig` (TTL-межі, `block_verdict_ttl`, `stale_grace`, `max_capacity`);
+поділяє `persist_lock` із `/admin/config`, бо обидва пишуть у той самий фізичний файл
+(`resolver_config.toml`); застосування завжди перебудовує кеш заново (`moka` не має живого
+сеттера для `max_capacity`/`Expiry` — див. CONFIGURATION.md), тобто скидає всі закешовані
+вердикти, навіть якщо змінилось лише одне поле.
 `AdminClient` (пінінг TLS на конкретний `cert.pem`, що вже персистує цей сервіс, не системний
 trust store й не вимкнена перевірка сертифіката) — програмний клієнт цього каналу.
 `POST /admin/shutdown` (T-149) — окремий, найвищого blast radius ендпоінт цього каналу: шле

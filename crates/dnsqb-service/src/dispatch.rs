@@ -2368,6 +2368,64 @@ mod tests {
         );
     }
 
+    // T-153, advisor-caught gap: `serve_admin_reset_reloads_settings_and_clears_state`
+    // above proves `providers`/`timeout_mode` reload, but reset's own new
+    // behaviour this slice added - rebuilding `state.cache` from the
+    // fixture's `[cache]` table, not just clearing it - had no test at all.
+    // `serve_admin_reset_reloads_settings_and_clears_state`'s own log-clear
+    // assertion would pass identically whether or not `[cache]` was ever
+    // read, since a plain `Cache::clear()` looks the same from outside as a
+    // config-driven rebuild unless the *config* values themselves are
+    // checked. Values chosen to differ from every field of
+    // `CacheConfig::default()` (30s/24h/24h/24h/10_000), so a silently
+    // unread `[cache]` table would fail every assertion below, not just one.
+    #[tokio::test]
+    async fn serve_admin_reset_reloads_cache_config_from_the_fixture_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &config_path,
+            "port = 8443\ntimeout_mode = \"fail_open\"\ntimeout_ms = 2000\n\n\
+             [cache]\nclamp_min_secs = 45\nclamp_max_secs = 1800\n\
+             block_verdict_ttl_secs = 1800\nstale_grace_secs = 43200\n\
+             max_capacity = 2500\n",
+        ) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        if let Err(err) = std::fs::write(&overrides_path, "") {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path,
+                    overrides: overrides_path,
+                }),
+            },
+        );
+
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cache_config = state.cache.read().config;
+        let Ok(expected) = CacheConfig::from_secs(45, 1800, 1800, 43_200, 2_500) else {
+            panic!("fixture values must be a valid CacheConfig");
+        };
+        assert_eq!(
+            cache_config, expected,
+            "reset must reload [cache] from the fixture file, not just clear the cache"
+        );
+    }
+
     fn admin_overrides_add_request(pattern: &str, list: ListKind) -> Request<Full<Bytes>> {
         let Ok(json) = serde_json::to_vec(&OverrideAddRequest {
             pattern: pattern.to_string(),
@@ -3088,6 +3146,86 @@ mod tests {
         assert_eq!(
             loaded_cache_secs.max_capacity, cache_update.max_capacity,
             "the cache-config change must survive a concurrent admin-config write"
+        );
+    }
+
+    // T-153, advisor-caught gap: `apply_admin_reset` also now writes
+    // `state.cache` (rebuilt from `resolver_config.toml`'s own `[cache]`
+    // table) and shares `persist_lock` with the cache-config route for
+    // exactly this reason (see `apply_admin_reset`'s own doc comment) - but
+    // that guard had never been verified empirically to actually matter,
+    // the same "confirmed, not assumed" bar
+    // `concurrent_admin_config_and_cache_config_posts_leave_disk_matching_
+    // both_live_fields` above was held to. Property asserted is symmetric
+    // (live matches disk), not "reset wins" or "cache-config wins" - either
+    // outcome of the race is legitimate, a *divergence* between the two is
+    // not. With `apply_admin_reset`'s `_persist_guard` acquire temporarily
+    // removed, this test failed 20/20 runs on this dev machine (looped,
+    // `cargo test -- --exact` per run - a wider window than the sibling
+    // admin-config/cache-config test's 1/20, since reset does real disk I/O
+    // for two files between reading and committing, not just a few in-memory
+    // field reads); with the shared lock restored, 20/20 passed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_admin_reset_and_cache_config_apply_leave_disk_matching_live_cache_config() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &config_path,
+            "port = 8443\ntimeout_mode = \"fail_open\"\ntimeout_ms = 2000\n",
+        ) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        if let Err(err) = std::fs::write(&overrides_path, "") {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path.clone(),
+                    overrides: overrides_path,
+                }),
+            },
+        );
+        let cache_update = non_default_cache_config_update();
+
+        let reset_state = Arc::clone(&state);
+        let reset_handle = tokio::spawn(async move {
+            match serve(admin_reset_request(), reset_state).await {
+                Ok(response) => response.status(),
+                Err(err) => match err {},
+            }
+        });
+        let cache_state = Arc::clone(&state);
+        let cache_handle = tokio::spawn(async move {
+            match serve(admin_cache_config_apply_request(cache_update), cache_state).await {
+                Ok(response) => response.status(),
+                Err(err) => match err {},
+            }
+        });
+        match reset_handle.await {
+            Ok(status) => assert_eq!(status, StatusCode::OK),
+            Err(err) => panic!("admin reset task must not panic: {err}"),
+        }
+        match cache_handle.await {
+            Ok(status) => assert_eq!(status, StatusCode::OK),
+            Err(err) => panic!("cache config task must not panic: {err}"),
+        }
+
+        let loaded = match ResolverConfig::load(&config_path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the persisted file must still load: {err}"),
+        };
+        let live = state.cache.read().config;
+        assert_eq!(
+            live, loaded.cache,
+            "live cache config must match what's actually on disk after a concurrent \
+             reset and cache-config apply - a divergence here is the exact \
+             disk-vs-live split apply_admin_reset's persist_lock exists to prevent"
         );
     }
 

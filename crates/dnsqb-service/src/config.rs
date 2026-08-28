@@ -84,10 +84,11 @@ pub enum ConfigError {
 /// [`ResolverConfig::load`] before any of it is read into memory — reachable
 /// live via `POST /admin/reset` (T-149), not just at startup. A separate,
 /// much smaller constant than `overrides::MAX_OVERRIDES_FILE_SIZE`
-/// deliberately, not a shared one — this file holds four scalar fields plus
-/// a small nested table, not an open-ended domain list, so 64 KiB (the same
-/// order of magnitude as `dispatch::MAX_MESSAGE_SIZE`) is already generous
-/// for even a heavily hand-commented file.
+/// deliberately, not a shared one — this file holds a handful of scalar
+/// fields plus two small nested tables (`[providers]`, T-148; `[cache]`,
+/// T-153), not an open-ended domain list, so 64 KiB (the same order of
+/// magnitude as `dispatch::MAX_MESSAGE_SIZE`) is already generous for even a
+/// heavily hand-commented file.
 pub(crate) const MAX_CONFIG_FILE_SIZE: u64 = 64 * 1024;
 
 /// Resolver config, loaded once at startup (T-144). `Copy` — small and
