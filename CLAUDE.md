@@ -8,6 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Поза фазами, T-54 checked against its own premise (TASKS.md annotation, docs-only, no code,
+separate commit from T-134 above — a close and a non-close annotation don't belong in one commit,
+this repo's own `git log -S` habit of mining history for "was this already done?" depends on that):
+found genuinely still open, not narrowable-to-closed like T-55/T-59/T-60 were — those found
+existing behavior to credit, this one has nothing built to credit. Confirmed via grep:
+`query_log.rs`'s types (`Decision`/`DecisionSource`/`LogEntry`/`VoterVerdict`) carry zero
+`Serialize`/`Deserialize` derives, and `dispatch::ROUTES` has no log-exposing route at all — only
+`/admin/status`/`/admin/config`/`/admin/reset`/`/admin/shutdown`/`/admin/ui*`. T-54's own "mirror to
+a TS discriminated union" framing is also stale post-T-149 (no TS frontend exists) — but that's
+already covered generically by the existing T-149 blockquote at the top of SPEC.md §8, so no
+further SPEC.md/diagram edit was needed, just the TASKS.md annotation. T-54 stays open, blocked on
+a log-exposing endpoint/screen (adjacent to T-46/T-47's scope) that doesn't exist yet.
+
 Поза фазами, T-134 done (TASKS-DONE.md, docs-only, no code): investigated a technical mitigation
 for silent browser DoH fallback (SPEC.md §"Відкриті питання" п.10), the same "research, not
 implementation" precedent as T-14/T-141. An advisor review before starting split what looked like
