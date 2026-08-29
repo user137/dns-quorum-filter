@@ -133,6 +133,7 @@ mod query_log;
 mod quorum;
 mod timeout;
 mod tls;
+mod trust_store;
 mod upstream;
 mod wire;
 
@@ -163,6 +164,7 @@ pub use quorum::{
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
+pub use trust_store::{ensure_installed, uninstall, TrustStoreError, TrustStoreOutcome};
 pub use upstream::{
     doh_get_url, ecs_option_for_upstream, DohClient, Provider, ReqwestDohClient, UpstreamError,
     BASELINE_DOH_URL,

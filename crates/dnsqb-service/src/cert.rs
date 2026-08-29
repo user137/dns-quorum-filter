@@ -1,7 +1,8 @@
 //! Self-signed leaf certificate generation (SPEC.md §2, T-48) and disk
 //! persistence (T-50) for the local `DoH` listener. This module deliberately
-//! does not: install the cert into an OS trust store (T-49 — a manual, human
-//! step at this phase), rotate an existing cert (T-69), decide whether to
+//! does not: install the cert into an OS trust store (`trust_store.rs`,
+//! T-49 — a confirm-gated `dnsqb-tray` action, not a manual `certutil`
+//! recipe, as of T-49), rotate an existing cert (T-69), decide whether to
 //! load a previously-persisted cert instead of regenerating one (a future
 //! `main.rs` listener-wiring decision), or store the private key in a
 //! platform secure-storage API (T-67, Фаза 2 — DPAPI/Keychain/Secret
@@ -56,6 +57,15 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::paths;
 
+/// Subject `CommonName` this project's leaf certificate always carries —
+/// shared with `trust_store.rs`, which matches on it to enumerate every
+/// `CurrentUser\Root` entry this project has ever installed (T-49). A fixed
+/// CN is exactly what makes that enumeration correct there; it is
+/// deliberately *not* used as a precise "is this exact cert trusted?" check
+/// (`trust_store.rs` uses the certificate's own SHA-1 thumbprint for that —
+/// see its module doc comment for why CN alone would be wrong there).
+pub(crate) const CERT_COMMON_NAME: &str = "dns-quorum-filter local DoH";
+
 /// Errors generating the self-signed leaf certificate.
 #[derive(Debug, thiserror::Error)]
 pub enum CertError {
@@ -108,7 +118,7 @@ pub fn generate_self_signed_cert() -> Result<CertifiedKey<KeyPair>, CertError> {
     params.is_ca = IsCa::ExplicitNoCa;
 
     let mut distinguished_name = DistinguishedName::new();
-    distinguished_name.push(DnType::CommonName, "dns-quorum-filter local DoH");
+    distinguished_name.push(DnType::CommonName, CERT_COMMON_NAME);
     params.distinguished_name = distinguished_name;
 
     let signing_key = KeyPair::generate()?;

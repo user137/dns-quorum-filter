@@ -41,6 +41,7 @@ mod browser;
 mod status;
 
 use dnsqb_service::{app_data_dir, AdminClient, AdminClientError, ResolverConfig};
+use dnsqb_service::{ensure_installed, uninstall as uninstall_trust_store};
 use status::TrayStatus;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -69,6 +70,8 @@ const RESTART_ID: &str = "restart";
 const ABOUT_ID: &str = "about";
 const STOP_FILTERING_ID: &str = "stop-filtering";
 const CLOSE_ID: &str = "close";
+const INSTALL_CERT_ID: &str = "install-cert";
+const UNINSTALL_CERT_ID: &str = "uninstall-cert";
 
 /// Re-check cadence for `muda`'s global menu-event channel (see the module
 /// doc comment for why this loop drives it rather than `tao` itself) —
@@ -141,12 +144,17 @@ fn build_menu() -> Menu {
     let open_settings = MenuItem::with_id(OPEN_SETTINGS_ID, "Відкрити налаштування", true, None);
     let restart = MenuItem::with_id(RESTART_ID, "Перезапустити", true, None);
     let about = MenuItem::with_id(ABOUT_ID, "Про програму", true, None);
+    let install_cert = MenuItem::with_id(INSTALL_CERT_ID, "Встановити сертифікат", true, None);
+    let uninstall_cert = MenuItem::with_id(UNINSTALL_CERT_ID, "Видалити сертифікат", true, None);
     let stop_filtering = MenuItem::with_id(STOP_FILTERING_ID, "Зупинити фільтрацію", true, None);
     let close = MenuItem::with_id(CLOSE_ID, "Закрити", true, None);
     if let Err(err) = menu.append_items(&[
         &open_settings,
         &restart,
         &about,
+        &PredefinedMenuItem::separator(),
+        &install_cert,
+        &uninstall_cert,
         &PredefinedMenuItem::separator(),
         &stop_filtering,
         &close,
@@ -167,6 +175,25 @@ fn handle_menu_event(id: &str, app_data: &Path, port: u16, control_flow: &mut Co
             });
         }
         ABOUT_ID => show_about_dialog(),
+        INSTALL_CERT_ID => {
+            if confirm_install_cert() {
+                let cert_path = app_data.join("cert.pem");
+                spawn_trust_store_action(
+                    "install",
+                    "Встановити сертифікат",
+                    move || ensure_installed(&cert_path).map(|outcome| format!("{outcome:?}")),
+                );
+            }
+        }
+        UNINSTALL_CERT_ID => {
+            if confirm_uninstall_cert() {
+                spawn_trust_store_action(
+                    "uninstall",
+                    "Видалити сертифікат",
+                    || uninstall_trust_store().map(|()| "removed".to_string()),
+                );
+            }
+        }
         STOP_FILTERING_ID => {
             if confirm_stop_filtering() {
                 spawn_admin_action(
@@ -216,6 +243,81 @@ where
             }
         });
     });
+}
+
+/// Runs one trust-store action (`install`/`uninstall`) on its own throwaway
+/// OS thread — unlike [`spawn_admin_action`], this is a synchronous local
+/// `certutil` call, not an admin-HTTP-channel round trip, so no `tokio`
+/// runtime is needed at all. Reports the outcome **both** ways: logged (as
+/// every other action here does) and via a native dialog on this same
+/// thread — this crate builds with `windows_subsystem = "windows"` (no
+/// console), so a log line alone is invisible to a user who clicked a menu
+/// item and is watching for a result. A silent failure here would leave the
+/// user believing a trust-store change succeeded when it didn't — exactly
+/// the "no on-screen indication" failure class this crate's own module doc
+/// comment already names for "Зупинити фільтрацію" (advisor-caught before
+/// commit, not written this way from the start).
+fn spawn_trust_store_action<F, E>(action_name: &'static str, dialog_title: &'static str, action: F)
+where
+    F: FnOnce() -> Result<String, E> + Send + 'static,
+    E: std::fmt::Display,
+{
+    std::thread::spawn(move || match action() {
+        Ok(outcome) => {
+            tracing::info!("{action_name} succeeded: {outcome}");
+            rfd::MessageDialog::new()
+                .set_title(dialog_title)
+                .set_description(format!("Успішно: {outcome}"))
+                .set_level(rfd::MessageLevel::Info)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+        Err(err) => {
+            tracing::warn!("{action_name} failed: {err}");
+            rfd::MessageDialog::new()
+                .set_title(dialog_title)
+                .set_description(format!("Не вдалося: {err}"))
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+    });
+}
+
+/// Native confirm dialog before `certutil -addstore` — this pops the OS's
+/// own confirmation dialog too (a second, separate prompt) unless/until
+/// T-49's open "is certutil silent?" question is settled by a real run; see
+/// `trust_store.rs`'s module doc comment.
+fn confirm_install_cert() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_title("Встановити сертифікат")
+        .set_description(
+            "Локальний сертифікат dns-quorum-filter буде додано до довірених кореневих \
+             сертифікатів поточного користувача (CurrentUser\\Root). Це прибирає попередження \
+             браузера про недовірений сертифікат на сторінці налаштувань. Windows може показати \
+             власний діалог підтвердження. Продовжити?",
+        )
+        .set_level(rfd::MessageLevel::Info)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    result == rfd::MessageDialogResult::Yes
+}
+
+/// Native confirm dialog before `certutil -delstore` — names the real
+/// consequence (browser warning returns), same pattern as
+/// [`confirm_stop_filtering`].
+fn confirm_uninstall_cert() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_title("Видалити сертифікат")
+        .set_description(
+            "Локальний сертифікат dns-quorum-filter буде видалено з довірених кореневих \
+             сертифікатів. Браузер знову покаже попередження про недовірений сертифікат на \
+             сторінці налаштувань, доки сертифікат не буде встановлено повторно. Продовжити?",
+        )
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    result == rfd::MessageDialogResult::Yes
 }
 
 fn show_about_dialog() {
