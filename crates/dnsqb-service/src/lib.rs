@@ -125,6 +125,7 @@ mod cache;
 mod cert;
 mod config;
 mod dispatch;
+mod geoip;
 mod listener;
 mod overrides;
 mod paths;
@@ -149,6 +150,7 @@ pub use config::{ConfigError, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
 };
+pub use geoip::{GeoipError, GeoipReader};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,

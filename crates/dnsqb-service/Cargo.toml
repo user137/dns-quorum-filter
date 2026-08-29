@@ -21,6 +21,7 @@ http = "1"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.0", features = ["client", "http1", "http2", "server"] }
 hyper-util = { version = "0.1.20", default-features = false, features = ["http1", "http2", "server", "server-auto", "server-graceful", "tokio"] }
+maxminddb = { version = "0.30.3", default-features = false }
 moka = { version = "0.12", default-features = false, features = ["future"] }
 parking_lot = "0.12"
 percent-encoding = "2.3.2"

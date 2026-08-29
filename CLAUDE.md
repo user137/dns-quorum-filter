@@ -4,6 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Фаза 2, first slice (T-74 — TASKS.md, one commit): `geoip.rs`, a standalone `GeoipReader::open`/
+`country` — pure `IpAddr → Option<ISO country code>` lookup over a caller-supplied `MaxMind`-format
+database path (SPEC.md §3.5), the first primitive in the Ф2 execution plan's GeoIP workstream
+(TASKS.md's Ф2 plan block). New direct dependency `maxminddb` 0.30.3 (+`ipnetwork` 0.21.1,
+`default-features = false` — the `mmap`/`simdutf8`/`unsafe-str-decode` features all opt-in and left
+off, keeping this crate's `#![forbid(unsafe_code)]` posture intact without needing an exception for
+this dependency, confirmed by reading the vendored `reader.rs` before relying on it). Reads via
+`decode_path(&path!["country", "iso_code"])` rather than the crate's typed `geoip2::Country` struct
+— that path is the layout both DB-IP Lite (T-75's future default) and MaxMind GeoLite2 (T-80's
+future advanced mode) share, so this reader doesn't need to know which produced the file it's
+pointed at. A lookup-level error (confirmed empirically: an IPv6 address against this crate's
+IPv4-only test fixture) collapses into the same `None` as a genuine not-found, documented on
+`country()`'s own doc comment — this is a live per-query filter (SPEC.md §3.5's "порожній список
+країн — nop, не помилка" framing), not a fallible pipeline step. Test fixture risk (advisor-caught
+during Ф2 planning — `maxminddb` is reader-only, can't hand-author a valid `MMDB` file) resolved by
+vendoring `GeoIP2-Country-Test.mmdb` directly from `maxmind/MaxMind-DB`'s own `test-data/`
+(Apache-2.0/MIT dual-licensed, not a git submodule — `tests/fixtures/geoip/README.md` records
+provenance), reusing that repo's own known-good `89.160.20.112 → SE` assertion as ground truth
+rather than trusting the vendored file's contents unverified. `SECURITY.md` gained the dependency-
+vetting row. Diagram ground-truth ritual checked, untriggered — no `admin.rs` DTO/state/flow changed
+this slice (T-74 is internal-only; the pipeline wiring that will actually produce a `GeoIP` decision
+is T-76/T-79, not yet done). **Not in this slice**: the DB-IP Lite download/integrity-check/atomic-
+swap mechanism (T-75), pipeline wiring at either of the two located hook points (T-76), and the
+internal `DecisionSource::Geoip`/`LogEntry.geoip_country` fields (T-79, though the `admin.rs` DTO
+side already exists and is waiting, pinned by tests to stay inert until T-79 lands).
+
 **Фаза 1 formally closed 2026-08-29** (SPEC.md §"Фазований план", TASKS.md's own closure-plan
 record, docs-only) — every bullet in SPEC.md's original Ф1 scope is done; the two backlog lines
 still open under the Ф1 heading (T-51's Firefox half, T-56's full indicator) were never part of
@@ -1108,6 +1134,9 @@ is the tokio-ecosystem de-facto default), `tracing-subscriber` (T-143 — `main.
 enabled — RUSTSEC-2025-0055 against this crate doesn't cover the version resolved here, re-checked
 via `cargo audit`, see SECURITY.md),
 `moka` (`default-features = false`, feature `future` only — concurrent per-entry-TTL cache, T-32),
+`maxminddb` (+`ipnetwork`, `default-features = false` — GeoIP country lookup, T-74, Фаза 2; `mmap`/
+`simdutf8`/`unsafe-str-decode` all opt-in and left off, keeping this crate's `#![forbid(unsafe_code)]`
+posture without an exception for this dependency),
 `serde` (`derive` feature) + `serde_json` (introduced T-37 for the override-list file's on-disk
 shape; that use moved to `toml` at T-145, but `serde_json` stays direct — `timeout.rs`'s
 `TimeoutMode` round-trip test still exercises it deliberately, per the fifteenth-slice paragraph
