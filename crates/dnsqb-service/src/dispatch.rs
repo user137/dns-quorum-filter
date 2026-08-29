@@ -1428,7 +1428,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
+        admin_status, content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
         wire_bytes_from_get, AppState, CacheState, DohRequestError, LogQueryError, OverridesState,
         PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH,
         MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
@@ -1440,7 +1440,7 @@ mod tests {
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::ResolverConfig;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
-    use crate::query_log::{LogEntry, QueryLog};
+    use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{EnabledProviders, VoterRecord, VoterVerdict};
     use crate::timeout::TimeoutConfig;
     use crate::upstream::{doh_get_url, DohClient, Provider, UpstreamError};
@@ -1776,6 +1776,15 @@ mod tests {
     enum MockResponse {
         Instant(Message),
         Panic,
+        /// Never resolves (T-56) — same idea as `quorum.rs`'s own
+        /// `MockResponse::Pending`, added here so `MockClient` can force a
+        /// real `VoterVerdict::Timeout` under `#[tokio::test(start_paused =
+        /// true)]`. Needs `query` to have a genuine `.await` inside, hence
+        /// the `async fn` below instead of the previous plain `fn` +
+        /// `std::future::ready(...)` (which had no `.await` at all) —
+        /// `quorum.rs`'s `MockDohClient::query` already establishes this
+        /// exact `async fn` shape against the same trait.
+        Pending,
     }
 
     struct MockClient {
@@ -1785,22 +1794,18 @@ mod tests {
     }
 
     impl DohClient for MockClient {
-        fn query(
-            &self,
-            url: &str,
-            _query: &Message,
-        ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> {
+        async fn query(&self, url: &str, _query: &Message) -> Result<Message, UpstreamError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let response = if url == crate::upstream::BASELINE_DOH_URL {
                 &self.baseline
             } else {
                 &self.quorum
             };
-            let result = match response {
+            match response {
                 MockResponse::Instant(message) => Ok(message.clone()),
                 MockResponse::Panic => panic!("unexpected upstream call to {url}"),
-            };
-            std::future::ready(result)
+                MockResponse::Pending => std::future::pending().await,
+            }
         }
     }
 
@@ -1888,6 +1893,60 @@ mod tests {
             entries[0].decision_source,
             crate::query_log::DecisionSource::Quorum
         );
+    }
+
+    // T-56: proves a real Timeout voter reaches both the log and
+    // AdminStats's degraded_* counters through the actual production
+    // wiring (resolve_doh_request -> pipeline::handle_query -> quorum::
+    // resolve -> query_with_timeout -> LogEntry.voters -> compute_stats),
+    // not just admin::degraded_counts in isolation - same bar T-153's own
+    // closing note already sets for this crate.
+    #[tokio::test(start_paused = true)]
+    async fn resolve_doh_request_records_a_real_timeout_voter_and_marks_admin_stats_degraded() {
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
+            quorum: MockResponse::Pending,
+            calls: AtomicU32::new(0),
+        };
+        let wire_bytes = query_bytes("example.com.", RecordType::A);
+        let state = state_with(client);
+
+        if let Err(err) = resolve_doh_request(&wire_bytes, &state).await {
+            panic!("must resolve: {err}");
+        }
+
+        let entries = state.query_log.snapshot(std::time::SystemTime::now());
+        assert_eq!(entries.len(), 1, "exactly one query must have been logged");
+        assert_eq!(entries[0].decision_source, DecisionSource::Quorum);
+        // Assert the actual recorded mechanism first, not just the derived
+        // stat below (advisor review: a `degraded_events > 0`-only
+        // assertion could pass for the wrong reason - this crate's own
+        // gotchas already record this exact "test doesn't prove its own
+        // named property" shape three times before this one; a fourth,
+        // empirically checked here: with both filtering voters Pending and
+        // no Block signal ever produced, nothing triggers T-30's early-
+        // return/cancellation path, so both voters genuinely run out
+        // query_with_timeout's own timeout rather than getting dropped as
+        // Canceled - confirmed by temporarily asserting `Canceled` instead
+        // and watching it fail with `[Timeout, Timeout]`, then reverting).
+        assert!(
+            entries[0]
+                .voters
+                .iter()
+                .any(|v| v.verdict == VoterVerdict::Timeout),
+            "expected a real Timeout voter, got {:?}",
+            entries[0]
+                .voters
+                .iter()
+                .map(|v| v.verdict)
+                .collect::<Vec<_>>()
+        );
+
+        // Exact equality, not `>= 1` - exactly one query was logged above,
+        // so the counts are fully known, not just bounded.
+        let status = admin_status(&state, true);
+        assert_eq!(status.stats.degraded_window, 1);
+        assert_eq!(status.stats.degraded_events, 1);
     }
 
     // T-147: the proxy path is a named, still-open gap - not logged yet.

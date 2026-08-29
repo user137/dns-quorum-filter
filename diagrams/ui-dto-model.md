@@ -137,9 +137,11 @@ classDiagram
         +bool adguard
     }
     class AdminStats {
-        <<T-52, реалізовано; in_flight — T-149>>
+        <<T-52, реалізовано; in_flight — T-149; degraded_* — T-56>>
         +u64 total
         +u64 blocked
+        +u64 degraded_window
+        +u64 degraded_events
         +u64 in_flight
     }
     class CacheConfigView {
@@ -236,14 +238,29 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 Значення живиться і `dnsqb-service`'s вбудованим веб-UI (T-149), і `dnsqb-tray`'s tooltip
 (нижче) — не нова окрема DTO-форма, те саме поле в одній структурі.
 
-## `dnsqb-tray`'s tooltip — не новий DTO, похідний стан (T-149)
+## `dnsqb-tray`'s tooltip — не новий DTO, похідний стан (T-149; поля `Filtering` розширено T-56)
 
 `dnsqb-tray`'s три стани tooltip'а (`Unreachable`/`NoActiveProvider{in_flight}`/
-`Filtering{in_flight,blocked,total}`, `crates/dnsqb-tray/src/status.rs`) — це **не** нова DTO-
-форма на дроті, а чисто клієнтська інтерпретація вже існуючого `AdminStatusResponse` (той самий
-`providers`/`stats`, вище): `NoActiveProvider` = `!providers.quad9 && !providers.adguard`,
-`Filtering` = інакше. Не діаграмується як окремий клас — похідне, не передане окремим
-JSON-полем.
+`Filtering{in_flight,blocked,total,degraded_events,degraded_window}`,
+`crates/dnsqb-tray/src/status.rs`) — це **не** нова DTO-форма на дроті, а чисто клієнтська
+інтерпретація вже існуючого `AdminStatusResponse` (той самий `providers`/`stats`, вище):
+`NoActiveProvider` = `!providers.quad9 && !providers.adguard`, `Filtering` = інакше, з
+`degraded_events`/`degraded_window` просто скопійованими з `stats` (T-56). Не діаграмується як
+окремий клас — похідне, не передане окремим JSON-полем.
+
+## `AdminStats.degraded_window`/`degraded_events` — звужений T-56 (не повний `ui-status-indicator.md`)
+
+Ф1 closure-план (TASKS.md) звузив T-56 до одного похідного сигналу поверх уже наявного
+`QueryLog`-вікна — **не** повний індикатор `ui-status-indicator.md`'s draft (там 4 незалежні
+умови; ця реалізація покриває лише "0 voters", уже готове з T-149, і "деградація"). Рахуються за
+останні `DEGRADED_LOOKBACK` (20) записів із `decision_source == QUORUM` — менше вікно, ніж
+`total`/`blocked` (весь `QueryLog`), не той самий діапазон в одній структурі. Свідомо **сирі
+лічильники, не булевий прапорець і не відсоток** — той самий принцип "бекенд рахує, клієнт формує
+підпис", що вже в `blocked`/`total` (T-139's `main.js`-банди) — advisor-catch під час планування:
+булевий поріг "хоч один timeout за N" був би майже завжди `true` при звичайному fail-open-режимі
+(поодинокий timeout — нормальна поведінка інтернету, не деградація), а вигаданий відсотковий поріг
+не мав би джерела в SPEC.md. Немає перевірки браузера (умова 1) чи watchdog (умова 4, Фаза 3 ще не
+існує) — обидва лишаються майбутнім, повний draft у `ui-status-indicator.md` не переписано.
 
 ## `AdminStatusResponse`/`AdminStats`/`EnabledProviders` — реальна реалізація, ширша за чернетку
 

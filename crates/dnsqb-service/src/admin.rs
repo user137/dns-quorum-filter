@@ -101,7 +101,11 @@ pub struct AdminStatusResponse {
 /// (1000-entries-or-24h, SPEC.md §6), so `total`/`blocked` describe "the
 /// current log window," not "today." The `dnsqb-ui` frontend labels it that
 /// way rather than "сьогодні" (same honesty correction T-66 already made
-/// relabeling cache buckets "miss/hit" instead of "cold/warm").
+/// relabeling cache buckets "miss/hit" instead of "cold/warm"). **Two
+/// different windows in one struct** — `degraded_window`/`degraded_events`
+/// (T-56) deliberately use a *smaller, fixed* recent window
+/// ([`DEGRADED_LOOKBACK`]), not the same one `total`/`blocked` share; see
+/// [`degraded_counts`] for why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminStats {
     /// Every logged query in the current window, any decision.
@@ -110,6 +114,21 @@ pub struct AdminStats {
     /// Failed`] (SERVFAIL) is a separate outcome, not counted as blocked
     /// filtering (T-147).
     pub blocked: u64,
+    /// How many of the most recent [`DEGRADED_LOOKBACK`] *quorum-decided*
+    /// entries were actually available — see [`degraded_counts`] for why
+    /// this is a different, smaller window than `total`/`blocked` above.
+    /// `0` means no quorum-decided entries have been logged yet in that
+    /// window — not "healthy," just "no signal" (T-56).
+    pub degraded_window: u64,
+    /// Of `degraded_window`, how many entries had at least one voter
+    /// [`VoterVerdict::Timeout`]/[`VoterVerdict::Error`] (T-56). Reflects
+    /// *recent recorded voter failures*, not necessarily current upstream
+    /// health — it can stay nonzero for a short while after a real recovery
+    /// (the window just hasn't rolled the old failures out yet), and it can
+    /// be nonzero even while [`Self::in_flight`] is 0 or every provider is
+    /// currently disabled (past failures logged before they were turned
+    /// off).
+    pub degraded_events: u64,
     /// How many requests are being resolved *right now* (T-149) — a live
     /// counter (`dispatch::AppState`'s `in_flight` field), not derived from
     /// [`crate::QueryLog`] like `total`/`blocked` above: a `LogEntry` is only
@@ -519,6 +538,53 @@ pub struct LogQueryResponse {
     pub truncated: bool,
 }
 
+/// How many of the most recent *quorum-decided* entries [`degraded_counts`]
+/// inspects (T-56, Ф1 closure-plan step 5) — a small, fixed recent window,
+/// not the whole (up to 1000-entry/24h) `total`/`blocked` window: one
+/// timeout from hours ago must not keep the tray tooltip reading "degraded"
+/// long after things recovered. A round, easy-to-reason-about number, not
+/// derived from an SLA target SPEC.md doesn't state anywhere.
+const DEGRADED_LOOKBACK: usize = 20;
+
+/// Counts how many of the most recent [`DEGRADED_LOOKBACK`] *quorum-decided*
+/// entries (only [`DecisionSource::Quorum`] entries carry voters at all —
+/// T-147; an allowlist/blocklist/cache entry's `voters` is always empty and
+/// would just dilute the window, so those are filtered out *before* taking
+/// the last N, not counted toward N) had at least one voter
+/// [`VoterVerdict::Timeout`]/[`VoterVerdict::Error`].
+///
+/// Returns `(window, events)` — `window` is how many quorum-decided entries
+/// were actually available (can be less than [`DEGRADED_LOOKBACK`] on a
+/// freshly started service), `events` is the subset of those with at least
+/// one failed voter. Deliberately raw counts, not a pre-computed boolean or
+/// percentage — the same "backend returns counts, the caller renders the
+/// label" split `AdminStats::blocked`/`total` already use (`main.js` bands
+/// `blocked`/`total` client-side, T-139), since no SLA-derived threshold for
+/// "too many recent failures" is stated anywhere in SPEC.md and inventing
+/// one here would freeze an unverified guess into the wire format.
+/// `entries` is expected oldest-first (`QueryLog::snapshot`'s own contract).
+#[must_use]
+fn degraded_counts(entries: &[LogEntry]) -> (u64, u64) {
+    let mut window: u64 = 0;
+    let mut events: u64 = 0;
+    for entry in entries
+        .iter()
+        .rev()
+        .filter(|entry| entry.decision_source == DecisionSource::Quorum)
+        .take(DEGRADED_LOOKBACK)
+    {
+        window += 1;
+        if entry
+            .voters
+            .iter()
+            .any(|v| matches!(v.verdict, VoterVerdict::Timeout | VoterVerdict::Error))
+        {
+            events += 1;
+        }
+    }
+    (window, events)
+}
+
 /// Reduces `entries` to [`AdminStats`]. `pub(crate)` — only `dispatch.rs`'s
 /// `GET /admin/status`/`POST /admin/config` handlers call this.
 #[must_use]
@@ -528,9 +594,12 @@ pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
         .iter()
         .filter(|entry| entry.decision == Decision::Blocked)
         .count();
+    let (degraded_window, degraded_events) = degraded_counts(entries);
     AdminStats {
         total: u64::try_from(total).unwrap_or(u64::MAX),
         blocked: u64::try_from(blocked).unwrap_or(u64::MAX),
+        degraded_window,
+        degraded_events,
         // Filled in by the caller (`dispatch.rs`) from the live in-flight
         // counter, which this pure, log-only function has no access to.
         in_flight: 0,
@@ -683,20 +752,41 @@ impl AdminClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_stats, AdminStats};
+    use super::{compute_stats, degraded_counts, AdminStats, DEGRADED_LOOKBACK};
     use crate::query_log::{Decision, DecisionSource, LogEntry};
+    // VoterRecord/VoterVerdict/Provider are already `use`d further down in
+    // this same (flat, non-nested) `mod tests` block - Rust `use` applies
+    // to the whole module regardless of textual order, so re-importing them
+    // here would conflict (E0252), not shadow.
     use hickory_proto::rr::RecordType;
     use std::time::SystemTime;
 
     fn entry(decision: Decision) -> LogEntry {
+        entry_with(decision, DecisionSource::Quorum, Vec::new())
+    }
+
+    fn entry_with(
+        decision: Decision,
+        decision_source: DecisionSource,
+        voters: Vec<VoterRecord>,
+    ) -> LogEntry {
         LogEntry {
             timestamp: SystemTime::now(),
             domain: "example.com".to_string(),
             qtype: RecordType::A,
             decision,
-            decision_source: DecisionSource::Quorum,
-            voters: Vec::new(),
+            decision_source,
+            voters,
             latency_ms: 1,
+        }
+    }
+
+    fn voter(verdict: VoterVerdict) -> VoterRecord {
+        VoterRecord {
+            provider: Provider::Quad9,
+            verdict,
+            allow_ip_count: None,
+            error_message: None,
         }
     }
 
@@ -713,6 +803,8 @@ mod tests {
             AdminStats {
                 total: 4,
                 blocked: 2,
+                degraded_window: 4,
+                degraded_events: 0,
                 in_flight: 0,
             }
         );
@@ -725,8 +817,95 @@ mod tests {
             AdminStats {
                 total: 0,
                 blocked: 0,
+                degraded_window: 0,
+                degraded_events: 0,
                 in_flight: 0,
             }
+        );
+    }
+
+    #[test]
+    fn degraded_counts_flags_a_recent_timeout_voter() {
+        let entries = vec![
+            entry_with(
+                Decision::Allowed,
+                DecisionSource::Quorum,
+                vec![voter(VoterVerdict::Allow)],
+            ),
+            entry_with(
+                Decision::Allowed,
+                DecisionSource::Quorum,
+                vec![voter(VoterVerdict::Timeout)],
+            ),
+        ];
+        assert_eq!(degraded_counts(&entries), (2, 1));
+    }
+
+    #[test]
+    fn degraded_counts_flags_a_recent_error_voter() {
+        let entries = vec![entry_with(
+            Decision::Allowed,
+            DecisionSource::Quorum,
+            vec![voter(VoterVerdict::Error)],
+        )];
+        assert_eq!(degraded_counts(&entries), (1, 1));
+    }
+
+    #[test]
+    fn degraded_counts_of_an_all_healthy_window_is_zero_events() {
+        let entries = vec![
+            entry_with(
+                Decision::Allowed,
+                DecisionSource::Quorum,
+                vec![voter(VoterVerdict::Allow)],
+            ),
+            entry_with(
+                Decision::Blocked,
+                DecisionSource::Quorum,
+                vec![voter(VoterVerdict::Block)],
+            ),
+        ];
+        assert_eq!(degraded_counts(&entries), (2, 0));
+    }
+
+    #[test]
+    fn degraded_counts_excludes_non_quorum_entries_from_the_window() {
+        // Allowlist/blocklist/cache entries never carry voters (T-147) -
+        // they must not count toward the DEGRADED_LOOKBACK window at all,
+        // not even as a zero-signal filler.
+        let entries = vec![
+            entry_with(Decision::Allowed, DecisionSource::Allowlist, Vec::new()),
+            entry_with(
+                Decision::Allowed,
+                DecisionSource::Quorum,
+                vec![voter(VoterVerdict::Allow)],
+            ),
+            entry_with(Decision::Blocked, DecisionSource::Cache, Vec::new()),
+        ];
+        assert_eq!(degraded_counts(&entries), (1, 0));
+    }
+
+    #[test]
+    fn degraded_counts_ignores_a_timeout_outside_the_lookback_window() {
+        // Oldest entry (pushed first - LogEntry order is oldest-first,
+        // matching QueryLog::snapshot's own contract) carries the Timeout;
+        // DEGRADED_LOOKBACK healthy entries after it push it just outside
+        // the last-N window.
+        let mut entries = vec![entry_with(
+            Decision::Allowed,
+            DecisionSource::Quorum,
+            vec![voter(VoterVerdict::Timeout)],
+        )];
+        for _ in 0..DEGRADED_LOOKBACK {
+            entries.push(entry_with(
+                Decision::Allowed,
+                DecisionSource::Quorum,
+                vec![voter(VoterVerdict::Allow)],
+            ));
+        }
+        assert_eq!(
+            degraded_counts(&entries),
+            (u64::try_from(DEGRADED_LOOKBACK).unwrap_or(u64::MAX), 0)
         );
     }
 

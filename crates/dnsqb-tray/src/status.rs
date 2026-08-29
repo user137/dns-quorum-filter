@@ -40,6 +40,15 @@ pub enum TrayStatus {
         blocked: u64,
         /// Total count in the current log window.
         total: u64,
+        /// How many of the last `degraded_window` quorum-decided log
+        /// entries had at least one voter timeout/error (T-56,
+        /// `AdminStats::degraded_events`'s own doc comment) — a *recent
+        /// recorded* signal, not a live upstream-health check.
+        degraded_events: u64,
+        /// How many quorum-decided entries `degraded_events` was actually
+        /// computed over (T-56, `AdminStats::degraded_window`) — `0` means
+        /// no signal yet, not "healthy".
+        degraded_window: u64,
     },
 }
 
@@ -50,6 +59,8 @@ impl TrayStatus {
                 in_flight: response.stats.in_flight,
                 blocked: response.stats.blocked,
                 total: response.stats.total,
+                degraded_events: response.stats.degraded_events,
+                degraded_window: response.stats.degraded_window,
             }
         } else {
             Self::NoActiveProvider {
@@ -70,10 +81,107 @@ impl TrayStatus {
                 in_flight,
                 blocked,
                 total,
-            } => format!(
-                "dns-quorum-filter: {blocked}/{total} заблоковано \u{2014} {in_flight} запит(ів) зараз"
-            ),
+                degraded_events,
+                degraded_window,
+            } => {
+                let base = format!(
+                    "dns-quorum-filter: {blocked}/{total} заблоковано \u{2014} {in_flight} запит(ів) зараз"
+                );
+                // Raw counts, not a collapsed bool/percentage (admin.rs's
+                // own degraded_counts doc comment) — any nonzero count is
+                // shown as-is, letting the reader judge severity instead of
+                // an always-on warning masking it (T-56, advisor-caught
+                // during planning: a bare threshold-free boolean would go
+                // permanently true under routine fail-open timeouts).
+                if *degraded_events > 0 {
+                    format!(
+                        "{base} \u{2014} {degraded_events}/{degraded_window} останніх апстрім-запитів мали тайм-аут/помилку"
+                    )
+                } else {
+                    base
+                }
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TrayStatus;
+    use dnsqb_service::{AdminStats, AdminStatusResponse, EnabledProviders, TimeoutMode};
+
+    fn response(providers: EnabledProviders, stats: AdminStats) -> AdminStatusResponse {
+        AdminStatusResponse {
+            providers,
+            timeout_mode: TimeoutMode::FailOpen,
+            timeout_ms: 2000,
+            port: 8443,
+            stats,
+            persisted: true,
+        }
+    }
+
+    fn stats(degraded_window: u64, degraded_events: u64) -> AdminStats {
+        AdminStats {
+            total: 10,
+            blocked: 1,
+            degraded_window,
+            degraded_events,
+            in_flight: 0,
+        }
+    }
+
+    #[test]
+    fn from_response_carries_degraded_counts_through_when_filtering() {
+        let resp = response(EnabledProviders::default(), stats(20, 3));
+        let status = TrayStatus::from_response(&resp);
+        assert_eq!(
+            status,
+            TrayStatus::Filtering {
+                in_flight: 0,
+                blocked: 1,
+                total: 10,
+                degraded_events: 3,
+                degraded_window: 20,
+            }
+        );
+    }
+
+    #[test]
+    fn tooltip_omits_the_degraded_suffix_when_no_events_are_recorded() {
+        let resp = response(EnabledProviders::default(), stats(20, 0));
+        let tooltip = TrayStatus::from_response(&resp).tooltip();
+        assert!(
+            !tooltip.contains("тайм-аут"),
+            "must not warn with zero recorded degraded events: {tooltip}"
+        );
+    }
+
+    #[test]
+    fn tooltip_includes_the_raw_degraded_counts_when_events_are_recorded() {
+        let resp = response(EnabledProviders::default(), stats(20, 3));
+        let tooltip = TrayStatus::from_response(&resp).tooltip();
+        assert!(
+            tooltip.contains("3/20"),
+            "expected the raw counts in the tooltip, got: {tooltip}"
+        );
+    }
+
+    #[test]
+    fn no_active_provider_state_never_carries_a_degraded_signal() {
+        // Even if the log still holds Timeout entries from before providers
+        // were disabled (AdminStats::degraded_events's own doc comment) -
+        // NoActiveProvider is a distinct pass-through state, no voters run
+        // there at all.
+        let providers = EnabledProviders {
+            quad9: false,
+            adguard: false,
+        };
+        let resp = response(providers, stats(20, 5));
+        assert_eq!(
+            TrayStatus::from_response(&resp),
+            TrayStatus::NoActiveProvider { in_flight: 0 }
+        );
     }
 }
 

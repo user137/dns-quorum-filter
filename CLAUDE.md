@@ -8,6 +8,71 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).
 
+Фаза 1, twenty-seventh slice (T-56, narrowed — TASKS.md, one commit): per the Ф1 closure plan's own
+step 5, added a "деградований апстрім" signal to `dnsqb-tray`'s tooltip, derived from the existing
+`QueryLog` window — the plan's own narrower scope, not the full `diagrams/ui-status-indicator.md`
+draft (no browser-DoH-usage check, no watchdog state, Фаза 3 doesn't exist yet). New
+`admin::AdminStats` fields `degraded_window`/`degraded_events` (computed by a new private
+`degraded_counts`, wired into `compute_stats`): among the most recent `DEGRADED_LOOKBACK` (20)
+*quorum-decided* log entries (only `DecisionSource::Quorum` entries carry voters at all, T-147 —
+counted before taking the last N, not diluting it with allowlist/blocklist/cache entries that can
+never carry a voter), `degraded_window` is how many were actually available and `degraded_events`
+is the subset with at least one `VoterVerdict::Timeout`/`Error`. **Advisor review of the plan caught
+the one design choice the whole feature lives or dies on**: a first draft collapsed this into a
+single `degraded: bool`, "any Timeout/Error in the last 20" — flagged as the noisiest possible
+definition, since under `TimeoutMode::FailOpen` (the default) a single slow provider on a single
+query is routine internet weather, not degradation, and would leave the tooltip reading "degraded"
+almost permanently — an always-on warning being functionally identical to no warning, the same axis
+SPEC.md §8.1 already guards for the "0 voters" state. Fixed by exposing raw counts instead of an
+invented threshold — the same "backend returns counts, the caller renders the label" split
+`AdminStats::blocked`/`total` already use (T-139's `main.js` bands them client-side) — the tray only
+appends a suffix (`"N/M останніх апстрім-запитів мали тайм-аут/помилку"`) when `degraded_events >
+0`, letting the reader judge severity from the raw numbers rather than a collapsed always-on flag.
+A second advisor catch: the first-draft integration test asserted only `degraded_events >= 1`, which
+could pass for the wrong reason if the mocked voters actually landed on `Canceled` instead of
+`Timeout` (both filtering providers share one `MockResponse::Pending`, and `Canceled` is what T-30's
+early-return path produces for a voter that's still eligible but never waited on) — fixed by first
+asserting the actual recorded `VoterRecord.verdict == VoterVerdict::Timeout`, the fourth instance of
+this crate's own "a passing test that doesn't prove its own named property" gotcha, and by tightening
+both `degraded_window`/`degraded_events` to exact equality (`== 1`, not `>= 1` — exactly one query
+was logged, so the counts are fully known). **Checked empirically, not just reasoned about**:
+temporarily flipped the `Timeout` assertion to `Canceled` and reran — failed with `[Timeout,
+Timeout]` (no Block signal ever arises in this fixture, so nothing triggers T-30's cancellation path;
+both voters genuinely run out `query_with_timeout`'s own timeout), confirming the real assertion
+proves what it claims rather than passing by coincidence; reverted before commit.
+`TrayStatus::Filtering` gained the same two fields, threaded through from `AdminStatusResponse`;
+`NoActiveProvider`/`Unreachable` are untouched (no voters run in either state — a stale nonzero
+`degraded_events` from before providers were disabled must never leak into a state that implies "no
+filtering is happening", documented on the field's own doc comment). Tested at three levels: pure
+`degraded_counts` unit tests in `admin.rs` (in-window vs. just-outside-the-20-entry-boundary,
+non-`Quorum` entries excluded from the window rather than diluting it, an all-healthy window staying
+zero), one real `dispatch.rs` integration test proving the actual production wiring
+(`resolve_doh_request` → `pipeline::handle_query` → `quorum::resolve` → `query_with_timeout` → a
+real logged `Timeout` voter → `compute_stats`) under `#[tokio::test(start_paused = true)]` with a
+never-resolving `MockResponse::Pending` (new variant on the existing `MockClient`, converted from a
+plain `fn` returning `std::future::ready(...)` to a genuine `async fn` — `quorum.rs`'s own
+`MockDohClient` already established this exact shape against the same `DohClient` trait), and new
+`dnsqb-tray/src/status.rs` unit tests (`#[cfg(test)]` added to that file for the first time) proving
+`TrayStatus::from_response`/`tooltip()` thread the counts through correctly. **A real pre-existing
+CI gap found and fixed in the same pass**: `dnsqb-tray`/`dnsqb-watcher` are `[[bin]]`-only crates
+with no `[lib]` target, so CI's `cargo test --workspace --lib` had never once compiled or run
+`dnsqb-tray`'s own `#[cfg(test)]` modules — `browser.rs`'s existing test (predating this task)
+had been silently unexercised by CI the whole time, only caught while adding this slice's own
+`status.rs` tests and noticing they didn't appear in local `--lib` output either. Fixed by adding
+`--bins` to the CI command (`.github/workflows/ci.yml`) and to CLAUDE.md's own Commands section —
+not itself part of T-56's scope, but the new tests this slice adds would otherwise have joined
+`browser.rs`'s in never actually running anywhere. TASKS.md's own T-56 line updated in place
+(deliberately **not** moved to TASKS-DONE.md — same "narrowed, not closed" precedent already used
+for T-51 above it in the same closure plan) — still open: browser-DoH-usage detection (blocked on
+T-134's own named gap, no domain→fixed-IP canary mechanism exists yet), watchdog state (Фаза 3),
+and the full richer indicator for the web UI or a dedicated screen. Diagram ground-truth ritual run
+(triggered — `AdminStats` gained two DTO fields): `diagrams/ui-dto-model.md` updated (new fields on
+the `AdminStats` class, the `dnsqb-tray` tooltip section's `Filtering` shape corrected, one new
+section explaining the window/raw-counts design); `diagrams/ui-status-indicator.md` got one new
+paragraph noting this narrowed subset shipped, without rewriting the diagram's own full future
+target (conditions 1/4 stay undesigned). `SERVICES.md`'s `dnsqb-tray` "Live-статус" paragraph
+updated to describe the new fields — still three top-level tooltip states, not a fourth.
+
 Фаза 1, twenty-sixth slice done (T-153 — TASKS-DONE.md, **two commits**, advisor-recommended split
 given the size — backend fully green standalone before the UI card landed, same split precedent as
 T-52/T-149): `cache::CacheConfig`'s five fields (`clamp_min`/`clamp_max`/`block_verdict_ttl`/
@@ -1091,8 +1156,12 @@ Commands (from repo root):
   `tauri-cli`/frontend build step of any kind — `dnsqb-tray` is a plain Rust binary
   (`tray-icon`/`tao`/`rfd`), and the browser-based config page (`/admin/ui`) is served directly
   by `dnsqb-service` from `include_str!`-embedded HTML/CSS/JS, no bundler.
-- `cargo test --workspace --lib` — unit tests (`is_blocked`/quorum, T-61/T-62; `#[tokio::test]` for
-  the async quorum cases).
+- `cargo test --workspace --lib --bins` — unit tests (`is_blocked`/quorum, T-61/T-62; `#[tokio::test]`
+  for the async quorum cases). **`--bins` is required, not optional** — `dnsqb-tray`/`dnsqb-watcher`
+  are `[[bin]]`-only crates with no `[lib]` target, so `--lib` alone silently never compiles or runs
+  their own `#[cfg(test)]` modules (`dnsqb-tray/src/browser.rs`'s test predates this fix and had been
+  silently unexercised by CI the whole time; caught while adding T-56's `status.rs` tests — the CI
+  command itself was still the old `--lib`-only form).
 - `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green
   (`#[ignore]`d ones stay green, un-`#[ignore]`d ones must actually pass; count of each changes as
   Фаза 1 tasks land — check `TASKS.md` or run `-- --ignored` below for the current red-board size,

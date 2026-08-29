@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo build --workspace
-      - run: cargo test --workspace --lib
+      - run: cargo test --workspace --lib --bins
 
   lint:
     runs-on: windows-latest
