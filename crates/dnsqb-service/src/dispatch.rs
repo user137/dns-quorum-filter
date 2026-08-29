@@ -30,6 +30,7 @@ use crate::admin::{
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
 use crate::config::ResolverConfig;
+use crate::geoip::GeoipReader;
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome,
@@ -276,6 +277,27 @@ pub struct CacheState {
     pub config: CacheConfig,
 }
 
+/// The currently-loaded `GeoIP` country database, if any, plus when it was
+/// last (re)loaded (T-75). `reader: None` is the pre-first-download state
+/// (a fresh install, before `geoip_updater`'s first successful check
+/// completes) — same "empty ⇒ no-op, not disabled/error" framing SPEC.md
+/// §3.5 already uses for an empty blocked-country list, extended here to
+/// cover "no database at all" too, not just "database present but no
+/// countries configured."
+///
+/// `pub` (same reasoning as [`CacheState`]/[`OverridesState`]): `main.rs`
+/// builds the initial value (from an on-disk database a previous run left
+/// behind, if any) to hand to [`AppState::new`], and
+/// `geoip_updater::run_geoip_updater` builds each subsequent value after a
+/// successful refresh.
+#[derive(Default)]
+pub struct GeoipState {
+    /// The loaded database, or `None` before the first successful download.
+    pub reader: Option<Arc<GeoipReader>>,
+    /// When `reader` was last (re)loaded — `None` alongside `reader: None`.
+    pub updated_at: Option<SystemTime>,
+}
+
 /// The two on-disk config files' paths, always resolved together from one
 /// `app_data_dir()` call in `main.rs` — bundled as one field on
 /// [`PersistTarget`] rather than two independent `Option<PathBuf>`s so
@@ -387,6 +409,12 @@ pub struct AppState<C: DohClient + Sync> {
     overrides: RwLock<Arc<OverridesState>>,
     runtime: RwLock<RuntimeSettings>,
     cache: RwLock<Arc<CacheState>>,
+    /// T-75 — swapped by `geoip_updater::run_geoip_updater` after each
+    /// successful database refresh, read by `pipeline.rs`'s future `GeoIP`
+    /// filtering step (T-76, not wired yet). `RwLock<Arc<_>>`, same
+    /// snapshot-read-under-a-clone shape as `cache`/`overrides` — a query
+    /// must never hold this lock across an `.await`.
+    geoip: RwLock<Arc<GeoipState>>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -477,6 +505,7 @@ impl<C: DohClient + Sync> AppState<C> {
         overrides: OverridesState,
         runtime: RuntimeSettings,
         cache: CacheState,
+        geoip: GeoipState,
         query_log: QueryLog,
         persist: PersistTarget,
     ) -> Self {
@@ -486,6 +515,7 @@ impl<C: DohClient + Sync> AppState<C> {
             overrides: RwLock::new(Arc::new(overrides)),
             runtime: RwLock::new(runtime),
             cache: RwLock::new(Arc::new(cache)),
+            geoip: RwLock::new(Arc::new(geoip)),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
@@ -493,6 +523,17 @@ impl<C: DohClient + Sync> AppState<C> {
             persist_lock: Mutex::new(()),
             overrides_persist_lock: Mutex::new(()),
         }
+    }
+
+    /// Swaps in a newly-downloaded `GeoIP` database (T-75) — called only by
+    /// `geoip_updater::run_geoip_updater` after the new database has
+    /// already been validated and durably written to disk. Never called
+    /// with `reader: None` to represent a failed refresh: a failed refresh
+    /// simply doesn't call this at all, leaving the last-known-good
+    /// database (if any) in place (see `geoip_updater`'s own module doc
+    /// comment for the reasoning).
+    pub(crate) fn update_geoip(&self, new: GeoipState) {
+        *self.geoip.write() = Arc::new(new);
     }
 
     /// Subscribes a new receiver for the shutdown signal (T-149) — each call
@@ -1429,9 +1470,9 @@ where
 mod tests {
     use super::{
         admin_status, content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
-        wire_bytes_from_get, AppState, CacheState, DohRequestError, LogQueryError, OverridesState,
-        PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH,
-        MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipState, LogQueryError,
+        OverridesState, PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT,
+        DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
@@ -2025,6 +2066,7 @@ mod tests {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
             },
+            GeoipState::default(),
             QueryLog::default(),
             persist,
         ))
@@ -3071,6 +3113,7 @@ mod tests {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
             },
+            GeoipState::default(),
             QueryLog::default(),
             PersistTarget {
                 port: 8443,

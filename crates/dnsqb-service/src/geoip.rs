@@ -24,6 +24,7 @@
 
 use std::net::IpAddr;
 use std::path::Path;
+use std::time::SystemTime;
 
 use maxminddb::{path, Reader};
 
@@ -66,6 +67,47 @@ impl GeoipReader {
     pub fn open(path: &Path) -> Result<Self, GeoipError> {
         let reader = Reader::open_readfile(path).map_err(GeoipError::Open)?;
         Ok(Self { reader })
+    }
+
+    /// Parses a `GeoIP` database already held in memory, rather than reading
+    /// it from a file — T-75's downloader validates a freshly-downloaded
+    /// database this way *before* writing it to disk, so a corrupt/truncated
+    /// download never touches the file an atomic swap would otherwise
+    /// replace the last-known-good database with.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GeoipError::Open`] if `bytes` isn't a valid `MaxMind` DB.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, GeoipError> {
+        let reader = Reader::from_source(bytes).map_err(GeoipError::Open)?;
+        Ok(Self { reader })
+    }
+
+    /// The database's self-reported type string (e.g. `"DBIP-Country-Lite"`,
+    /// `"GeoLite2-Country"`) — a loose sanity check T-75's downloader uses to
+    /// reject a well-formed but wrong-shaped `MaxMind` DB (e.g. a City-level
+    /// database) before treating it as this service's country database, not
+    /// a value this crate otherwise interprets.
+    #[must_use]
+    pub(crate) fn database_type(&self) -> &str {
+        &self.reader.metadata().database_type
+    }
+
+    /// When the database itself was built, per its own embedded metadata —
+    /// **not** when this reader loaded it, and not a file's on-disk
+    /// modification time. `geoip_updater.rs` (T-75) uses this for
+    /// `GeoipState::updated_at` specifically because a periodic refresh
+    /// polls and re-persists on a fixed schedule regardless of whether
+    /// `db-ip.com` actually published anything new — the file's own mtime
+    /// (or "when did the last poll run") would report a near-current date
+    /// every time, honest-looking but useless for showing whether the data
+    /// is actually stale (T-78's whole point). `None` only if the embedded
+    /// `build_epoch` itself doesn't fit a `SystemTime` on this platform —
+    /// astronomically unlikely for any real database, not treated as an
+    /// error.
+    #[must_use]
+    pub fn build_time(&self) -> Option<SystemTime> {
+        self.reader.metadata().build_time().ok()
     }
 
     /// The two-letter ISO 3166-1 alpha-2 country code the database
@@ -138,6 +180,23 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(89, 160, 20, 112));
 
         assert_eq!(reader.country(ip), Some("SE"));
+    }
+
+    #[test]
+    fn build_time_reports_a_plausible_past_date_not_the_current_moment() {
+        let reader = open_fixture();
+        let Some(built) = reader.build_time() else {
+            panic!("test fixture must carry a build_epoch");
+        };
+        // The fixture is a fixed, long-published file - its build time must
+        // predate "now" by a wide margin, proving this reads the database's
+        // own embedded metadata rather than reporting the moment this test
+        // ran (the exact confusion this method exists to avoid, per its own
+        // doc comment).
+        let Ok(age) = SystemTime::now().duration_since(built) else {
+            panic!("fixture build_epoch must be in the past");
+        };
+        assert!(age.as_secs() > 60 * 60 * 24 * 30);
     }
 
     #[test]

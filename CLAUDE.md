@@ -4,7 +4,78 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Фаза 2, first slice (T-74 — TASKS.md, one commit): `geoip.rs`, a standalone `GeoipReader::open`/
+Фаза 2, second GeoIP slice (T-75 — TASKS-DONE.md, one commit): the background updater that keeps
+the local `GeoIP` database current — new `geoip_download.rs` (pure: DB-IP Lite candidate-URL
+construction via a hand-rolled civil-calendar date algorithm, no new date dependency; bounded gzip
+decompression) and `geoip_updater.rs` (network fetch/verify/atomic-swap + an infinite background
+loop, this crate's first standing background task and first outbound call to a new third party).
+`AppState` gained a `GeoipState { reader: Option<Arc<GeoipReader>>, updated_at }` slice
+(`RwLock<Arc<_>>`, mirroring `CacheState`/`OverridesState`'s snapshot-read shape), swapped only by
+`AppState::update_geoip` after a downloaded database is validated and durably written to disk — a
+failed refresh never clears an already-loaded database (SPEC.md's own user-safety framing: stale
+beats silently unfiltered). **Real environment blocker, same class as the earlier macOS one,
+surfaced to the user rather than guessed past**: `db-ip.com`/`download.db-ip.com` are unreachable
+from this dev sandbox (DNS-blocked — confirmed via both `curl` and `WebFetch`, while an unrelated
+domain resolves fine), so whether DB-IP publishes a machine-readable checksum sidecar next to the
+`.mmdb.gz` file (their download *page* only shows an MD5/SHA1 as HTML text) couldn't be confirmed
+before writing this code — and SPEC.md §3.5 calls integrity verification "not optional." Put to the
+user via `AskUserQuestion`; chosen: a **defensive fallback** — try a `.sha1` sidecar opportunistically
+and hard-fail on a mismatch, but when the sidecar is absent (404 or any fetch failure), fall back to
+a still-real integrity gate that needs nothing extra from `db-ip.com`: TLS (transport integrity +
+CA-validated origin identity), the gzip trailer's own CRC32/ISIZE (`flate2` validates this
+automatically when the stream is read to its real EOF — the size cap is therefore an unconditional
+reject, never a silent CRC-skipping truncation), a structural `MaxMind`-DB parse
+(`GeoipReader::from_bytes`, new alongside `open`), and a loose `database_type` sanity check. A
+`#[ignore]`d live test (`geoip_updater::tests::fetch_and_verify_against_live_db_ip`, same "manual,
+not CI-gated" precedent as `upstream.rs`'s live-Quad9 test) is where whoever first has real
+`db-ip.com` connectivity should confirm which path actually fires and fold that back into
+`geoip_updater.rs`'s own module doc comment. **Advisor-caught before implementing**: the first
+framing called the sidecar "same-origin, adds ~nothing" — wrong, `db-ip.com` (the page) and
+`download.db-ip.com` (the artifact) are different hosts, so a found sidecar is a genuine cross-host
+consistency check, not a self-referential one; and the gzip CRC32/ISIZE trailer is a free, already-
+present integrity check the first draft hadn't counted at all. Two more findings recorded but not
+acted on here (T-81's scope): DB-IP Lite's actual current license is **CC BY 4.0**, not CC BY-SA 4.0
+as SPEC.md previously stated, and their page separately requires a link back to db-ip.com on any
+page displaying results — both confirmed via live web search, not training-data memory, and
+appended to SPEC.md §3.5 as a note rather than rewriting the original paragraph. New dependencies:
+`flate2` (pure-Rust `miniz_oxide` backend, no `unsafe`, no C toolchain — keeps `#![forbid(unsafe_code)]`
+intact the same way `maxminddb`'s feature choice does) and `sha1` (RustCrypto — SHA-1 chosen only
+because that's what `db-ip.com`'s page is confirmed to publish, not for collision resistance; the
+threat model here is cross-host consistency, not a resourced adversary). `reqwest` gained the
+`stream` feature for `Response::bytes_stream()` — download size is bounded chunk-by-chunk as bytes
+arrive, not checked against a spoofable `Content-Length` after the fact. Date math (which calendar
+month DB-IP's URL should name, with a previous-month fallback for early-in-the-month publish lag)
+is Howard Hinnant's `civil_from_days` algorithm, hand-implemented — deliberately no new date crate
+for one calculation. **Closing advisor review before commit caught three more real bugs, all fixed
+in this same slice, not deferred:** (1) `fetch_checksum_sidecar`'s first draft trusted any `2xx`
+body as a real checksum — a server answering a missing sidecar path with `200` + an HTML error page
+(not a proper `404`) would have its first "word" (`<!doctype`) compared as if it were a digest,
+always mismatch, and hard-fail every refresh forever via `ChecksumMismatch` with no working
+fallback — the exact "silently worse than no filtering, no signal to the user" Три Б shape. Fixed
+with `looks_like_sha1_hex` (40 hex chars) gating whether a fetched token is even treated as a
+checksum, restoring "absent" vs. "present but wrong" as the only two real outcomes. (2) The new
+`reqwest::Client` in `main.rs` had no timeout anywhere on this path — a stalled connection would
+park `run_geoip_updater`'s loop indefinitely (it never reaches its own `sleep`), silently killing
+the feature until a process restart — the same "promoted to an unbounded path, needs a timeout"
+gotcha already recorded in this file for `pipeline::resolve_via_baseline` at T-41, now hit on a
+brand-new outbound path instead of rediscovered later. Fixed with `tokio::time::timeout` wrapping
+each candidate attempt (`GEOIP_FETCH_TIMEOUT`, 120s), mirroring `query_with_timeout`'s own
+established shape rather than reaching for `reqwest`'s own per-request timeout (whose semantics
+against a still-open `bytes_stream()` weren't worth relying on unverified). (3) `updated_at` was
+first set from `SystemTime::now()` (the refresh's own poll time) — since this task polls on a fixed
+24h schedule regardless of whether `db-ip.com` actually published anything new, T-78's future "last
+updated" indicator would always read as "today," true but useless for showing real staleness. Fixed
+by reading the database's own embedded `build_epoch` instead (`maxminddb::Metadata::build_time`,
+confirmed present by reading the vendored source) — a new `GeoipReader::build_time` (`pub`, mirrors
+`database_type`'s existing internal accessor) used both here and by `main.rs`'s startup-load path,
+which had the same wrong-quantity bug via file mtime. Full local gate green (327 lib tests,
+clippy/fmt/doc all `-D warnings`, `cargo deny check`/`cargo audit` both clean, only pre-existing
+informational advisories). Diagram ground-truth ritual checked, untriggered — `GeoipState` is an
+internal `AppState` slice, no `admin.rs` DTO/UI state/flow changed this slice. **Not in this
+slice**: pipeline wiring (T-76), `DecisionSource::Geoip`/`geoip_country` internal types (T-79), any
+UI (T-77/T-78/T-81), advanced MaxMind mode (T-80).
+
+Фаза 2, first slice (T-74 — TASKS-DONE.md, one commit): `geoip.rs`, a standalone `GeoipReader::open`/
 `country` — pure `IpAddr → Option<ISO country code>` lookup over a caller-supplied `MaxMind`-format
 database path (SPEC.md §3.5), the first primitive in the Ф2 execution plan's GeoIP workstream
 (TASKS.md's Ф2 plan block). New direct dependency `maxminddb` 0.30.3 (+`ipnetwork` 0.21.1,
@@ -1123,9 +1194,12 @@ a stub binary (`todo!()` body); it's Фаза 3 scope (SPEC.md §7).
 Runtime dependencies: `hickory-proto`, `tokio` (`rt-multi-thread`/`macros`/`net`/`sync`/`time` —
 `sync` added T-149 for `tokio::sync::watch`, `main.rs`'s `/admin/shutdown` signal; `test-util`
 in `[dev-dependencies]` for `tokio::time::pause`/`advance` in timeout tests), `reqwest`
-(`default-features = false`, `rustls`/`http2`/`json` — `json` added T-52 for `admin::AdminClient`'s
-`Response::json()`/`RequestBuilder::json()`, `cargo deny check` clean, no new license entries; still
-no `native-tls`), `thiserror`, `base64`,
+(`default-features = false`, `rustls`/`http2`/`json`/`stream` — `json` added T-52 for
+`admin::AdminClient`'s `Response::json()`/`RequestBuilder::json()`; `stream` added T-75 for
+`Response::bytes_stream()`, `geoip_updater::fetch_bounded`'s chunk-by-chunk size-bounded download
+(pulls in `tokio-util`; `wasm-streams` too, but `cfg`'d to `wasm32`, outside this project's
+Windows-only `cargo deny` graph restriction); `cargo deny check` clean both times, no new license
+entries; still no `native-tls`), `thiserror`, `base64`,
 `futures-util` (`FuturesUnordered`/`StreamExt` only, not the full `futures` crate — T-30), `tracing`
 (diagnostic logging, T-29; `SPEC.md`'s "Технічний стек" table doesn't name a logging crate, `tracing`
 is the tokio-ecosystem de-facto default), `tracing-subscriber` (T-143 — `main.rs`'s
@@ -1191,7 +1265,16 @@ added several batches ago; `futures-util`/`tracing`/`moka`/`serde`/`serde_json`/
 `x509-parser`/`zeroize` are all `MIT OR Apache-2.0`, already allowed; `rustls` is `Apache-2.0 OR
 ISC OR MIT`, `ISC` already allowed for this same TLS stack; the `hyper` family/`http`/
 `http-body-util`/`bytes`/`tracing-subscriber` are all plain `MIT`, already allowed) — `cargo deny
-check` confirmed clean at T-142 (2026-08-26) and again at T-143 (2026-08-26).
+check` confirmed clean at T-142 (2026-08-26) and again at T-143 (2026-08-26). `flate2`
+(`default-features = false, features = ["miniz_oxide"]` — the crate's own pure-Rust, no-`unsafe`
+default backend, no C toolchain; T-75, `geoip_download::decompress_bounded`'s bounded gzip
+decompression of a downloaded `GeoIP` database) and `sha1` (RustCrypto, T-75,
+`geoip_updater::sha1_hex` — verifies an opportunistic `.sha1` checksum sidecar; SHA-1 chosen to
+match what `db-ip.com`'s download page actually publishes, not for collision resistance) both
+resolve to already-allowed licenses (`MIT OR Apache-2.0`), no new `deny.toml` entries — `cargo deny
+check` confirmed clean at T-75 (2026-08-29); introduces a second `cpufeatures` version alongside the
+one `chacha20`/`rand` already pull in (`multiple-versions = "warn"`, not `deny`, so this doesn't
+fail the gate).
 
 Commands (from repo root):
 - `cargo build --workspace` — build all three crates (`dnsqb-service`, `dnsqb-watcher`, and

@@ -11,9 +11,10 @@
 //! manual smoke-test step recorded for T-143 in `TASKS-DONE.md` instead.
 
 use dnsqb_service::{
-    app_data_dir, bind_listener, load_or_generate_server_config, serve, AppState, BindError, Cache,
-    CacheState, InvalidEntry, OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLog,
-    ReqwestDohClient, ResolverConfig, RuntimeSettings, TimeoutConfig,
+    app_data_dir, bind_listener, load_or_generate_server_config, run_geoip_updater, serve,
+    AppState, BindError, Cache, CacheState, GeoipReader, GeoipState, InvalidEntry, OverrideLists,
+    OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
+    RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -95,6 +96,14 @@ async fn main() {
         }),
     };
 
+    // T-75: a database a previous run already downloaded is loaded
+    // synchronously here so a restart doesn't lose GeoIP filtering until the
+    // background updater's next periodic check completes - `geoip_path` is
+    // `None` under the same "no app-data directory" tolerance every other
+    // persisted file in this function already applies.
+    let geoip_path = app_data.as_deref().map(|dir| dir.join("geoip.mmdb"));
+    let geoip = load_geoip_state(geoip_path.as_deref());
+
     // Cache TTL/capacity config is now live-editable (T-153) - built from
     // whatever `resolver_config.toml`'s own `[cache]` table resolved to
     // (defaults if absent), not a hardcoded `CacheConfig::default()`.
@@ -111,14 +120,61 @@ async fn main() {
             cache: Cache::new(&resolver_config.cache),
             config: resolver_config.cache,
         },
+        geoip,
         QueryLog::default(),
         persist,
     ));
+
+    // T-75: the GeoIP database updater talks to a public third party
+    // (db-ip.com), never this service's own pinned-cert admin channel - a
+    // separate, plainly-configured `reqwest::Client` with normal public-CA
+    // validation, the same construction `ReqwestDohClient` itself uses for
+    // its own public upstream queries (Quad9/AdGuard/Cloudflare).
+    if let Some(path) = geoip_path {
+        match reqwest::Client::builder().build() {
+            Ok(geoip_client) => {
+                tokio::spawn(run_geoip_updater(geoip_client, path, Arc::clone(&state)));
+            }
+            Err(err) => {
+                tracing::error!("failed to build the GeoIP update HTTP client: {err}");
+            }
+        }
+    } else {
+        tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
+    }
 
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
 
     serve_until_shutdown(listener, acceptor, state).await;
+}
+
+/// Loads a `GeoIP` database a previous run already persisted, if any (T-75).
+/// A missing file is the ordinary first-run state, not an error - the
+/// background updater's first successful check fills it in. A present but
+/// unreadable/corrupt file is also non-fatal (same tolerance
+/// `load_overrides`/`load_resolver_config` apply to their own files) -
+/// worst case, filtering starts with no `GeoIP` database until the next
+/// periodic refresh replaces the bad file.
+fn load_geoip_state(path: Option<&Path>) -> GeoipState {
+    let Some(path) = path else {
+        return GeoipState::default();
+    };
+    match GeoipReader::open(path) {
+        Ok(reader) => {
+            tracing::info!("loaded existing GeoIP database from {}", path.display());
+            // The database's own embedded build time, not this file's disk
+            // mtime - see `GeoipReader::build_time`'s own doc comment for
+            // why that distinction matters for T-78's future "how stale is
+            // this" indicator.
+            let updated_at = reader.build_time();
+            GeoipState {
+                reader: Some(Arc::new(reader)),
+                updated_at,
+            }
+        }
+        Err(_) => GeoipState::default(),
+    }
 }
 
 /// Accepts connections until `/admin/shutdown` signals (T-149), then drains

@@ -126,6 +126,8 @@ mod cert;
 mod config;
 mod dispatch;
 mod geoip;
+mod geoip_download;
+mod geoip_updater;
 mod listener;
 mod overrides;
 mod paths;
@@ -148,9 +150,11 @@ pub use cache::{
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use config::{ConfigError, ResolverConfig};
 pub use dispatch::{
-    serve, AppState, CacheState, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
+    serve, AppState, CacheState, GeoipState, OverridesState, PersistPaths, PersistTarget,
+    RuntimeSettings,
 };
 pub use geoip::{GeoipError, GeoipReader};
+pub use geoip_updater::{run_geoip_updater, GeoipUpdateError, GEOIP_CHECK_INTERVAL};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
