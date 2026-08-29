@@ -4,6 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+**Фаза 1 formally closed 2026-08-29** (SPEC.md §"Фазований план", TASKS.md's own closure-plan
+record, docs-only) — every bullet in SPEC.md's original Ф1 scope is done; the two backlog lines
+still open under the Ф1 heading (T-51's Firefox half, T-56's full indicator) were never part of
+that original bullet list and are both blocked on named out-of-MVP work (T-132, T-134), so neither
+blocks the closure. **Closing-advisor review of this closure note itself (before commit) caught
+two real, unblocked gaps the first draft had silently overclaimed past**: (1) no test anywhere in
+this repo has ever exercised the actual "browser → local DoH" leg SPEC.md's own Ф1 "Ціль" line
+names first — every existing confirmation is either DoH-client-level (`Invoke-WebRequest`, T-143/
+T-148) or Chrome automation against `/admin/ui` (a different page); Chrome trusting the cert
+(T-49/T-51) is the prerequisite, not the pass itself. (2) T-66's metrics — the explicit gate
+SPEC.md sets before investing in Ф2 — didn't confirm the quorum hypothesis on its one sample
+(AdGuard 0/38). Neither is a numbered task, both are open decisions before Ф2 starts for real; see
+SPEC.md's own closure paragraph for the full wording. Next active phase is Фаза 2, not yet started.
+
 Крок 0 done (SPEC.md §"Фазований план"): Rust workspace, CI, and the RFC-conformance test table
 (T-1–T-19) are in place. Phase 1 target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md
 itself left this open).

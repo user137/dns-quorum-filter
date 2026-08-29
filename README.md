@@ -5,7 +5,7 @@
 
 [![CI](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: Phase 1 PoC](https://img.shields.io/badge/status-Phase%201%20%C2%B7%20PoC-orange)
+![Status: Phase 1 complete, Phase 2 not started](https://img.shields.io/badge/status-Phase%201%20complete%20%C2%B7%20Phase%202%20not%20started-yellow)
 
 [`SPEC.md`](SPEC.md) · [`SERVICES.md`](SERVICES.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`SECURITY.md`](SECURITY.md)
 
@@ -55,10 +55,14 @@ SPEC.md §"Чому саме такий дизайн"):
 
 ## Статус
 
-Фаза 1 (PoC) у процесі: 1 платформа (Windows), 2 upstream-провайдери (Quad9 + AdGuard), ручне
-встановлення сертифіката, override-списки + in-memory лог, без watchdog'а (ручний рестарт
-прийнятний на цій фазі). Живий, детальний статус по кожному зрізу роботи — [`CLAUDE.md`](CLAUDE.md),
-розділ "Project state"; повний фазований план — SPEC.md.
+Фаза 1 (PoC) формально закрита 2026-08-29: 1 платформа (Windows), 2 upstream-провайдери (Quad9 +
+AdGuard), self-signed leaf-сертифікат (встановлення тепер автоматизоване, T-49 — понад початкову
+MVP-вимогу "вручну"), override-списки + in-memory лог, без watchdog'а (як і планувалось на цьому
+етапі). **Два розриви, названі явно, не приховані**: живий прохід через реально налаштований
+Chrome Custom DoH provider (не лише DoH-клієнтський/`Invoke-WebRequest`-рівень) ще не зафіксовано,
+і метрики (T-66) не підтвердили приріст кворуму над найкращим одиночним провайдером на зібраному
+зразку — обидва відкриті перед повноцінним стартом Фази 2. Живий, детальний статус по кожному
+зрізу роботи — [`CLAUDE.md`](CLAUDE.md), розділ "Project state"; повний фазований план — SPEC.md.
 
 ## Workspace
 
