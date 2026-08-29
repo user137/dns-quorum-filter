@@ -148,10 +148,10 @@ pub use cache::{
     CacheConfigSecs, CacheEntry, CacheKey, Verdict,
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
-pub use config::{ConfigError, ResolverConfig};
+pub use config::{ConfigError, GeoipConfig, ResolverConfig};
 pub use dispatch::{
-    serve, AppState, CacheState, GeoipState, OverridesState, PersistPaths, PersistTarget,
-    RuntimeSettings,
+    serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
+    PersistTarget, RuntimeSettings,
 };
 pub use geoip::{GeoipError, GeoipReader};
 pub use geoip_updater::{run_geoip_updater, GeoipUpdateError, GEOIP_CHECK_INTERVAL};
@@ -161,7 +161,8 @@ pub use overrides::{
 };
 pub use paths::{app_data_dir, PathsError};
 pub use pipeline::{
-    handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome, QueryLogMeta,
+    handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
+    PipelineOutcome, QueryLogMeta,
 };
 pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
 pub use quorum::{

@@ -29,11 +29,12 @@ use crate::admin::{
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
-use crate::config::ResolverConfig;
+use crate::config::{GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
-    handle_query, invalidate_changed, proxy_to_single_upstream, PipelineOutcome,
+    handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
+    PipelineOutcome,
 };
 use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
 use crate::quorum::EnabledProviders;
@@ -298,6 +299,27 @@ pub struct GeoipState {
     pub updated_at: Option<SystemTime>,
 }
 
+/// `AppState::new`'s `geoip` parameter (T-76) — pairs the initially-loaded
+/// `GeoipState` with the initially-configured blocked-country list so the
+/// constructor doesn't need an eighth parameter (same
+/// `clippy::too_many_arguments` reasoning as `pipeline::CacheContext`/
+/// `GeoipFilter`). `AppState::new` immediately splits this into two
+/// independently-swappable fields — see [`AppState::geoip`]/
+/// [`AppState::geoip_countries`]'s own doc comments for why they're kept
+/// separate rather than one field: `geoip` is swapped only by
+/// `geoip_updater::run_geoip_updater` after a database refresh,
+/// `geoip_countries` only by config load / `/admin/reset` (and, once T-77
+/// exists, an admin write route) — bundling them into one swappable value
+/// would mean a database refresh could silently wipe the user's country
+/// list, or vice versa.
+pub struct GeoipInit {
+    /// The initially-loaded `GeoIP` database state (reader + when it was
+    /// last refreshed).
+    pub database: GeoipState,
+    /// The initially-configured blocked-country list.
+    pub blocked_countries: Vec<String>,
+}
+
 /// The two on-disk config files' paths, always resolved together from one
 /// `app_data_dir()` call in `main.rs` — bundled as one field on
 /// [`PersistTarget`] rather than two independent `Option<PathBuf>`s so
@@ -358,14 +380,28 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // straddle a swap and pair a stale `Cache` with a fresh `CacheConfig` or
     // vice versa.
     let cache_state = Arc::clone(&state.cache.read());
+    // Same snapshot discipline as `cache_state` above (T-76) - two
+    // independent `RwLock`s (`geoip`/`geoip_countries`, see their own doc
+    // comments for why they're separate), each `Arc::clone`d once, never
+    // held across the `.await` below.
+    let geoip_state = Arc::clone(&state.geoip.read());
+    let geoip_countries = Arc::clone(&state.geoip_countries.read());
+    let cache_context = CacheContext {
+        cache: &cache_state.cache,
+        config: &cache_state.config,
+    };
+    let geoip_filter = GeoipFilter {
+        reader: geoip_state.reader.as_deref(),
+        blocked_countries: &geoip_countries,
+    };
     let response = match handle_query(
         &query,
         &state.client,
         &overrides_state.lists,
         settings.providers,
-        &cache_state.cache,
-        &cache_state.config,
+        &cache_context,
         &settings.timeout,
+        &geoip_filter,
     )
     .await
     {
@@ -410,11 +446,19 @@ pub struct AppState<C: DohClient + Sync> {
     runtime: RwLock<RuntimeSettings>,
     cache: RwLock<Arc<CacheState>>,
     /// T-75 — swapped by `geoip_updater::run_geoip_updater` after each
-    /// successful database refresh, read by `pipeline.rs`'s future `GeoIP`
-    /// filtering step (T-76, not wired yet). `RwLock<Arc<_>>`, same
+    /// successful database refresh, read by `pipeline::handle_query`'s
+    /// `GeoIP` filtering step (T-76). `RwLock<Arc<_>>`, same
     /// snapshot-read-under-a-clone shape as `cache`/`overrides` — a query
-    /// must never hold this lock across an `.await`.
+    /// must never hold this lock across an `.await`. Deliberately doesn't
+    /// carry the blocked-country list too — see [`GeoipInit`]'s own doc
+    /// comment for why that's a separate field ([`AppState::geoip_countries`]).
     geoip: RwLock<Arc<GeoipState>>,
+    /// T-76 — the `GeoIP` blocked-country list (SPEC.md §3.5), swapped by
+    /// config load / `/admin/reset` (and, once T-77 exists, an admin write
+    /// route) — never by `geoip_updater`, which only ever touches `geoip`
+    /// above. Same `RwLock<Arc<_>>` snapshot-read shape as every other
+    /// per-query state here.
+    geoip_countries: RwLock<Arc<Vec<String>>>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -505,7 +549,7 @@ impl<C: DohClient + Sync> AppState<C> {
         overrides: OverridesState,
         runtime: RuntimeSettings,
         cache: CacheState,
-        geoip: GeoipState,
+        geoip: GeoipInit,
         query_log: QueryLog,
         persist: PersistTarget,
     ) -> Self {
@@ -515,7 +559,8 @@ impl<C: DohClient + Sync> AppState<C> {
             overrides: RwLock::new(Arc::new(overrides)),
             runtime: RwLock::new(runtime),
             cache: RwLock::new(Arc::new(cache)),
-            geoip: RwLock::new(Arc::new(geoip)),
+            geoip: RwLock::new(Arc::new(geoip.database)),
+            geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
@@ -531,9 +576,18 @@ impl<C: DohClient + Sync> AppState<C> {
     /// with `reader: None` to represent a failed refresh: a failed refresh
     /// simply doesn't call this at all, leaving the last-known-good
     /// database (if any) in place (see `geoip_updater`'s own module doc
-    /// comment for the reasoning).
+    /// comment for the reasoning). Never touches `geoip_countries` — see
+    /// that field's own doc comment.
     pub(crate) fn update_geoip(&self, new: GeoipState) {
         *self.geoip.write() = Arc::new(new);
+    }
+
+    /// Swaps in a new `GeoIP` blocked-country list (T-76) — called by
+    /// `apply_admin_reset` after a successful `resolver_config.toml` reload,
+    /// and (once T-77 exists) an admin write route. Never touches `geoip`
+    /// (the loaded database) — see that field's own doc comment.
+    pub(crate) fn update_geoip_countries(&self, blocked_countries: Vec<String>) {
+        *self.geoip_countries.write() = Arc::new(blocked_countries);
     }
 
     /// Subscribes a new receiver for the shutdown signal (T-149) — each call
@@ -631,10 +685,13 @@ fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) ->
 /// its own doc comment for why this is what keeps concurrent admin-channel
 /// POSTs' disk-write order matching their in-memory-write order, without
 /// holding `runtime` itself across the blocking `fs::write`. Also reads
-/// `state.cache`'s current config (not just `runtime`) while still holding
-/// the lock, so the file this writes reflects the cache config's live value
-/// too, not a stale/default one — see `persist_lock`'s own doc comment for
-/// why this cross-field read has to happen here.
+/// `state.cache`'s current config and `state.geoip_countries`'s current list
+/// (not just `runtime`) while still holding the lock, so the file this
+/// writes reflects both other fields' live values too, not stale/default
+/// ones — see `persist_lock`'s own doc comment for why this cross-field read
+/// has to happen here (T-76 extended it to `geoip_countries`: without this,
+/// an ordinary providers/timeout toggle would silently overwrite a
+/// hand-edited `[geoip] blocked_countries` with an empty list on save).
 fn apply_admin_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: AdminConfigUpdate,
@@ -653,6 +710,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         *guard
     };
     let cache_config = state.cache.read().config;
+    let blocked_countries = state.geoip_countries.read().as_ref().clone();
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => {
             let config = ResolverConfig {
@@ -661,6 +719,7 @@ fn apply_admin_config<C: DohClient + Sync>(
                 timeout_ms: timeout_ms(settings.timeout.duration),
                 providers: settings.providers,
                 cache: cache_config,
+                geoip: GeoipConfig { blocked_countries },
             };
             match config.save(&paths.config) {
                 Ok(()) => true,
@@ -845,6 +904,11 @@ fn apply_admin_reset<C: DohClient + Sync>(
         cache: Cache::new(&config.cache),
         config: config.cache,
     });
+    // T-76: reset reloads resolver_config.toml's whole [geoip] table too -
+    // without this, a hand-edited blocked-country list would only take
+    // effect at the next process restart, not on the very next reset (the
+    // same completeness gap `overrides`/`cache` above already close).
+    state.update_geoip_countries(config.geoip.blocked_countries);
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -1063,11 +1127,12 @@ fn serve_admin_cache_config<C: DohClient + Sync>(state: &AppState<C>) -> Respons
 /// `state.persist_lock` is held for the whole validate-swap-persist
 /// sequence, acquired *before* `cache`'s own lock — same shared-file
 /// reasoning as [`apply_admin_config`], see `persist_lock`'s own doc
-/// comment. Also reads `state.runtime`'s current settings (not just
-/// `cache`) while still holding the lock, so the file this writes reflects
-/// `providers`/`timeout_mode`'s live values too, not stale/default ones —
-/// same cross-field-read requirement `apply_admin_config` has in the other
-/// direction.
+/// comment. Also reads `state.runtime`'s current settings and
+/// `state.geoip_countries`'s current list (not just `cache`) while still
+/// holding the lock, so the file this writes reflects all of their live
+/// values too, not stale/default ones — same cross-field-read requirement
+/// `apply_admin_config` has in the other direction (T-76 extended it here
+/// too, same reasoning as that function's own doc comment).
 fn apply_cache_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: CacheConfigUpdate,
@@ -1079,6 +1144,7 @@ fn apply_cache_config<C: DohClient + Sync>(
         config: new_config,
     });
     let runtime = *state.runtime.read();
+    let blocked_countries = state.geoip_countries.read().as_ref().clone();
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => {
             let config = ResolverConfig {
@@ -1087,6 +1153,7 @@ fn apply_cache_config<C: DohClient + Sync>(
                 timeout_ms: timeout_ms(runtime.timeout.duration),
                 providers: runtime.providers,
                 cache: new_config,
+                geoip: GeoipConfig { blocked_countries },
             };
             match config.save(&paths.config) {
                 Ok(()) => true,
@@ -1470,9 +1537,9 @@ where
 mod tests {
     use super::{
         admin_status, content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
-        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipState, LogQueryError,
-        OverridesState, PersistPaths, PersistTarget, RuntimeSettings, DEFAULT_LOG_LIMIT,
-        DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipState,
+        LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
+        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
@@ -2066,7 +2133,10 @@ mod tests {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
             },
-            GeoipState::default(),
+            GeoipInit {
+                database: GeoipState::default(),
+                blocked_countries: Vec::new(),
+            },
             QueryLog::default(),
             persist,
         ))
@@ -2463,6 +2533,56 @@ mod tests {
         };
         assert_eq!(loaded.providers, update.providers);
         assert_eq!(loaded.timeout_mode, update.timeout_mode);
+    }
+
+    // T-76, advisor-caught before commit: an unrelated `POST /admin/config`
+    // (providers/timeout-mode only) must not silently wipe a hand-edited
+    // `[geoip] blocked_countries` on save - the same "backend snapshots the
+    // *other* field's live value too" discipline `persist_lock`'s own doc
+    // comment already documents for `providers`/`timeout_mode`/`cache`,
+    // extended here to `geoip_countries`. Without the cross-field read this
+    // test would fail (the saved file's `[geoip]` table would come back
+    // empty).
+    #[tokio::test]
+    async fn serve_admin_config_does_not_wipe_a_preexisting_geoip_blocked_country_list() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        state.update_geoip_countries(vec!["SE".to_string()]);
+
+        let update = AdminConfigUpdate {
+            providers: EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+            timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+        };
+        let response = match serve(admin_config_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(
+            loaded.geoip.blocked_countries,
+            vec!["SE".to_string()],
+            "an unrelated providers/timeout-mode change must not wipe the geoip country list"
+        );
     }
 
     // T-58, SPEC.md §8.1's "rapid toggle race" misuse example. Several
@@ -2892,6 +3012,103 @@ mod tests {
         );
     }
 
+    // T-76, advisor-caught gap: /admin/reset must reload [geoip]
+    // blocked_countries too, same completeness requirement as
+    // `serve_admin_reset_reloads_cache_config_from_the_fixture_file` above -
+    // a hand-edited country list must take effect on the next reset, not
+    // wait for a process restart. Built with a real, loaded GeoipReader
+    // (the vendored fixture geoip.rs's own tests use), not
+    // `GeoipState::default()` - a `reader: None` state would make this
+    // test's whole subject (`blocks_any`) short-circuit to false regardless
+    // of whether the reload actually happened, proving nothing.
+    #[tokio::test]
+    async fn serve_admin_reset_reloads_the_geoip_blocked_country_list_from_the_fixture_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &config_path,
+            "port = 8443\ntimeout_mode = \"fail_open\"\ntimeout_ms = 2000\n\n\
+             [geoip]\nblocked_countries = [\"se\"]\n",
+        ) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        if let Err(err) = std::fs::write(&overrides_path, "") {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/geoip/GeoIP2-Country-Test.mmdb");
+        let Ok(reader) = crate::geoip::GeoipReader::open(&fixture_path) else {
+            panic!("geoip fixture must load");
+        };
+
+        let state = Arc::new(AppState::new(
+            no_op_client(),
+            OverridesState {
+                lists: OverrideLists::empty(),
+                invalid: Vec::new(),
+            },
+            RuntimeSettings {
+                providers: EnabledProviders::default(),
+                timeout: TimeoutConfig::default(),
+            },
+            CacheState {
+                cache: Cache::new(&CacheConfig::default()),
+                config: CacheConfig::default(),
+            },
+            GeoipInit {
+                database: GeoipState {
+                    reader: Some(Arc::new(reader)),
+                    updated_at: None,
+                },
+                // Starts empty - the reset below is what must populate it
+                // from the fixture file's own [geoip] table.
+                blocked_countries: Vec::new(),
+            },
+            QueryLog::default(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: config_path,
+                    overrides: overrides_path,
+                }),
+            },
+        ));
+
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // ResolverConfig::load normalizes to uppercase - the swapped-in live
+        // value must reflect that, not the raw lowercase file text.
+        assert_eq!(
+            **state.geoip_countries.read(),
+            vec!["SE".to_string()],
+            "reset must reload [geoip] blocked_countries from the fixture file"
+        );
+        // And the reload is real, not just a stored string - the actual
+        // filter this crate ships (geoip::blocks_any) must now block the
+        // fixture's own known-good SE address.
+        let se_ip: std::net::IpAddr = match "89.160.20.112".parse() {
+            Ok(ip) => ip,
+            Err(err) => panic!("valid IPv4 literal: {err}"),
+        };
+        let geoip_snapshot = Arc::clone(&state.geoip.read());
+        let countries_snapshot = Arc::clone(&state.geoip_countries.read());
+        assert!(
+            crate::geoip::blocks_any(
+                geoip_snapshot.reader.as_deref(),
+                &countries_snapshot,
+                &[se_ip]
+            ),
+            "the reloaded country list must actually block the fixture's known SE address"
+        );
+    }
+
     fn admin_overrides_add_request(pattern: &str, list: ListKind) -> Request<Full<Bytes>> {
         let Ok(json) = serde_json::to_vec(&OverrideAddRequest {
             pattern: pattern.to_string(),
@@ -3113,7 +3330,10 @@ mod tests {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
             },
-            GeoipState::default(),
+            GeoipInit {
+                database: GeoipState::default(),
+                blocked_countries: Vec::new(),
+            },
             QueryLog::default(),
             PersistTarget {
                 port: 8443,
@@ -3443,6 +3663,46 @@ mod tests {
         let loaded_secs = loaded.cache.to_secs();
         assert_eq!(loaded_secs.clamp_min_secs, update.clamp_min_secs);
         assert_eq!(loaded_secs.max_capacity, update.max_capacity);
+    }
+
+    // T-76, same cross-field-read requirement as `serve_admin_config_does_
+    // not_wipe_a_preexisting_geoip_blocked_country_list` above, mirrored for
+    // this route (`apply_cache_config` reads `state.geoip_countries` too).
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_does_not_wipe_a_preexisting_geoip_blocked_country_list()
+    {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        state.update_geoip_countries(vec!["DE".to_string()]);
+
+        let update = non_default_cache_config_update();
+        let response = match serve(admin_cache_config_apply_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(
+            loaded.geoip.blocked_countries,
+            vec!["DE".to_string()],
+            "an unrelated cache-config change must not wipe the geoip country list"
+        );
     }
 
     #[tokio::test]

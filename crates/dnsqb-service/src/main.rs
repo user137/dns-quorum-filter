@@ -12,9 +12,9 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_or_generate_server_config, run_geoip_updater, serve,
-    AppState, BindError, Cache, CacheState, GeoipReader, GeoipState, InvalidEntry, OverrideLists,
-    OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
-    RuntimeSettings, TimeoutConfig,
+    AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader, GeoipState, InvalidEntry,
+    OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient,
+    ResolverConfig, RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -102,7 +102,16 @@ async fn main() {
     // `None` under the same "no app-data directory" tolerance every other
     // persisted file in this function already applies.
     let geoip_path = app_data.as_deref().map(|dir| dir.join("geoip.mmdb"));
-    let geoip = load_geoip_state(geoip_path.as_deref());
+    let geoip_database = load_geoip_state(geoip_path.as_deref());
+    // T-76: the blocked-country list starts from whatever resolver_config.
+    // toml's own [geoip] table resolved to (empty by default, SPEC.md
+    // §3.5) - bundled with `geoip_database` into one `GeoipInit` (see that
+    // type's own doc comment for why `AppState::new` splits it into two
+    // independently-swapped fields rather than taking it as a single value).
+    let geoip = GeoipInit {
+        database: geoip_database,
+        blocked_countries: resolver_config.geoip.blocked_countries.clone(),
+    };
 
     // Cache TTL/capacity config is now live-editable (T-153) - built from
     // whatever `resolver_config.toml`'s own `[cache]` table resolved to

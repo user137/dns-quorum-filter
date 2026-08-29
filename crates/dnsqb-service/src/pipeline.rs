@@ -1,9 +1,8 @@
 //! T-39: end-to-end request pipeline — allowlist → blocklist → cache →
 //! quorum (SPEC.md §5 steps 1-3+5). Voter scope (step 4, top-N per country)
-//! and `GeoIP` (step 6) aren't implemented yet — both are later phases (Фаза 4
-//! and Фаза 2 respectively), not this batch. RFC 8767 stale-if-error
-//! integration (`should_serve_stale` stays an unconsumed predicate here) is
-//! also deferred — see TASKS.md. Not wired to any network listener yet
+//! isn't implemented yet — Фаза 4. RFC 8767 stale-if-error integration
+//! (`should_serve_stale` stays an unconsumed predicate here) is also
+//! deferred — see TASKS.md. Not wired to any network listener yet
 //! (T-48 waits on the self-signed certificate).
 //!
 //! T-40 adds a second, non-`handle_query` entry point: [`invalidate_changed`]
@@ -15,10 +14,30 @@
 //! that all-or-nothing switch with [`crate::quorum::EnabledProviders`], a
 //! real per-provider toggle — see `handle_query`'s `enabled.any_enabled()`
 //! branch.
+//!
+//! T-76 wires SPEC.md §3.5's `GeoIP` filter into the two points named there:
+//! a cache-hit `Allow` replay ([`cache_hit_response_with_meta`]) and a fresh
+//! quorum `Allow` ([`handle_allow`]'s return path). Both apply live, never
+//! cache the `GeoIP` verdict itself (SPEC.md's own reasoning: a country-list
+//! edit must take effect on the very next query, not wait out a TTL) — see
+//! [`GeoipFilter`]/[`crate::geoip::blocks_any`]. **SPEC-silent choice, stated
+//! here rather than left implicit**: the allowlist branch is exempt (SPEC.md
+//! §3.5's own pipeline snippet says so explicitly — allowlisted domains never
+//! consult quorum *or* `GeoIP`), and the every-provider-disabled pass-through
+//! ([`baseline_passthrough_with_meta`]) is *also* exempt, by the same "no
+//! filtering at all" reasoning T-41 already documented for that branch — both
+//! share [`resolve_via_baseline`], so exempting one without the other would
+//! need splitting that shared helper for no behavioral gain today. Not yet
+//! wired: `DecisionSource::Geoip` entries always log `geoip_country: None`
+//! (T-79 fills that in) and non-A/AAAA proxied queries (HTTPS/SVCB
+//! `ipv4hint`/`ipv6hint`) never reach this filter — they already bypass
+//! quorum entirely (SPEC.md §3), and `GeoIP` bypasses with it, a real named
+//! gap rather than a silent one.
 
 use crate::cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
+use crate::geoip::{self, GeoipReader};
 use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
 use crate::query_log::{Decision, DecisionSource};
@@ -31,6 +50,34 @@ use hickory_proto::rr::rdata::{A, AAAA, SOA};
 use hickory_proto::rr::{RData, Record, RecordType};
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
+
+/// The cache and its config, bundled into one `handle_query` parameter
+/// (T-76) — keeps the total parameter count under `clippy::too_many_arguments`
+/// now that `geoip` is an eighth, the same "structural fix, not `#[allow]`"
+/// precedent T-147/T-148 already established elsewhere in this file. Defined
+/// here rather than reusing `dispatch::CacheState` (which owns the values,
+/// not references, and importing it here would invert the crate's
+/// `dispatch` → `pipeline` dependency direction).
+pub struct CacheContext<'a> {
+    /// The live cache.
+    pub cache: &'a Cache,
+    /// The config it was built from.
+    pub config: &'a CacheConfig,
+}
+
+/// SPEC.md §3.5's live `GeoIP` filter inputs for one query (T-76) — bundled
+/// into one `handle_query` parameter for the same `clippy::too_many_arguments`
+/// reason as [`CacheContext`]. `reader: None` means no database has ever
+/// loaded yet (a fresh install, before `geoip_updater`'s first successful
+/// check) — see [`geoip::blocks_any`]'s own doc comment for why that's a
+/// no-op, not an error.
+pub struct GeoipFilter<'a> {
+    /// The loaded `GeoIP` database, or `None` before the first successful
+    /// download.
+    pub reader: Option<&'a GeoipReader>,
+    /// The user's blocked-country list — empty by default (SPEC.md §3.5).
+    pub blocked_countries: &'a [String],
+}
 
 /// The result of running a query through the pipeline.
 #[derive(Debug)]
@@ -141,13 +188,43 @@ fn blocklist_response_with_meta(
 
 /// A fresh cache hit's response + metadata (T-147) — same reason as
 /// [`blocklist_response_with_meta`].
+///
+/// SPEC.md §3.5: `GeoIP` applies live even on a cache-hit replay, checked
+/// here (not baked into the cached [`CacheEntry`] itself) — see the module
+/// doc comment for why the verdict is never cached. A `GeoIP`-blocked hit
+/// still logs `DecisionSource::Geoip`, not `Cache` — the cached verdict was
+/// `Allow`, but that's not what actually decided this response. The block
+/// response's TTL is `cache_config.block_verdict_ttl`, the same constant
+/// [`handle_allow`]'s own `GeoIP` block uses on the fresh-answer path — not
+/// the *Allow* entry's own remaining TTL, which has no relationship to how
+/// long a `GeoIP` block should be advertised and would leave the browser
+/// holding a stale `0.0.0.0` for up to that remainder after a country is
+/// removed from the list (advisor-caught before commit).
 fn cache_hit_response_with_meta(
     query: &Message,
     entry: &CacheEntry,
     now: Instant,
     domain: String,
     qtype: RecordType,
+    cache_config: &CacheConfig,
+    geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    if let Verdict::Allow(ips) = &entry.verdict {
+        if geoip::blocks_any(geoip.reader, geoip.blocked_countries, ips) {
+            let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
+            let meta = QueryLogMeta {
+                domain,
+                qtype,
+                decision: Decision::Blocked,
+                decision_source: DecisionSource::Geoip,
+                voters: Vec::new(),
+            };
+            return (
+                PipelineOutcome::Response(build_block_response(query, ttl)),
+                Some(meta),
+            );
+        }
+    }
     let decision = match entry.verdict {
         Verdict::Block => Decision::Blocked,
         Verdict::Allow(_) => Decision::Allowed,
@@ -180,9 +257,9 @@ pub async fn handle_query<C: DohClient + Sync>(
     client: &C,
     overrides: &OverrideLists,
     enabled: EnabledProviders,
-    cache: &Cache,
-    cache_config: &CacheConfig,
+    cache: &CacheContext<'_>,
     timeout_config: &TimeoutConfig,
+    geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
     let Some(question) = query.queries.first() else {
         return (PipelineOutcome::ProxyToSingleUpstream, None);
@@ -221,7 +298,7 @@ pub async fn handle_query<C: DohClient + Sync>(
             .await;
         }
         Ok(Some(ListKind::Blocklist)) => {
-            return blocklist_response_with_meta(query, cache_config, log_domain.clone(), qtype);
+            return blocklist_response_with_meta(query, cache.config, log_domain.clone(), qtype);
         }
         Ok(None) | Err(_) => {}
     }
@@ -285,9 +362,17 @@ pub async fn handle_query<C: DohClient + Sync>(
     };
 
     let now = Instant::now();
-    if let Some(entry) = cache.get(&key).await {
+    if let Some(entry) = cache.cache.get(&key).await {
         if entry.is_fresh(now) {
-            return cache_hit_response_with_meta(query, &entry, now, log_domain.clone(), qtype);
+            return cache_hit_response_with_meta(
+                query,
+                &entry,
+                now,
+                log_domain.clone(),
+                qtype,
+                cache.config,
+                geoip,
+            );
         }
     }
 
@@ -295,8 +380,9 @@ pub async fn handle_query<C: DohClient + Sync>(
     match outcome.verdict {
         QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
-            let ttl = cache_config.block_verdict_ttl;
+            let ttl = cache.config.block_verdict_ttl;
             cache
+                .cache
                 .insert(key, CacheEntry::new(Verdict::Block, ttl))
                 .await;
             let meta = QueryLogMeta {
@@ -312,18 +398,53 @@ pub async fn handle_query<C: DohClient + Sync>(
             )
         }
         QuorumVerdict::Allow => {
-            let voters = outcome.voters;
-            let message = handle_allow(cache, key, cache_config, query, outcome.answer).await;
-            let meta = QueryLogMeta {
-                domain: log_domain,
-                qtype,
-                decision: decision_from_response(&message),
-                decision_source: DecisionSource::Quorum,
-                voters,
-            };
-            (PipelineOutcome::Response(message), Some(meta))
+            quorum_allow_response_with_meta(cache, key, query, outcome, log_domain, qtype, geoip)
+                .await
         }
     }
+}
+
+/// The `QuorumVerdict::Allow` branch of `handle_query`'s quorum step —
+/// pulled out only to keep `handle_query` itself under
+/// `clippy::too_many_lines` (T-76 added a fourth branch's worth of `GeoIP`
+/// handling), same "structural fix, not `#[allow]`" precedent T-147/T-148
+/// already established for this file's other extracted helpers.
+async fn quorum_allow_response_with_meta(
+    cache: &CacheContext<'_>,
+    key: CacheKey,
+    query: &Message,
+    outcome: crate::quorum::QuorumOutcome,
+    log_domain: String,
+    qtype: RecordType,
+    geoip: &GeoipFilter<'_>,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let voters = outcome.voters;
+    let result = handle_allow(cache, key, query, outcome.answer, geoip).await;
+    let (message, decision, decision_source, voters) = match result {
+        AllowResult::Answer(message) => {
+            let decision = decision_from_response(&message);
+            (message, decision, DecisionSource::Quorum, voters)
+        }
+        // SPEC.md §3.5: the quorum verdict itself was Allow (and is cached
+        // as such, unchanged — see handle_allow's own doc comment for why)
+        // - GeoIP overrides only the response actually sent, and only this
+        // log entry's own decision/decision_source/voters, not the cached
+        // Verdict a later, country-list-edited query will re-read.
+        AllowResult::GeoipBlocked(message) => (
+            message,
+            Decision::Blocked,
+            DecisionSource::Geoip,
+            Vec::new(),
+        ),
+    };
+    let meta = QueryLogMeta {
+        domain: log_domain,
+        qtype,
+        decision,
+        decision_source,
+        voters,
+    };
+    (PipelineOutcome::Response(message), Some(meta))
 }
 
 /// SPEC.md §5 step 1: one direct query to the baseline resolver (T-22),
@@ -368,16 +489,38 @@ pub async fn proxy_to_single_upstream<C: DohClient + Sync>(
     resolve_via_baseline(client, query, timeout_config).await
 }
 
+/// [`handle_allow`]'s result — distinguishes a real answer (forwarded or
+/// synthesized SERVFAIL, `Decision`/`DecisionSource` computed by the caller
+/// the same way it always was) from a live `GeoIP` block (T-76), whose
+/// `Decision`/`DecisionSource`/`voters` the caller must override outright
+/// rather than derive from the response — see `handle_query`'s own match on
+/// this type.
+enum AllowResult {
+    Answer(Message),
+    GeoipBlocked(Message),
+}
+
 /// The `Allow`-verdict branch of `handle_query`'s quorum step — separated
 /// out only because `handle_query` was otherwise growing past a readable
 /// single function, not because this is reused elsewhere.
+///
+/// SPEC.md §3.5: `GeoIP` is checked on the *return* path, after the quorum
+/// `Allow` verdict is cached exactly as it always was (unaffected by whether
+/// `GeoIP` goes on to block this particular response) — never inside the
+/// `is_cacheable(ttl)` branch below, which only runs for a positive answer
+/// with a non-zero TTL and would silently skip the check for a TTL-0 answer.
+/// This is also why the resolved `Verdict::Allow` is cached unchanged even
+/// when this function returns [`AllowResult::GeoipBlocked`]: caching a
+/// `Block` (or skipping the insert) would mean removing a country from the
+/// blocked list doesn't take effect until the cache entry's TTL expires —
+/// exactly what the module doc comment says `GeoIP` exists to avoid.
 async fn handle_allow(
-    cache: &Cache,
+    cache: &CacheContext<'_>,
     key: CacheKey,
-    cache_config: &CacheConfig,
     query: &Message,
     answer: Option<Message>,
-) -> Message {
+    geoip: &GeoipFilter<'_>,
+) -> AllowResult {
     let Some(message) = answer else {
         // Every voter unresponsive under fail-open, or every Responded voter
         // had an unusable answer (SERVFAIL/REFUSED - representative_allow_
@@ -386,35 +529,43 @@ async fn handle_allow(
         // misleading empty NoError that a browser would read as "this
         // domain has no record" (SPEC.md §3.2's own reasoning about
         // misleading responses applies here too).
-        return build_servfail_response(query);
+        return AllowResult::Answer(build_servfail_response(query));
     };
 
     if message.answers.is_empty() {
         // Genuine NXDOMAIN/NODATA (not a block - quorum already ruled that
         // out). RFC 2308 negative-caching TTL comes from the authority
         // section's SOA MINIMUM, not the same clamp source as a positive
-        // answer's chain TTL.
+        // answer's chain TTL. No IPs in an empty answer section, so GeoIP
+        // has nothing to check here - falls straight through to the forward
+        // below.
         let ttl = match find_soa(&message.authorities) {
-            Some(soa) => clamp_ttl(negative_cache_ttl(soa), cache_config),
+            Some(soa) => clamp_ttl(negative_cache_ttl(soa), cache.config),
             // No SOA to derive a negative TTL from - Три Б: don't guess one,
             // just don't cache this answer.
             None => Duration::ZERO,
         };
         if is_cacheable(ttl) {
             cache
+                .cache
                 .insert(key, CacheEntry::new(Verdict::Allow(Vec::new()), ttl))
                 .await;
         }
     } else {
+        let ips = extract_ips(&message.answers);
         let ttl = match chain_cache_ttl(&message.answers) {
-            Some(secs) => clamp_ttl(secs, cache_config),
+            Some(secs) => clamp_ttl(secs, cache.config),
             None => Duration::ZERO,
         };
         if is_cacheable(ttl) {
-            let ips = extract_ips(&message.answers);
             cache
-                .insert(key, CacheEntry::new(Verdict::Allow(ips), ttl))
+                .cache
+                .insert(key, CacheEntry::new(Verdict::Allow(ips.clone()), ttl))
                 .await;
+        }
+        if geoip::blocks_any(geoip.reader, geoip.blocked_countries, &ips) {
+            let block_ttl = duration_to_ttl_secs(cache.config.block_verdict_ttl);
+            return AllowResult::GeoipBlocked(build_block_response(query, block_ttl));
         }
     }
 
@@ -425,7 +576,7 @@ async fn handle_allow(
     // Cache-hit replay is the one place that collapses NXDOMAIN into
     // NODATA-shaped (`response_from_cache_entry` below) - a deliberate,
     // documented difference between the two paths, not an inconsistency.
-    crate::wire::forward_response(query, &message)
+    AllowResult::Answer(crate::wire::forward_response(query, &message))
 }
 
 /// SPEC.md §5 (T-40): apply the `Cache` invalidation implied by an
@@ -521,8 +672,9 @@ fn duration_to_ttl_secs(duration: Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_query, invalidate_changed, PipelineOutcome};
+    use super::{handle_query, invalidate_changed, CacheContext, GeoipFilter, PipelineOutcome};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
+    use crate::geoip::GeoipReader;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{Decision, DecisionSource};
     use crate::quorum::{EnabledProviders, VoterVerdict};
@@ -535,6 +687,30 @@ mod tests {
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{Duration, Instant};
+
+    // T-76: the same vendored MaxMind-DB test fixture geoip.rs's own tests
+    // use (89.160.20.112 -> SE, maxmind/MaxMind-DB's own known-good
+    // assertion) - loaded here too rather than a hand-rolled mock, so these
+    // tests exercise a real GeoipReader::country lookup, not just the
+    // pipeline's own plumbing around one.
+    fn geoip_fixture() -> GeoipReader {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/geoip/GeoIP2-Country-Test.mmdb");
+        let Ok(reader) = GeoipReader::open(&path) else {
+            panic!("fixture must load");
+        };
+        reader
+    }
+
+    fn se_ip() -> Ipv4Addr {
+        Ipv4Addr::new(89, 160, 20, 112)
+    }
+
+    /// TEST-NET-1 (RFC 5737) - never present in any real `GeoIP` database, see
+    /// `geoip.rs`'s own tests for the same fixture-address choice.
+    fn unmatched_ip() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 1)
+    }
 
     fn query_for(domain: &str, qtype: RecordType) -> Message {
         let Ok(name) = Name::from_str(domain) else {
@@ -549,11 +725,17 @@ mod tests {
     }
 
     fn allow_message_with_ip(ip: Ipv4Addr) -> Message {
+        allow_message_with_ips(&[ip])
+    }
+
+    fn allow_message_with_ips(ips: &[Ipv4Addr]) -> Message {
         let mut message = Message::query();
         message.metadata.response_code = ResponseCode::NoError;
-        message
-            .answers
-            .push(Record::from_rdata(Name::root(), 300, RData::A(A(ip))));
+        for ip in ips {
+            message
+                .answers
+                .push(Record::from_rdata(Name::root(), 300, RData::A(A(*ip))));
+        }
         message
     }
 
@@ -679,9 +861,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         // Must not match the "b.com" blocklist entry - "a.b.com" (one label
@@ -721,9 +909,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -747,9 +941,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -789,9 +989,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -811,9 +1017,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(matches!(outcome, PipelineOutcome::ProxyToSingleUpstream));
@@ -842,9 +1054,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -887,9 +1105,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -924,9 +1148,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -944,9 +1174,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(matches!(outcome, PipelineOutcome::Response(_)));
@@ -974,9 +1210,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(matches!(outcome, PipelineOutcome::Response(_)));
@@ -999,9 +1241,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(matches!(outcome, PipelineOutcome::Response(_)));
@@ -1029,9 +1277,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(fresh_response) = outcome else {
@@ -1050,9 +1304,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(matches!(outcome, PipelineOutcome::Response(_)));
@@ -1082,9 +1342,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1109,9 +1375,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &config,
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1145,9 +1417,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1323,9 +1601,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1353,9 +1637,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(matches!(outcome, PipelineOutcome::Response(_)));
@@ -1389,9 +1679,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1430,9 +1726,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &config,
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
 
@@ -1509,9 +1811,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1548,9 +1856,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let PipelineOutcome::Response(response) = outcome else {
@@ -1585,9 +1899,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1619,9 +1939,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1650,9 +1976,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1695,9 +2027,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1711,9 +2049,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1739,9 +2083,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1773,9 +2123,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1809,9 +2165,15 @@ mod tests {
                 quad9: false,
                 adguard: false,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1846,9 +2208,15 @@ mod tests {
                 quad9: false,
                 adguard: true,
             },
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         let Some(meta) = meta else {
@@ -1880,9 +2248,15 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(meta.is_none());
@@ -1899,11 +2273,371 @@ mod tests {
             &client,
             &overrides,
             EnabledProviders::default(),
-            &cache,
-            &cache_config(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
             &timeout_config(),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
         )
         .await;
         assert!(meta.is_none());
+    }
+
+    // T-76: GeoIP wiring at both of SPEC.md §3.5's named hook points (a
+    // fresh quorum Allow and a cache-hit Allow replay). `nop_on_an_empty_
+    // blocked_list` asserts the real answer, not just the response code -
+    // `build_block_response` is also NoError for A/AAAA, the same trap
+    // `label_with_a_literal_dot_does_not_panic_or_false_match` above already
+    // documents.
+
+    #[tokio::test]
+    async fn geoip_nop_on_an_empty_blocked_list_serves_the_real_ip() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let ip = se_ip();
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(ip)),
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let reader = geoip_fixture();
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders::default(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected the real A answer, not a NULL-blocked one");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == ip));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+    }
+
+    #[tokio::test]
+    async fn geoip_blocks_a_fresh_quorum_allow_when_a_non_first_ip_matches() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        // The matching IP is deliberately second - a "check only ips[0]"
+        // bug would pass a first-IP-matching version of this test but fail
+        // this one, same discipline as `geoip.rs`'s own `blocks_any_is_true_
+        // when_a_non_first_ip_matches_a_blocked_country`.
+        let message = allow_message_with_ips(&[unmatched_ip(), se_ip()]);
+        let client = MockClient {
+            quad9: MockResponse::Instant(message.clone()),
+            adguard: MockResponse::Instant(message.clone()),
+            baseline: MockResponse::Instant(message),
+            calls: AtomicU32::new(0),
+        };
+        let reader = geoip_fixture();
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders::default(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &["SE".to_string()],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-blocked A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Blocked);
+        assert_eq!(meta.decision_source, DecisionSource::Geoip);
+        assert!(
+            meta.voters.is_empty(),
+            "GeoIP isn't a quorum vote - voters must stay empty on a GeoIP-blocked entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn geoip_blocked_fresh_allow_still_caches_the_underlying_allow_verdict() {
+        // The one property SPEC.md §3.5 actually depends on: the quorum
+        // Allow verdict is cached unchanged even when GeoIP blocks this
+        // particular response - caching a Block (or skipping the insert)
+        // would mean removing a country from the list doesn't take effect
+        // until the cache entry's TTL expires, exactly what GeoIP not being
+        // cached is supposed to avoid. This test proves both halves in one
+        // place: first with the country blocked (response is BLOCK, but the
+        // cache holds Allow), then with the country removed and no upstream
+        // client available at all (so a second network round-trip would
+        // panic) - the second call can only be a genuine cache hit serving
+        // the real IP.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let ip = se_ip();
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(ip)),
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let reader = geoip_fixture();
+        let cache_context = CacheContext {
+            cache: &cache,
+            config: &cache_config(),
+        };
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders::default(),
+            &cache_context,
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &["SE".to_string()],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-blocked A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision_source, DecisionSource::Geoip);
+
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Some(cached) = cache.get(&key).await else {
+            panic!("the underlying Allow verdict must still be cached");
+        };
+        assert_eq!(
+            cached.verdict,
+            Verdict::Allow(vec![ip.into()]),
+            "the cached verdict must be the real Allow, never a Block, regardless of GeoIP"
+        );
+
+        // Second call: country removed, and a client that panics on any
+        // call - if this weren't a genuine cache hit, the test would panic
+        // here instead of asserting anything below.
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &MockClient::all_panic(),
+            &overrides,
+            EnabledProviders::default(),
+            &cache_context,
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected the real A answer now that the country was removed");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == ip));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(
+            meta.decision_source,
+            DecisionSource::Cache,
+            "a country-list edit must take effect on the very next query, no cache invalidation"
+        );
+    }
+
+    #[tokio::test]
+    async fn geoip_blocks_a_cache_hit_allow_without_ever_consulting_quorum() {
+        // Independently exercises cache_hit_response_with_meta's own GeoIP
+        // check (not just reached transitively via a prior quorum call, as
+        // in the test above) - the cache is pre-populated directly, and the
+        // client panics on any call, proving quorum is never consulted for
+        // a fresh cache hit either way.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let ip = se_ip();
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(Verdict::Allow(vec![ip.into()]), Duration::from_secs(300)),
+            )
+            .await;
+        let client = MockClient::all_panic();
+        let reader = geoip_fixture();
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders::default(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &["SE".to_string()],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-blocked A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Blocked);
+        assert_eq!(meta.decision_source, DecisionSource::Geoip);
+
+        // Unaffected by the GeoIP block - still the original Allow.
+        let Some(cached) = cache.get(&key).await else {
+            panic!("cache entry must survive a GeoIP-blocked read");
+        };
+        assert_eq!(cached.verdict, Verdict::Allow(vec![ip.into()]));
+    }
+
+    #[tokio::test]
+    async fn voters_disabled_pass_through_is_exempt_from_geoip() {
+        // SPEC-silent choice, stated in the module doc comment: the
+        // every-provider-disabled pass-through shares resolve_via_baseline
+        // with the allowlist branch and is documented as "no filtering at
+        // all" - GeoIP (a filtering mechanism) is included in that scope by
+        // the same reasoning. A blocked-country match here must not turn
+        // into a BLOCK response.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let ip = se_ip();
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let reader = geoip_fixture();
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders {
+                quad9: false,
+                adguard: false,
+            },
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &["SE".to_string()],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected the real baseline A answer, not a NULL-blocked one");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == ip));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+    }
+
+    #[tokio::test]
+    async fn allowlist_match_is_exempt_from_geoip() {
+        // SPEC.md §3.5's own pipeline snippet, step 1: "ALLOW, ні quorum,
+        // ні GeoIP не опитуються" - an allowlisted domain's real answer must
+        // never be overridden by a blocked-country match.
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let ip = se_ip();
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let reader = geoip_fixture();
+
+        let (outcome, _meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            EnabledProviders::default(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &timeout_config(),
+            &GeoipFilter {
+                reader: Some(&reader),
+                blocked_countries: &["SE".to_string()],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected the real baseline A answer, not a NULL-blocked one");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == ip));
     }
 }

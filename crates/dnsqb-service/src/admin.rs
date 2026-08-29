@@ -354,11 +354,12 @@ impl From<Decision> for DecisionView {
 
 /// SPEC.md §6/§8 `decision_source` column, DTO form (T-54) — all seven
 /// values `UI-SPEC.md` §1's "carry every field from day one" principle
-/// requires, though only four (`Allowlist`/`Blocklist`/`Cache`/`Quorum`) are
-/// producible before their own later-phase pipeline step exists (see
-/// [`DecisionSourceView::from`] below — a total match over the internal
-/// four-variant [`DecisionSource`], so the other three can never actually be
-/// constructed by this conversion, only declared for the wire format).
+/// requires, though only five (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/
+/// `GeoIp`, the last added at T-76) are producible before their own
+/// later-phase pipeline step exists (see [`DecisionSourceView::from`] below
+/// — a total match over the internal five-variant [`DecisionSource`], so the
+/// other two can never actually be constructed by this conversion, only
+/// declared for the wire format).
 ///
 /// `CcTldBlock`/`GeoIp` need an explicit `#[serde(rename)]` — automatic
 /// `SCREAMING_SNAKE_CASE` conversion would produce `CC_TLD_BLOCK`/`GEO_IP`,
@@ -386,6 +387,7 @@ impl From<DecisionSource> for DecisionSourceView {
             DecisionSource::Blocklist => Self::Blocklist,
             DecisionSource::Cache => Self::Cache,
             DecisionSource::Quorum => Self::Quorum,
+            DecisionSource::Geoip => Self::GeoIp,
         }
     }
 }
@@ -480,9 +482,10 @@ fn unix_millis(time: SystemTime) -> u64 {
 }
 
 /// SPEC.md §6/§8 `LogEntry` DTO — the body of `GET /admin/log`'s `entries`
-/// (T-54). Widens the internal, Phase-1-only [`LogEntry`] (four
-/// `decision_source` values, no `voter_scope`/`geoip_country` fields at all)
-/// into the full seven-value/placeholder-carrying shape `UI-SPEC.md` §1's
+/// (T-54). Widens the internal, Phase-1-only [`LogEntry`] (five
+/// `decision_source` values as of T-76, still no `voter_scope`/`geoip_country`
+/// fields at all) into the full seven-value/placeholder-carrying shape
+/// `UI-SPEC.md` §1's
 /// "carry every field from day one" principle calls for — `crate::query_log`'s
 /// own module doc comment names this widening as this task's job, not
 /// something to build into the internal type itself (an illegal state for
@@ -499,7 +502,10 @@ pub struct LogEntryView {
     /// comment.
     pub voter_scope: VoterScopeView,
     pub voters: Vec<VoterResultView>,
-    /// Always `None` this phase — T-79 (Фаза 2) hasn't built `GeoIP` yet.
+    /// Always `None` this phase — T-76 (Фаза 2) wired `GeoIP` into the
+    /// pipeline (a `decision_source` of `GEOIP` is producible now), but the
+    /// internal [`LogEntry`] still has nowhere to carry *which* country
+    /// matched — that field is T-79's, the very next task in this workstream.
     pub geoip_country: Option<String>,
     pub latency_ms: u64,
 }
@@ -974,13 +980,20 @@ mod tests {
             json_of(&DecisionSourceView::from(DecisionSource::Quorum)),
             "\"QUORUM\""
         );
-        // The two phase-5 variants aren't producible from the internal
-        // 4-variant DecisionSource (see DecisionSourceView::from's own
-        // exhaustive match) - constructed directly here purely to pin their
-        // wire string, which the explicit #[serde(rename)] overrides exist
-        // for.
+        // T-76: Geoip joined the producible side - asserted through the same
+        // From conversion the other four use, not constructed directly like
+        // the two still-unbuilt variants below, since it's now a real
+        // reachable value, not just a declared wire-format placeholder.
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::Geoip)),
+            "\"GEOIP\""
+        );
+        // The two remaining later-phase variants aren't producible from the
+        // internal 5-variant DecisionSource (see DecisionSourceView::from's
+        // own exhaustive match) - constructed directly here purely to pin
+        // their wire string, which the explicit #[serde(rename)] override on
+        // CcTldBlock exists for.
         assert_eq!(json_of(&DecisionSourceView::CcTldBlock), "\"CCTLD_BLOCK\"");
-        assert_eq!(json_of(&DecisionSourceView::GeoIp), "\"GEOIP\"");
         assert_eq!(
             json_of(&DecisionSourceView::RatingFilter),
             "\"RATING_FILTER\""

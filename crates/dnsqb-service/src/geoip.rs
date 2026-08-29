@@ -1,12 +1,12 @@
 //! `GeoIP` country lookup (T-74, Фаза 2 — SPEC.md §3.5).
 //!
-//! Just the reader: `GeoipReader::open`/`country` are a pure, standalone
+//! The reader: `GeoipReader::open`/`country` are a pure, standalone
 //! `IpAddr → Option<country code>` lookup over a caller-supplied database
-//! path. Nothing here wires into `pipeline.rs` yet (T-76), fetches or
-//! verifies a database file (T-75), or applies OR-across-multiple-IPs
-//! semantics (also T-76) — this module's whole job is the one already-usable
-//! primitive those tasks build on, same "module ready, wiring later" pattern
-//! every prior slice in this crate has used — no live caller yet (T-76).
+//! path. [`blocks_any`] (T-76) is the OR-across-multiple-IPs decision
+//! `pipeline.rs` calls at both of SPEC.md §3.5's named hook points (a
+//! cache-hit `Allow` replay and a fresh quorum `Allow`) — this module still
+//! doesn't fetch or verify a database file itself (T-75's `geoip_updater.rs`
+//! owns that).
 //!
 //! Deliberately reads via [`maxminddb::LookupResult::decode_path`]'s
 //! `["country", "iso_code"]` path rather than the crate's typed
@@ -142,6 +142,56 @@ impl GeoipReader {
     }
 }
 
+/// SPEC.md §3.5's OR-across-multiple-IPs policy (T-76): `true` iff
+/// `blocked_countries` is non-empty **and** at least one of `ips` resolves
+/// (via `reader`) to one of those countries. The comparison is
+/// case-insensitive (`eq_ignore_ascii_case`) — **provable correct from this
+/// line alone, not by trusting an upstream normalization step**: this
+/// crate's `#[deny]`-level bounds/safety discipline (global CLAUDE.md) treats
+/// "correct only because a caller elsewhere validated its input" as a real
+/// risk, not a formality, and `blocked_countries` has more than one writer
+/// ([`crate::config::ResolverConfig::load`]'s own uppercase-normalizing
+/// validation is only one of them — `dispatch::AppState::update_geoip_countries`
+/// takes a raw `Vec<String>` too, and T-77's future admin write route lands
+/// there directly). A caller-side normalization step is a real, load-bearing
+/// invariant only when the type system or this function itself enforces it;
+/// here it doesn't, so the fold happens where it's actually checked, not
+/// hoped for. On the handful of country codes a real deployment configures,
+/// this costs nothing worth optimizing away.
+///
+/// An empty `blocked_countries` is always `false`, checked *before* touching
+/// `reader` at all — SPEC.md's own documented default (opt-in, not a default
+/// policy) and this crate's "порожній список — nop, не помилка" framing for
+/// a live per-query filter, same precedent [`GeoipReader::country`]'s own doc
+/// comment already states for a single lookup.
+///
+/// `reader: None` (no database has ever loaded — a fresh install, before
+/// `geoip_updater`'s first successful check) is also always `false`, even
+/// with a non-empty `blocked_countries` — Три Б: the safer failure direction
+/// for a filter the user explicitly opted into by adding countries is
+/// degrading to no-op, not misapplying an absent/stale database as though it
+/// were current.
+#[must_use]
+pub(crate) fn blocks_any(
+    reader: Option<&GeoipReader>,
+    blocked_countries: &[String],
+    ips: &[IpAddr],
+) -> bool {
+    if blocked_countries.is_empty() {
+        return false;
+    }
+    let Some(reader) = reader else {
+        return false;
+    };
+    ips.iter().any(|ip| {
+        reader.country(*ip).is_some_and(|code| {
+            blocked_countries
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(code))
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +279,72 @@ mod tests {
             .join("tests/fixtures/geoip/does-not-exist.mmdb");
 
         assert!(GeoipReader::open(&missing).is_err());
+    }
+
+    fn se_ip() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(89, 160, 20, 112))
+    }
+
+    fn unmatched_ip() -> IpAddr {
+        // TEST-NET-1 (RFC 5737) - never present in any real GeoIP database,
+        // same fixture address `country_returns_none_for_an_address_outside_
+        // the_database` above already relies on.
+        IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))
+    }
+
+    // T-76: blocks_any's own tests. `nop_on_an_empty_blocked_list` in
+    // particular asserts the real answer, not just the response code - a
+    // response code alone can't distinguish "not blocked" from "blocked" in
+    // this crate (`build_block_response` is also NoError for A/AAAA), the
+    // same trap `pipeline.rs`'s own `label_with_a_literal_dot_does_not_
+    // panic_or_false_match` test already documents.
+
+    #[test]
+    fn blocks_any_is_false_on_an_empty_blocked_list_even_for_a_matching_ip() {
+        let reader = open_fixture();
+        assert!(!blocks_any(Some(&reader), &[], &[se_ip()]));
+    }
+
+    #[test]
+    fn blocks_any_is_false_with_no_database_loaded_even_for_a_configured_country() {
+        assert!(!blocks_any(None, &["SE".to_string()], &[se_ip()]));
+    }
+
+    #[test]
+    fn blocks_any_is_true_when_a_non_first_ip_matches_a_blocked_country() {
+        let reader = open_fixture();
+        // The matching IP is deliberately second - a "check only ips[0]" bug
+        // would pass a first-IP-matching test but fail this one, the same
+        // discipline T-40's multi-entry reload test already established for
+        // this crate's other OR-across-a-collection logic.
+        let ips = [unmatched_ip(), se_ip()];
+        assert!(blocks_any(Some(&reader), &["SE".to_string()], &ips));
+    }
+
+    #[test]
+    fn blocks_any_is_false_when_no_ip_matches_any_blocked_country() {
+        let reader = open_fixture();
+        assert!(!blocks_any(
+            Some(&reader),
+            &["DE".to_string()],
+            &[se_ip(), unmatched_ip()]
+        ));
+    }
+
+    #[test]
+    fn blocks_any_matches_regardless_of_the_stored_entrys_case() {
+        // Advisor-caught (T-76 closing review): the first draft's version of
+        // this test locked in a plain `==` comparison as a "precondition"
+        // only actually enforced at one of `blocked_countries`'s several
+        // writers (`ResolverConfig::load`) - `AppState::update_geoip_countries`
+        // and T-77's future admin write route both take a raw `Vec<String>`
+        // with no normalization, so a lowercase entry reaching this function
+        // by any path other than config-file load would silently never
+        // match. Fixed structurally (`eq_ignore_ascii_case`, not a
+        // documented-but-unenforced caller contract) - this test now proves
+        // the property that actually holds.
+        let reader = open_fixture();
+        assert!(blocks_any(Some(&reader), &["se".to_string()], &[se_ip()]));
+        assert!(blocks_any(Some(&reader), &["Se".to_string()], &[se_ip()]));
     }
 }

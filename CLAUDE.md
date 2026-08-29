@@ -4,6 +4,101 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Фаза 2, third GeoIP slice (T-76 — TASKS-DONE.md, one commit): wires the already-built
+`geoip::blocks_any` (new, pure OR-across-multiple-IPs decision over `GeoipReader::country`, T-74)
+into `pipeline.rs` at SPEC.md §3.5's two named hook points — `cache_hit_response_with_meta` (a
+cached `Allow` replay) and `handle_allow`'s return path (a fresh quorum `Allow`, after
+`extract_ips`). Both apply live and never cache the `GeoIP` verdict itself — a quorum `Allow` is
+cached unchanged even when `GeoIP` blocks that particular response, proven by a test that reads the
+cache entry back after a `GeoIP` block and asserts `Verdict::Allow`, not `Block`. **Named, not
+hidden, side effect (advisor-caught on the closing review)**: a fresh quorum `Allow` that `GeoIP`
+then blocks logs `voters: Vec::new()` — real voter telemetry from a quorum resolution that
+genuinely ran (timeouts and errors included) never reaches the log. Consistent with `LogEntry.
+voters`'s already-documented "empty except for `Quorum`" rule, not a bug, but it has a real
+consequence for T-56's degraded-upstream signal: `admin::degraded_counts` filters on `decision_
+source == Quorum`, so those samples drop out of the degradation window entirely. Not fixed this
+slice — a stated limitation, not a silent gap. New config surface
+needed before any UI exists (same backend-before-UI precedent as T-153/T-47/T-52):
+`config::GeoipConfig { blocked_countries: Vec<String> }`, a new `[geoip]` TOML table, empty by
+default (SPEC.md §3.5's own opt-in default); `ResolverConfig::load` validates each code (exactly
+two ASCII letters) and normalizes to uppercase, a malformed code is a loud `ConfigError::
+InvalidCountryCode`, never a silent no-op. `AppState` gained a separate `geoip_countries:
+RwLock<Arc<Vec<String>>>` field — deliberately **not** folded into the existing `GeoipState {
+reader, updated_at }` (T-75): the two are swapped by different triggers (`geoip_updater`'s
+background refresh vs. config load/`/admin/reset`/T-77's future admin route), and merging them
+would let a database refresh silently wipe the user's country list, or vice versa. A new
+`AppState::new` parameter `GeoipInit { database, blocked_countries }` bundles both at construction
+only, immediately split into the two independent fields — keeps the constructor under
+`clippy::too_many_arguments` (same structural-fix precedent as T-147/T-148, never `#[allow(...)]`).
+The same threshold hit `pipeline::handle_query` (7 params + `geoip` = 8); fixed with new
+`pipeline::CacheContext<'a> { cache, config }` (replacing two params with one) and `pipeline::
+GeoipFilter<'a> { reader, blocked_countries }`, both local to `pipeline.rs` rather than reusing
+`dispatch::CacheState` (would invert the `dispatch` → `pipeline` dependency direction). `handle_allow`
+now returns a new `AllowResult { Answer, GeoipBlocked }`, not a bare `Message` — otherwise
+`handle_query`'s `decision_from_response` call (whose own doc comment says it's never valid where
+`Block` is reachable) would misclassify a `GeoIP`-block-shaped `NoError` response as `Allowed`; the
+`Allow` branch was pulled into a new `quorum_allow_response_with_meta` helper for `clippy::
+too_many_lines` (same "extract, don't `#[allow]`" precedent). New `query_log::DecisionSource::Geoip`
+(a fifth, now-real value — `admin::DecisionSourceView::GeoIp` already existed as a T-74/T-75-era
+DTO placeholder, now genuinely mapped; `geoip_country` itself stays `None` until T-79, the next task
+in this workstream). **SPEC-silent choice, stated explicitly rather than picked silently**: the
+allowlist branch is exempt from `GeoIP` (SPEC.md §3.5's own pipeline snippet says so), and the
+every-provider-disabled pass-through is *also* exempt, by the same "no filtering at all" reasoning
+T-41 already documented for that branch (both share `resolve_via_baseline`) — this is the user's
+call to reverse later (that language predates `GeoIP`), not a hidden default.
+
+**Advisor review of the plan before implementing caught two real bugs**: (1) the first draft hooked
+`extract_ips` inside the `is_cacheable(ttl)` branch, which would skip `GeoIP` entirely for a TTL-0
+answer — fixed by hoisting `extract_ips` onto the return path, outside the cacheability check. (2)
+`blocks_any`'s comparison was first drafted as plain `==`, documented as relying on `blocked_
+countries` arriving already-uppercased from `ResolverConfig::load`. **The closing review before
+commit found that precondition false, not just risky**: `AppState::update_geoip_countries` (and
+T-77's future admin write route) write into the same field with no normalization at all — the
+"correct by an invariant enforced elsewhere" shape global CLAUDE.md's bounds-safety rule names
+explicitly. Fixed structurally with `eq_ignore_ascii_case`, correct regardless of which writer
+populated the field; the test that had locked in the old, fragile `==` behavior was rewritten to
+prove the property that actually holds instead. **The same closing review found three more real
+gaps, all closed in this commit**: (3) neither of the two admin routes that re-serialize
+`ResolverConfig` to disk (`POST /admin/config`, `POST /admin/cache-config/apply`) read the current
+`geoip_countries` before saving — the same "an unrelated write silently drops a sibling field"
+shape this project has now fixed four times (T-57/T-139/T-149/T-47), extending `persist_lock`'s
+cross-field-read discipline to `geoip_countries`; both routes got a regression test, empirically
+confirmed by reverting the fix and watching the test fail before restoring it. (4) `/admin/reset`
+never reloaded `[geoip]` at all — fixed via a new `AppState::update_geoip_countries`, called under
+the already-held `persist_lock`; its test uses a real loaded `GeoipReader` (the same vendored
+`GeoIP2-Country-Test.mmdb` fixture `geoip.rs`/`pipeline.rs`'s own tests use) rather than
+`GeoipState::default()`, which would make the test vacuous (`blocks_any` always `false` regardless
+of whether the reload worked). (5) the two hook points handed out different block TTLs for the same
+kind of decision — the fresh path used `cache_config.block_verdict_ttl`, the cache-hit path used the
+*Allow* entry's own remaining TTL, with no rationale (the `GeoIP` verdict isn't cached, so
+inheriting an unrelated entry's remaining lifetime was accidental, not designed) — fixed to
+`block_verdict_ttl` in both places; unfixed, removing a country from the list would leave the
+browser holding a stale `0.0.0.0` for up to the old entry's remainder. Checked, not assumed: the
+embedded web UI (`admin_ui.rs`) has zero references to `decision_source` or a log screen (grepped
+the whole file) — the already-documented T-46/T-54 gap (DTO ready, no UI consumer yet), nothing to
+reconcile this slice. Tests: 3 new in `geoip.rs` (nop-on-empty asserts the real IP, not just the
+response code — the same trap `pipeline.rs`'s own `label_with_a_literal_dot...` test already
+documents; OR when the *second*, not first, IP matches; case-insensitivity), 5 new in `config.rs`
+(`[geoip]` table default/normalization/rejection cases), 6 new in `pipeline.rs` (nop via real IP; OR
+with a non-first matching IP; a cached `Allow` survives a `GeoIP` block **and** unblocks with no
+network call the moment the country is removed — one test proving both halves of SPEC.md §3.5's own
+claim; the cache-hit path tested directly, not just transitively via a prior quorum call; both
+exempt branches), 3 new in `dispatch.rs` (two cross-field-persist regressions, one reset-reload,
+the reset test using the real fixture reader as noted above). Manually smoke-tested the real binary:
+a `resolver_config.toml` with `[geoip]\nblocked_countries = ["SE", "de"]` (deliberately mixed case)
+against a temp `%LOCALAPPDATA%` — the process started and stayed alive, not exit-1; stopped
+manually. **Not verified live** (same class of gap as T-75): an actual DNS query through a real
+`GeoIP` block end to end — `db-ip.com`'s DNS-blocked-sandbox limitation (T-75's own note) means no
+real database can be downloaded here either, so this is covered by the vendored-fixture unit tests
+above, named as a real gap rather than glossed over. Full local gate green (346 lib tests, +19 new;
+clippy/fmt/doc/doctest all clean; RFC-conformance untouched; `cargo deny check` clean, only the same
+pre-existing informational advisories as T-75). Diagram ground-truth ritual run (triggered —
+`decision_source` gained a fifth real-producible value): `diagrams/ui-dto-model.md` updated once;
+`ui-navigation.md`'s GeoIP screen-inventory node checked, unaffected (describes the still-unbuilt
+T-77/T-78 UI, not touched this slice). **Not in this slice**: `geoip_country` in the log (T-79,
+next), the UI (T-77/T-78), advanced mode (T-80), UI attribution (T-81), closing property-style
+tests (T-82).
+
 Фаза 2, second GeoIP slice (T-75 — TASKS-DONE.md, one commit): the background updater that keeps
 the local `GeoIP` database current — new `geoip_download.rs` (pure: DB-IP Lite candidate-URL
 construction via a hand-rolled civil-calendar date algorithm, no new date dependency; bounded gzip

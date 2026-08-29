@@ -25,6 +25,17 @@
 //! `overrides.toml` (T-37) still has none — no writer and no watcher there
 //! yet (T-46/T-47), so *that* sibling file keeps the "load once at startup,
 //! no live-reload" precedent this module used to share with it in full.
+//!
+//! `[geoip]` (T-76, SPEC.md §3.5) is the `GeoIP` blocked-country list —
+//! validated (uppercase, two ASCII letters) at load, same "hand-edited file,
+//! loud error not a silent no-op" discipline every other field here already
+//! has (see [`ConfigError::InvalidCountryCode`]). It's the one field this
+//! module persists with no admin-route *editor* yet (T-77) — `dispatch.rs`'s
+//! two existing config-writing routes still have to read and echo its
+//! current value back on every save, or an unrelated `providers`/`timeout`/
+//! cache-config change would silently wipe a hand-edited country list, same
+//! cross-field-read requirement `AppState::persist_lock`'s own doc comment
+//! already documents for `providers`/`timeout_mode`/`cache`.
 
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -78,6 +89,19 @@ pub enum ConfigError {
     /// the admin-channel write handler both go through.
     #[error("cache config clamp_min_secs must not exceed clamp_max_secs")]
     CacheClampMinExceedsMax,
+    /// The `[geoip]` table's `blocked_countries` contains an entry that
+    /// isn't exactly two ASCII letters (T-76) — rejected at load rather than
+    /// silently stored and matching nothing: `"RUS"` or `"Ukraine"` would
+    /// never equal any `GeoipReader::country` result (SPEC.md §3.5's country
+    /// codes are ISO 3166-1 alpha-2), leaving the operator believing
+    /// filtering is active for a country it can never actually match — the
+    /// same "hand-edited file, loud error not a silent no-op" discipline
+    /// `ZeroPort`/`ZeroTimeout` already apply. The code itself, not a
+    /// domain name, so a payload here carries no "no domain names in
+    /// service logs" risk (same reasoning `ConfigError::Toml`'s own doc
+    /// comment already states for this file).
+    #[error("blocked country code {0:?} is not a valid two-letter ISO 3166-1 alpha-2 code")]
+    InvalidCountryCode(String),
 }
 
 /// Upper bound on `resolver_config.toml`'s on-disk size, checked in
@@ -91,9 +115,24 @@ pub enum ConfigError {
 /// heavily hand-commented file.
 pub(crate) const MAX_CONFIG_FILE_SIZE: u64 = 64 * 1024;
 
-/// Resolver config, loaded once at startup (T-144). `Copy` — small and
-/// value-like, same as [`crate::CacheConfig`]/[`crate::TimeoutConfig`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The `[geoip]` table's live-relevant contents (T-76 — SPEC.md §3.5):
+/// which countries a resolved IP must never match. `Vec<String>`, not
+/// `Copy` (unlike `EnabledProviders`/`CacheConfig`) — that's why
+/// [`ResolverConfig`] itself lost its own `Copy` derive at this task; see
+/// that type's own doc comment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GeoipConfig {
+    /// Already-validated, uppercased two-letter ISO 3166-1 alpha-2 codes
+    /// (see [`ConfigError::InvalidCountryCode`]) — empty by default, SPEC.md
+    /// §3.5's own stated default: an opt-in list, not a default policy.
+    pub blocked_countries: Vec<String>,
+}
+
+/// Resolver config, loaded once at startup (T-144). No longer `Copy` as of
+/// T-76 — `geoip.blocked_countries` is a `Vec<String>`, so this type is
+/// `Clone` only now (every other field stays individually `Copy`, so a
+/// caller that only reads e.g. `.port`/`.providers` is unaffected).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolverConfig {
     /// The local `DoH` listener's port (SPEC.md §1: fixed-by-default,
     /// configurable, never a silent fallback on conflict). `0` is rejected
@@ -119,6 +158,8 @@ pub struct ResolverConfig {
     /// already established for `providers` above: a second type here could
     /// drift from what `cache::clamp_ttl`/`Cache::new` actually honor.
     pub cache: CacheConfig,
+    /// `GeoIP` blocked-country list (T-76, SPEC.md §3.5).
+    pub geoip: GeoipConfig,
 }
 
 impl Default for ResolverConfig {
@@ -130,6 +171,7 @@ impl Default for ResolverConfig {
             timeout_ms: 2000,
             providers: EnabledProviders::default(),
             cache: CacheConfig::default(),
+            geoip: GeoipConfig::default(),
         }
     }
 }
@@ -195,6 +237,10 @@ impl ResolverConfig {
                 return Err(ConfigError::CacheClampMinExceedsMax)
             }
         };
+        let mut blocked_countries = Vec::with_capacity(file.geoip.blocked_countries.len());
+        for raw in &file.geoip.blocked_countries {
+            blocked_countries.push(validate_country_code(raw)?);
+        }
 
         Ok(Self {
             port: file.port,
@@ -202,6 +248,7 @@ impl ResolverConfig {
             timeout_ms: file.timeout_ms,
             providers: file.providers,
             cache,
+            geoip: GeoipConfig { blocked_countries },
         })
     }
 
@@ -237,9 +284,23 @@ impl ResolverConfig {
                 stale_grace_secs: cache_secs.stale_grace_secs,
                 max_capacity: cache_secs.max_capacity,
             },
+            geoip: GeoipConfigFile {
+                blocked_countries: self.geoip.blocked_countries.clone(),
+            },
         };
         let toml = toml::to_string(&file).map_err(ConfigError::TomlSerialize)?;
         fs::write(path, toml).map_err(ConfigError::Io)
+    }
+}
+
+/// Validates and uppercases one `[geoip] blocked_countries` entry (T-76) —
+/// see [`ConfigError::InvalidCountryCode`]'s own doc comment for why this is
+/// a load-time rejection, not a silent pass-through.
+fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
+    if raw.len() == 2 && raw.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        Ok(raw.to_ascii_uppercase())
+    } else {
+        Err(ConfigError::InvalidCountryCode(raw.to_string()))
     }
 }
 
@@ -257,6 +318,7 @@ struct ResolverConfigFile {
     timeout_ms: u32,
     providers: EnabledProviders,
     cache: CacheConfigFile,
+    geoip: GeoipConfigFile,
 }
 
 impl Default for ResolverConfigFile {
@@ -275,8 +337,24 @@ impl Default for ResolverConfigFile {
                 stale_grace_secs: cache_secs.stale_grace_secs,
                 max_capacity: cache_secs.max_capacity,
             },
+            geoip: GeoipConfigFile {
+                blocked_countries: defaults.geoip.blocked_countries,
+            },
         }
     }
+}
+
+/// TOML-facing shape for [`GeoipConfig`] (T-76) — a plain, hand-editable
+/// `[geoip]` table, same "graceful partial, loud typo" split every other
+/// nested table in this file already established. Country-code validation
+/// itself happens in [`ResolverConfig::load`] (via [`validate_country_code`]),
+/// not here — this struct only has to round-trip the raw strings; the load
+/// path is the one place `serde`'s own error type is already the wrong shape
+/// to carry a per-entry validation failure cleanly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct GeoipConfigFile {
+    blocked_countries: Vec<String>,
 }
 
 /// TOML-facing shape for `cache::CacheConfig` (T-153) — seconds as `u64`,
@@ -309,7 +387,7 @@ impl Default for CacheConfigFile {
 
 #[cfg(test)]
 mod tests {
-    use super::{CacheConfig, ConfigError, ResolverConfig};
+    use super::{CacheConfig, ConfigError, GeoipConfig, ResolverConfig};
     use crate::quorum::EnabledProviders;
     use crate::timeout::TimeoutMode;
     use std::fs;
@@ -355,6 +433,7 @@ mod tests {
                     adguard: false,
                 },
                 cache: CacheConfig::default(),
+                geoip: GeoipConfig::default(),
             }
         );
     }
@@ -513,6 +592,9 @@ mod tests {
                 adguard: true,
             },
             cache,
+            geoip: GeoipConfig {
+                blocked_countries: vec!["SE".to_string(), "DE".to_string()],
+            },
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -553,6 +635,74 @@ mod tests {
         assert!(matches!(
             ResolverConfig::load(&path),
             Err(ConfigError::ZeroTimeout)
+        ));
+    }
+
+    // T-76: [geoip] - default empty (SPEC.md §3.5's own stated default: an
+    // opt-in list, not a default policy), entries normalized to uppercase,
+    // a malformed code is a loud load-time error, not silently stored to
+    // match nothing.
+
+    #[test]
+    fn load_of_a_missing_geoip_table_defaults_to_an_empty_blocked_list() {
+        let (_dir, path) = temp_config_path();
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a missing file must still load: {err}"),
+        };
+        assert_eq!(config.geoip, GeoipConfig::default());
+        assert!(config.geoip.blocked_countries.is_empty());
+    }
+
+    #[test]
+    fn load_of_a_geoip_table_normalizes_country_codes_to_uppercase() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[geoip]\nblocked_countries = [\"se\", \"De\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a valid [geoip] table must load: {err}"),
+        };
+        assert_eq!(
+            config.geoip.blocked_countries,
+            vec!["SE".to_string(), "DE".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_three_letter_country_code() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[geoip]\nblocked_countries = [\"RUS\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidCountryCode(code)) if code == "RUS"
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_non_alphabetic_country_code() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[geoip]\nblocked_countries = [\"1U\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidCountryCode(_))
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_key_inside_the_geoip_table() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[geoip]\nblcoked_countries = [\"SE\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
         ));
     }
 

@@ -9,16 +9,19 @@
 //!
 //! This module's [`LogEntry`] is the **internal backend record**, narrower
 //! than the Tauri IPC DTO of the same name (`diagrams/ui-dto-model.md`,
-//! `UI-SPEC.md`): `decision_source` here only has the four values Phase 1
-//! can actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`), and there
-//! is no `voter_scope`/`geoip_country` field at all — TASKS.md's own T-43
-//! text defers both to T-109 (Фаза 4) and T-79 (Фаза 2) respectively. The DTO
-//! conversion (T-53/T-54) is expected to widen this into the seven-variant
-//! DTO enum and fill `voter_scope`/`geoip_country` with their fixed Phase-1
-//! placeholder values (`FULL`/`null`) — that widening doesn't exist yet, and
-//! doesn't belong in this module (illegal states — a `decision_source` this
-//! phase can't produce — stay unrepresentable here instead of being carried
-//! as a dead enum variant).
+//! `UI-SPEC.md`): `decision_source` here has five of the seven values Phase 1
+//! can actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`/`GEOIP`,
+//! `GEOIP` added at T-76), and there is still no `voter_scope`/`geoip_country`
+//! field at all — TASKS.md's own T-43 text defers `voter_scope` to T-109
+//! (Фаза 4), and `geoip_country` (the ISO code a `GEOIP` entry actually
+//! matched, distinct from *whether* one matched) to T-79, the very next task
+//! in this same `GeoIP` workstream. The DTO conversion (T-53/T-54) is expected
+//! to widen this into the seven-variant DTO enum and fill `voter_scope`/
+//! `geoip_country` with their fixed Phase-1 placeholder values (`FULL`/
+//! `null`) — that widening doesn't exist yet for the two still-unbuilt
+//! sources, and doesn't belong in this module (illegal states — a
+//! `decision_source` this phase can't produce — stay unrepresentable here
+//! instead of being carried as a dead enum variant).
 //!
 //! [`VoterRecord`]/`VoterVerdict` moved to `quorum.rs` at T-147 — which
 //! providers cast a vote and what their outcome means is quorum's own
@@ -63,9 +66,10 @@ pub enum Decision {
     Failed,
 }
 
-/// SPEC.md §6 `decision_source` column — Phase 1's four producible values
-/// only (`CCTLD_BLOCK`/`RATING_FILTER`/`GEOIP` are later-phase pipeline
-/// steps that don't exist yet, see this module's doc comment).
+/// SPEC.md §6 `decision_source` column — five of the seven values the DTO
+/// (`admin::DecisionSourceView`) declares are producible so far
+/// (`CCTLD_BLOCK`/`RATING_FILTER` are still later-phase pipeline steps that
+/// don't exist yet). `Geoip` joined at T-76 — see this module's doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecisionSource {
     /// Matched an allowlist entry.
@@ -76,6 +80,11 @@ pub enum DecisionSource {
     Cache,
     /// Decided by a fresh quorum resolution.
     Quorum,
+    /// A quorum `Allow` (cached or fresh) was overridden by SPEC.md §3.5's
+    /// live `GeoIP` filter (T-76) — the resolved IP matched a blocked
+    /// country. `voters` is always empty here (see this module's own doc
+    /// comment): `GeoIP` isn't a quorum vote, it applies *after* one.
+    Geoip,
 }
 
 /// One query-log record (SPEC.md §6's field table minus the two fields this
@@ -238,7 +247,7 @@ pub struct LogFilter<'a> {
     /// participate" intent.
     ///
     /// `voters` is empty for every non-`Quorum` `decision_source`
-    /// (`ALLOWLIST`/`BLOCKLIST`/`CACHE` never populate it — see this
+    /// (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`GEOIP` never populate it — see this
     /// module's own doc comment) — filtering by voter therefore only ever
     /// surfaces entries decided by a *fresh* quorum resolution. A domain
     /// this provider blocked that's now served from cache won't appear;
