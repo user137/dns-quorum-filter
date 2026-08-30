@@ -4,6 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Фаза 2, fifth GeoIP slice (T-82 — TASKS-DONE.md, docs-only, no commit-worthy code): closed without
+new code, the same T-60 precedent — both properties T-82's own line names (OR across multiple IPs,
+nop on an empty blocked-country list) already had dedicated `geoip.rs` unit tests, written for
+T-76/T-79 and never credited to this line. Confirmed via `git log -S`, not assumed:
+`blocking_country_is_some_when_a_non_first_ip_matches_a_blocked_country` and
+`blocking_country_is_none_on_an_empty_blocked_list_even_for_a_matching_ip` both predate this pass
+(commit `7790433`, T-76); the second, stronger two-country OR test
+(`blocking_country_reports_the_first_matching_ips_country_when_two_ips_match_different_countries`)
+predates it too (commit `5a5a894`, T-79). All three confirmed green and unedited since their
+introducing commit. Deliberately **not** claimed to cover pipeline-level properties (cache-hit vs.
+fresh-quorum-Allow) — T-82's own line names the GeoIP filter's unit level, already covered
+separately by `pipeline.rs`'s own T-76/T-79 tests. Next in the Ф2 plan order: T-77 (UI: blocked-
+country list, over-blocking warning).
+
 Фаза 2, fourth GeoIP slice (T-79 — TASKS-DONE.md, one commit): fills in the one field T-76's own
 closing note left as a stated gap — `query_log::LogEntry`/`pipeline::QueryLogMeta` gain
 `geoip_country: Option<String>` (`Some` only when `decision_source == Geoip`, `None` otherwise,
