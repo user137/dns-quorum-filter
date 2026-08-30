@@ -2,7 +2,8 @@
 //!
 //! The reader: `GeoipReader::open`/`country` are a pure, standalone
 //! `IpAddr → Option<country code>` lookup over a caller-supplied database
-//! path. [`blocks_any`] (T-76) is the OR-across-multiple-IPs decision
+//! path. [`blocking_country`] (T-76, widened at T-79 from a bare `bool` to
+//! the actual matched country) is the OR-across-multiple-IPs decision
 //! `pipeline.rs` calls at both of SPEC.md §3.5's named hook points (a
 //! cache-hit `Allow` replay and a fresh quorum `Allow`) — this module still
 //! doesn't fetch or verify a database file itself (T-75's `geoip_updater.rs`
@@ -142,14 +143,21 @@ impl GeoipReader {
     }
 }
 
-/// SPEC.md §3.5's OR-across-multiple-IPs policy (T-76): `true` iff
-/// `blocked_countries` is non-empty **and** at least one of `ips` resolves
-/// (via `reader`) to one of those countries. The comparison is
-/// case-insensitive (`eq_ignore_ascii_case`) — **provable correct from this
-/// line alone, not by trusting an upstream normalization step**: this
-/// crate's `#[deny]`-level bounds/safety discipline (global CLAUDE.md) treats
-/// "correct only because a caller elsewhere validated its input" as a real
-/// risk, not a formality, and `blocked_countries` has more than one writer
+/// SPEC.md §3.5's OR-across-multiple-IPs policy (T-76, widened at T-79):
+/// `Some(country)` — the database's own casing, not necessarily
+/// `blocked_countries`'s — for the first of `ips` (in caller-supplied order)
+/// that resolves (via `reader`) to a blocked country; `None` if no `ips`
+/// entry matches. SPEC.md never names an ordering beyond OR, so "first
+/// matching IP wins" is the natural reading of this function's own iteration
+/// order, not a documented protocol requirement — pinned by
+/// `blocking_country_reports_the_first_matching_ips_country_...` below so a
+/// future change to this order is a deliberate decision, not an accident.
+/// The comparison against `blocked_countries` is case-insensitive
+/// (`eq_ignore_ascii_case`) — **provable correct from this line alone, not by
+/// trusting an upstream normalization step**: this crate's `#[deny]`-level
+/// bounds/safety discipline (global CLAUDE.md) treats "correct only because a
+/// caller elsewhere validated its input" as a real risk, not a formality, and
+/// `blocked_countries` has more than one writer
 /// ([`crate::config::ResolverConfig::load`]'s own uppercase-normalizing
 /// validation is only one of them — `dispatch::AppState::update_geoip_countries`
 /// takes a raw `Vec<String>` too, and T-77's future admin write route lands
@@ -159,36 +167,39 @@ impl GeoipReader {
 /// hoped for. On the handful of country codes a real deployment configures,
 /// this costs nothing worth optimizing away.
 ///
-/// An empty `blocked_countries` is always `false`, checked *before* touching
+/// An empty `blocked_countries` is always `None`, checked *before* touching
 /// `reader` at all — SPEC.md's own documented default (opt-in, not a default
 /// policy) and this crate's "порожній список — nop, не помилка" framing for
 /// a live per-query filter, same precedent [`GeoipReader::country`]'s own doc
 /// comment already states for a single lookup.
 ///
 /// `reader: None` (no database has ever loaded — a fresh install, before
-/// `geoip_updater`'s first successful check) is also always `false`, even
+/// `geoip_updater`'s first successful check) is also always `None`, even
 /// with a non-empty `blocked_countries` — Три Б: the safer failure direction
 /// for a filter the user explicitly opted into by adding countries is
 /// degrading to no-op, not misapplying an absent/stale database as though it
 /// were current.
+///
+/// Returns an owned `String`, not a `&str` borrowed from `reader` — unlike
+/// [`GeoipReader::country`]'s own per-lookup borrow, this value is meant to
+/// outlive the call (SPEC.md §6's `geoip_country` log field, T-79). A
+/// two-letter code makes the allocation cost immaterial.
 #[must_use]
-pub(crate) fn blocks_any(
+pub(crate) fn blocking_country(
     reader: Option<&GeoipReader>,
     blocked_countries: &[String],
     ips: &[IpAddr],
-) -> bool {
+) -> Option<String> {
     if blocked_countries.is_empty() {
-        return false;
+        return None;
     }
-    let Some(reader) = reader else {
-        return false;
-    };
-    ips.iter().any(|ip| {
-        reader.country(*ip).is_some_and(|code| {
-            blocked_countries
-                .iter()
-                .any(|c| c.eq_ignore_ascii_case(code))
-        })
+    let reader = reader?;
+    ips.iter().find_map(|ip| {
+        let code = reader.country(*ip)?;
+        blocked_countries
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(code))
+            .then(|| code.to_string())
     })
 }
 
@@ -292,47 +303,57 @@ mod tests {
         IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))
     }
 
-    // T-76: blocks_any's own tests. `nop_on_an_empty_blocked_list` in
-    // particular asserts the real answer, not just the response code - a
+    // T-76/T-79: blocking_country's own tests. `nop_on_an_empty_blocked_list`
+    // in particular asserts the real answer, not just the response code - a
     // response code alone can't distinguish "not blocked" from "blocked" in
     // this crate (`build_block_response` is also NoError for A/AAAA), the
     // same trap `pipeline.rs`'s own `label_with_a_literal_dot_does_not_
     // panic_or_false_match` test already documents.
 
     #[test]
-    fn blocks_any_is_false_on_an_empty_blocked_list_even_for_a_matching_ip() {
+    fn blocking_country_is_none_on_an_empty_blocked_list_even_for_a_matching_ip() {
         let reader = open_fixture();
-        assert!(!blocks_any(Some(&reader), &[], &[se_ip()]));
+        assert_eq!(blocking_country(Some(&reader), &[], &[se_ip()]), None);
     }
 
     #[test]
-    fn blocks_any_is_false_with_no_database_loaded_even_for_a_configured_country() {
-        assert!(!blocks_any(None, &["SE".to_string()], &[se_ip()]));
+    fn blocking_country_is_none_with_no_database_loaded_even_for_a_configured_country() {
+        assert_eq!(
+            blocking_country(None, &["SE".to_string()], &[se_ip()]),
+            None
+        );
     }
 
     #[test]
-    fn blocks_any_is_true_when_a_non_first_ip_matches_a_blocked_country() {
+    fn blocking_country_is_some_when_a_non_first_ip_matches_a_blocked_country() {
         let reader = open_fixture();
         // The matching IP is deliberately second - a "check only ips[0]" bug
         // would pass a first-IP-matching test but fail this one, the same
         // discipline T-40's multi-entry reload test already established for
         // this crate's other OR-across-a-collection logic.
         let ips = [unmatched_ip(), se_ip()];
-        assert!(blocks_any(Some(&reader), &["SE".to_string()], &ips));
+        assert_eq!(
+            blocking_country(Some(&reader), &["SE".to_string()], &ips),
+            Some("SE".to_string())
+        );
     }
 
     #[test]
-    fn blocks_any_is_false_when_no_ip_matches_any_blocked_country() {
+    fn blocking_country_is_none_when_no_ip_matches_any_blocked_country() {
         let reader = open_fixture();
-        assert!(!blocks_any(
-            Some(&reader),
-            &["DE".to_string()],
-            &[se_ip(), unmatched_ip()]
-        ));
+        assert_eq!(
+            blocking_country(
+                Some(&reader),
+                &["DE".to_string()],
+                &[se_ip(), unmatched_ip()]
+            ),
+            None
+        );
     }
 
     #[test]
-    fn blocks_any_matches_regardless_of_the_stored_entrys_case() {
+    fn blocking_country_reports_the_databases_own_casing_regardless_of_the_configured_entrys_case()
+    {
         // Advisor-caught (T-76 closing review): the first draft's version of
         // this test locked in a plain `==` comparison as a "precondition"
         // only actually enforced at one of `blocked_countries`'s several
@@ -342,9 +363,48 @@ mod tests {
         // by any path other than config-file load would silently never
         // match. Fixed structurally (`eq_ignore_ascii_case`, not a
         // documented-but-unenforced caller contract) - this test now proves
-        // the property that actually holds.
+        // the property that actually holds. Widened at T-79: the *returned*
+        // code must be the database's own casing ("SE"), not an echo of
+        // whatever case the config happened to use - the one way this could
+        // pass while silently sourcing the value from the wrong place.
         let reader = open_fixture();
-        assert!(blocks_any(Some(&reader), &["se".to_string()], &[se_ip()]));
-        assert!(blocks_any(Some(&reader), &["Se".to_string()], &[se_ip()]));
+        assert_eq!(
+            blocking_country(Some(&reader), &["se".to_string()], &[se_ip()]),
+            Some("SE".to_string())
+        );
+        assert_eq!(
+            blocking_country(Some(&reader), &["Se".to_string()], &[se_ip()]),
+            Some("SE".to_string())
+        );
+    }
+
+    /// The known-GB fixture address used by `maxminddb`'s own upstream tests
+    /// against this same `GeoIP2-Country-Test.mmdb` file (`reader_test.rs`'s
+    /// `test_within` — `81.2.69.142/31` inside this address's containing
+    /// `81.2.69.128/26` network resolves to London/GB) - reusing a
+    /// known-good ground-truth pair rather than trusting an assumed country
+    /// for a second address, same precedent `country_finds_the_known_
+    /// fixture_address` above already established for the SE one.
+    fn gb_ip() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(81, 2, 69, 160))
+    }
+
+    #[test]
+    fn blocking_country_reports_the_first_matching_ips_country_when_two_ips_match_different_countries(
+    ) {
+        let reader = open_fixture();
+        // blocked_countries lists GB before SE, but the IP order is what
+        // decides - proves the "first matching IP wins" semantic documented
+        // on blocking_country's own doc comment isn't just alphabetical or
+        // list-order coincidence.
+        let blocked = ["GB".to_string(), "SE".to_string()];
+        assert_eq!(
+            blocking_country(Some(&reader), &blocked, &[se_ip(), gb_ip()]),
+            Some("SE".to_string())
+        );
+        assert_eq!(
+            blocking_country(Some(&reader), &blocked, &[gb_ip(), se_ip()]),
+            Some("GB".to_string())
+        );
     }
 }

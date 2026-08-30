@@ -20,19 +20,20 @@
 //! quorum `Allow` ([`handle_allow`]'s return path). Both apply live, never
 //! cache the `GeoIP` verdict itself (SPEC.md's own reasoning: a country-list
 //! edit must take effect on the very next query, not wait out a TTL) — see
-//! [`GeoipFilter`]/[`crate::geoip::blocks_any`]. **SPEC-silent choice, stated
+//! [`GeoipFilter`]/[`crate::geoip::blocking_country`]. **SPEC-silent choice, stated
 //! here rather than left implicit**: the allowlist branch is exempt (SPEC.md
 //! §3.5's own pipeline snippet says so explicitly — allowlisted domains never
 //! consult quorum *or* `GeoIP`), and the every-provider-disabled pass-through
 //! ([`baseline_passthrough_with_meta`]) is *also* exempt, by the same "no
 //! filtering at all" reasoning T-41 already documented for that branch — both
 //! share [`resolve_via_baseline`], so exempting one without the other would
-//! need splitting that shared helper for no behavioral gain today. Not yet
-//! wired: `DecisionSource::Geoip` entries always log `geoip_country: None`
-//! (T-79 fills that in) and non-A/AAAA proxied queries (HTTPS/SVCB
+//! need splitting that shared helper for no behavioral gain today. T-79
+//! filled in `QueryLogMeta.geoip_country`/`LogEntry.geoip_country`
+//! (`Some(code)` on a `DecisionSource::Geoip` entry, `None` otherwise) via
+//! [`geoip::blocking_country`], widened from a bare `bool` at that same task.
+//! Still a real, named gap: non-A/AAAA proxied queries (HTTPS/SVCB
 //! `ipv4hint`/`ipv6hint`) never reach this filter — they already bypass
-//! quorum entirely (SPEC.md §3), and `GeoIP` bypasses with it, a real named
-//! gap rather than a silent one.
+//! quorum entirely (SPEC.md §3), and `GeoIP` bypasses with it.
 
 use crate::cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
@@ -69,8 +70,8 @@ pub struct CacheContext<'a> {
 /// into one `handle_query` parameter for the same `clippy::too_many_arguments`
 /// reason as [`CacheContext`]. `reader: None` means no database has ever
 /// loaded yet (a fresh install, before `geoip_updater`'s first successful
-/// check) — see [`geoip::blocks_any`]'s own doc comment for why that's a
-/// no-op, not an error.
+/// check) — see [`geoip::blocking_country`]'s own doc comment for why that's
+/// a no-op, not an error.
 pub struct GeoipFilter<'a> {
     /// The loaded `GeoIP` database, or `None` before the first successful
     /// download.
@@ -121,6 +122,10 @@ pub struct QueryLogMeta {
     /// Always empty except for `DecisionSource::Quorum` — matches
     /// `LogEntry.voters`'s own documented rule.
     pub voters: Vec<VoterRecord>,
+    /// The ISO country code that triggered a `GeoIP` block (T-79) —
+    /// `Some` only when `decision_source` is `DecisionSource::Geoip`,
+    /// `None` otherwise, matching `LogEntry.geoip_country`'s own rule.
+    pub geoip_country: Option<String>,
 }
 
 /// `Decision::Allowed` vs `Decision::Failed` from a resolved [`Message`] —
@@ -159,6 +164,7 @@ async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
         decision: decision_from_response(&message),
         decision_source,
         voters: Vec::new(),
+        geoip_country: None,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -179,6 +185,7 @@ fn blocklist_response_with_meta(
         decision: Decision::Blocked,
         decision_source: DecisionSource::Blocklist,
         voters: Vec::new(),
+        geoip_country: None,
     };
     (
         PipelineOutcome::Response(build_block_response(query, ttl)),
@@ -210,7 +217,7 @@ fn cache_hit_response_with_meta(
     geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
     if let Verdict::Allow(ips) = &entry.verdict {
-        if geoip::blocks_any(geoip.reader, geoip.blocked_countries, ips) {
+        if let Some(country) = geoip::blocking_country(geoip.reader, geoip.blocked_countries, ips) {
             let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
             let meta = QueryLogMeta {
                 domain,
@@ -218,6 +225,7 @@ fn cache_hit_response_with_meta(
                 decision: Decision::Blocked,
                 decision_source: DecisionSource::Geoip,
                 voters: Vec::new(),
+                geoip_country: Some(country),
             };
             return (
                 PipelineOutcome::Response(build_block_response(query, ttl)),
@@ -235,6 +243,7 @@ fn cache_hit_response_with_meta(
         decision,
         decision_source: DecisionSource::Cache,
         voters: Vec::new(),
+        geoip_country: None,
     };
     (
         PipelineOutcome::Response(response_from_cache_entry(query, entry, now)),
@@ -391,6 +400,7 @@ pub async fn handle_query<C: DohClient + Sync>(
                 decision: Decision::Blocked,
                 decision_source: DecisionSource::Quorum,
                 voters: outcome.voters,
+                geoip_country: None,
             };
             (
                 PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl))),
@@ -420,21 +430,22 @@ async fn quorum_allow_response_with_meta(
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
     let voters = outcome.voters;
     let result = handle_allow(cache, key, query, outcome.answer, geoip).await;
-    let (message, decision, decision_source, voters) = match result {
+    let (message, decision, decision_source, voters, geoip_country) = match result {
         AllowResult::Answer(message) => {
             let decision = decision_from_response(&message);
-            (message, decision, DecisionSource::Quorum, voters)
+            (message, decision, DecisionSource::Quorum, voters, None)
         }
         // SPEC.md §3.5: the quorum verdict itself was Allow (and is cached
         // as such, unchanged — see handle_allow's own doc comment for why)
         // - GeoIP overrides only the response actually sent, and only this
-        // log entry's own decision/decision_source/voters, not the cached
-        // Verdict a later, country-list-edited query will re-read.
-        AllowResult::GeoipBlocked(message) => (
-            message,
+        // log entry's own decision/decision_source/voters/geoip_country, not
+        // the cached Verdict a later, country-list-edited query will re-read.
+        AllowResult::GeoipBlocked { response, country } => (
+            response,
             Decision::Blocked,
             DecisionSource::Geoip,
             Vec::new(),
+            Some(country),
         ),
     };
     let meta = QueryLogMeta {
@@ -443,6 +454,7 @@ async fn quorum_allow_response_with_meta(
         decision,
         decision_source,
         voters,
+        geoip_country,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -497,7 +509,14 @@ pub async fn proxy_to_single_upstream<C: DohClient + Sync>(
 /// this type.
 enum AllowResult {
     Answer(Message),
-    GeoipBlocked(Message),
+    /// A named struct variant (T-79), not a `(Message, String)` tuple — the
+    /// caller destructures this by field name, so a future third field can't
+    /// silently land at the wrong tuple position the way it could in a
+    /// growing positional match.
+    GeoipBlocked {
+        response: Message,
+        country: String,
+    },
 }
 
 /// The `Allow`-verdict branch of `handle_query`'s quorum step — separated
@@ -563,9 +582,13 @@ async fn handle_allow(
                 .insert(key, CacheEntry::new(Verdict::Allow(ips.clone()), ttl))
                 .await;
         }
-        if geoip::blocks_any(geoip.reader, geoip.blocked_countries, &ips) {
+        if let Some(country) = geoip::blocking_country(geoip.reader, geoip.blocked_countries, &ips)
+        {
             let block_ttl = duration_to_ttl_secs(cache.config.block_verdict_ttl);
-            return AllowResult::GeoipBlocked(build_block_response(query, block_ttl));
+            return AllowResult::GeoipBlocked {
+                response: build_block_response(query, block_ttl),
+                country,
+            };
         }
     }
 
@@ -2382,6 +2405,7 @@ mod tests {
         };
         assert_eq!(meta.decision, Decision::Blocked);
         assert_eq!(meta.decision_source, DecisionSource::Geoip);
+        assert_eq!(meta.geoip_country, Some("SE".to_string()));
         assert!(
             meta.voters.is_empty(),
             "GeoIP isn't a quorum vote - voters must stay empty on a GeoIP-blocked entry"
@@ -2440,6 +2464,7 @@ mod tests {
             panic!("expected Some(meta)");
         };
         assert_eq!(meta.decision_source, DecisionSource::Geoip);
+        assert_eq!(meta.geoip_country, Some("SE".to_string()));
 
         let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
             panic!("valid domain");
@@ -2485,6 +2510,7 @@ mod tests {
             DecisionSource::Cache,
             "a country-list edit must take effect on the very next query, no cache invalidation"
         );
+        assert_eq!(meta.geoip_country, None);
     }
 
     #[tokio::test]
@@ -2537,6 +2563,7 @@ mod tests {
         };
         assert_eq!(meta.decision, Decision::Blocked);
         assert_eq!(meta.decision_source, DecisionSource::Geoip);
+        assert_eq!(meta.geoip_country, Some("SE".to_string()));
 
         // Unaffected by the GeoIP block - still the original Allow.
         let Some(cached) = cache.get(&key).await else {

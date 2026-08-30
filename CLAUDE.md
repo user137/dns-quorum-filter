@@ -4,6 +4,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Фаза 2, fourth GeoIP slice (T-79 — TASKS-DONE.md, one commit): fills in the one field T-76's own
+closing note left as a stated gap — `query_log::LogEntry`/`pipeline::QueryLogMeta` gain
+`geoip_country: Option<String>` (`Some` only when `decision_source == Geoip`, `None` otherwise,
+the same "empty/absent except for one source" rule `voters` already follows one field over), and
+`admin::LogEntryView::from_entry` now clones it through instead of hardcoding `None`. The one real
+design decision was widening `geoip::blocks_any` itself, not adding a second lookup alongside it:
+renamed to `blocking_country`, return type changed from `bool` to `Option<String>` — `find_map`
+over `ips` in caller-supplied order, first IP whose looked-up country is in `blocked_countries`
+wins (SPEC.md never names an ordering beyond OR, so this is the natural reading of the function's
+own iteration order, now pinned by a dedicated two-country test rather than left implicit). Every
+caller updated: `cache_hit_response_with_meta`'s and `handle_allow`'s own `if geoip::blocks_any(...)`
+checks became `if let Some(country) = geoip::blocking_country(...)`. **Advisor-caught before
+implementing**: the first draft of `handle_allow`'s `GeoIP`-block signal was a plain
+`AllowResult::GeoipBlocked(Message, String)` tuple, threaded through `quorum_allow_response_with_meta`'s
+existing 4-tuple match as a 5th positional element — flagged as exactly the shape rust.md's own
+"Make Illegal States Unrepresentable" rule warns against: a future 6th field would silently land at
+the wrong tuple position rather than fail to compile. Fixed with a named struct variant
+(`GeoipBlocked { response: Message, country: String }`), matched by field name. A second
+advisor-directed check, done *before* writing any code rather than assumed: grepped
+`query_log::LogFilter`/`matches_filter` and `dispatch::parse_log_query` for any enumeration of
+`LogEntry`'s field set or `DecisionSource`'s variants that a new `Option<String>` field could
+silently break — confirmed neither exists (SPEC.md §6's own log-search paragraph names exactly
+three facets — domain substring, decision, voter — `geoip_country` isn't one of them this phase),
+so this stayed a clean 5-file change (`geoip.rs`/`pipeline.rs`/`query_log.rs`/`dispatch.rs`/
+`admin.rs`), not a sixth. New tests: `geoip.rs`'s five existing `blocks_any` tests renamed and
+reshaped to assert `Option<String>` instead of `bool` (including one now proving the returned code
+is the *database's* casing, not an echo of the configured entry's casing — the one way the old
+plain-bool version could pass while silently sourcing the value from the wrong place), plus a new
+test with two `ips` matching two different blocked countries in reversed list order, proving IP
+order (not list order or alphabetical) decides which country is reported — this needed a second
+known-country fixture address (`81.2.69.160` → `GB`, the same `GeoIP2-Country-Test.mmdb` address
+`maxminddb`'s own upstream `test_within` uses against this file, empirically confirmed against the
+real vendored fixture via `cargo test` before committing to the assertion, per this project's own
+"verify before trusting an assumed value" discipline — not guessed from the address alone).
+`pipeline.rs`'s six existing `GeoIP` tests gained `meta.geoip_country` assertions (`Some("SE")` on
+every `DecisionSource::Geoip` branch, `None` everywhere else, including the post-country-removal
+cache-hit half of the "removing a country unblocks immediately" test). `admin.rs` gained a new test
+proving `LogEntryView::from_entry` threads a real `Some("SE")` through unchanged (the existing
+"always None" test was re-scoped to a `Blocklist`-source entry, which genuinely never carries a
+country regardless of phase, rather than deleted). `dispatch.rs` gained one new full-stack test
+(`serve_admin_log_reports_the_real_geoip_country_for_a_geoip_sourced_entry`) proving the value
+survives the real HTTP `GET /admin/log` JSON round-trip, not just the direct `LogEntryView::from_entry`
+unit test — and its own pre-existing `/admin/reset` fixture test updated for the renamed function
+(`assert!(blocks_any(...))` → `assert_eq!(blocking_country(...), Some("SE".to_string()))`). Full
+local gate green (349 lib tests, +3 new — the two-country `geoip.rs` test, the `admin.rs` DTO test,
+and the `dispatch.rs` HTTP round-trip test; clippy/fmt/doc/doctest/conformance all unaffected and
+clean; `cargo deny check` clean, only the same pre-existing informational advisories T-75/T-76
+already recorded). Manually smoke-tested the real binary: started with the same kind of mixed-case
+`[geoip]` config T-76 used, confirmed `GET /admin/log`/`GET /admin/status` both respond healthily
+(no runtime panic from the new field threading), then a clean `/admin/shutdown`. **Not verified
+live** (same underlying blocker T-75/T-76 both already named, not a new one): an actual
+`GeoIP`-blocked real-world DNS query producing a real `geoip_country` in the log end to end — this
+sandbox's DNS block on `db-ip.com` (T-75's own finding) means no real database can be downloaded
+here at all, so a live block is unreachable regardless of domain choice, not merely inconvenient to
+pick a domain for. Stays covered by the vendored-fixture unit/integration tests above, named as a
+real gap rather than glossed over.
+Diagram ground-truth ritual run (triggered — `LogEntryView.geoip_country` moved from
+always-placeholder to genuinely producible): `diagrams/ui-dto-model.md`'s `GET /admin/log`
+paragraph updated in place, no new SOURCES section needed (the field's shape was already declared,
+only its real-vs-placeholder status changed). **Not in this slice**: the UI (T-77/T-78/T-81),
+advanced MaxMind mode (T-80), closing property-style tests (T-82, next in the Ф2 plan order).
+
 Фаза 2, third GeoIP slice (T-76 — TASKS-DONE.md, one commit): wires the already-built
 `geoip::blocks_any` (new, pure OR-across-multiple-IPs decision over `GeoipReader::country`, T-74)
 into `pipeline.rs` at SPEC.md §3.5's two named hook points — `cache_hit_response_with_meta` (a

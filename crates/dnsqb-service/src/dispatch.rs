@@ -419,6 +419,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
                     decision: meta.decision,
                     decision_source: meta.decision_source,
                     voters: meta.voters,
+                    geoip_country: meta.geoip_country,
                     latency_ms,
                 });
             }
@@ -1593,6 +1594,7 @@ mod tests {
                 allow_ip_count: Some(1),
                 error_message: None,
             }],
+            geoip_country: None,
             latency_ms: 5,
         }
     }
@@ -3091,20 +3093,21 @@ mod tests {
             "reset must reload [geoip] blocked_countries from the fixture file"
         );
         // And the reload is real, not just a stored string - the actual
-        // filter this crate ships (geoip::blocks_any) must now block the
-        // fixture's own known-good SE address.
+        // filter this crate ships (geoip::blocking_country) must now block
+        // the fixture's own known-good SE address.
         let se_ip: std::net::IpAddr = match "89.160.20.112".parse() {
             Ok(ip) => ip,
             Err(err) => panic!("valid IPv4 literal: {err}"),
         };
         let geoip_snapshot = Arc::clone(&state.geoip.read());
         let countries_snapshot = Arc::clone(&state.geoip_countries.read());
-        assert!(
-            crate::geoip::blocks_any(
+        assert_eq!(
+            crate::geoip::blocking_country(
                 geoip_snapshot.reader.as_deref(),
                 &countries_snapshot,
                 &[se_ip]
             ),
+            Some("SE".to_string()),
             "the reloaded country list must actually block the fixture's known SE address"
         );
     }
@@ -3972,6 +3975,31 @@ mod tests {
         };
         assert!(body.entries.is_empty());
         assert!(!body.truncated);
+    }
+
+    // T-79: proves the whole `GeoIP` block's `geoip_country` survives the
+    // full HTTP round-trip (LogEntry -> LogEntryView::from_entry ->
+    // serde_json), not just the direct-call unit test already covering
+    // `LogEntryView::from_entry` in `admin.rs`.
+    #[tokio::test]
+    async fn serve_admin_log_reports_the_real_geoip_country_for_a_geoip_sourced_entry() {
+        let state = state_with(no_op_client());
+        let mut entry = sample_log_entry("blocked.example", crate::query_log::Decision::Blocked);
+        entry.decision_source = crate::query_log::DecisionSource::Geoip;
+        entry.voters = Vec::new();
+        entry.geoip_country = Some("SE".to_string());
+        state.query_log.push(entry);
+
+        let response = match serve(admin_log_request(None), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        assert_eq!(body.entries.len(), 1);
+        assert_eq!(body.entries[0].geoip_country, Some("SE".to_string()));
     }
 
     #[tokio::test]

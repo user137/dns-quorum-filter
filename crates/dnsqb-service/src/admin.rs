@@ -483,9 +483,9 @@ fn unix_millis(time: SystemTime) -> u64 {
 
 /// SPEC.md §6/§8 `LogEntry` DTO — the body of `GET /admin/log`'s `entries`
 /// (T-54). Widens the internal, Phase-1-only [`LogEntry`] (five
-/// `decision_source` values as of T-76, still no `voter_scope`/`geoip_country`
-/// fields at all) into the full seven-value/placeholder-carrying shape
-/// `UI-SPEC.md` §1's
+/// `decision_source` values as of T-76, still no `voter_scope` field at all
+/// — `geoip_country` joined the internal type at T-79) into the full
+/// seven-value/placeholder-carrying shape `UI-SPEC.md` §1's
 /// "carry every field from day one" principle calls for — `crate::query_log`'s
 /// own module doc comment names this widening as this task's job, not
 /// something to build into the internal type itself (an illegal state for
@@ -502,10 +502,9 @@ pub struct LogEntryView {
     /// comment.
     pub voter_scope: VoterScopeView,
     pub voters: Vec<VoterResultView>,
-    /// Always `None` this phase — T-76 (Фаза 2) wired `GeoIP` into the
-    /// pipeline (a `decision_source` of `GEOIP` is producible now), but the
-    /// internal [`LogEntry`] still has nowhere to carry *which* country
-    /// matched — that field is T-79's, the very next task in this workstream.
+    /// The ISO country code that triggered a `GeoIP` block (T-79) — `Some`
+    /// only when `decision_source` is `GeoIp`, a direct passthrough of the
+    /// internal [`LogEntry`]'s own field of the same name and rule.
     pub geoip_country: Option<String>,
     pub latency_ms: u64,
 }
@@ -521,7 +520,7 @@ impl LogEntryView {
             decision_source: DecisionSourceView::from(entry.decision_source),
             voter_scope: VoterScopeView::Full,
             voters: entry.voters.iter().map(VoterResultView::from).collect(),
-            geoip_country: None,
+            geoip_country: entry.geoip_country.clone(),
             latency_ms: entry.latency_ms,
         }
     }
@@ -783,6 +782,7 @@ mod tests {
             decision,
             decision_source,
             voters,
+            geoip_country: None,
             latency_ms: 1,
         }
     }
@@ -1092,8 +1092,26 @@ mod tests {
             VoterScopeView::Full,
             "always FULL until T-109 (Фаза 4)"
         );
-        assert_eq!(view.geoip_country, None, "always None until T-79 (Фаза 2)");
+        assert_eq!(
+            view.geoip_country, None,
+            "a Blocklist decision never carries a country, regardless of phase"
+        );
         assert_eq!(view.voters.len(), 1);
         assert_eq!(view.latency_ms, 42);
+    }
+
+    #[test]
+    fn log_entry_view_from_entry_threads_a_real_geoip_country_through_unchanged() {
+        // T-79: the internal LogEntry can now genuinely carry a country on a
+        // Geoip-sourced entry - proves from_entry passes it through, not
+        // just that the always-None case (above) still passes.
+        let mut source_entry = entry(Decision::Blocked);
+        source_entry.decision_source = DecisionSource::Geoip;
+        source_entry.geoip_country = Some("SE".to_string());
+
+        let view = LogEntryView::from_entry(&source_entry);
+
+        assert_eq!(view.decision_source, DecisionSourceView::GeoIp);
+        assert_eq!(view.geoip_country, Some("SE".to_string()));
     }
 }

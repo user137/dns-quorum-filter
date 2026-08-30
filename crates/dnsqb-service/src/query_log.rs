@@ -11,17 +11,16 @@
 //! than the Tauri IPC DTO of the same name (`diagrams/ui-dto-model.md`,
 //! `UI-SPEC.md`): `decision_source` here has five of the seven values Phase 1
 //! can actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`/`GEOIP`,
-//! `GEOIP` added at T-76), and there is still no `voter_scope`/`geoip_country`
-//! field at all — TASKS.md's own T-43 text defers `voter_scope` to T-109
-//! (Фаза 4), and `geoip_country` (the ISO code a `GEOIP` entry actually
-//! matched, distinct from *whether* one matched) to T-79, the very next task
-//! in this same `GeoIP` workstream. The DTO conversion (T-53/T-54) is expected
-//! to widen this into the seven-variant DTO enum and fill `voter_scope`/
-//! `geoip_country` with their fixed Phase-1 placeholder values (`FULL`/
-//! `null`) — that widening doesn't exist yet for the two still-unbuilt
-//! sources, and doesn't belong in this module (illegal states — a
-//! `decision_source` this phase can't produce — stay unrepresentable here
-//! instead of being carried as a dead enum variant).
+//! `GEOIP` added at T-76), and there is still no `voter_scope` field at all —
+//! TASKS.md's own T-43 text defers it to T-109 (Фаза 4). `geoip_country` (the
+//! ISO code a `GEOIP` entry actually matched, distinct from *whether* one
+//! matched) joined at T-79, the task right after `GEOIP` itself became
+//! producible. The DTO conversion (T-53/T-54) is expected to widen this into
+//! the seven-variant DTO enum and fill `voter_scope` with its fixed Phase-1
+//! placeholder value (`FULL`) — that widening doesn't exist yet for the two
+//! still-unbuilt sources, and doesn't belong in this module (illegal states
+//! — a `decision_source` this phase can't produce — stay unrepresentable
+//! here instead of being carried as a dead enum variant).
 //!
 //! [`VoterRecord`]/`VoterVerdict` moved to `quorum.rs` at T-147 — which
 //! providers cast a vote and what their outcome means is quorum's own
@@ -114,6 +113,16 @@ pub struct LogEntry {
     /// Per-provider results — empty when `decision_source` isn't `Quorum`
     /// (an allowlist/blocklist/cache decision never consulted a voter).
     pub voters: Vec<VoterRecord>,
+    /// The ISO country code that triggered a `GeoIP` block (T-79) — `Some`
+    /// only when `decision_source` is `Geoip`, `None` for every other
+    /// source, the same "empty/absent except for the one source that
+    /// produces it" rule `voters` follows one field up. An unenforced
+    /// convention, not a type-level guarantee — same as `quorum::resolve`'s
+    /// own documented-but-unenforced precondition (T-148's gotcha) — but
+    /// with a single production writer today (`dispatch::resolve_doh_request`,
+    /// which copies straight from `pipeline::QueryLogMeta`), a materially
+    /// narrower blast radius than that precedent's multi-writer case.
+    pub geoip_country: Option<String>,
     /// Total response latency.
     pub latency_ms: u64,
 }
@@ -315,6 +324,7 @@ mod tests {
             decision: Decision::Allowed,
             decision_source: DecisionSource::Quorum,
             voters: Vec::new(),
+            geoip_country: None,
             latency_ms: 5,
         }
     }

@@ -312,13 +312,14 @@ T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна
 на адмін-каналі, реалізує весь блок DTO вище як `admin::LogEntryView`/`VoterResultView`/
 `VoterVerdictView`/`DecisionSourceView`/`DecisionView`/`VoterScopeView`/`QTypeView`. Внутрішній
 backend-тип `query_log::LogEntry` (вужчий, 5 значень `decision_source` як з T-76 — `GEOIP`
-приєднався до `ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM` — без `voter_scope`/`geoip_country` — див.
-`query_log.rs`'s власний doc-коментар) конвертується в `LogEntryView` одним методом
-(`LogEntryView::from_entry`), не дублюється по кількох маршрутах — `voter_scope` завжди `FULL`
-(T-109 ще не існує), `geoip_country` завжди `null` (T-76 підключив сам фільтр у конвеєр і додав
-`decision_source = GEOIP` як реально досяжне значення, але поле з ISO-кодом країни, що спрацювала,
-лишається T-79's роботою — той самий "проектований наперед DTO" підхід, тепер частково заповнений),
-решта полів — пряме відображення.
+приєднався до `ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM` — без `voter_scope` — див. `query_log.rs`'s
+власний doc-коментар) конвертується в `LogEntryView` одним методом (`LogEntryView::from_entry`), не
+дублюється по кількох маршрутах — `voter_scope` завжди `FULL` (T-109 ще не існує). `geoip_country`
+**реальний з T-79**: `pipeline.rs`'s `geoip::blocking_country` (T-76 як `blocks_any`, широкий до
+`Option<String>` на T-79) тепер повертає саме ISO-код країни, що спрацювала, а не лише `bool` —
+проведений без змін через `QueryLogMeta` → `LogEntry` → `LogEntryView::from_entry`, `Some` лише коли
+`decision_source = GEOIP`, `null` для решти джерел (той самий "порожньо/відсутньо, крім одного
+джерела" патерн, що й `voters`). Решта полів — пряме відображення.
 
 **`DecisionSourceView`'s два варіанти (`CcTldBlock`/`GeoIp`) потребують явного `#[serde(rename)]`**
 — автоматична `SCREAMING_SNAKE_CASE`-конверсія serde дала б `CC_TLD_BLOCK`/`GEO_IP`, не
