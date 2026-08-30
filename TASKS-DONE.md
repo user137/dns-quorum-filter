@@ -1595,10 +1595,11 @@
   того, що робилось на T-80 (де ендпоінт MaxMind пробили, а не реконструювали). db-ip.com цієї
   сесії був досяжний (як і на T-78/T-161 — досяжність session-dependent, перевіряти щоразу), тож
   **WebFetch проти `https://db-ip.com/db/download/ip-to-country-lite`**: сторінка сама називає
-  "Creative Commons Attribution 4.0 International License" і вимагає рівно цей сніпет —
-  `<a href='https://db-ip.com'>IP Geolocation by DB-IP</a>` — на будь-якій сторінці, що показує
-  результати бази. SPEC.md §3.5's T-75 нотатка оновлена: "потім підтверджено напряму проти
-  db-ip.com 2026-08-30" замість застарілого "не підтверджено напряму".
+  "Creative Commons Attribution 4.0 International License" і вимагає посилання назад на db-ip.com
+  з будь-якої сторінки, що показує результати бази; форму показує як
+  `<a href='https://db-ip.com'>IP Geolocation by DB-IP</a>` (одинарні лапки — косметика, тест
+  quote-agnostic). Ліцензійний ідентифікатор тепер звірений напряму; SPEC.md §3.5's T-75 нотатка
+  оновлена відповідно (було "не підтверджено проти db-ip.com напряму").
 
   **Дві додаткові advisor-порали, застосовані:**
   - **MaxMind-атрибуція не безумовна.** "This product includes GeoLite2 data..." фактично хибне в
@@ -1608,9 +1609,14 @@
     similar" формулювання, не дослівне.
   - **Тест перевіряє посилання, не хостнейм.** `INDEX_HTML.contains("db-ip.com")` зеленів би й на
     рядок у HTML-коментарі. Тест (`admin_ui::tests::
-    index_html_carries_the_required_geoip_data_attributions`) перевіряє `href="https://db-ip.com"`
-    + текст сніпета + `CC BY 4.0` + `creativecommons.org/licenses/by/4.0` + GeoLite2/maxmind.com +
-    Apache-посилання — рівно те, що вимога називає, не "хостнейм десь є".
+    index_html_carries_the_required_geoip_data_attributions`) знаходить елемент
+    `...IP Geolocation by DB-IP</a>` (закриваючий тег — щоб згадка фрази в коментарі не збіглася),
+    відмотує до його `<a ` і перевіряє, що саме цей відкриваючий тег містить `db-ip.com` — тобто
+    текст і href в одному елементі. Quote-agnostic (`'` → `"` перед матчем), тож перехід на форму
+    сніпета db-ip.com з одинарними лапками не зробить юридично обов'язкове посилання червоним
+    тестом. Емпірично звірено (T-59-прецедент): зелений на обох формах лапок, червоний коли
+    посилання прибрати зовсім. Плюс `creativecommons.org/licenses/by/4.0` і GeoLite2/maxmind.com.
+    Apache-рядок з тесту прибраний — він не юридично навантажений так, як дві атрибуції даних.
 
   **Заодно:** `renderGeoip`'s рядок дати збірки більше не хардкодить "(DB-IP)" — джерело-нейтральний
   "Дата збірки бази GeoIP: …", бо з T-80 завантажена база може бути MaxMind GeoLite2, а DTO не

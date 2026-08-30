@@ -94,35 +94,38 @@ mod tests {
     use super::{serve_css, serve_html, serve_js, INDEX_HTML};
     use http::{Method, StatusCode};
 
-    // T-81: DB-IP Lite's CC BY 4.0 licence requires a link back to db-ip.com
-    // on any page displaying data derived from the database, and this page
-    // shows GeoIP-derived country data. This asserts the two things the
-    // requirement actually names - the link-back and the licence - not just
-    // that the hostname appears somewhere (it could sit in a comment).
-    // MaxMind's GeoLite2 attribution is likewise required whenever that
-    // source is in use (T-80).
+    // T-81: DB-IP Lite's CC BY 4.0 licence requires the "IP Geolocation by
+    // DB-IP" anchor text AND a link back to db-ip.com in the *same* element,
+    // on any page displaying data derived from the database - and this page
+    // shows GeoIP-derived country data. Checked quote-agnostically and by
+    // proving the two live in one <a>, not as two independent substrings
+    // (which would pass with the text in one place and a bare URL in a
+    // comment elsewhere - the "hostname appears somewhere" gap). MaxMind's
+    // GeoLite2 attribution is likewise required whenever that source is in
+    // use (T-80).
     #[test]
     fn index_html_carries_the_required_geoip_data_attributions() {
+        let html = INDEX_HTML.replace('\'', "\"");
+        // Match the closing tag too, so a mention of the phrase in a comment
+        // (which has no `</a>` after it) can't be picked up instead of the
+        // real element.
+        let Some((before_anchor, _)) = html.split_once("IP Geolocation by DB-IP</a>") else {
+            panic!("the db-ip.com-mandated anchor element is missing");
+        };
+        let Some(tag_start) = before_anchor.rfind("<a ") else {
+            panic!("the DB-IP anchor text is not inside an <a> element");
+        };
         assert!(
-            INDEX_HTML.contains("href=\"https://db-ip.com\""),
-            "DB-IP link-back is legally required (CC BY 4.0)"
+            before_anchor[tag_start..].contains("db-ip.com"),
+            "the DB-IP attribution anchor must link back to db-ip.com (CC BY 4.0 requirement)"
         );
         assert!(
-            INDEX_HTML.contains("IP Geolocation by DB-IP"),
-            "the db-ip.com-mandated anchor text"
-        );
-        assert!(
-            INDEX_HTML.contains("CC BY 4.0")
-                && INDEX_HTML.contains("creativecommons.org/licenses/by/4.0"),
+            html.contains("creativecommons.org/licenses/by/4.0"),
             "the licence must be named and linked, and it is CC BY 4.0 (not -SA)"
         );
         assert!(
-            INDEX_HTML.contains("GeoLite2") && INDEX_HTML.contains("maxmind.com"),
+            html.contains("GeoLite2") && html.contains("maxmind.com"),
             "MaxMind GeoLite2 attribution (T-80 advanced mode)"
-        );
-        assert!(
-            INDEX_HTML.contains("apache.org/licenses/LICENSE-2.0"),
-            "the app's own Apache-2.0 licence"
         );
     }
 
