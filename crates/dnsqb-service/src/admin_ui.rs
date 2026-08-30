@@ -123,9 +123,21 @@ mod tests {
             html.contains("creativecommons.org/licenses/by/4.0"),
             "the licence must be named and linked, and it is CC BY 4.0 (not -SA)"
         );
+        // Scoped to the <footer id="credits"> slice, not the whole document:
+        // since T-162 the string "GeoLite2" also appears in a card heading, so
+        // a plain `html.contains("GeoLite2")` would no longer fail if the
+        // GeoLite2 line were deleted from the footer (the same "phrase
+        // present somewhere" gap the DB-IP assertion above already guards
+        // against, reopened on the MaxMind half).
+        let Some((_, footer)) = html.split_once("<footer id=\"credits\">") else {
+            panic!("the #credits footer element is missing");
+        };
+        let Some((credits, _)) = footer.split_once("</footer>") else {
+            panic!("the #credits footer is not closed");
+        };
         assert!(
-            html.contains("GeoLite2") && html.contains("maxmind.com"),
-            "MaxMind GeoLite2 attribution (T-80 advanced mode)"
+            credits.contains("GeoLite2") && credits.contains("maxmind.com"),
+            "MaxMind GeoLite2 attribution must be in the #credits footer (T-80 advanced mode)"
         );
     }
 

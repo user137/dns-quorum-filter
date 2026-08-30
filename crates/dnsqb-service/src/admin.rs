@@ -1356,8 +1356,11 @@ mod maxmind_dto_tests {
 
     #[test]
     fn database_source_classifies_both_real_publisher_strings_and_falls_back_to_other() {
-        // The exact `database_type` strings DB-IP and MaxMind publish (the
-        // latter is `maxminddb`'s own upstream test-fixture value).
+        // The exact `database_type` strings each publisher emits, both
+        // verified against a real database, not assumed: `"DBIP-Country-Lite"`
+        // printed from a live db-ip.com download 2026-08-31 (no separator, so
+        // the lowercased `.contains("dbip")` holds); `"GeoLite2-Country"` is
+        // `maxminddb`'s own upstream test-fixture value.
         assert_eq!(
             DatabaseSource::classify("DBIP-Country-Lite"),
             DatabaseSource::DbIpLite

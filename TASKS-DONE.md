@@ -1834,6 +1834,16 @@
   `MaxmindCredentialsView` без `license_key` у JSON. Chrome-автоматизація недоступна вже 4-ту
   сесію поспіль — картка не відрендерена вживу; названо чесно, не заявлено.
 
+  **Closing-review follow-up (той самий коміт-пас):** (1) `DatabaseSource::classify`'s DB-IP-гілка
+  залежить від рядка `database_type`, а це дефолтний шлях кожного користувача — **звірено
+  емпірично**, не з fixture (MaxMind-артефакт нічого не каже про DB-IP): live-завантаження з
+  db-ip.com цієї сесії дало `"DBIP-Country-Lite"` (без роздільника, тож lowercased
+  `.contains("dbip")` тримається); тест-fixture вже був правильний, коментар оновлено. (2)
+  `admin_ui::tests::index_html_carries_the_required_geoip_data_attributions` — MaxMind-половина
+  асерту (`html.contains("GeoLite2")`) тепер задовольнялась би заголовком нової картки, не
+  футером; звужено пошук до зрізу `<footer id="credits">…</footer>` (та сама "фраза є десь"
+  прогалина, яку DB-IP-половина вже стереже).
+
   Ground-truth ритуал: `ui-dto-model.md` — **зачеплений** (додано `database_source`,
   `DatabaseSource`, `MaxmindCredentialsView`/`MaxmindCredentialsRequest`/`MaxmindCredentialCheck`
   + класи, зв'язки, наративна секція). `ui-navigation.md` / `ui-status-indicator.md` — **не
