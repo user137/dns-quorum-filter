@@ -162,7 +162,17 @@ classDiagram
         +u64 max_capacity
     }
 
+    class GeoipCountriesResponse {
+        <<T-77, реалізовано>>
+        +List~String~ blocked_countries
+        +bool persisted
+    }
+    class GeoipCountryRequest {
+        <<T-77, реалізовано>>
+        +String country
+    }
     class GeoIPConfig {
+        <<чернетка UI-SPEC.md §3.5 — не реальний DTO>>
         +List~String~ blocked_countries
         +DateTime db_updated_at
     }
@@ -305,6 +315,23 @@ T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна
 `CacheConfigUpdate` (тіло запиту) відрізняються лише полем `persisted` — той самий патерн, що й
 `OverrideListsResponse` вище: відповідь завжди відображає живий стан, значення заявки не
 обов'язково збігаються з ним, якщо валідація відхилила (`clamp_min_secs > clamp_max_secs`).
+
+## `GeoipCountriesResponse`/`GeoipCountryRequest` — нова пара DTO, не `GeoIPConfig` з чернетки (T-77)
+
+`GET /admin/geoip`/`POST /admin/geoip/add`/`POST /admin/geoip/remove` реалізують лише перший
+рядок UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`) — не увесь клас: `db_
+updated_at` (T-78) і атрибуція (T-81) залишаються не доставленими, тож `GeoIPConfig` вище
+позначений як чернетка, а не реалізований DTO. `GeoipCountriesResponse`/`GeoipCountryRequest` —
+той самий "окремий маршрут, не додаток до `/admin/config`" патерн, що й
+`CacheConfigView`/`CacheConfigUpdate` вище, з тієї самої причини (невʼязана зміна тумблера
+провайдера не повинна нести чи застосовувати поточний список країн як побічний ефект). На
+відміну від `CacheConfigView`/`CacheConfigUpdate`, `GeoipCountryRequest` — одне поле (`country`),
+спільне і для `add`, і для `remove`: код країни не має wildcard/list-виміру, який
+`OverrideAddRequest`/`OverrideRemoveRequest` мусять розрізняти. Обидва маршрути валідують і
+нормалізують `country` через той самий `config::validate_country_code`, що й завантаження
+`resolver_config.toml` — `remove` теж, не лише `add` (реальний баг, спійманий до реалізації:
+без нормалізації на `remove` малий регістр у запиті мовчки не збігався б із завжди-великим
+збереженим кодом).
 
 ## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`VoterScope`/`QType` — реальна реалізація (T-54)
 

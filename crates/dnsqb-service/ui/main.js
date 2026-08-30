@@ -11,6 +11,7 @@ const statusText = document.getElementById("status-text");
 const appBody = document.getElementById("app-body");
 const overridesBody = document.getElementById("overrides-body");
 const cacheConfigBody = document.getElementById("cache-config-body");
+const geoipBody = document.getElementById("geoip-body");
 const logBody = document.getElementById("log-body");
 
 function setPill(ok, text) {
@@ -502,6 +503,204 @@ async function refreshCacheConfig() {
 }
 
 refreshCacheConfig();
+
+// T-77: GeoIP blocked-country list editor. Same isolation reasoning as the
+// overrides/cache-config sections above - a country-code input the user is
+// actively typing into must not lose its value to the unrelated 2s poll.
+// SPEC.md §3.5's own explicit requirement is that the CDN over-blocking
+// warning must appear on every addition, not sit as a permanent fixture (a
+// permanent banner is functionally identical to no banner - the same trap
+// this project's own T-56 status-indicator design and the now-reversed T-57
+// notice already document, DECISIONS.md). So "Додати" arms a confirm step
+// inline instead of adding immediately - the warning becomes visible only
+// as part of that interaction, and a second click on the same code (or
+// "Підтвердити додавання") is what actually sends the request.
+
+async function getGeoip() {
+  const response = await fetch("/admin/geoip");
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function addGeoipCountry(country) {
+  const response = await fetch("/admin/geoip/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ country }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function removeGeoipCountry(country) {
+  const response = await fetch("/admin/geoip/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ country }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// SPEC.md §3.5's own wording, translated - large CDNs hand out anycast IPs
+// whose apparent country changes between requests/points of presence, so
+// blocking a country is expected, typical over-blocking risk for any site
+// behind one, not a hypothetical edge case.
+const GEOIP_OVER_BLOCKING_WARNING =
+  "Великі CDN (Cloudflare, Google, Amazon) роздають anycast-адреси, чия " +
+  "географія змінюється між запитами - блокування країни ризикує " +
+  "заблокувати легітимні сайти, які просто фізично проходять через " +
+  "дата-центр у цій країні, не маючи стосунку до її юрисдикції.";
+
+function geoipListItem(code) {
+  const li = document.createElement("li");
+  li.className = "override-item";
+  const label = document.createElement("span");
+  label.textContent = code;
+  li.appendChild(label);
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "override-remove";
+  removeBtn.textContent = "Видалити";
+  removeBtn.addEventListener("click", async () => {
+    try {
+      await removeGeoipCountry(code);
+      await refreshGeoip();
+    } catch (err) {
+      renderGeoipError(err);
+    }
+  });
+  li.appendChild(removeBtn);
+  return li;
+}
+
+function renderGeoip(data) {
+  geoipBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "GeoIP-блокування";
+  geoipBody.appendChild(heading);
+
+  // Same "silent data loss" concern as #overrides-body's own persisted
+  // warning (T-47).
+  if (!data.persisted) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    geoipBody.appendChild(notPersisted);
+  }
+
+  const addRow = document.createElement("div");
+  addRow.className = "override-add-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "SE";
+  input.maxLength = 2;
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Додати";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Скасувати";
+  cancelBtn.hidden = true;
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+  const warningLine = document.createElement("div");
+  warningLine.className = "notice warn";
+  warningLine.hidden = true;
+  warningLine.textContent = GEOIP_OVER_BLOCKING_WARNING;
+
+  // Local to this one render's closure, not module state - a fresh
+  // renderGeoip() call (after a successful add/remove) always starts
+  // un-armed, and nothing else re-renders #geoip-body mid-interaction (this
+  // section isn't touched by the unrelated 2s status poll, same as
+  // overrides/cache-config above).
+  let armedCode = null;
+
+  function resetArming() {
+    armedCode = null;
+    warningLine.hidden = true;
+    cancelBtn.hidden = true;
+    addBtn.textContent = "Додати";
+  }
+  cancelBtn.addEventListener("click", resetArming);
+  input.addEventListener("input", resetArming);
+
+  async function submitAdd() {
+    const code = input.value.trim().toUpperCase();
+    if (!code) {
+      return;
+    }
+    // Client-side mirror of the server's own validate_country_code check -
+    // belt and suspenders, not a replacement (the server still rejects an
+    // invalid code independently).
+    if (!/^[A-Z]{2}$/.test(code)) {
+      errorLine.textContent = `"${code}" не є дійсним дволітерним кодом країни (ISO 3166-1 alpha-2).`;
+      return;
+    }
+    errorLine.textContent = "";
+    if (armedCode !== code) {
+      armedCode = code;
+      warningLine.hidden = false;
+      cancelBtn.hidden = false;
+      addBtn.textContent = "Підтвердити додавання";
+      return;
+    }
+    try {
+      await addGeoipCountry(code);
+      input.value = "";
+      await refreshGeoip();
+    } catch (err) {
+      errorLine.textContent = `Не вдалося додати "${code}": ${(err && err.message) || String(err)}`;
+    }
+  }
+  addBtn.addEventListener("click", submitAdd);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submitAdd();
+    }
+  });
+
+  addRow.appendChild(input);
+  addRow.appendChild(addBtn);
+  addRow.appendChild(cancelBtn);
+  geoipBody.appendChild(addRow);
+  geoipBody.appendChild(warningLine);
+  geoipBody.appendChild(errorLine);
+
+  const list = document.createElement("ul");
+  list.className = "override-list";
+  data.blocked_countries.forEach((code) => list.appendChild(geoipListItem(code)));
+  geoipBody.appendChild(list);
+}
+
+function renderGeoipError(err) {
+  geoipBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "GeoIP-блокування";
+  geoipBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  geoipBody.appendChild(panel);
+}
+
+async function refreshGeoip() {
+  try {
+    renderGeoip(await getGeoip());
+  } catch (err) {
+    renderGeoipError(err);
+  }
+}
+
+refreshGeoip();
 
 // T-46/T-54: query log screen. Same isolation reasoning as the two sections
 // above (#log-body, own fetch/render cycle, not on the 2s poll) - but unlike

@@ -4,6 +4,45 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Фаза 2, sixth GeoIP slice (T-77 — TASKS-DONE.md, two commits): the first live-write path for
+`[geoip] blocked_countries` — new `GET /admin/geoip`/`POST /admin/geoip/add`/`POST
+/admin/geoip/remove` plus a `#geoip-body` card on `/admin/ui`, matching the T-47 overrides-card
+shape. Plan mode + a real advisor review of the plan before implementing (this repo's global
+CLAUDE.md Agent Discipline rule, a genuine new admin-write surface) caught two real bugs before
+any code existed: (1) the plan's first draft would have shown a permanently-visible CDN
+over-blocking warning banner — flagged as the same "always-on warning is functionally identical
+to no warning" trap already recorded for T-56, doubly so since T-57's own permanent notice was
+later reversed at the user's explicit request (DECISIONS.md); fixed with a two-click confirm flow
+(first "Додати" click arms the warning and requires "Підтвердити додавання"/"Скасувати", nothing
+sent until the second click) so the warning is a genuine per-addition event, not a fixture. (2)
+the plan's remove route validated/normalized the country code only on add — since the stored list
+is always uppercase, a lowercase remove request would have silently no-op'd against it, looking
+like a broken button with no error; fixed by routing remove through the same
+`config::validate_country_code` (now `pub(crate)`) as add, both empirically confirmed as real
+regressions (reverted each fix, watched the corresponding test fail, restored). Design decisions
+made explicitly: new routes share `state.persist_lock` with `/admin/config`/`/admin/cache-config/
+apply` (not an independent lock, since all three write the same `resolver_config.toml` — the same
+cross-field-read discipline already fixed four times in this project, T-57/T-139/T-149/T-47, now
+extended a fifth); no cache-invalidation call on change, unlike overrides — a `GeoIP` verdict is
+never cached at all (SPEC.md §3.5), so a list change takes effect on the very next lookup with no
+invalidation logic needed. `AppState::update_geoip_countries` (T-76) stays the single writer,
+shared with `apply_admin_reset`, rather than the new routes touching the `RwLock` directly. 11 new
+`dispatch.rs` tests, including two cross-field regressions (an unrelated geoip add must not wipe
+`providers`/`timeout_mode`/`[cache]`, and vice versa — mirrors the existing T-76 tests one
+direction over), both empirically confirmed against a reverted fix. Live-verified against the
+real binary via direct HTTP round-trips (Chrome browser automation wasn't connected in this
+environment) — add/remove/persist-to-disk/lowercase-normalization/invalid-code-400 all confirmed
+against a running `dnsqb-service.exe` and its real `resolver_config.toml`; the actual browser
+click-through and warning-banner visibility are **not** verified this slice, named honestly
+rather than glossed over. Found while researching, folded into this task: `CONFIGURATION.md` had
+zero mentions of `[geoip]`/`blocked_countries` at all — a pre-existing gap from T-76, now fixed
+with a full section mirroring `[cache]`'s own shape. Diagram ground-truth ritual run: `ui-dto-
+model.md` gained the new `GeoipCountriesResponse`/`GeoipCountryRequest` DTO pair and re-marked the
+draft `GeoIPConfig` class as a draft, not a real DTO; `ui-navigation.md`'s GeoIP screen-inventory
+node was actually re-checked this time (not silently skipped the way T-76/T-79 both left it) —
+its existing text already named T-77 correctly for both bullets it now covers, so no edit was
+needed there. Next in the Ф2 plan order: T-78 (UI: last-database-update indicator), then T-80/T-81.
+
 Фаза 2, fifth GeoIP slice (T-82 — TASKS-DONE.md, docs-only, no commit-worthy code): closed without
 new code, the same T-60 precedent — both properties T-82's own line names (OR across multiple IPs,
 nop on an empty blocked-country list) already had dedicated `geoip.rs` unit tests, written for

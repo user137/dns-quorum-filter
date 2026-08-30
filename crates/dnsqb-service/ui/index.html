@@ -27,6 +27,13 @@
     <h3>Кеш</h3>
     <p>Завантаження…</p>
   </div>
+  <!-- T-77: same reasoning as #overrides-body/#cache-config-body above - a
+       country-code input the user is actively typing into must not lose its
+       value to the unrelated 2s status poll. -->
+  <div id="geoip-body" class="card">
+    <h3>GeoIP-блокування</h3>
+    <p>Завантаження…</p>
+  </div>
   <!-- T-46/T-54: same reasoning as #overrides-body/#cache-config-body above
        - a search box the user is actively typing into must not lose its
        value to the unrelated 2s status poll. Unlike those two, this section
