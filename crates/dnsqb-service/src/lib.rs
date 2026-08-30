@@ -123,6 +123,7 @@ mod admin;
 mod admin_ui;
 mod cache;
 mod cert;
+mod cert_rotation;
 mod config;
 mod dispatch;
 mod geoip;
@@ -149,6 +150,7 @@ pub use cache::{
     CacheConfigSecs, CacheEntry, CacheKey, Verdict,
 };
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
+pub use cert_rotation::{rotate_certificate, RotationError, RotationReport};
 pub use config::{ConfigError, GeoipConfig, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,

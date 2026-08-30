@@ -36,7 +36,7 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource`, `LogFilter` search, `clear` |
 | `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables; per-field validation, loud errors |
-| `cert` / `paths` / `trust_store` | self-signed leaf cert generation (T-48), disk persistence with restricted key ACL (T-50), `CurrentUser\Root` trust-store install/uninstall (T-49) |
+| `cert` / `paths` / `trust_store` / `cert_rotation` | self-signed leaf cert generation (T-48), disk persistence with restricted key ACL (T-50), `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
@@ -54,8 +54,11 @@ discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47
 
 `dnsqb-tray` — tray icon (`tray-icon` / `tao` / `rfd`), polls `/admin/status` on its own OS thread;
 menu: "Restart" = soft `/admin/reset` (clear cache + log, re-read both TOMLs), "Stop filtering" =
-confirm-gated `/admin/shutdown`, "Close" exits the tray only. Replaced the deleted Tauri `dnsqb-ui`
-(T-149, DECISIONS.md). Tooltip has three top-level states (`Unreachable` / `NoActiveProvider` /
+confirm-gated `/admin/shutdown`, "Close" exits the tray only, plus a confirm-gated cert group
+(T-49/T-69): "Встановити"/"Видалити сертифікат" (`ensure_installed`/`uninstall`) and "Перевипустити
+сертифікат" (`cert_rotation::rotate_certificate` — reissue + re-trust; needs a manual `dnsqb-service`
+restart, and the tooltip reads `Unreachable` until that restart). Replaced the deleted Tauri
+`dnsqb-ui` (T-149, DECISIONS.md). Tooltip has three top-level states (`Unreachable` / `NoActiveProvider` /
 `Filtering`); `Filtering` appends a degraded-upstream suffix when `AdminStats.degraded_events > 0`
 (raw counts over the last 20 `QUORUM` log entries — T-56, narrowed), not a fourth state.
 

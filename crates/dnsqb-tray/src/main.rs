@@ -41,7 +41,7 @@ mod browser;
 mod status;
 
 use dnsqb_service::{app_data_dir, AdminClient, AdminClientError, ResolverConfig};
-use dnsqb_service::{ensure_installed, uninstall as uninstall_trust_store};
+use dnsqb_service::{ensure_installed, rotate_certificate, uninstall as uninstall_trust_store};
 use status::TrayStatus;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -72,6 +72,7 @@ const STOP_FILTERING_ID: &str = "stop-filtering";
 const CLOSE_ID: &str = "close";
 const INSTALL_CERT_ID: &str = "install-cert";
 const UNINSTALL_CERT_ID: &str = "uninstall-cert";
+const ROTATE_CERT_ID: &str = "rotate-cert";
 
 /// Re-check cadence for `muda`'s global menu-event channel (see the module
 /// doc comment for why this loop drives it rather than `tao` itself) —
@@ -146,6 +147,7 @@ fn build_menu() -> Menu {
     let about = MenuItem::with_id(ABOUT_ID, "Про програму", true, None);
     let install_cert = MenuItem::with_id(INSTALL_CERT_ID, "Встановити сертифікат", true, None);
     let uninstall_cert = MenuItem::with_id(UNINSTALL_CERT_ID, "Видалити сертифікат", true, None);
+    let rotate_cert = MenuItem::with_id(ROTATE_CERT_ID, "Перевипустити сертифікат", true, None);
     let stop_filtering = MenuItem::with_id(STOP_FILTERING_ID, "Зупинити фільтрацію", true, None);
     let close = MenuItem::with_id(CLOSE_ID, "Закрити", true, None);
     if let Err(err) = menu.append_items(&[
@@ -155,6 +157,7 @@ fn build_menu() -> Menu {
         &PredefinedMenuItem::separator(),
         &install_cert,
         &uninstall_cert,
+        &rotate_cert,
         &PredefinedMenuItem::separator(),
         &stop_filtering,
         &close,
@@ -191,6 +194,15 @@ fn handle_menu_event(id: &str, app_data: &Path, port: u16, control_flow: &mut Co
                     "uninstall",
                     "Видалити сертифікат",
                     || uninstall_trust_store().map(|()| "removed".to_string()),
+                );
+            }
+        }
+        ROTATE_CERT_ID => {
+            if confirm_rotate_cert() {
+                spawn_trust_store_action(
+                    "rotate",
+                    "Перевипустити сертифікат",
+                    || rotate_certificate().map(|report| report.to_string()),
                 );
             }
         }
@@ -313,6 +325,32 @@ fn confirm_uninstall_cert() -> bool {
             "Локальний сертифікат dns-quorum-filter буде видалено з довірених кореневих \
              сертифікатів. Браузер знову покаже попередження про недовірений сертифікат на \
              сторінці налаштувань, доки сертифікат не буде встановлено повторно. Продовжити?",
+        )
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    result == rfd::MessageDialogResult::Yes
+}
+
+/// Native confirm dialog before certificate rotation — names every consequence
+/// *before* the user acts: the old `CurrentUser\Root` entries are removed, a
+/// fresh key is generated and the new certificate installed, and the running
+/// `dnsqb-service` keeps serving the old certificate (it holds its TLS config
+/// from startup) until it is restarted. Until that restart the tray tooltip
+/// shows `Unreachable` even though filtering still works, because
+/// [`status::spawn`]'s probe re-pins to the new `cert.pem` and can't complete
+/// the handshake against the still-running old one — expected, and it clears on
+/// restart.
+fn confirm_rotate_cert() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_title("Перевипустити сертифікат")
+        .set_description(
+            "Буде згенеровано новий локальний сертифікат dns-quorum-filter із новим ключем. \
+             Старі записи цього проєкту прибираються з довірених кореневих сертифікатів \
+             (CurrentUser\\Root), новий сертифікат встановлюється замість них. \
+             dnsqb-service потрібно перезапустити, щоб новий сертифікат почав діяти — до \
+             перезапуску трей показуватиме стан «Unreachable», хоча фільтрація працює. \
+             Продовжити?",
         )
         .set_level(rfd::MessageLevel::Warning)
         .set_buttons(rfd::MessageButtons::YesNo)

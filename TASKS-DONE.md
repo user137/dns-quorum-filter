@@ -1642,3 +1642,98 @@
   clippy/fmt/doc/deny/audit чисті. Docs: SPEC.md §3.5, UI-SPEC.md §3.5/§3.7, diagrams/
   ui-navigation.md, CLAUDE.md (GeoIP-workstream позначений завершеним, названо наступні Ф2-опції),
   TASKS.md.
+
+- [x] T-69 — Механізм ротації сертифіката: перевипуск, видалення старого з trust store без
+  накопичення (SPEC.md §2) — один коміт, plan-mode + advisor до і після.
+
+  **Жодного нового примітиву.** Задача — упорядкована композиція чотирьох уже наявних функцій у
+  новому модулі `crates/dnsqb-service/src/cert_rotation.rs`: `cert::generate_self_signed_cert` →
+  `trust_store::uninstall` → `cert::write_cert_and_key_to_app_data` → `trust_store::ensure_installed`.
+  Публічний `rotate_certificate()` — тонка обгортка; тестоване ядро `rotate_with(generate, clear,
+  persist, install)` приймає чотири кроки як замикання (той самий патерн, що `trust_store::
+  uninstall_loop`), бо реальні `uninstall`/`ensure_installed` за правилом свого модуля **ніколи не
+  викликаються з автоматичного тесту** (мутують справжній `CurrentUser\Root`).
+
+  **Порядок "очистити перед записом" вимушений, не вподобання.** `trust_store::uninstall` —
+  CN-вичерпний (прибирає **всі** записи під `cert::CERT_COMMON_NAME`), а кожен сертифікат проєкту
+  несе той самий `CommonName` — тож `uninstall` після встановлення нового видалив би і його.
+  Генерація йде першою лише тому, що вона чиста й у памʼяті: її збій аборти́ть без жодної зміни
+  диска чи trust store. Побічний бонус порядку: якщо кроки 1–2 пройшли, а далі збій — "Встановити
+  сертифікат" перевстановлює оригінал, що ще на диску, тобто чистий відкат.
+
+  **Стан при частковому збої — по кроках, у повідомленні `RotationError` (англ., назва стану, не
+  дієслово-порада):**
+  - `Generate` — нічого не змінилось.
+  - `TrustStoreClear` — нічого не змінилось; наявний сертифікат ще довірений.
+  - `Persist` — **advisor pre-gate уточнив цей стан і він гірший, ніж "можливо недописаний файл".**
+    `write_cert_and_key_to_app_data` пише `cert.pem` (новий), потім `write_key_file` робить
+    `File::create(key.pem)` — це **обрізає key.pem до нуля** — перед `icacls` і справжнім записом.
+    Тож збій усередині `write_key_file` лишає `cert.pem` = новий, `key.pem` = **порожній**:
+    неузгоджена пара, не частковий запис. Наслідок, який радить задокументувати advisor: наступний
+    старт `dnsqb-service` падає на порожньому ключі → `tls::CertOrigin::Replaced` самолікується,
+    регенеруючи **обидва** файли (третій, інший сертифікат), але trust store очищено на кроці 2 й
+    порожній — правильне відновлення для користувача: **перезапустити сервіс, потім "Встановити
+    сертифікат"**. Повідомлення `Persist` називає стан "mismatched pair … until dnsqb-service
+    regenerates it on next start".
+  - `Install` — валідна пара `cert.pem`/`key.pem` записана, але не довірена; лікується "Встановити
+    сертифікат".
+
+  **Ротація не потребує наявного `cert.pem`** (заявлено свідомо): generate → uninstall (порожньо →
+  `Ok`) → persist (створює обидва файли) → `ensure_installed` (читає щойно записаний). Тобто вона
+  знімає передумову `trust_store::local_cert_thumbprint` ("якщо dnsqb-service ніколи не
+  запускався — запусти раз спершу"); майбутній читач не повинен додавати guard на випадок, що вже
+  працює.
+
+  **UI — один пункт трею.** `crates/dnsqb-tray/src/main.rs`: `ROTATE_CERT_ID` "Перевипустити
+  сертифікат" у групі сертифіката (після "Видалити", перед сепаратором), проведений точно як
+  `INSTALL_CERT_ID`/`UNINSTALL_CERT_ID` — `confirm_rotate_cert()` (нативний `YesNo`) → наявний
+  `spawn_trust_store_action` (його bound `F: FnOnce() -> Result<String, E>, E: Display` уже
+  підходить). **Тільки трей, без admin-маршруту:** мутація trust store свідомо тільки в треї за
+  нативним підтвердженням (T-49, `trust_store.rs` module doc); admin-rotate однаково потребував би
+  трею для trust-store-половини — split-brain без вигоди. **Ручний перезапуск, без hot-reload:**
+  `dnsqb-service` будує `rustls::ServerConfig` раз при старті й біндить слухач раз; hot-reload TLS —
+  окремий, значно більший механізм, поза скоупом. Трей не вміє **запустити** сервіс (лише
+  soft-reset/shutdown — T-150), тож діалог інструктує ручний перезапуск.
+
+  **Advisor-порада, застосована — конкретний видимий симптом:** до перезапуску трей показує
+  `Unreachable` (хоча фільтрація працює), бо `status.rs` перечитує `cert.pem` і перепінює свій
+  probe-клієнт на **новий** сертифікат, поки сервіс ще віддає **старий** з памʼяті, — TLS-handshake
+  probe'а падає. Це Три-Б чесне-відображення, і саме це користувач побачить. Названо в
+  `confirm_rotate_cert()`'s тексті (до дії) і тут.
+
+  **Advisor-порада, застосована — жодної української в error-типах.** Усі error-типи
+  `dnsqb-service` (`CertError`/`TrustStoreError`/`GeoipUpdateError`) англійські; українська —
+  тільки в `dnsqb-tray` (мітки меню, `confirm_*`), а `spawn_trust_store_action` уже загортає
+  payload в українську обгортку (`"Успішно: {outcome}"`). `RotationError`/`RotationReport` —
+  англ., називають стан; "restart"/"tooltip Unreachable"-порада — у `confirm_rotate_cert()`, де
+  користувач читає її **перед** дією. Тест `all_library_facing_messages_are_ascii_english` це
+  стереже (`is_ascii()` по всіх чотирьох варіантах + обох `TrustStoreOutcome`).
+
+  **Advisor-порада, застосована — doc-гейти в дизайні, не лише у verification.** `rotate_certificate`
+  `pub` і повертає `Result` → `missing_errors_doc` вимагає `# Errors`; `RUSTDOCFLAGS=-D warnings` —
+  `///` на кожному `pub`-елементі (`RotationReport` + поле, `RotationError` + кожен варіант). Все
+  на місці, гейт зелений з першого проходу.
+
+  **Вікно валідності лишається фіксованим (2020–2120), не generation-relative** — питання
+  користувачеві в plan-mode, відповідь "лишити фіксованим". `cert.rs`'s doc comment називав T-69
+  місцем, "де перехід став би того вартий", але ротація його не потребує, а перехід зламав би три
+  тести точного timestamp і чіпав би T-51's нотатку.
+
+  Тести (7 нових, inline `#[cfg(test)]`, `panic!`/`let-else`): порядок кроків generate→clear→persist
+  →install (`RefCell<Vec<&str>>`); generate-збій → інші кроки не викликані; clear-збій → persist/
+  install не викликані; persist-збій → install не викликаний + "mismatched pair" у `Display`;
+  install-збій → "not trusted" у `Display`; happy path → `Display` несе `TrustStoreOutcome`; усі
+  повідомлення ASCII. Реального-`certutil` тесту нема (правило `trust_store.rs`). Трей — без нового
+  автотесту (єдиний тест крейта — `browser.rs`'s; проводка меню звіряється вручну, як
+  install/uninstall на T-49).
+
+  Ground-truth ритуал діаграм: `ui-navigation.md` / `ui-dto-model.md` / `ui-status-indicator.md` —
+  **не зачеплені**, звірено проти їхніх SOURCES-блоків: T-69 додає пункт меню трею + service-lib
+  composition-функцію, без DTO, без умови індикатора стану, без вузла навігації. Жодна діаграма не
+  малює список меню трею чи життєвий цикл сертифіката.
+
+  Повний локальний гейт зелений: 392 lib/bins (+7 нових тестів), conformance 18/2,
+  clippy/fmt/doc/deny/audit чисті (`Cargo.lock` без змін — yanked `chacha20` warning пре-існуючий,
+  транзитивний через `hickory-proto`, не з цієї задачі). Docs: SPEC.md §2, CLAUDE.md (нова
+  `cert_rotation`-рядок у таблиці модулів, опис трею), SERVICES.md (`### Меню` — лічильник і три
+  пункти сертифіката), TASKS.md.
