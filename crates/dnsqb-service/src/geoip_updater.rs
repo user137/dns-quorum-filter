@@ -135,6 +135,14 @@ pub const GEOIP_CHECK_INTERVAL: Duration = Duration::from_hours(24);
 /// directly), not tuned to a measured connection speed.
 const GEOIP_FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Timeout for [`check_maxmind_credentials`]'s single status probe — an order
+/// of magnitude below [`GEOIP_FETCH_TIMEOUT`] because it runs *inline* in an
+/// interactive `POST /admin/geoip/maxmind` (T-162) and only needs a status
+/// code back, never a download. A timeout collapses to
+/// [`GeoipUpdateError::Timeout`] → `MaxmindCredentialCheck::Unverified`, never
+/// a `5xx` to the operator.
+const MAXMIND_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// A `GeoIP` database refresh attempt failed — see this module's own doc
 /// comment for what happens next (the last-known-good database, if any,
 /// stays in place).
@@ -436,6 +444,55 @@ async fn fetch_bounded_authed(
         body.extend_from_slice(&chunk);
     }
     Ok(body.freeze())
+}
+
+/// One authenticated probe of the `MaxMind` download endpoint, for the
+/// save-time credential check behind `POST /admin/geoip/maxmind` (T-162).
+/// Inspects **only** the HTTP status — a `Range: bytes=0-0` header keeps a
+/// success from pulling the whole archive body. Bounded by
+/// [`MAXMIND_CHECK_TIMEOUT`], not [`GEOIP_FETCH_TIMEOUT`]: this runs inline
+/// in an interactive admin request.
+///
+/// Returns the same coarse error taxonomy the scheduled refresh already
+/// uses, so the caller ([`crate::dispatch`]) maps it to a
+/// `MaxmindCredentialCheck` without a new error type.
+///
+/// # Errors
+///
+/// [`GeoipUpdateError::MaxmindAuthRejected`] on `401`/`403` (bad account id
+/// or key), [`GeoipUpdateError::MaxmindDownloadFailed`] for any other
+/// non-`2xx` or a transport error, [`GeoipUpdateError::Timeout`] past
+/// [`MAXMIND_CHECK_TIMEOUT`]. Every `reqwest::Error` is dropped, never
+/// logged — the request URL embeds the account id (same rule as
+/// [`fetch_bounded_authed`]).
+pub(crate) async fn check_maxmind_credentials(
+    client: &reqwest::Client,
+    account_id: &str,
+    license_key: &str,
+) -> Result<(), GeoipUpdateError> {
+    let url = maxmind_download_url(MAXMIND_EDITION, "tar.gz");
+    let probe = async {
+        let response = client
+            .get(&url)
+            .basic_auth(account_id, Some(license_key))
+            .header(reqwest::header::RANGE, "bytes=0-0")
+            .send()
+            .await
+            .map_err(|_| GeoipUpdateError::MaxmindDownloadFailed)?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(GeoipUpdateError::MaxmindAuthRejected);
+        }
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(GeoipUpdateError::MaxmindDownloadFailed)
+        }
+    };
+    match tokio::time::timeout(MAXMIND_CHECK_TIMEOUT, probe).await {
+        Ok(result) => result,
+        Err(_elapsed) => Err(GeoipUpdateError::Timeout),
+    }
 }
 
 /// Fetches `MaxMind`'s `?suffix=tar.gz.sha256` sidecar and returns its hex
@@ -781,5 +838,33 @@ mod tests {
             "database_type was {:?}",
             reader.database_type()
         );
+    }
+
+    /// The save-time credential probe (T-162) against live `MaxMind`. Real
+    /// creds → `Ok(())` (Verified); a deliberately-mangled key → an
+    /// `Err(MaxmindAuthRejected)` (Rejected). `#[ignore]`d for the same
+    /// reason as the download test above.
+    #[tokio::test]
+    #[ignore = "hits the real network; needs real MAXMIND_ACCOUNT_ID / MAXMIND_LICENSE_KEY env vars"]
+    async fn check_maxmind_credentials_verifies_good_creds_and_rejects_bad_ones() {
+        let (Ok(account_id), Ok(license_key)) = (
+            std::env::var("MAXMIND_ACCOUNT_ID"),
+            std::env::var("MAXMIND_LICENSE_KEY"),
+        ) else {
+            panic!("set MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY to run this test");
+        };
+        let Ok(client) = reqwest::Client::builder().build() else {
+            panic!("must be able to build a plain reqwest client");
+        };
+
+        match check_maxmind_credentials(&client, &account_id, &license_key).await {
+            Ok(()) => {}
+            Err(err) => panic!("real credentials must verify: {err}"),
+        }
+
+        assert!(matches!(
+            check_maxmind_credentials(&client, &account_id, "definitely-not-a-real-key").await,
+            Err(GeoipUpdateError::MaxmindAuthRejected)
+        ));
     }
 }

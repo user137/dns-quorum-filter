@@ -12,6 +12,7 @@ const appBody = document.getElementById("app-body");
 const overridesBody = document.getElementById("overrides-body");
 const cacheConfigBody = document.getElementById("cache-config-body");
 const geoipBody = document.getElementById("geoip-body");
+const geoipMaxmindBody = document.getElementById("geoip-maxmind-body");
 const logBody = document.getElementById("log-body");
 
 function setPill(ok, text) {
@@ -548,6 +549,13 @@ async function removeGeoipCountry(country) {
   return response.json();
 }
 
+// T-162: `DatabaseSource` wire strings → human labels.
+const DATABASE_SOURCE_LABELS = {
+  DB_IP_LITE: "DB-IP Lite",
+  GEO_LITE2: "MaxMind GeoLite2",
+  OTHER: "інше джерело",
+};
+
 // SPEC.md §3.5's own wording, translated - large CDNs hand out anycast IPs
 // whose apparent country changes between requests/points of presence, so
 // blocking a country is expected, typical over-blocking risk for any site
@@ -606,14 +614,28 @@ function renderGeoip(data) {
   } else if (data.database_built_at_ms == null) {
     databaseStatus.textContent = "База GeoIP завантажена, дата збірки невідома.";
   } else {
-    // No "(DB-IP)" here - since T-80 the loaded database may be MaxMind
-    // GeoLite2 instead, and this DTO doesn't carry which. Source-neutral is
-    // correct for both; the credits footer names both possible sources.
+    // Source-neutral date line - `database_source` (below) carries which
+    // publisher's database this actually is (T-162); before that field
+    // existed a hardcoded "(DB-IP)" here was wrong once T-80 landed.
     databaseStatus.textContent = `Дата збірки бази GeoIP: ${new Date(
       data.database_built_at_ms,
     ).toLocaleString()}`;
   }
   geoipBody.appendChild(databaseStatus);
+
+  // T-162: which publisher's database is *actually* loaded right now,
+  // classified server-side from the file's own metadata (not from which
+  // source is configured - those diverge when MaxMind creds are set but
+  // rejected). Omitted entirely when no database is loaded (the line above
+  // already says so).
+  if (data.database_source) {
+    const sourceLine = document.createElement("p");
+    sourceLine.className = "geoip-database-status";
+    sourceLine.textContent = `Активне джерело: ${
+      DATABASE_SOURCE_LABELS[data.database_source] || data.database_source
+    }`;
+    geoipBody.appendChild(sourceLine);
+  }
 
   // Same "silent data loss" concern as #overrides-body's own persisted
   // warning (T-47).
@@ -730,6 +752,169 @@ async function refreshGeoip() {
 }
 
 refreshGeoip();
+
+// T-162: MaxMind GeoLite2 credentials card. Own fetch/render cycle (a
+// license-key field the operator is typing must not be wiped by the 2s
+// status poll), same pattern as the GeoIP card above. The POST response
+// carries a `check` field - the result of one authenticated probe the
+// service runs against MaxMind right after saving - so the operator learns
+// immediately whether the credentials were accepted (Три Б: hand-editing the
+// file gave no such signal). A credentials change only takes effect after a
+// dnsqb-service restart (runtime pickup is T-163).
+
+const MAXMIND_CHECK_MESSAGES = {
+  VERIFIED: { cls: "notice ok", text: "MaxMind підтвердив ці креденшели." },
+  REJECTED: {
+    cls: "notice warn",
+    text: "MaxMind відхилив креденшели (401/403) - перевірте account ID та ліцензійний ключ.",
+  },
+  UNVERIFIED: {
+    cls: "notice warn",
+    text: "Не вдалося перевірити креденшели зараз (мережа?) - файл збережено, перевірка відбудеться при наступному оновленні бази.",
+  },
+};
+
+async function getMaxmind() {
+  const response = await fetch("/admin/geoip/maxmind");
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function setMaxmind(accountId, licenseKey) {
+  const response = await fetch("/admin/geoip/maxmind", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account_id: accountId, license_key: licenseKey }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function clearMaxmind() {
+  const response = await fetch("/admin/geoip/maxmind/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function renderMaxmind(data) {
+  geoipMaxmindBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Джерело GeoIP: MaxMind GeoLite2";
+  geoipMaxmindBody.appendChild(heading);
+
+  const state = document.createElement("p");
+  state.className = "geoip-database-status";
+  state.textContent = data.configured
+    ? `Налаштовано. Account ID: ${data.account_id}. Діє після перезапуску dnsqb-service.`
+    : "Не налаштовано - використовується DB-IP Lite (за замовчуванням).";
+  geoipMaxmindBody.appendChild(state);
+
+  if (!data.persisted) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    geoipMaxmindBody.appendChild(notPersisted);
+  }
+
+  const check = MAXMIND_CHECK_MESSAGES[data.check];
+  if (check) {
+    const line = document.createElement("div");
+    line.className = check.cls;
+    line.textContent = check.text;
+    geoipMaxmindBody.appendChild(line);
+  }
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+
+  const accountInput = document.createElement("input");
+  accountInput.type = "text";
+  accountInput.placeholder = "account ID";
+  const keyInput = document.createElement("input");
+  keyInput.type = "password";
+  keyInput.placeholder = "ліцензійний ключ";
+  keyInput.autocomplete = "off";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.textContent = "Зберегти";
+  saveBtn.addEventListener("click", async () => {
+    const accountId = accountInput.value.trim();
+    const licenseKey = keyInput.value.trim();
+    if (!accountId || !licenseKey) {
+      errorLine.textContent = "Обидва поля обов'язкові.";
+      return;
+    }
+    errorLine.textContent = "";
+    try {
+      renderMaxmind(await setMaxmind(accountId, licenseKey));
+    } catch (err) {
+      errorLine.textContent = `Не вдалося зберегти: ${(err && err.message) || String(err)}`;
+    }
+  });
+
+  const addRow = document.createElement("div");
+  addRow.className = "override-add-row";
+  addRow.appendChild(accountInput);
+  addRow.appendChild(keyInput);
+  addRow.appendChild(saveBtn);
+
+  if (data.configured) {
+    let armed = false;
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.textContent = "Очистити";
+    clearBtn.addEventListener("click", async () => {
+      if (!armed) {
+        armed = true;
+        clearBtn.textContent = "Підтвердити очищення";
+        return;
+      }
+      try {
+        renderMaxmind(await clearMaxmind());
+      } catch (err) {
+        errorLine.textContent = `Не вдалося очистити: ${(err && err.message) || String(err)}`;
+      }
+    });
+    addRow.appendChild(clearBtn);
+  }
+
+  geoipMaxmindBody.appendChild(addRow);
+  geoipMaxmindBody.appendChild(errorLine);
+}
+
+function renderMaxmindError(err) {
+  geoipMaxmindBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Джерело GeoIP: MaxMind GeoLite2";
+  geoipMaxmindBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  geoipMaxmindBody.appendChild(panel);
+}
+
+async function refreshMaxmind() {
+  try {
+    renderMaxmind(await getMaxmind());
+  } catch (err) {
+    renderMaxmindError(err);
+  }
+}
+
+refreshMaxmind();
 
 // T-46/T-54: query log screen. Same isolation reasoning as the two sections
 // above (#log-body, own fetch/render cycle, not on the 2s poll) - but unlike

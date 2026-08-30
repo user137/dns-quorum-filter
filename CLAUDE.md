@@ -41,14 +41,17 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient`; embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
-| `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, `geoip_maxmind.toml` creds, Basic auth, `.tar.gz` extract — T-80); bounded download + integrity gate + atomic swap + 24h background refresh |
+| `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, `geoip_maxmind.toml` creds, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::save`/`clear` (T-162, ACL-restricted via `cert::write_user_restricted_file`) back `POST /admin/geoip/maxmind[/clear]`; `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check. Bounded download + integrity gate + atomic swap + 24h background refresh |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
 write route, the full set enumerated in `dispatch::ROUTES` (a path/method not in that table can
 never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset`,
 `/admin/shutdown`; `GET|POST /admin/overrides[/add|/remove]`, `/admin/cache-config[/apply]`,
-`/admin/geoip[/add|/remove]`, `/admin/log[/clear]`; `GET /admin/ui`, `/admin/ui/main.js`,
-`/admin/ui/style.css`. Every route that re-serializes `resolver_config.toml` shares
+`/admin/geoip[/add|/remove]`, `GET|POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
+(T-162, MaxMind creds; POST persists then runs a save-time probe → `check`), `/admin/log[/clear]`;
+`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. `geoip_maxmind.toml` is its own file
+with a single writer (that one POST route), not part of `resolver_config.toml` — no shared lock.
+Every route that re-serializes `resolver_config.toml` shares
 `state.persist_lock` and reads the other fields' live values before saving — the cross-field-read
 discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77).
 
@@ -75,14 +78,17 @@ plaintext `geoip_maxmind.toml`, `geoip_updater` branches on `GeoipSource`; Basic
 the modern permalink, opportunistic `.tar.gz.sha256`, in-memory `.mmdb` extraction from the
 tarball; UI + DPAPI + broken-creds signal deferred to **T-162**), T-81 (attribution footer
 `#credits` on `/admin/ui` — DB-IP link-back + **CC BY 4.0** (confirmed direct against db-ip.com),
-MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO).
+MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO), T-162 **partial**
+(admin route + `/admin/ui` card for MaxMind creds + save-time `check` probe + `database_source`
+closed enum showing the *loaded* source; plaintext file kept, ACL-restricted).
 
 **The GeoIP workstream (T-74–T-82) is complete.** Remaining Ф2 work is separate: cert automation
 (T-69 rotation → T-67 DPAPI, each needs its own plan+advisor cycle) and custom DoH provider +
 presets (T-72/T-73, the phase's riskiest — `quorum` is hardcoded to two named providers).
-**T-162** (finish T-80's MaxMind UX: admin route + `/admin/ui` card + DPAPI + broken-creds signal +
-`/admin/reset` re-read + "which source is active" is unshown) stays open but is not the critical
-path. macOS-dependent tasks (T-68/T-70 halves, T-71, T-83) remain deferred — no macOS access.
+**T-163** (the rest of T-162: DPAPI for `geoip_maxmind.toml`; `POST /admin/reset` re-read +
+`run_geoip_updater` reading `GeoipSource` from shared state so a creds change needs no restart;
+detecting creds that break *after* acceptance) stays open, not the critical path. macOS-dependent
+tasks (T-68/T-70 halves, T-71, T-83) remain deferred — no macOS access.
 
 GeoIP design invariants (SPEC.md §3.5): the verdict is never cached — a cheap local lookup applied
 live on every cached-or-fresh ALLOW, so a blocked-country-list change takes effect on the next
@@ -123,11 +129,13 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
-- **Broken MaxMind credentials only produce a `tracing::warn!` (T-80)** — a malformed
-  `geoip_maxmind.toml`, or a valid one MaxMind then rejects with 401/403, silently falls back to
-  DB-IP Lite (or a stale/absent DB); the user gets no in-UI signal. Surfacing that state is part
-  of **T-162** (which also adds the admin route + DPAPI storage). `geoip_maxmind.toml` is also
-  **not** re-read by `POST /admin/reset` — only a process restart picks up a credentials change.
+- **MaxMind credentials that break *after* being accepted still only produce a `tracing::warn!`** —
+  T-162 added a **save-time** probe (`POST /admin/geoip/maxmind` → `check`: `VERIFIED`/`REJECTED`/
+  `UNVERIFIED`), so a bad key typed into the UI is caught immediately; but a key that MaxMind later
+  starts rejecting at a scheduled 24h refresh still silently falls back to DB-IP Lite / a stale DB
+  with no in-UI signal. `geoip_maxmind.toml` is also **not** re-read by `POST /admin/reset` (and
+  the background updater holds the `GeoipSource` it was spawned with), so a creds change needs a
+  process restart. Both, plus DPAPI instead of the ACL-restricted plaintext file, are **T-163**.
 - **Admin-channel fuzz (T-58, narrowed)** covers `parse_pattern` / `wire_bytes_from_get` /
   `/admin/config` POST body only — other routes and the `/dns-query` POST body are not fuzzed.
 - **The status indicator (T-56, narrowed)** — browser-DoH-usage detection and watchdog state are

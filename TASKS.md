@@ -190,9 +190,15 @@ plan-mode + advisor) — механізм ротації сертифіката:
 `dnsqb_service::rotate_certificate` як упорядкована композиція наявних примітивів (generate →
 `uninstall` CN-вичерпний → persist → `ensure_installed`), без нового примітиву видалення; порядок
 "очистити перед записом" вимушений спільним `CommonName`; новий сертифікат діє лише після ручного
-перезапуску `dnsqb-service`. Далі в Ф2-плані — cert-автоматизація (T-67: приватний ключ у DPAPI,
-власний plan+advisor цикл) або кастомний DoH-провайдер + presets (T-72/T-73). Наступна задача — за
-вибором користувача.
+перезапуску `dnsqb-service`. T-162 (part) done (TASKS-DONE.md, 2026-08-31, один коміт, plan-mode +
+advisor) — MaxMind-режим отримав UX: адмін-маршрут `GET`/`POST /admin/geoip/maxmind` +
+`/maxmind/clear` + картка на `/admin/ui` (файл `geoip_maxmind.toml` більше не редагується руками),
+save-time проба проти `download.maxmind.com` (`check`: VERIFIED/REJECTED/UNVERIFIED — Три Б),
+`database_source` (closed enum) на `GeoipCountriesResponse` з метаданих завантаженого reader-а.
+Plaintext-файл лишається (ACL-обмежений). **Решта T-162 → T-163** (DPAPI, `/admin/reset` re-read +
+runtime-підхоплення джерела, виявлення "зламалися пізніше"). Далі в Ф2-плані — T-72/T-73
+(кастомний DoH-провайдер + presets), тоді T-67 (приватний ключ у DPAPI). Порядок — за вибором
+користувача (поточний: T-162 → T-72/T-73 → T-67).
 
 - [ ] T-67 — Інсталятор генерує leaf-сертифікат, приватний ключ у platform secure storage (DPAPI / Keychain / Secret Service) (2)
 - [ ] T-68 — **Windows-половина (install) звужена — готово, T-49 (TASKS-DONE.md, 2026-08-29),
@@ -204,19 +210,15 @@ plan-mode + advisor) — механізм ротації сертифіката:
 - [ ] T-72 — UI для додавання кастомного DoH-провайдера (довільний URL — NextDNS/ControlD) (3.4, Фазований план Фаза 2)
 - [ ] T-73 — UI: додати решту вбудованих presets із таблиці 3.4 (CleanBrowsing, DNS4EU, Cloudflare Family, OpenDNS FamilyShield тощо), не лише custom-provider URL (3.4, Фазований план Фаза 2)
 - [ ] T-83 — CI: розширити build matrix на другу платформу (Windows + macOS; Linux — можлива третя ціль, див. T-71) (Фазований план, Фаза 2)
-- [ ] T-162 — Doведення T-80's MaxMind GeoLite2-режиму до повного UX: (1) адмін-маршрут
-  `GET`/`POST /admin/geoip/maxmind` + картка на `/admin/ui` для введення/очищення `account_id` +
-  `license_key` (замість ручної правки `geoip_maxmind.toml`); (2) platform secure storage (DPAPI)
-  для ключа замість plaintext-файлу — той самий T-67-прецедент про крейт-широкий
-  `#![forbid(unsafe_code)]` vs сирий Win32 FFI, потребує власного plan+advisor циклу; (3) видимий
-  у UI стан "MaxMind-креденшели зламані / відхилені" — зараз лише `tracing::warn!` + тихий відкат
-  на DB-IP Lite чи застарілу базу (Три Б, user safety); (4) `POST /admin/reset` має також
-  перечитувати `geoip_maxmind.toml` (зараз лише перезапуск процесу підхоплює зміну); (5) UI
-  ніде не показує, яке джерело GeoIP-бази активне (DB-IP Lite / MaxMind GeoLite2) — T-81 навмисно
-  прибрав неточний хардкод "(DB-IP)" з рядка дати збірки, лишивши джерело-нейтральний текст;
-  розрізнення потребує нового поля в `GeoipCountriesResponse` (напр. `database_source` з
-  `GeoipReader::database_type()`), яке заодно дало б джерело-специфічну атрибуцію у футері
-  `#credits` замість статичної згадки обох. (3.5)
+- [ ] T-163 — Залишок T-162 (частина 1+3-save-time+5 доставлена в T-162, TASKS-DONE.md 2026-08-31):
+  (1) **DPAPI** для `geoip_maxmind.toml` замість plaintext — той самий T-67-прецедент про
+  крейт-широкий `#![forbid(unsafe_code)]` vs сирий Win32 FFI, власний plan+advisor+AskUserQuestion
+  цикл (спільний примітив із T-67); (2) `POST /admin/reset` має перечитувати `geoip_maxmind.toml`
+  **+** фоновий `run_geoip_updater` має читати `GeoipSource` зі спільного стану `AppState`, щоб
+  зміна креденшелів діяла без перезапуску процесу (зараз апдейтер тримає `GeoipSource`, з яким
+  його заспавнили); (3) **ongoing** виявлення: показувати в UI, що раніше прийняті креденшели
+  почав відхиляти MaxMind на пізнішому плановому оновленні бази (T-162 перевіряє лише при
+  записі). (3.5)
 
 ## Фаза 3 — Продакшн-hardening
 

@@ -528,9 +528,27 @@ mismatch — жорстка помилка; відсутній — відкат 
 `hickory-dns` замість власного DNS-парсера). (4) `reqwest` 0.13 **знімає**
 `Authorization` на крос-хостовому редіректі MaxMind → Cloudflare R2 (перевірено в
 вендореному `redirect.rs`), тож ключ не покидає origin MaxMind. Ключ на диску —
-**відкритий текст**, свідомий MVP-tech-debt (як `key.pem`); DPAPI + адмін-маршрут +
-UI-сигнал про зламані креденшели — **T-162**. `GEOIP_CHECK_INTERVAL` лишається 24 год
-для обох джерел.
+**відкритий текст**, свідомий MVP-tech-debt (як `key.pem`). `GEOIP_CHECK_INTERVAL`
+лишається 24 год для обох джерел.
+
+**Уточнення, T-162 (2026-08-31) — часткова доставка UX MaxMind-режиму.**
+Реалізовано: (1) `GET`/`POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
+та картка на `/admin/ui` замість ручного редагування `geoip_maxmind.toml`;
+`geoip_credentials::save` пише файл із ACL, обмеженим поточним користувачем (той самий
+`cert::write_user_restricted_file`, що й для `key.pem` — interim-мітигація до DPAPI).
+(2) Save-time проба: `POST` робить один автентифікований запит до
+`download.maxmind.com` одразу після запису й повертає `check`
+(`VERIFIED`/`REJECTED`/`UNVERIFIED`) — Три Б: ручне редагування такого сигналу не
+давало. Власний короткий таймаут (10 с, не 120 с), лише статус-код, coarse-мітки.
+(3) `database_source` (`Option<DatabaseSource>`, closed enum) на
+`GeoipCountriesResponse` — класифікація з метаданих **завантаженого** reader-а, не з
+налаштованого `GeoipSource` (розходяться, коли креденшели задані, але відхилені);
+UI показує активне джерело в GeoIP-картці. Футер `#credits` лишається статичним
+(T-81) — обидві атрибуції завжди присутні (недоатрибуція = регресія CC BY 4.0).
+**Відкладено на T-163**: DPAPI замість plaintext; перечитування `geoip_maxmind.toml`
+на `POST /admin/reset` + runtime-підхоплення нового `GeoipSource` фоновим апдейтером
+(зараз зміна діє лише після ручного перезапуску `dnsqb-service`); виявлення
+креденшелів, які зламалися **після** прийняття (ця задача перевіряє лише при записі).
 
 #### 3.6. Latency-оптимізація: early return при першому BLOCK, HTTP/2 keep-alive до апстрімів
 

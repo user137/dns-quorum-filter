@@ -164,15 +164,41 @@ classDiagram
     }
 
     class GeoipCountriesResponse {
-        <<T-77/T-78, реалізовано>>
+        <<T-77/T-78/T-162, реалізовано>>
         +List~String~ blocked_countries
         +bool persisted
         +bool database_loaded
         +Option~u64~ database_built_at_ms
+        +Option~DatabaseSource~ database_source
     }
     class GeoipCountryRequest {
         <<T-77, реалізовано>>
         +String country
+    }
+    class DatabaseSource {
+        <<T-162, реалізовано — enum>>
+        DB_IP_LITE
+        GEO_LITE2
+        OTHER
+    }
+    class MaxmindCredentialsView {
+        <<T-162, реалізовано>>
+        +bool configured
+        +Option~String~ account_id
+        +MaxmindCredentialCheck check
+        +bool persisted
+    }
+    class MaxmindCredentialsRequest {
+        <<T-162, реалізовано>>
+        +String account_id
+        +String license_key
+    }
+    class MaxmindCredentialCheck {
+        <<T-162, реалізовано — enum>>
+        SKIPPED
+        VERIFIED
+        REJECTED
+        UNVERIFIED
     }
     class GeoIPConfig {
         <<чернетка UI-SPEC.md §3.5 — не реальний DTO>>
@@ -203,6 +229,8 @@ classDiagram
     OverrideAddRequest --> ListKind
     OverrideRemoveRequest --> ListKind
     ProviderConfig --> Category
+    GeoipCountriesResponse --> DatabaseSource
+    MaxmindCredentialsView --> MaxmindCredentialCheck
 ```
 
 ## Розбіжність у джерелі — вирішено, див. DECISIONS.md
@@ -347,6 +375,26 @@ UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`, 
 `resolver_config.toml` — `remove` теж, не лише `add` (реальний баг, спійманий до реалізації:
 без нормалізації на `remove` малий регістр у запиті мовчки не збігався б із завжди-великим
 збереженим кодом).
+
+## `database_source` + `MaxmindCredentialsView`/`MaxmindCredentialsRequest`/`MaxmindCredentialCheck` (T-162)
+
+`GeoipCountriesResponse` отримує `database_source: Option<DatabaseSource>` — закритий enum
+(`DB_IP_LITE`/`GEO_LITE2`/`OTHER`), класифікований **на сервері** з метаданих
+завантаженого reader-а (`GeoipReader::database_type()`), не з налаштованого `GeoipSource`: ці
+двоє розходяться саме тоді, коли це важливо (креденшели MaxMind задані, але відхилені — файл
+досі DB-IP Lite). Той самий "response-тип ніколи не повертає невірифікований рядок дослівно"
+принцип, що вже задокументований для `QTypeView`. `None`, коли `database_loaded == false`.
+
+Нова трійка DTO для `GET`/`POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear` —
+опційний режим MaxMind GeoLite2 (`geoip_maxmind.toml`). `MaxmindCredentialsView` **не має поля
+`license_key`** — секрет write-only, не представлений у відповіді, а не просто пропущений
+(`LicenseKey` навмисно не `Serialize`). `MaxmindCredentialCheck` — результат однієї
+автентифікованої проби, яку сервіс робить проти MaxMind одразу після запису файлу (Три Б:
+ручне редагування файлу такого сигналу не давало); `REJECTED` = 401/403 (єдиний випадок, який
+оператор може виправити перевведенням), `UNVERIFIED` = мережа/таймаут (файл усе одно
+збережено), `SKIPPED` = звичайний `GET` та `/clear`. Виявлення креденшелів, які **зламалися
+пізніше**, DPAPI замість plaintext, і перечитування файлу на `POST /admin/reset` — окрема
+задача **T-163**. Зміна креденшелів діє лише після ручного перезапуску `dnsqb-service`.
 
 ## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`VoterScope`/`QType` — реальна реалізація (T-54)
 

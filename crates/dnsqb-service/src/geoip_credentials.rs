@@ -9,8 +9,8 @@
 //! bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77). Putting a
 //! secret in that file would make "silently wipe the operator's `MaxMind`
 //! credentials on an unrelated cache-config save" the next instance. A
-//! dedicated file has no such writer — in fact nothing in this task writes it
-//! at all; it is hand-edited (T-162 adds an admin route + secure storage).
+//! dedicated file has no such writer other than [`save`] (T-162's
+//! `POST /admin/geoip/maxmind`); before T-162 it was hand-edited only.
 //! It also keeps `config.rs`'s decision to log the full `toml::de::Error`
 //! line snippet sound (justified there by "`resolver_config.toml` never
 //! contains a domain name" — a license key would break that), and it mirrors
@@ -18,15 +18,17 @@
 //!
 //! **Plaintext on disk is explicit MVP tech debt**, the same posture as the
 //! TLS private key (`SECURITY.md`: "plaintext PEM … explicit MVP tech debt").
-//! Platform secure storage (DPAPI) is deferred to T-162, not silently the
-//! intended end state.
+//! [`save`] restricts the file's ACL to the current user (via
+//! [`crate::cert::write_user_restricted_file`], identical to the private
+//! key) as the interim mitigation; platform secure storage (DPAPI) is
+//! deferred to T-163, not silently the intended end state.
 
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Upper bound on `geoip_maxmind.toml`'s on-disk size, checked before the
 /// file is read into memory (SPEC.md §8.1: bound the allocation, don't
@@ -104,6 +106,13 @@ pub enum CredentialsError {
     /// read into memory.
     #[error("MaxMind credentials file exceeds the {MAX_CREDENTIALS_FILE_SIZE}-byte size limit")]
     TooLarge,
+    /// Failed to create, ACL-restrict, or write the credentials file
+    /// ([`save`], T-162). Wraps [`crate::cert::CertError`], whose own
+    /// `Display` is coarse (icacls exit codes, env-var names, an app-data
+    /// path) and carries no secret — unlike this file's *contents*, which is
+    /// why the parse/read errors above stay payload-free.
+    #[error("failed to write MaxMind credentials file: {0}")]
+    Write(#[source] crate::cert::CertError),
 }
 
 /// Loads `MaxMind` credentials from `path`.
@@ -151,6 +160,68 @@ pub fn load(path: &Path) -> Result<Option<MaxmindCredentials>, CredentialsError>
         account_id: file.account_id,
         license_key: file.license_key,
     }))
+}
+
+/// Writes `account_id` + `license_key` to `path` as a two-key TOML file,
+/// behind an ACL restricted to the current user (T-162). The single writer
+/// of `geoip_maxmind.toml` — `POST /admin/geoip/maxmind` — replacing the
+/// former hand-edit-only workflow.
+///
+/// Overwrites any existing file wholesale; there is no read-modify-write, so
+/// no lock is needed against a concurrent writer (there is exactly one route,
+/// and a second concurrent operator POST is correctly last-writer-wins).
+///
+/// **Still plaintext on disk** — the same MVP tech-debt posture as the TLS
+/// `key.pem` (`SECURITY.md`); DPAPI is T-163. The restricted ACL (via
+/// [`crate::cert::write_user_restricted_file`], identical to how the private
+/// key is handled) is the interim mitigation.
+///
+/// # Errors
+///
+/// [`CredentialsError::Malformed`] if either field is blank (the same rule
+/// [`load`] enforces on read), or [`CredentialsError::Write`] if creating,
+/// ACL-restricting, or writing the file fails.
+pub(crate) fn save(
+    path: &Path,
+    account_id: &str,
+    license_key: &str,
+) -> Result<(), CredentialsError> {
+    if account_id.trim().is_empty() || license_key.trim().is_empty() {
+        return Err(CredentialsError::Malformed);
+    }
+    let body = toml::to_string(&CredentialsFileOut {
+        account_id,
+        license_key,
+    })
+    .map_err(|_| CredentialsError::Malformed)?;
+    crate::cert::write_user_restricted_file(path, body.as_bytes()).map_err(CredentialsError::Write)
+}
+
+/// The on-disk shape [`save`] serializes — a throwaway `Serialize` mirror of
+/// [`CredentialsFile`] over borrowed `&str`s. `LicenseKey` itself is
+/// deliberately **not** `Serialize` (so it can never leak through a response
+/// DTO); writing the plaintext to its own ACL-restricted file is the one
+/// legitimate exposure, the same conscious call `expose_secret` makes for
+/// the auth header.
+#[derive(Serialize)]
+struct CredentialsFileOut<'a> {
+    account_id: &'a str,
+    license_key: &'a str,
+}
+
+/// Removes `geoip_maxmind.toml` (T-162) — the operator switching back to the
+/// default DB-IP Lite source. A missing file is `Ok(())`, the same "not an
+/// error" tolerance [`load`] applies on read.
+///
+/// # Errors
+///
+/// [`CredentialsError::Io`] if the file exists but can't be removed.
+pub(crate) fn clear(path: &Path) -> Result<(), CredentialsError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(CredentialsError::Io(err)),
+    }
 }
 
 /// On-disk shape — a flat two-key TOML file. `deny_unknown_fields` rejects a
@@ -242,6 +313,88 @@ mod tests {
         );
         let path = write(&dir, &oversized);
         assert!(matches!(load(&path), Err(CredentialsError::TooLarge)));
+    }
+
+    #[test]
+    fn save_then_load_roundtrips_both_fields() {
+        let dir = tmp();
+        let path = dir.path().join("geoip_maxmind.toml");
+        if let Err(err) = save(&path, "acct-123", "the-license-key") {
+            panic!("save must succeed: {err}");
+        }
+        match load(&path) {
+            Ok(Some(creds)) => {
+                assert_eq!(creds.account_id, "acct-123");
+                assert_eq!(creds.license_key.expose_secret(), "the-license-key");
+            }
+            other => panic!("expected Ok(Some(_)) after save, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_rejects_a_blank_field() {
+        let dir = tmp();
+        let path = dir.path().join("geoip_maxmind.toml");
+        assert!(matches!(
+            save(&path, "acct", "   "),
+            Err(CredentialsError::Malformed)
+        ));
+        assert!(
+            !path.exists(),
+            "a rejected save must not have created the file"
+        );
+    }
+
+    #[test]
+    fn clear_removes_the_file_and_is_ok_when_already_absent() {
+        let dir = tmp();
+        let path = dir.path().join("geoip_maxmind.toml");
+        if let Err(err) = save(&path, "acct", "key") {
+            panic!("save must succeed: {err}");
+        }
+        if let Err(err) = clear(&path) {
+            panic!("clear must succeed: {err}");
+        }
+        assert!(!path.exists());
+        if let Err(err) = clear(&path) {
+            panic!("clear of an already-absent file must be Ok: {err}");
+        }
+    }
+
+    // The ACL restriction itself is `cert::write_user_restricted_file`, fully
+    // covered by `cert.rs`'s own two ACL tests; this asserts `save` actually
+    // routes through it (exactly one ACE, current user), the same structural
+    // `icacls` line-count check `cert.rs` uses rather than a substring
+    // denylist.
+    #[test]
+    fn save_produces_a_file_restricted_to_the_current_user() {
+        let dir = tmp();
+        let path = dir.path().join("geoip_maxmind.toml");
+        if let Err(err) = save(&path, "acct", "key") {
+            panic!("save must succeed: {err}");
+        }
+        let output = match std::process::Command::new("icacls").arg(&path).output() {
+            Ok(output) => output,
+            Err(err) => panic!("icacls must be runnable to verify the ACL: {err}"),
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let ace_lines: Vec<&str> = stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty() && !line.contains("Successfully processed"))
+            .collect();
+        assert_eq!(
+            ace_lines.len(),
+            1,
+            "expected exactly one ACE after save, got: {stdout}"
+        );
+        let username = match std::env::var("USERNAME") {
+            Ok(name) => name,
+            Err(err) => panic!("USERNAME must be set on Windows: {err}"),
+        };
+        assert!(
+            ace_lines[0].contains(&format!("{username}:(F)")),
+            "expected the sole ACE to grant the current user Full Control, got: {stdout}"
+        );
     }
 
     // The regression this guards: a derived `Debug` on `LicenseKey` (or any

@@ -24,14 +24,17 @@
 
 use crate::admin::{
     compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    CacheConfigUpdate, CacheConfigView, GeoipCountriesResponse, GeoipCountryRequest, LogEntryView,
-    LogQueryResponse, OverrideAddRequest, OverrideDomainView, OverrideListsResponse,
-    OverrideRemoveRequest,
+    CacheConfigUpdate, CacheConfigView, DatabaseSource, GeoipCountriesResponse,
+    GeoipCountryRequest, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
+    MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest, OverrideDomainView,
+    OverrideListsResponse, OverrideRemoveRequest,
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
 use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
+use crate::geoip_credentials::{self, CredentialsError};
+use crate::geoip_updater::{check_maxmind_credentials, GeoipUpdateError};
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
@@ -80,6 +83,8 @@ const ADMIN_CACHE_CONFIG_APPLY_PATH: &str = "/admin/cache-config/apply";
 const ADMIN_GEOIP_PATH: &str = "/admin/geoip";
 const ADMIN_GEOIP_ADD_PATH: &str = "/admin/geoip/add";
 const ADMIN_GEOIP_REMOVE_PATH: &str = "/admin/geoip/remove";
+const ADMIN_GEOIP_MAXMIND_PATH: &str = "/admin/geoip/maxmind";
+const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
 const ADMIN_UI_PATH: &str = "/admin/ui";
@@ -109,6 +114,8 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_GEOIP_PATH, &[Method::GET]),
     (ADMIN_GEOIP_ADD_PATH, &[Method::POST]),
     (ADMIN_GEOIP_REMOVE_PATH, &[Method::POST]),
+    (ADMIN_GEOIP_MAXMIND_PATH, &[Method::GET, Method::POST]),
+    (ADMIN_GEOIP_MAXMIND_CLEAR_PATH, &[Method::POST]),
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
@@ -339,6 +346,18 @@ pub struct PersistPaths {
     pub config: PathBuf,
     /// `overrides.toml`'s path.
     pub overrides: PathBuf,
+}
+
+impl PersistPaths {
+    /// `geoip_maxmind.toml`'s path (T-162) — derived from `config`'s parent
+    /// rather than stored as a third field: all three live in the one
+    /// `app_data_dir()` directory (the invariant this struct's own doc
+    /// comment already relies on), so a `with_file_name` is exact and avoids
+    /// threading a new field through every `PersistPaths` construction site.
+    #[must_use]
+    pub fn geoip_maxmind(&self) -> PathBuf {
+        self.config.with_file_name("geoip_maxmind.toml")
+    }
 }
 
 /// Decode `wire_bytes`, run it through the pipeline, and encode whatever
@@ -1233,6 +1252,14 @@ fn geoip_view(
         persisted,
         database_loaded: database.reader.is_some(),
         database_built_at_ms: database.updated_at.map(unix_millis),
+        // Classified from the loaded reader's own metadata, never from the
+        // configured `GeoipSource` (T-162) — those diverge exactly when
+        // MaxMind credentials are set but rejected and the live file is still
+        // DB-IP Lite.
+        database_source: database
+            .reader
+            .as_deref()
+            .map(|reader| DatabaseSource::classify(reader.database_type())),
     }
 }
 
@@ -1393,6 +1420,177 @@ where
         Ok(response) => json_response(&response),
         Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
+}
+
+/// Builds the current [`MaxmindCredentialsView`] from `geoip_maxmind.toml`
+/// (T-162) — shared by the GET route and the two mutating routes' echo-back.
+/// A missing app-data dir, a missing file, or a malformed file all read as
+/// `configured: false`: the operator re-enters through `POST` either way, and
+/// a malformed on-disk hand-edit is exactly what this route exists to
+/// replace. `check` is always [`MaxmindCredentialCheck::Skipped`] here — only
+/// `POST` runs the probe.
+fn maxmind_view<C: DohClient + Sync>(
+    state: &AppState<C>,
+    persisted: bool,
+) -> MaxmindCredentialsView {
+    let account_id = state
+        .persist
+        .paths
+        .as_ref()
+        .and_then(|paths| {
+            geoip_credentials::load(&paths.geoip_maxmind())
+                .ok()
+                .flatten()
+        })
+        .map(|creds| creds.account_id);
+    MaxmindCredentialsView {
+        configured: account_id.is_some(),
+        account_id,
+        check: MaxmindCredentialCheck::Skipped,
+        persisted,
+    }
+}
+
+/// Maps [`check_maxmind_credentials`]'s coarse `Result` onto the wire enum —
+/// `401`/`403` is the one actionable case (`Rejected`), everything else the
+/// operator can't fix by retyping the key (`Unverified`).
+fn credential_check(result: &Result<(), GeoipUpdateError>) -> MaxmindCredentialCheck {
+    match result {
+        Ok(()) => MaxmindCredentialCheck::Verified,
+        Err(GeoipUpdateError::MaxmindAuthRejected) => MaxmindCredentialCheck::Rejected,
+        Err(_) => MaxmindCredentialCheck::Unverified,
+    }
+}
+
+/// `/admin/geoip/maxmind` (T-162) — one handler for both methods (like
+/// [`serve_dns_query`]), branching on `req.method()`; the `ROUTES` table
+/// already rejected anything but `GET`/`POST` before this runs.
+///
+/// - `GET`: read-only, no CSRF gate — the current [`MaxmindCredentialsView`]
+///   (never the license key).
+/// - `POST`: same CSRF gate and body-size cap as `/admin/geoip/add`. Writes
+///   `geoip_maxmind.toml` **first**, then runs one authenticated probe
+///   against `MaxMind` and reports the outcome in
+///   [`MaxmindCredentialsView::check`]. A blank field is `400`; a failed disk
+///   write is `persisted: false` in the body (the recurring "surface a
+///   failed save" rule), never a `5xx`. The new credentials take effect only
+///   at the next `dnsqb-service` restart — runtime pickup is T-163.
+async fn serve_admin_geoip_maxmind<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    if req.method() == Method::GET {
+        return json_response(&maxmind_view(state, true));
+    }
+
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(request) = serde_json::from_slice::<MaxmindCredentialsRequest>(&collected.to_bytes())
+    else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+
+    let Some(paths) = state.persist.paths.as_ref() else {
+        // No app-data dir — nothing to persist to, and the credentials file
+        // *is* the state (no live-apply half like `apply_geoip_change` has).
+        return json_response(&MaxmindCredentialsView {
+            configured: false,
+            account_id: Some(request.account_id),
+            check: MaxmindCredentialCheck::Skipped,
+            persisted: false,
+        });
+    };
+
+    match geoip_credentials::save(
+        &paths.geoip_maxmind(),
+        &request.account_id,
+        &request.license_key,
+    ) {
+        Err(CredentialsError::Malformed) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => {
+            tracing::warn!("failed to persist MaxMind credentials to disk: {err}");
+            json_response(&MaxmindCredentialsView {
+                configured: false,
+                account_id: Some(request.account_id),
+                check: MaxmindCredentialCheck::Skipped,
+                persisted: false,
+            })
+        }
+        Ok(()) => {
+            // A one-off, operator-initiated outbound call — not the
+            // status-poll hot path the "don't rebuild a TLS client 30x/min"
+            // concern (T-149) was about. Talks to the public
+            // `download.maxmind.com`, so no cert pinning.
+            let check = match reqwest::Client::builder().build() {
+                Ok(client) => credential_check(
+                    &check_maxmind_credentials(&client, &request.account_id, &request.license_key)
+                        .await,
+                ),
+                Err(_) => MaxmindCredentialCheck::Unverified,
+            };
+            json_response(&MaxmindCredentialsView {
+                configured: true,
+                account_id: Some(request.account_id),
+                check,
+                persisted: true,
+            })
+        }
+    }
+}
+
+/// `POST /admin/geoip/maxmind/clear` (T-162) — same gate; removes
+/// `geoip_maxmind.toml`, reverting to the default DB-IP Lite source at the
+/// next `dnsqb-service` restart. A missing file is not an error.
+async fn serve_admin_geoip_maxmind_clear<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    if limited.collect().await.is_err() {
+        return status_response(StatusCode::BAD_REQUEST);
+    }
+    let persisted = match state.persist.paths.as_ref() {
+        Some(paths) => match geoip_credentials::clear(&paths.geoip_maxmind()) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!("failed to remove MaxMind credentials file: {err}");
+                false
+            }
+        },
+        None => false,
+    };
+    json_response(&MaxmindCredentialsView {
+        configured: false,
+        account_id: None,
+        check: MaxmindCredentialCheck::Skipped,
+        persisted,
+    })
 }
 
 /// `GET /admin/log`'s default result cap (T-54) — a value a user actually
@@ -1717,6 +1915,8 @@ where
         ADMIN_GEOIP_PATH => serve_admin_geoip(&state),
         ADMIN_GEOIP_ADD_PATH => serve_admin_geoip_add(req, &state).await,
         ADMIN_GEOIP_REMOVE_PATH => serve_admin_geoip_remove(req, &state).await,
+        ADMIN_GEOIP_MAXMIND_PATH => serve_admin_geoip_maxmind(req, &state).await,
+        ADMIN_GEOIP_MAXMIND_CLEAR_PATH => serve_admin_geoip_maxmind_clear(req, &state).await,
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
@@ -1740,7 +1940,8 @@ mod tests {
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
-        GeoipCountriesResponse, GeoipCountryRequest, LogQueryResponse, OverrideAddRequest,
+        GeoipCountriesResponse, GeoipCountryRequest, LogQueryResponse, MaxmindCredentialCheck,
+        MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest,
         OverrideListsResponse, OverrideRemoveRequest,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
@@ -4270,6 +4471,10 @@ mod tests {
         };
         assert!(!body.database_loaded);
         assert_eq!(body.database_built_at_ms, None);
+        assert_eq!(
+            body.database_source, None,
+            "no reader loaded → no source to classify (T-162)"
+        );
     }
 
     #[tokio::test]
@@ -4318,6 +4523,160 @@ mod tests {
             "a loaded reader must report database_loaded even without a known build time"
         );
         assert_eq!(body.database_built_at_ms, None);
+        assert!(
+            body.database_source.is_some(),
+            "a loaded reader must classify to some DatabaseSource (T-162); the exact \
+             DB-IP/GeoLite2/Other mapping is unit-tested in admin.rs"
+        );
+    }
+
+    fn maxmind_state_with_tempdir() -> (tempfile::TempDir, Arc<AppState<MockClient>>) {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: dir.path().join("resolver_config.toml"),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        (dir, state)
+    }
+
+    fn admin_maxmind_get_request() -> Request<Full<Bytes>> {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/geoip/maxmind")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    fn admin_maxmind_post_request(account_id: &str, license_key: &str) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&MaxmindCredentialsRequest {
+            account_id: account_id.to_string(),
+            license_key: license_key.to_string(),
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/geoip/maxmind")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    async fn maxmind_view_via_get(state: Arc<AppState<MockClient>>) -> MaxmindCredentialsView {
+        let response = match serve(admin_maxmind_get_request(), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<MaxmindCredentialsView>(&bytes) else {
+            panic!("response must decode as MaxmindCredentialsView");
+        };
+        view
+    }
+
+    #[tokio::test]
+    async fn maxmind_get_reports_not_configured_on_a_fresh_state() {
+        let (_dir, state) = maxmind_state_with_tempdir();
+        let view = maxmind_view_via_get(state).await;
+        assert!(!view.configured);
+        assert_eq!(view.account_id, None);
+        assert_eq!(view.check, MaxmindCredentialCheck::Skipped);
+    }
+
+    // The save-time probe reaches the real `download.maxmind.com`, so the
+    // *write* path is exercised without going through the POST handler
+    // (`geoip_credentials::save` directly, then a plain GET) — same "network
+    // behind `#[ignore]`" discipline the rest of this crate keeps. The
+    // `check` result plumbing is covered by `geoip_updater`'s own
+    // `#[ignore]`d live test.
+    #[tokio::test]
+    async fn maxmind_get_echoes_the_account_id_after_a_save_and_never_the_key() {
+        let (dir, state) = maxmind_state_with_tempdir();
+        if let Err(err) = crate::geoip_credentials::save(
+            &dir.path().join("geoip_maxmind.toml"),
+            "acct-987",
+            "a-very-secret-license-key",
+        ) {
+            panic!("save fixture must succeed: {err}");
+        }
+        let view = maxmind_view_via_get(Arc::clone(&state)).await;
+        assert!(view.configured);
+        assert_eq!(view.account_id.as_deref(), Some("acct-987"));
+
+        let response = match serve(admin_maxmind_get_request(), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let raw = String::from_utf8_lossy(&body_bytes(response).await).into_owned();
+        assert!(
+            !raw.contains("a-very-secret-license-key") && !raw.contains("license"),
+            "the GET response must never carry the license key in any form: {raw}"
+        );
+    }
+
+    #[tokio::test]
+    async fn maxmind_post_with_a_blank_field_is_400_before_any_probe() {
+        let (_dir, state) = maxmind_state_with_tempdir();
+        // A blank `license_key` — `geoip_credentials::save` rejects it as
+        // `Malformed` before the handler ever builds a client, so this stays
+        // network-free.
+        let response = match serve(admin_maxmind_post_request("acct", "   "), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn maxmind_clear_removes_the_file_and_reports_not_configured() {
+        let (dir, state) = maxmind_state_with_tempdir();
+        if let Err(err) =
+            crate::geoip_credentials::save(&dir.path().join("geoip_maxmind.toml"), "acct", "key")
+        {
+            panic!("save fixture must succeed: {err}");
+        }
+        let Ok(clear_req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/geoip/maxmind/clear")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(clear_req, Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<MaxmindCredentialsView>(&bytes) else {
+            panic!("clear response must decode as MaxmindCredentialsView");
+        };
+        assert!(!view.configured);
+        assert!(
+            view.persisted,
+            "removing an existing file must report persisted"
+        );
+        assert!(
+            !dir.path().join("geoip_maxmind.toml").exists(),
+            "the credentials file must be gone after /clear"
+        );
+        assert!(!maxmind_view_via_get(state).await.configured);
     }
 
     #[tokio::test]
@@ -5036,6 +5395,8 @@ mod tests {
         ("/admin/geoip", &[Method::GET]),
         ("/admin/geoip/add", &[Method::POST]),
         ("/admin/geoip/remove", &[Method::POST]),
+        ("/admin/geoip/maxmind", &[Method::GET, Method::POST]),
+        ("/admin/geoip/maxmind/clear", &[Method::POST]),
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),

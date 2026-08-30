@@ -144,6 +144,7 @@ mod wire;
 
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
+    DatabaseSource, MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
 };
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError,

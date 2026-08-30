@@ -188,9 +188,20 @@ pub fn write_cert_and_key_to_app_data(
 /// leave a window where the private key sits on disk under the parent
 /// directory's inherited ACL rather than the restricted one.
 fn write_key_file(path: &Path, contents: &[u8]) -> Result<(), CertError> {
+    write_user_restricted_file(path, contents)
+}
+
+/// Write `contents` to `path` behind an ACL restricted to Full Control for
+/// the current user only — creating the file empty, restricting it, *then*
+/// writing, so the bytes never sit on disk under the parent directory's
+/// inherited (wider) ACL even briefly. Reused for the private key
+/// (`write_key_file`) and for `geoip_maxmind.toml` (T-162,
+/// [`crate::geoip_credentials::save`]) — both plaintext secrets on disk as
+/// explicit MVP tech debt (`SECURITY.md`), so both get the same restriction.
+pub(crate) fn write_user_restricted_file(path: &Path, contents: &[u8]) -> Result<(), CertError> {
     // The handle itself is unused — this call exists only to make `path`
     // exist as an empty file for `restrict_to_current_user` to ACL, before
-    // any key bytes are written to it.
+    // any secret bytes are written to it.
     File::create(path).map_err(CertError::Io)?;
     restrict_to_current_user(path)?;
     fs::write(path, contents).map_err(CertError::Io)

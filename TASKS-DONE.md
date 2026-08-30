@@ -1755,3 +1755,92 @@
   транзитивний через `hickory-proto`, не з цієї задачі). Docs: SPEC.md §2, CLAUDE.md (нова
   `cert_rotation`-рядок у таблиці модулів, опис трею), SERVICES.md (`### Меню` — лічильник і три
   пункти сертифіката), TASKS.md.
+
+- [x] T-162 (частина) — MaxMind GeoLite2-режим: адмін-маршрут + картка на `/admin/ui` +
+  показ активного джерела бази (SPEC.md §3.5) — один коміт, plan-mode + advisor до і після.
+
+  **Свідомо порізана.** T-162 як заведена — п'ять частин. Доставлено **1 + 3-save-time + 5**;
+  **2 (DPAPI)**, **4 (`/admin/reset` re-read + runtime-підхоплення джерела)** і **ongoing-половина
+  3 (креденшели, що зламалися після прийняття)** → нова **T-163**. Причина: текст самої T-162 у
+  TASKS.md виносить частину 2 як "потребує власного plan+advisor циклу" й називає її прецедентом
+  T-67 (крейт-широкий `#![forbid(unsafe_code)]` vs сирий Win32 FFI); обраний користувачем порядок
+  ставить T-67 останнім, тож будувати FFI-примітив зараз інвертувало б його. Частини 4 і
+  ongoing-3 обидві потребують одного механізму (spawn-and-forget `run_geoip_updater` читає
+  `GeoipSource` зі спільного стану й репортить наслідок кожного оновлення назад) — окремий дизайн,
+  не потрібний, щоб закрити гострий UX-капкан. Той самий backend-before-UI поділ, що T-80.
+
+  **Що зроблено.**
+  - `admin.rs`: `DatabaseSource` (closed enum `DB_IP_LITE`/`GEO_LITE2`/`OTHER`) +
+    `database_source: Option<DatabaseSource>` на `GeoipCountriesResponse`. Класифікація —
+    `DatabaseSource::classify(&str)` з `GeoipReader::database_type()` **завантаженого reader-а**,
+    ніколи з налаштованого `GeoipSource` (розходяться саме тоді, коли креденшели задані, але
+    відхилені — файл досі DB-IP Lite; репортити налаштоване джерело було б T-75-помилкою
+    "last-updated = коли я востаннє опитував" у новому вбранні — advisor). Сирий `database_type`
+    з чужого `.mmdb` **не** проходить дослівно в DTO — те саме рішення, що вже задокументоване на
+    `QTypeView` (advisor Catch 1).
+  - `MaxmindCredentialsView` (`configured`/`account_id`/`check`/`persisted`) — **без поля
+    `license_key`**, секрет write-only, не представлений у відповіді (`LicenseKey` навмисно не
+    `Serialize`); `MaxmindCredentialCheck` (`SKIPPED`/`VERIFIED`/`REJECTED`/`UNVERIFIED`);
+    `MaxmindCredentialsRequest`.
+  - `geoip_credentials.rs`: `save(path, account_id, license_key)` + `clear(path)`. `save` валідує
+    непорожність, серіалізує через `toml`-крейт (throwaway `#[derive(Serialize)]`-структура над
+    `&str`, не `LicenseKey`), пише через **новий** `cert::write_user_restricted_file` —
+    винесено з `write_key_file` create-restrict-write послідовність (`write_key_file` тепер
+    делегує), щоб `geoip_maxmind.toml` дістав той самий ACL, обмежений поточним користувачем, що
+    й `key.pem` (двофазний `icacls`, самокоригівний проти дефолтних DACL на `windows-latest` —
+    reuse, не hand-roll: другий ACL-шлях повторно заробив би CI-red з T-50; advisor Catch 2).
+    Plaintext лишається — той самий MVP-tech-debt, що `key.pem`; DPAPI → T-163. Новий м'ютекс
+    **не** доданий: `geoip_maxmind.toml` має рівно один маршрут-писар, запис — цілофайловий
+    overwrite (не read-modify-write), тож клас lost-update, що мотивує `persist_lock`/
+    `overrides_persist_lock`, не застосовний; окремий файл — не ділить `persist_lock` (той
+    впорядковує писарів `resolver_config.toml`).
+  - `geoip_updater.rs`: `check_maxmind_credentials(client, account_id, license_key)` — один
+    автентифікований запит до `maxmind_download_url(..., "tar.gz")` з `Range: bytes=0-0` (щоб
+    `VERIFIED` не тягнув тіло), дивиться **лише** статус-код: 2xx → `Ok`, 401/403 →
+    `MaxmindAuthRejected`, решта → `MaxmindDownloadFailed`; власний `MAXMIND_CHECK_TIMEOUT` = 10 с
+    (не `GEOIP_FETCH_TIMEOUT` 120 с — це inline в інтерактивному POST), таймаут → `Timeout`.
+    Повертає наявну coarse-таксономію помилок, dispatch мапить у `MaxmindCredentialCheck` (без
+    нового типу — advisor). Кожен `reqwest::Error` дропається (URL несе account id).
+  - `dispatch.rs`: `PersistPaths::geoip_maxmind()` (метод, не поле — уникає ~17 правок фікстур;
+    інваріант "усі три файли в одній app-data-теці" вже реальний і задокументований на
+    `PersistPaths`); маршрути `GET|POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
+    (3 `_PATH`-конст + 2 рядки в `ROUTES` + незалежна hand-written копія в тесті + арми в `serve()`);
+    один хендлер на обидва методи (як `serve_dns_query`, гілка на `req.method()`). POST:
+    CSRF-гейт + `MAX_ADMIN_BODY_SIZE` → `save` **спершу** → якщо `Ok`, будує inline
+    `reqwest::Client` (рідкісна, ініційована оператором дія — не hot-path status-поллінгу, якого
+    стосувалась T-149) і робить пробу → `MaxmindCredentialsView` з реальним `check`. `Malformed`
+    (порожнє поле) → 400; невдалий запис на диск → `persisted: false` у тілі (рекурентне
+    правило), **не** 5xx.
+  - UI: нова картка `#geoip-maxmind-body` (`renderMaxmind` — власний fetch/render цикл, як GeoIP-
+    картка, бо поле ключа не повинне гинути від 2-сек поллінгу), форма account_id +
+    `type="password"` ключ, "Зберегти", confirm-gated "Очистити" при `configured`, показ `check`-
+    результату + постійна нотатка "діє після перезапуску". Рядок "Активне джерело: …" в GeoIP-
+    картці з `database_source`. Футер `#credits` — **статичний** (T-81 зробив його DTO-free
+    навмисно; JS-переписаний футер створив би pre-JS вікно, де DB-IP-похідна сторінка без
+    атрибуції DB-IP — регресія CC BY 4.0; переатрибуція нешкідлива — advisor Q3). `.notice.ok`
+    у CSS (нова, `--good`/`--good-soft`).
+  - `AdminClient`: `maxmind_credentials`/`set_maxmind_credentials`/`clear_maxmind_credentials`.
+
+  **Чесна прогалина в покритті.** Save-time проба ходить у справжній `download.maxmind.com`, тож
+  *write*-шлях покритий без хендлера (`geoip_credentials::save` напряму → plain GET), а плюмбінг
+  `check`-результату — лише `#[ignore]`d live-тестом у `geoip_updater` (реальні креденшели →
+  `Ok`; зіпсований ключ → `MaxmindAuthRejected`). Та сама "мережа за `#[ignore]`" дисципліна, що
+  решта крейта. Dispatch-тести (5): GET на свіжому стані → `configured:false`; `save` + GET →
+  `account_id` луна, жодного `license`-тексту в тілі; POST з порожнім полем → 400 (до будь-якої
+  проби); `/clear` прибирає файл; незалежна `ROUTES`-копія покриває нові пари. `geoip_credentials`
+  (4): `save`+`load` roundtrip, `save` відхиляє порожнє, `save` дає файл із рівно одним ACE
+  (той самий `icacls`-line-count, що `cert.rs`), `clear` ідемпотентний. `admin.rs` (3):
+  `classify` мапить обидва реальні publisher-рядки + `OTHER`, `SCREAMING_SNAKE_CASE` wire-рядки,
+  `MaxmindCredentialsView` без `license_key` у JSON. Chrome-автоматизація недоступна вже 4-ту
+  сесію поспіль — картка не відрендерена вживу; названо чесно, не заявлено.
+
+  Ground-truth ритуал: `ui-dto-model.md` — **зачеплений** (додано `database_source`,
+  `DatabaseSource`, `MaxmindCredentialsView`/`MaxmindCredentialsRequest`/`MaxmindCredentialCheck`
+  + класи, зв'язки, наративна секція). `ui-navigation.md` / `ui-status-indicator.md` — **не
+  зачеплені** (нова картка — не вузол навігації й не умова індикатора стану).
+
+  Повний локальний гейт зелений: 403 lib + 5 bins (+14 нових тестів, +2 `#[ignore]`d),
+  conformance 18/2, clippy/fmt/doc/deny/audit чисті (`Cargo.lock` без змін — нові deps не додані,
+  `toml`/`reqwest`/`tempfile`/`sha2`/`tar` вже в дереві; yanked `chacha20` — пре-існуючий,
+  транзитивний). Docs: SPEC.md §3.5 (dated T-162-part note + T-163 pointer), TASKS.md (progress +
+  нова `- [ ] T-163`), CLAUDE.md, CONFIGURATION.md, UI-SPEC.md §3.5, `diagrams/ui-dto-model.md`.

@@ -34,6 +34,14 @@
     <h3>GeoIP-блокування</h3>
     <p>Завантаження…</p>
   </div>
+  <!-- T-162: MaxMind GeoLite2 credentials (opt-in advanced GeoIP source).
+       Same reasoning as the cards above - a license-key field the operator
+       is typing into must not be wiped by the 2s status poll, so this has
+       its own independent fetch/render cycle (see main.js). -->
+  <div id="geoip-maxmind-body" class="card">
+    <h3>Джерело GeoIP: MaxMind GeoLite2</h3>
+    <p>Завантаження…</p>
+  </div>
   <!-- T-46/T-54: same reasoning as #overrides-body/#cache-config-body above
        - a search box the user is actively typing into must not lose its
        value to the unrelated 2s status poll. Unlike those two, this section

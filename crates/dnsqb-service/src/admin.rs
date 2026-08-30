@@ -335,6 +335,99 @@ pub struct GeoipCountriesResponse {
     /// epoch. `None` when `database_loaded` is `false`, or when a loaded
     /// database's own metadata doesn't carry a build time.
     pub database_built_at_ms: Option<u64>,
+    /// Which publisher's database is **actually loaded** right now (T-162) —
+    /// classified from the loaded reader's own `database_type` metadata, not
+    /// from the configured [`crate::GeoipSource`]: those diverge exactly when
+    /// it matters (`MaxMind` credentials configured but rejected → the live
+    /// file is still DB-IP Lite). `None` when `database_loaded` is `false`.
+    pub database_source: Option<DatabaseSource>,
+}
+
+/// Which publisher built the `GeoIP` database currently loaded (T-162,
+/// SPEC.md §3.5). A **closed** enum, not the raw `database_type` string from
+/// a downloaded third-party `.mmdb` — same "a response type must never
+/// round-trip untrusted input verbatim" decision [`QTypeView`]'s own doc
+/// comment records for wire record types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DatabaseSource {
+    /// DB-IP Lite Country (SPEC.md §3.5's registration-free default).
+    DbIpLite,
+    /// `MaxMind` `GeoLite2` Country (T-80's opt-in advanced mode).
+    GeoLite2,
+    /// A loaded database whose `database_type` matches neither known
+    /// publisher — surfaced honestly rather than guessed either way.
+    Other,
+}
+
+impl DatabaseSource {
+    /// Classifies a raw `maxminddb` `database_type` string. DB-IP Lite
+    /// publishes `DBIP-Country-Lite`, `MaxMind` `GeoLite2-Country`; anything
+    /// else is [`DatabaseSource::Other`].
+    #[must_use]
+    pub fn classify(database_type: &str) -> Self {
+        let lowered = database_type.to_ascii_lowercase();
+        if lowered.contains("dbip") {
+            Self::DbIpLite
+        } else if lowered.contains("geolite2") {
+            Self::GeoLite2
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// `GET /admin/geoip/maxmind`'s body, and echoed by `POST /admin/geoip/maxmind`
+/// / `POST /admin/geoip/maxmind/clear` after applying a change (T-162) — the
+/// operator-facing view of the opt-in `MaxMind` `GeoLite2` credentials
+/// (`geoip_maxmind.toml`). **Carries no `license_key` field** — the secret is
+/// write-only, unrepresentable in a response rather than merely omitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaxmindCredentialsView {
+    /// Whether a complete `geoip_maxmind.toml` is present on disk.
+    pub configured: bool,
+    /// The stored `MaxMind` account id (the Basic-auth username — not itself
+    /// a secret). `None` when `configured` is `false`.
+    pub account_id: Option<String>,
+    /// Result of the save-time credential probe against `MaxMind` (T-162) —
+    /// [`MaxmindCredentialCheck::Skipped`] for a plain `GET` and for
+    /// `/clear`.
+    pub check: MaxmindCredentialCheck,
+    /// Whether the change that produced this response was written to disk —
+    /// same `persisted` convention as [`GeoipCountriesResponse::persisted`] /
+    /// [`OverrideListsResponse::persisted`]. Always `true` for a plain `GET`.
+    pub persisted: bool,
+}
+
+/// Outcome of the one authenticated probe `POST /admin/geoip/maxmind` runs
+/// against `MaxMind` right after writing the file (T-162) — the acute
+/// user-safety signal (Три Б) that hand-editing `geoip_maxmind.toml` never
+/// gave. Detecting credentials that break *after* being accepted is T-163.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MaxmindCredentialCheck {
+    /// No probe was made (a plain `GET`, or `/clear`).
+    Skipped,
+    /// `MaxMind` answered a success status to an authenticated request.
+    Verified,
+    /// `MaxMind` answered `401`/`403` — the account id or license key is
+    /// wrong, expired, or lacks `GeoLite2` access.
+    Rejected,
+    /// The probe could not be completed (network error or timeout) — the
+    /// file was still saved; the credentials may or may not be valid.
+    Unverified,
+}
+
+/// `POST /admin/geoip/maxmind`'s request body (T-162). Both fields are
+/// mandatory and validated server-side (non-blank); a blank field is `400`,
+/// the same shape [`GeoipCountryRequest`] uses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MaxmindCredentialsRequest {
+    /// The `MaxMind` account id (Basic-auth username).
+    pub account_id: String,
+    /// The `MaxMind` license key (Basic-auth password). Never echoed back in
+    /// any response — see [`MaxmindCredentialsView`].
+    pub license_key: String,
 }
 
 /// `POST /admin/geoip/add`/`POST /admin/geoip/remove`'s shared body (T-77) —
@@ -816,6 +909,76 @@ impl AdminClient {
             .map_err(AdminClientError::Request)?;
         Ok(())
     }
+
+    /// Reads the live `MaxMind` `GeoLite2` credentials state (T-162) —
+    /// whether a `geoip_maxmind.toml` is configured, and the stored account
+    /// id if so. Never returns the license key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdminClientError::Request`] if the service isn't reachable
+    /// or the response doesn't decode as [`MaxmindCredentialsView`].
+    pub async fn maxmind_credentials(&self) -> Result<MaxmindCredentialsView, AdminClientError> {
+        let response = self
+            .client
+            .get(format!("{}/admin/geoip/maxmind", self.base_url))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Writes `MaxMind` `GeoLite2` credentials to `geoip_maxmind.toml`
+    /// (T-162) and runs one authenticated probe against `MaxMind` — the
+    /// returned [`MaxmindCredentialsView::check`] reports whether they were
+    /// accepted. The new credentials take effect at the next `dnsqb-service`
+    /// restart (runtime pickup is T-163).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdminClientError::Request`] if the service isn't reachable,
+    /// a field was blank (`400`), or the response doesn't decode.
+    pub async fn set_maxmind_credentials(
+        &self,
+        account_id: &str,
+        license_key: &str,
+    ) -> Result<MaxmindCredentialsView, AdminClientError> {
+        let body = MaxmindCredentialsRequest {
+            account_id: account_id.to_string(),
+            license_key: license_key.to_string(),
+        };
+        let response = self
+            .client
+            .post(format!("{}/admin/geoip/maxmind", self.base_url))
+            .json(&body)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Removes `geoip_maxmind.toml` (T-162) — reverts to the default DB-IP
+    /// Lite source at the next `dnsqb-service` restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdminClientError::Request`] if the service isn't reachable
+    /// or the response doesn't decode as [`MaxmindCredentialsView`].
+    pub async fn clear_maxmind_credentials(
+        &self,
+    ) -> Result<MaxmindCredentialsView, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/geoip/maxmind/clear", self.base_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
 }
 
 #[cfg(test)]
@@ -1177,5 +1340,66 @@ mod tests {
 
         assert_eq!(view.decision_source, DecisionSourceView::GeoIp);
         assert_eq!(view.geoip_country, Some("SE".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod maxmind_dto_tests {
+    use super::{DatabaseSource, MaxmindCredentialCheck, MaxmindCredentialsView};
+
+    fn json_of<T: serde::Serialize>(value: &T) -> String {
+        match serde_json::to_string(value) {
+            Ok(json) => json,
+            Err(err) => panic!("must serialize: {err}"),
+        }
+    }
+
+    #[test]
+    fn database_source_classifies_both_real_publisher_strings_and_falls_back_to_other() {
+        // The exact `database_type` strings DB-IP and MaxMind publish (the
+        // latter is `maxminddb`'s own upstream test-fixture value).
+        assert_eq!(
+            DatabaseSource::classify("DBIP-Country-Lite"),
+            DatabaseSource::DbIpLite
+        );
+        assert_eq!(
+            DatabaseSource::classify("GeoLite2-Country"),
+            DatabaseSource::GeoLite2
+        );
+        assert_eq!(
+            DatabaseSource::classify("Some-Other-Vendor-DB"),
+            DatabaseSource::Other
+        );
+    }
+
+    #[test]
+    fn database_source_wire_strings_are_screaming_snake_case() {
+        assert_eq!(json_of(&DatabaseSource::DbIpLite), "\"DB_IP_LITE\"");
+        assert_eq!(json_of(&DatabaseSource::GeoLite2), "\"GEO_LITE2\"");
+        assert_eq!(json_of(&DatabaseSource::Other), "\"OTHER\"");
+    }
+
+    #[test]
+    fn maxmind_credentials_view_has_no_license_key_field_in_its_json() {
+        let view = MaxmindCredentialsView {
+            configured: true,
+            account_id: Some("acct-123".to_string()),
+            check: MaxmindCredentialCheck::Verified,
+            persisted: true,
+        };
+        let json = json_of(&view);
+        assert!(
+            !json.contains("license_key") && !json.contains("license"),
+            "the response DTO must not carry the secret in any form: {json}"
+        );
+        assert!(
+            json.contains("acct-123"),
+            "the non-secret account id is fine"
+        );
+        assert_eq!(
+            json_of(&MaxmindCredentialCheck::Unverified),
+            "\"UNVERIFIED\""
+        );
+        assert_eq!(json_of(&MaxmindCredentialCheck::Skipped), "\"SKIPPED\"");
     }
 }
