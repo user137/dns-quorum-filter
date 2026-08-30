@@ -24,12 +24,12 @@
 
 use crate::admin::{
     compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse, CacheConfigUpdate,
-    CacheConfigView, LogEntryView, LogQueryResponse, OverrideAddRequest, OverrideDomainView,
-    OverrideListsResponse, OverrideRemoveRequest,
+    CacheConfigView, GeoipCountriesResponse, GeoipCountryRequest, LogEntryView, LogQueryResponse,
+    OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
-use crate::config::{GeoipConfig, ResolverConfig};
+use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
@@ -76,6 +76,9 @@ const ADMIN_OVERRIDES_ADD_PATH: &str = "/admin/overrides/add";
 const ADMIN_OVERRIDES_REMOVE_PATH: &str = "/admin/overrides/remove";
 const ADMIN_CACHE_CONFIG_PATH: &str = "/admin/cache-config";
 const ADMIN_CACHE_CONFIG_APPLY_PATH: &str = "/admin/cache-config/apply";
+const ADMIN_GEOIP_PATH: &str = "/admin/geoip";
+const ADMIN_GEOIP_ADD_PATH: &str = "/admin/geoip/add";
+const ADMIN_GEOIP_REMOVE_PATH: &str = "/admin/geoip/remove";
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
 const ADMIN_UI_PATH: &str = "/admin/ui";
@@ -102,6 +105,9 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_OVERRIDES_REMOVE_PATH, &[Method::POST]),
     (ADMIN_CACHE_CONFIG_PATH, &[Method::GET]),
     (ADMIN_CACHE_CONFIG_APPLY_PATH, &[Method::POST]),
+    (ADMIN_GEOIP_PATH, &[Method::GET]),
+    (ADMIN_GEOIP_ADD_PATH, &[Method::POST]),
+    (ADMIN_GEOIP_REMOVE_PATH, &[Method::POST]),
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
@@ -455,8 +461,8 @@ pub struct AppState<C: DohClient + Sync> {
     /// comment for why that's a separate field ([`AppState::geoip_countries`]).
     geoip: RwLock<Arc<GeoipState>>,
     /// T-76 — the `GeoIP` blocked-country list (SPEC.md §3.5), swapped by
-    /// config load / `/admin/reset` (and, once T-77 exists, an admin write
-    /// route) — never by `geoip_updater`, which only ever touches `geoip`
+    /// config load / `/admin/reset` / `POST /admin/geoip/add`/`remove`
+    /// (T-77) — never by `geoip_updater`, which only ever touches `geoip`
     /// above. Same `RwLock<Arc<_>>` snapshot-read shape as every other
     /// per-query state here.
     geoip_countries: RwLock<Arc<Vec<String>>>,
@@ -477,36 +483,38 @@ pub struct AppState<C: DohClient + Sync> {
     /// the kind of claim this project verifies empirically before relying on
     /// — `watch` has no equivalent ambiguity, so no probe was needed.
     shutdown_tx: watch::Sender<bool>,
-    /// Orders `POST /admin/config`'s and `POST /admin/cache-config/apply`'s
-    /// (T-153) live-write + disk-persist sequences across concurrent
-    /// requests (T-58) — `ResolverConfig::save` is a plain `fs::write`, not
-    /// atomic, and happens *after* `runtime`'s (or `cache`'s) write lock is
-    /// released (deliberately: holding either across a blocking disk write
-    /// would stall every in-flight query's own read of that field too).
-    /// **Shared by both routes, not two independent locks, because both
-    /// write into the *same* physical file** (`resolver_config.toml` now
-    /// carries `providers`/`timeout_mode` *and* `[cache]`, T-153) — two
-    /// separate locks guarding writes into one file would reproduce the
-    /// exact disk-vs-live divergence this lock exists to prevent, just
-    /// between two different routes instead of two calls to the same one.
-    /// Each handler's `save()` call snapshots **both** `runtime` and `cache`
-    /// (not just the field it's changing) while still holding this lock, so
-    /// the file it writes always reflects the other field's current live
-    /// value too, never a stale/default one. Without this, two
+    /// Orders `POST /admin/config`'s, `POST /admin/cache-config/apply`'s
+    /// (T-153), and `POST /admin/geoip/add`/`remove`'s (T-77) live-write +
+    /// disk-persist sequences across concurrent requests (T-58) —
+    /// `ResolverConfig::save` is a plain `fs::write`, not atomic, and happens
+    /// *after* `runtime`'s (or `cache`'s, or `geoip_countries`'s) write lock
+    /// is released (deliberately: holding any of them across a blocking disk
+    /// write would stall every in-flight query's own read of that field
+    /// too). **Shared by all three routes, not independent locks, because
+    /// all three write into the *same* physical file**
+    /// (`resolver_config.toml` carries `providers`/`timeout_mode`,
+    /// `[cache]` (T-153), and `[geoip]` (T-77)) — separate locks guarding
+    /// writes into one file would reproduce the exact disk-vs-live
+    /// divergence this lock exists to prevent, just between three routes
+    /// instead of two. Each handler's `save()` call snapshots **all three**
+    /// fields (not just the one it's changing) while still holding this
+    /// lock, so the file it writes always reflects the other fields'
+    /// current live values too, never stale/default ones. Without this, two
     /// near-simultaneous admin POSTs (e.g. two quick clicks in the web UI)
     /// can persist to disk in the opposite order from the order their
     /// in-memory writes landed, leaving the on-disk file not matching the
     /// live settings. **Invariant: `persist_lock` is always acquired before
-    /// `runtime`/`cache`, never after.** **`apply_admin_reset` also takes
-    /// this lock (T-153) across its whole load-then-commit sequence** —
-    /// unlike the state before T-153, reset now writes both `runtime` *and*
-    /// `cache` in memory after reading the same file this lock guards, so
-    /// without it a concurrent admin POST could commit its own disk write
-    /// between reset's read and reset's memory-write, leaving memory holding
-    /// stale values while disk holds the new ones until restart (the same
-    /// class of bug `overrides_persist_lock` below already exists to
-    /// prevent for `overrides.toml`, now true here too because reset gained
-    /// a second in-memory field with a shared on-disk file). No deadlock
+    /// `runtime`/`cache`/`geoip_countries`, never after.**
+    /// **`apply_admin_reset` also takes this lock (T-153) across its whole
+    /// load-then-commit sequence** — reset writes `runtime`, `cache`, *and*
+    /// `geoip_countries` in memory after reading the same file this lock
+    /// guards, so without it a concurrent admin POST could commit its own
+    /// disk write between reset's read and reset's memory-write, leaving
+    /// memory holding stale values while disk holds the new ones until
+    /// restart (the same class of bug `overrides_persist_lock` below already
+    /// exists to prevent for `overrides.toml`, now true here too because
+    /// reset writes multiple in-memory fields sharing one on-disk file). No
+    /// deadlock
     /// risk from `apply_admin_reset` holding both `persist_lock` and
     /// `overrides_persist_lock` at once: it is the only function that ever
     /// holds both, always acquired in the same order, and no other function
@@ -583,9 +591,11 @@ impl<C: DohClient + Sync> AppState<C> {
         *self.geoip.write() = Arc::new(new);
     }
 
-    /// Swaps in a new `GeoIP` blocked-country list (T-76) — called by
-    /// `apply_admin_reset` after a successful `resolver_config.toml` reload,
-    /// and (once T-77 exists) an admin write route. Never touches `geoip`
+    /// Swaps in a new `GeoIP` blocked-country list — called by
+    /// `apply_admin_reset` after a successful `resolver_config.toml` reload
+    /// (T-76), and by `apply_geoip_change` after a live add/remove (T-77) —
+    /// the single writer of `geoip_countries` both call sites share, rather
+    /// than either writing the `RwLock` directly. Never touches `geoip`
     /// (the loaded database) — see that field's own doc comment.
     pub(crate) fn update_geoip_countries(&self, blocked_countries: Vec<String>) {
         *self.geoip_countries.write() = Arc::new(blocked_countries);
@@ -1202,6 +1212,167 @@ where
     }
 }
 
+/// Shared view builder for `GET /admin/geoip` and the two mutating routes
+/// below (T-77) — same "always return the fresh live state" shape as
+/// [`overrides_view`]/[`CacheConfigView::from_config`].
+fn geoip_view(blocked_countries: &[String], persisted: bool) -> GeoipCountriesResponse {
+    GeoipCountriesResponse {
+        blocked_countries: blocked_countries.to_vec(),
+        persisted,
+    }
+}
+
+/// `GET /admin/geoip` (T-77) — method allowlisting happens centrally in
+/// [`serve`]'s `ROUTES` check, not re-checked here. Read-only, no CSRF gate
+/// needed (same as `GET /admin/status`/`/admin/overrides`/`/admin/cache-config`).
+fn serve_admin_geoip<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
+    json_response(&geoip_view(&state.geoip_countries.read(), true))
+}
+
+/// Applies `compute_new` to `state`'s live `GeoIP` blocked-country list
+/// (T-77) and returns the fresh view — shared by `POST /admin/geoip/add`/
+/// `remove`, which differ only in how the new list is computed.
+///
+/// `state.persist_lock` is held for the whole swap-then-persist sequence —
+/// **shared with `POST /admin/config`/`POST /admin/cache-config/apply`, not
+/// an independent lock**, because all three write into the same
+/// `resolver_config.toml` (see `persist_lock`'s own doc comment). Also
+/// reads `state.runtime`'s current settings and `state.cache`'s current
+/// config (not just `geoip_countries`) while still holding the lock, so the
+/// file this writes reflects all three fields' live values, not
+/// stale/default ones — the same cross-field-read requirement
+/// `apply_admin_config`/`apply_cache_config` already apply in the other two
+/// directions.
+///
+/// **No cache-invalidation call here, unlike [`apply_overrides_change`]** —
+/// a `GeoIP` verdict is never cached (SPEC.md §3.5's own stated reason: it's
+/// applied live on every read, cached or fresh, specifically so a
+/// country-list change takes effect on the very next lookup with no
+/// invalidation logic at all). Swaps via [`AppState::update_geoip_countries`],
+/// the single writer this field shares with `apply_admin_reset`, rather
+/// than writing the `RwLock` directly.
+///
+/// `after` is built locally by `compute_new` and never re-read from
+/// `state.geoip_countries` — same "provably the exact value just written,
+/// not whatever the lock currently holds" discipline
+/// [`apply_overrides_change`]'s own doc comment already states.
+fn apply_geoip_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    compute_new: impl FnOnce(&[String]) -> Result<Vec<String>, ConfigError>,
+) -> Result<GeoipCountriesResponse, ConfigError> {
+    let _persist_guard = state.persist_lock.lock();
+    let before = state.geoip_countries.read().as_ref().clone();
+    let after = compute_new(&before)?;
+    state.update_geoip_countries(after.clone());
+    let runtime = *state.runtime.read();
+    let cache_config = state.cache.read().config;
+    let persisted = match state.persist.paths.as_ref() {
+        Some(paths) => {
+            let config = ResolverConfig {
+                port: state.persist.port,
+                timeout_mode: runtime.timeout.mode,
+                timeout_ms: timeout_ms(runtime.timeout.duration),
+                providers: runtime.providers,
+                cache: cache_config,
+                geoip: GeoipConfig {
+                    blocked_countries: after.clone(),
+                },
+            };
+            match config.save(&paths.config) {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("failed to persist an admin geoip change to disk: {err}");
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+    Ok(geoip_view(&after, persisted))
+}
+
+/// `POST /admin/geoip/add` (T-77) — method allowlisting happens centrally
+/// in [`serve`]'s `ROUTES` check, not re-checked here. Same CSRF gate and
+/// body-size cap as `/admin/overrides/add`. An invalid country code is
+/// `400` (see [`validate_country_code`]). Idempotent: adding an
+/// already-present code is a no-op, not a duplicate entry (mirrors
+/// [`crate::overrides::OverrideLists::with_entry_added`]'s own idempotency).
+async fn serve_admin_geoip_add<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(request) = serde_json::from_slice::<GeoipCountryRequest>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_geoip_change(state, |current| {
+        let code = validate_country_code(&request.country)?;
+        let mut new_list = current.to_vec();
+        if !new_list.iter().any(|c| c == &code) {
+            new_list.push(code);
+        }
+        Ok(new_list)
+    }) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// `POST /admin/geoip/remove` (T-77) — same gates as add. **`country` is
+/// validated and normalized the exact same way add's is, not compared
+/// as-is** (advisor-caught during this task's own planning): the stored
+/// list is always uppercase, so a lowercase or malformed request must be
+/// rejected the same way add rejects one, not silently no-op against a
+/// case-sensitive match — the same "correct only by an invariant enforced
+/// elsewhere" trap `geoip::blocking_country`'s own `eq_ignore_ascii_case`
+/// comparison already exists to guard against one layer down. Removal
+/// itself is infallible once the code is valid (a not-present code is a
+/// no-op, not an error) — mirrors
+/// [`crate::overrides::OverrideLists::with_entry_removed`].
+async fn serve_admin_geoip_remove<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(request) = serde_json::from_slice::<GeoipCountryRequest>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_geoip_change(state, |current| {
+        let code = validate_country_code(&request.country)?;
+        Ok(current.iter().filter(|c| **c != code).cloned().collect())
+    }) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
 /// `GET /admin/log`'s default result cap (T-54) — a value a user actually
 /// reads in one screen, not [`DEFAULT_MAX_ENTRIES`] (1000): every other
 /// input/output boundary in this crate is explicitly bounded, and a JSON
@@ -1521,6 +1692,9 @@ where
         ADMIN_OVERRIDES_REMOVE_PATH => serve_admin_overrides_remove(req, &state).await,
         ADMIN_CACHE_CONFIG_PATH => serve_admin_cache_config(&state),
         ADMIN_CACHE_CONFIG_APPLY_PATH => serve_admin_cache_config_apply(req, &state).await,
+        ADMIN_GEOIP_PATH => serve_admin_geoip(&state),
+        ADMIN_GEOIP_ADD_PATH => serve_admin_geoip_add(req, &state).await,
+        ADMIN_GEOIP_REMOVE_PATH => serve_admin_geoip_remove(req, &state).await,
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
@@ -1544,7 +1718,8 @@ mod tests {
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
-        LogQueryResponse, OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
+        GeoipCountriesResponse, GeoipCountryRequest, LogQueryResponse, OverrideAddRequest,
+        OverrideListsResponse, OverrideRemoveRequest,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::ResolverConfig;
@@ -3959,6 +4134,326 @@ mod tests {
         );
     }
 
+    // T-77: `GET /admin/geoip`/`POST /admin/geoip/add`/`remove`.
+
+    fn admin_geoip_add_request(country: &str) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&GeoipCountryRequest {
+            country: country.to_string(),
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/geoip/add")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    fn admin_geoip_remove_request(country: &str) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(&GeoipCountryRequest {
+            country: country.to_string(),
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/geoip/remove")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_returns_the_current_list() {
+        let state = state_with(no_op_client());
+        state.update_geoip_countries(vec!["SE".to_string(), "DE".to_string()]);
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/geoip")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert_eq!(
+            body.blocked_countries,
+            vec!["SE".to_string(), "DE".to_string()]
+        );
+        assert!(body.persisted);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_add_appends_a_new_country_and_it_is_visible_on_the_next_get() {
+        let state = state_with(no_op_client());
+        let response = match serve(admin_geoip_add_request("SE"), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert_eq!(body.blocked_countries, vec!["SE".to_string()]);
+        // `state_with` sets `paths: None`, so this change live-applies but
+        // can't persist - same "in-memory change succeeded, disk write
+        // didn't" honesty T-47's own equivalent test already established.
+        assert!(!body.persisted);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_add_normalizes_a_lowercase_code_to_uppercase() {
+        let state = state_with(no_op_client());
+        let response = match serve(admin_geoip_add_request("se"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert_eq!(
+            body.blocked_countries,
+            vec!["SE".to_string()],
+            "a lowercase request must be stored uppercase, same as a config-file entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_add_is_idempotent_for_an_already_present_country() {
+        let state = state_with(no_op_client());
+        state.update_geoip_countries(vec!["SE".to_string()]);
+        let response = match serve(admin_geoip_add_request("SE"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert_eq!(
+            body.blocked_countries,
+            vec!["SE".to_string()],
+            "re-adding an already-present code must not duplicate it"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_add_rejects_an_invalid_code() {
+        let state = state_with(no_op_client());
+        let response = match serve(admin_geoip_add_request("RUS"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Same CSRF concern as `/admin/overrides/add` (T-47) - see
+    // `content_type_is_json`'s own doc comment.
+    #[tokio::test]
+    async fn serve_admin_geoip_add_rejects_a_missing_content_type() {
+        let Ok(json) = serde_json::to_vec(&GeoipCountryRequest {
+            country: "SE".to_string(),
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/geoip/add")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_remove_removes_the_matching_country() {
+        let state = state_with(no_op_client());
+        state.update_geoip_countries(vec!["SE".to_string(), "DE".to_string()]);
+        let response = match serve(admin_geoip_remove_request("SE"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert_eq!(body.blocked_countries, vec!["DE".to_string()]);
+    }
+
+    // Advisor-caught during this task's own planning: the stored list is
+    // always uppercase, so a lowercase remove request must still match the
+    // stored entry, not silently no-op (which would look like a broken
+    // "Видалити" button in the UI - nothing tells the caller the country is
+    // still there).
+    #[tokio::test]
+    async fn serve_admin_geoip_remove_accepts_a_lowercase_code_matching_the_stored_uppercase_entry()
+    {
+        let state = state_with(no_op_client());
+        state.update_geoip_countries(vec!["SE".to_string()]);
+        let response = match serve(admin_geoip_remove_request("se"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert!(
+            body.blocked_countries.is_empty(),
+            "a lowercase remove request must match the stored uppercase entry"
+        );
+    }
+
+    // Mirrors `serve_admin_geoip_add_rejects_an_invalid_code` - a malformed
+    // code on remove must be a loud 400, not a silent no-op against a list
+    // it can never match (same advisor catch as the lowercase-match test
+    // above, the other half of the same "normalize/validate on both
+    // routes, not just add" gap).
+    #[tokio::test]
+    async fn serve_admin_geoip_remove_rejects_an_invalid_code() {
+        let state = state_with(no_op_client());
+        state.update_geoip_countries(vec!["SE".to_string()]);
+        let response = match serve(admin_geoip_remove_request("Sweden"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_add_persists_a_change_to_disk_when_a_config_path_is_set() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let response = match serve(admin_geoip_add_request("SE"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert!(body.persisted);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(loaded.geoip.blocked_countries, vec!["SE".to_string()]);
+    }
+
+    // T-77, mirrors `serve_admin_config_does_not_wipe_a_preexisting_geoip_
+    // blocked_country_list`/`serve_admin_cache_config_apply_does_not_wipe_a_
+    // preexisting_geoip_blocked_country_list` in the other direction: an
+    // unrelated `/admin/geoip/add` must not silently wipe already-persisted
+    // `providers`/`timeout_mode`/`[cache]` back to their defaults on save -
+    // same cross-field-read discipline `persist_lock`'s own doc comment
+    // documents for all three fields.
+    #[tokio::test]
+    async fn serve_admin_geoip_add_does_not_wipe_preexisting_providers_and_cache_config() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let providers_update = AdminConfigUpdate {
+            providers: EnabledProviders {
+                quad9: false,
+                adguard: true,
+            },
+            timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+        };
+        let response = match serve(admin_config_request(providers_update), Arc::clone(&state)).await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let cache_update = non_default_cache_config_update();
+        let response = match serve(
+            admin_cache_config_apply_request(cache_update),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = match serve(admin_geoip_add_request("SE"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(
+            loaded.providers, providers_update.providers,
+            "an unrelated geoip add must not wipe the providers toggle"
+        );
+        assert_eq!(
+            loaded.timeout_mode, providers_update.timeout_mode,
+            "an unrelated geoip add must not wipe the timeout mode"
+        );
+        let Ok(expected_cache) = cache_update.into_config() else {
+            panic!("fixture cache update must be valid");
+        };
+        assert_eq!(
+            loaded.cache, expected_cache,
+            "an unrelated geoip add must not wipe the cache config"
+        );
+    }
+
     // T-54: `GET /admin/log`/`POST /admin/log/clear`.
 
     #[tokio::test]
@@ -4388,6 +4883,9 @@ mod tests {
         ("/admin/overrides/remove", &[Method::POST]),
         ("/admin/cache-config", &[Method::GET]),
         ("/admin/cache-config/apply", &[Method::POST]),
+        ("/admin/geoip", &[Method::GET]),
+        ("/admin/geoip/add", &[Method::POST]),
+        ("/admin/geoip/remove", &[Method::POST]),
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),

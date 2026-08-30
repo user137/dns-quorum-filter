@@ -29,13 +29,17 @@
 //! `[geoip]` (T-76, SPEC.md §3.5) is the `GeoIP` blocked-country list —
 //! validated (uppercase, two ASCII letters) at load, same "hand-edited file,
 //! loud error not a silent no-op" discipline every other field here already
-//! has (see [`ConfigError::InvalidCountryCode`]). It's the one field this
-//! module persists with no admin-route *editor* yet (T-77) — `dispatch.rs`'s
-//! two existing config-writing routes still have to read and echo its
-//! current value back on every save, or an unrelated `providers`/`timeout`/
-//! cache-config change would silently wipe a hand-edited country list, same
-//! cross-field-read requirement `AppState::persist_lock`'s own doc comment
-//! already documents for `providers`/`timeout_mode`/`cache`.
+//! has (see [`ConfigError::InvalidCountryCode`]). `dispatch.rs`'s two
+//! config-writing routes that predate a dedicated editor for this field
+//! still have to read and echo its current value back on every save, or an
+//! unrelated `providers`/`timeout`/cache-config change would silently wipe a
+//! hand-edited country list, same cross-field-read requirement
+//! `AppState::persist_lock`'s own doc comment already documents for
+//! `providers`/`timeout_mode`/`cache`. `validate_country_code` itself is
+//! `pub(crate)` as of T-77 — `dispatch.rs`'s new `/admin/geoip/*` add/remove
+//! routes reuse this exact check rather than a second copy, the same "one
+//! validating constructor" precedent `cache::CacheConfig::from_secs`
+//! already set (T-153).
 
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -293,10 +297,12 @@ impl ResolverConfig {
     }
 }
 
-/// Validates and uppercases one `[geoip] blocked_countries` entry (T-76) —
+/// Validates and uppercases one `[geoip] blocked_countries` entry (T-76,
+/// widened to `pub(crate)` at T-77 for `dispatch.rs`'s admin-route reuse) —
 /// see [`ConfigError::InvalidCountryCode`]'s own doc comment for why this is
-/// a load-time rejection, not a silent pass-through.
-fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
+/// a load-time (and, since T-77, live-write-time) rejection, not a silent
+/// pass-through.
+pub(crate) fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
     if raw.len() == 2 && raw.bytes().all(|byte| byte.is_ascii_alphabetic()) {
         Ok(raw.to_ascii_uppercase())
     } else {

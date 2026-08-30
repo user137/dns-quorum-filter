@@ -301,6 +301,41 @@ impl CacheConfigUpdate {
     }
 }
 
+/// The body of `GET /admin/geoip`, and echoed back by `POST
+/// /admin/geoip/add`/`POST /admin/geoip/remove` after applying a change
+/// (T-77, SPEC.md §3.5, UI-SPEC.md §3.5) — same "always return the fresh
+/// live state" shape as [`OverrideListsResponse`]/[`CacheConfigView`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeoipCountriesResponse {
+    /// Every currently blocked ISO 3166-1 alpha-2 country code, uppercase
+    /// (see [`crate::config::validate_country_code`]). Empty by default —
+    /// SPEC.md §3.5's own stated opt-in default, never a shipped policy.
+    pub blocked_countries: Vec<String>,
+    /// Whether the change that produced this response was also written to
+    /// `resolver_config.toml` on disk — same convention as
+    /// [`OverrideListsResponse::persisted`]/[`CacheConfigView::persisted`].
+    /// Always `true` for a plain `GET`.
+    pub persisted: bool,
+}
+
+/// `POST /admin/geoip/add`/`POST /admin/geoip/remove`'s shared body (T-77) —
+/// one field is enough, unlike [`OverrideAddRequest`]/[`OverrideRemoveRequest`]'s
+/// two different shapes: a country code carries no wildcard/list-kind
+/// dimension to disambiguate. Validated server-side by
+/// [`crate::config::validate_country_code`] on both routes, not just add —
+/// an unnormalized (lowercase, or malformed) `country` on remove must be
+/// rejected the same way add rejects one, not silently no-op against the
+/// already-uppercase stored list (the exact "correct only by an invariant
+/// enforced elsewhere" trap `geoip::blocking_country`'s own
+/// `eq_ignore_ascii_case` comparison already exists to guard against one
+/// layer down, advisor-caught during this task's own planning).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeoipCountryRequest {
+    /// A raw ISO 3166-1 alpha-2 country code, any case (e.g. `"se"` or
+    /// `"SE"`) — normalized and validated server-side, not here.
+    pub country: String,
+}
+
 /// SPEC.md §6 `qtype` column, DTO form (`diagrams/ui-dto-model.md`'s `QType`
 /// enum, T-54) — four coarse buckets, not [`RecordType`]'s full range: an
 /// unrecognized/unusual wire record type must never round-trip an arbitrary

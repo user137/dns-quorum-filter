@@ -358,15 +358,20 @@ mod tests {
         // this test locked in a plain `==` comparison as a "precondition"
         // only actually enforced at one of `blocked_countries`'s several
         // writers (`ResolverConfig::load`) - `AppState::update_geoip_countries`
-        // and T-77's future admin write route both take a raw `Vec<String>`
-        // with no normalization, so a lowercase entry reaching this function
-        // by any path other than config-file load would silently never
-        // match. Fixed structurally (`eq_ignore_ascii_case`, not a
-        // documented-but-unenforced caller contract) - this test now proves
-        // the property that actually holds. Widened at T-79: the *returned*
-        // code must be the database's own casing ("SE"), not an echo of
-        // whatever case the config happened to use - the one way this could
-        // pass while silently sourcing the value from the wrong place.
+        // itself takes a raw `Vec<String>` with no normalization of its own
+        // (every current caller happens to pass it already-normalized data -
+        // `ResolverConfig::load` for config load/`/admin/reset`,
+        // `dispatch::validate_country_code` for T-77's admin add/remove
+        // routes - but that's a convention every caller upholds today, not
+        // a type-level guarantee this function enforces). Fixed
+        // structurally (`eq_ignore_ascii_case`, not a documented-but-
+        // unenforced caller contract) - this test now proves the property
+        // that actually holds, as defense-in-depth against a future writer
+        // that doesn't uphold the convention, not because a real gap
+        // remains today. Widened at T-79: the *returned* code must be the
+        // database's own casing ("SE"), not an echo of whatever case the
+        // config happened to use - the one way this could pass while
+        // silently sourcing the value from the wrong place.
         let reader = open_fixture();
         assert_eq!(
             blocking_country(Some(&reader), &["se".to_string()], &[se_ip()]),
