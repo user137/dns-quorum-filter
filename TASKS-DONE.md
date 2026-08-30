@@ -1580,3 +1580,59 @@
   стиль T-75), CONFIGURATION.md (нова секція `geoip_maxmind.toml`), SECURITY.md (2 dep-рядки +
   plaintext-tech-debt bullet + GeoIP-feeds bullet), CLAUDE.md (module table + known-limitations +
   deps), TASKS.md (T-162 заведено).
+
+- [x] T-81 — Атрибуція DB-IP Lite (CC BY 4.0, **не** CC BY-SA 4.0) в UI About/Credits (3.5,
+  Наскрізні вимоги) — один коміт, advisor до і після. **Закриває GeoIP-workstream Ф2 (T-74–T-82).**
+
+  Юридично обов'язкова атрибуція. `/admin/ui` — однобічний UI без вкладок і без екрана "Про
+  застосунок", тож реалізовано як постійний футер `<footer id="credits">` у
+  `crates/dnsqb-service/ui/index.html`: статичний HTML, **без JS, без DTO, без маршруту**. Поза
+  `#app-body`, тож 2-секундний status-poll його не чіпає (той самий патерн, що `#overrides-body`).
+
+  **Advisor pre-gate — блокуючий пункт: ліцензійний ідентифікатор був непідтверджений.** SPEC.md's
+  T-75 нотатка сама несла застереження "кілька незалежних джерел, але жодне не саму сторінку
+  db-ip.com напряму". Писати юридично зобовʼязуючий рядок у shipped UI з такого джерела — інверсія
+  того, що робилось на T-80 (де ендпоінт MaxMind пробили, а не реконструювали). db-ip.com цієї
+  сесії був досяжний (як і на T-78/T-161 — досяжність session-dependent, перевіряти щоразу), тож
+  **WebFetch проти `https://db-ip.com/db/download/ip-to-country-lite`**: сторінка сама називає
+  "Creative Commons Attribution 4.0 International License" і вимагає рівно цей сніпет —
+  `<a href='https://db-ip.com'>IP Geolocation by DB-IP</a>` — на будь-якій сторінці, що показує
+  результати бази. SPEC.md §3.5's T-75 нотатка оновлена: "потім підтверджено напряму проти
+  db-ip.com 2026-08-30" замість застарілого "не підтверджено напряму".
+
+  **Дві додаткові advisor-порали, застосовані:**
+  - **MaxMind-атрибуція не безумовна.** "This product includes GeoLite2 data..." фактично хибне в
+    дефолтному DB-IP-режимі (кожен інстал без opt-in). Футер каже "у розширеному режимі (власний
+    ключ MaxMind) використовуються дані GeoLite2, створені MaxMind" — вірно незалежно від активного
+    джерела. MaxMind's EULA (WebFetch проти maxmind.com/en/geolite2/eula) вимагає "substantially
+    similar" формулювання, не дослівне.
+  - **Тест перевіряє посилання, не хостнейм.** `INDEX_HTML.contains("db-ip.com")` зеленів би й на
+    рядок у HTML-коментарі. Тест (`admin_ui::tests::
+    index_html_carries_the_required_geoip_data_attributions`) перевіряє `href="https://db-ip.com"`
+    + текст сніпета + `CC BY 4.0` + `creativecommons.org/licenses/by/4.0` + GeoLite2/maxmind.com +
+    Apache-посилання — рівно те, що вимога називає, не "хостнейм десь є".
+
+  **Заодно:** `renderGeoip`'s рядок дати збірки більше не хардкодить "(DB-IP)" — джерело-нейтральний
+  "Дата збірки бази GeoIP: …", бо з T-80 завантажена база може бути MaxMind GeoLite2, а DTO не
+  каже яка. Втрата інформації ("яке джерело активне") зафіксована як T-162 п.(5), не залатана
+  вигаданим полем у цій задачі. Футер також несе Apache-2.0-ліцензію самого застосунку (Ф1-рядок
+  UI-SPEC §3.7, доти не реалізований — екрана "Про застосунок" не існувало).
+
+  **Жива перевірка проти реального бінарника** (той самий T-77/T-78 прецедент прямого HTTPS
+  round-trip, Chrome-automation досі недоступна): `dnsqb-service.exe` запущений проти тимчасового
+  `%LOCALAPPDATA%`, `curl -sk https://127.0.0.1:8443/admin/ui` — футер присутній з усіма
+  посиланнями; `/admin/ui/style.css` несе правило `#credits`; `POST /admin/shutdown` спрацював.
+  HTML-структура звірена на збалансованість тегів (`html.parser`, нових незакритих немає).
+
+  Ground-truth ритуал діаграм: `ui-navigation.md`'s `About`-вузол оновлено (CC BY 4.0, сніпет,
+  MaxMind-рядок, "реалізовано як футер #credits, не окремий екран"); додано ⚠️ GAP-нотатку, що
+  вкладкова структура діаграми — інвентар вимог, не карта реалізації (реальний UI однобічний).
+  `ui-dto-model.md` / `ui-status-indicator.md` — **не зачеплені** (T-81 не додає DTO/enum/поля й
+  не чіпає умов індикатора стану), звірено проти їхніх SOURCES-блоків. UI-SPEC §3.5/§3.7 —
+  рядки атрибуції позначені реалізованими, ліцензія виправлена на CC BY 4.0, додано примітку про
+  футер сторінки замість екрана.
+
+  Повний локальний гейт зелений: 385 lib/bins (+1 новий тест), conformance 18/2,
+  clippy/fmt/doc/deny/audit чисті. Docs: SPEC.md §3.5, UI-SPEC.md §3.5/§3.7, diagrams/
+  ui-navigation.md, CLAUDE.md (GeoIP-workstream позначений завершеним, названо наступні Ф2-опції),
+  TASKS.md.

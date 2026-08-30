@@ -606,7 +606,10 @@ function renderGeoip(data) {
   } else if (data.database_built_at_ms == null) {
     databaseStatus.textContent = "База GeoIP завантажена, дата збірки невідома.";
   } else {
-    databaseStatus.textContent = `Дата збірки бази GeoIP (DB-IP): ${new Date(
+    // No "(DB-IP)" here - since T-80 the loaded database may be MaxMind
+    // GeoLite2 instead, and this DTO doesn't carry which. Source-neutral is
+    // correct for both; the credits footer names both possible sources.
+    databaseStatus.textContent = `Дата збірки бази GeoIP: ${new Date(
       data.database_built_at_ms,
     ).toLocaleString()}`;
   }

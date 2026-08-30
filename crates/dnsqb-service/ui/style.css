@@ -211,3 +211,15 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   font-size: 11.8px; padding: 0.15rem 0;
 }
 .log-voter-provider { color: var(--text-muted); }
+
+/* T-81: attribution / credits footer. Muted, sits below all cards. */
+#credits {
+  margin-top: 1.6rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+#credits p { margin: 0.3rem 0; }
+#credits a { color: var(--accent); }

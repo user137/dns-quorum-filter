@@ -44,6 +44,27 @@
     <h3>Лог запитів</h3>
     <p>Завантаження…</p>
   </div>
+  <!-- T-81: attribution / credits. Static markup, no JS and no DTO - it must
+       be present on every render because this page displays GeoIP-derived
+       country data (the log's resolved_ip_country column, the GeoIP card),
+       and DB-IP Lite's CC BY 4.0 licence requires a link back to db-ip.com
+       on any page that shows results derived from the database (confirmed
+       2026-08-30 against db-ip.com's own download page - the required
+       snippet is exactly the "IP Geolocation by DB-IP" link below). The
+       MaxMind line is scoped to "advanced mode" because GeoLite2 data is
+       only in use when the operator has opted in (T-80). Kept outside
+       #app-body so the 2s status poll never touches it. -->
+  <footer id="credits">
+    <p>DNS Quorum Filter — <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache License 2.0</a>.</p>
+    <p>
+      GeoIP-дані:
+      <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a>
+      — база «IP to Country Lite», ліцензія
+      <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.
+      У розширеному режимі (власний ключ MaxMind) використовуються дані GeoLite2, створені MaxMind,
+      доступні з <a href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer">maxmind.com</a>.
+    </p>
+  </footer>
   <script src="/admin/ui/main.js"></script>
 </body>
 </html>

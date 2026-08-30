@@ -91,8 +91,40 @@ fn respond(
 
 #[cfg(test)]
 mod tests {
-    use super::{serve_css, serve_html, serve_js};
+    use super::{serve_css, serve_html, serve_js, INDEX_HTML};
     use http::{Method, StatusCode};
+
+    // T-81: DB-IP Lite's CC BY 4.0 licence requires a link back to db-ip.com
+    // on any page displaying data derived from the database, and this page
+    // shows GeoIP-derived country data. This asserts the two things the
+    // requirement actually names - the link-back and the licence - not just
+    // that the hostname appears somewhere (it could sit in a comment).
+    // MaxMind's GeoLite2 attribution is likewise required whenever that
+    // source is in use (T-80).
+    #[test]
+    fn index_html_carries_the_required_geoip_data_attributions() {
+        assert!(
+            INDEX_HTML.contains("href=\"https://db-ip.com\""),
+            "DB-IP link-back is legally required (CC BY 4.0)"
+        );
+        assert!(
+            INDEX_HTML.contains("IP Geolocation by DB-IP"),
+            "the db-ip.com-mandated anchor text"
+        );
+        assert!(
+            INDEX_HTML.contains("CC BY 4.0")
+                && INDEX_HTML.contains("creativecommons.org/licenses/by/4.0"),
+            "the licence must be named and linked, and it is CC BY 4.0 (not -SA)"
+        );
+        assert!(
+            INDEX_HTML.contains("GeoLite2") && INDEX_HTML.contains("maxmind.com"),
+            "MaxMind GeoLite2 attribution (T-80 advanced mode)"
+        );
+        assert!(
+            INDEX_HTML.contains("apache.org/licenses/LICENSE-2.0"),
+            "the app's own Apache-2.0 licence"
+        );
+    }
 
     #[test]
     fn serve_html_returns_ok_with_a_strict_csp_header() {

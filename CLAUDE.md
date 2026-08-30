@@ -69,9 +69,16 @@ Done: T-74 (`GeoipReader`), T-75 (background updater), T-76 (pipeline wiring + `
 every real-answer log row), T-80 (opt-in MaxMind GeoLite2 source — `geoip_credentials.rs` reads a
 plaintext `geoip_maxmind.toml`, `geoip_updater` branches on `GeoipSource`; Basic-auth download of
 the modern permalink, opportunistic `.tar.gz.sha256`, in-memory `.mmdb` extraction from the
-tarball; UI + DPAPI + broken-creds signal deferred to **T-162**). **Next: T-81** — DB-IP Lite
-attribution in the UI About/Credits (license is **CC BY 4.0**, not CC BY-SA 4.0 as older SPEC text
-said — corrected at T-75).
+tarball; UI + DPAPI + broken-creds signal deferred to **T-162**), T-81 (attribution footer
+`#credits` on `/admin/ui` — DB-IP link-back + **CC BY 4.0** (confirmed direct against db-ip.com),
+MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO).
+
+**The GeoIP workstream (T-74–T-82) is complete.** Remaining Ф2 work is separate: cert automation
+(T-69 rotation → T-67 DPAPI, each needs its own plan+advisor cycle) and custom DoH provider +
+presets (T-72/T-73, the phase's riskiest — `quorum` is hardcoded to two named providers).
+**T-162** (finish T-80's MaxMind UX: admin route + `/admin/ui` card + DPAPI + broken-creds signal +
+`/admin/reset` re-read + "which source is active" is unshown) stays open but is not the critical
+path. macOS-dependent tasks (T-68/T-70 halves, T-71, T-83) remain deferred — no macOS access.
 
 GeoIP design invariants (SPEC.md §3.5): the verdict is never cached — a cheap local lookup applied
 live on every cached-or-fresh ALLOW, so a blocked-country-list change takes effect on the next
