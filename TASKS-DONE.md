@@ -1855,11 +1855,11 @@
   транзитивний). Docs: SPEC.md §3.5 (dated T-162-part note + T-163 pointer), TASKS.md (progress +
   нова `- [ ] T-163`), CLAUDE.md, CONFIGURATION.md, UI-SPEC.md §3.5, `diagrams/ui-dto-model.md`.
 
-- [x] T-72 + T-73 (backend) — runtime-configured provider list: кастомний DoH-провайдер +
+- [x] T-72 + T-73 — runtime-configured provider list: кастомний DoH-провайдер +
   усі §3.4 presets, генералізація жорстко-закодованої 2-voter моделі (SPEC.md §3.4) —
-  plan-mode + advisor до і після; **розбито на 2 коміти** (backend + окремий UI-картковий),
-  бо єдиний діф вийшов ~3000 рядків через ~10 файлів + ~150 тест-сайтів у найбезпекочутливішому
-  модулі (ризик-нотатка плану спрацювала — розбиття явно нею дозволене).
+  plan-mode + advisor до і після; **3 коміти** (`4c8bf88` backend → `81b8cf1` closing-review →
+  UI-картка), бо єдиний діф вийшов ~3000 рядків через ~10 файлів + ~150 тест-сайтів у
+  найбезпекочутливішому модулі (ризик-нотатка плану спрацювала — розбиття явно нею дозволене).
 
   **Ядро.** `upstream.rs`: видалено `enum Provider` та `todo!()`-заглушку
   `ecs_option_for_upstream` (панікувала при виклику, `pub`, несла номер T-73 — перезаведено як
@@ -1932,16 +1932,40 @@
   (`EnabledProviders`/`Provider`/`ProvidersResponse` без шляху) — переформульовано.
   `examples/phase1_metrics.rs` мігровано (`builtin_preset` + `BlockSignature`).
 
-  Ground-truth ритуал: `ui-dto-model.md` — **зачеплений** (додано `ProviderSpec`/`ProviderView`/
-  `ProvidersResponse`/`ProviderAddRequest`/`ProviderStatusView`/`BlockSignature`, оновлено
-  `Category`/`AdminStatusResponse`/`AdminConfigUpdate`, видалено `EnabledProviders`, зв'язки,
-  наративні секції). `ui-status-indicator.md` — умова `NoActiveProvider` (`!providers.quad9 &&
-  !providers.adguard` → `active_providers.is_empty()`) — енкодиться лише в `ui-dto-model.md`,
-  оновлено там. `ui-navigation.md` — нова картка (у UI-коміті) не вузол навігації, **не
-  зачеплений**.
+  **Closing-review коміт (`81b8cf1`).** Advisor-огляд backend-коміту: (1) `ProvidersResponse`
+  дістав `filtering_active: bool` — `add`/`remove`/`set-enabled` можуть за один запит лишити
+  0 увімкнених voter'ів; SPEC.md §3/§8.1 робить цей pass-through легітимним вибором, тож він
+  **повертається з явним сигналом**, який картка мусить показати, а не відхиляється; тест це
+  перевіряє. (2) Коментар про `?voter=`-фасет виправлено: вимкнений preset лишається
+  фільтрованим, але **видалений кастомний** id — 400, його історичні рядки нефільтровні за
+  voter (у CLAUDE.md limitations). (3) `default_active_set()` через `filter_map(builtin_preset)`
+  тихо кидає невідомий id — новий тест пінить довжину до `DEFAULT_PROVIDER_IDS`.
 
-  Повний локальний гейт зелений: 416 lib + 5 tray (+~25 нових тестів, +2 `#[ignore]`d),
-  conformance 18/2, clippy/fmt/doc/deny/audit чисті (`url` не дав нової ліцензії; yanked
-  `chacha20` — пре-існуючий). Docs: SPEC.md §3.4, CONFIGURATION.md (`[[providers]]`),
-  CLAUDE.md, TASKS.md (+`- [ ] T-164`, T-72/73 UI-коміт лишається), `diagrams/ui-dto-model.md`.
-  **UI-коміт (наступний):** картка `#providers-body` + `main.js` + UI-SPEC.md §3.4.
+  **UI-картка (коміт 3).** `#providers-body` на `/admin/ui` — власний fetch/render-цикл (як
+  `#overrides-body`/`#geoip-body`, поза 2-с status-поллом). Список активних voter'ів згруповано
+  за `Category`, тумблер на рядок → `POST /admin/providers/set-enabled` (рендериться відповідь
+  POST-а напряму, не re-GET — той самий "failed save видно як `persisted:false`" патерн, що в
+  geoip-картці); бейдж `block_signature`; «Додати пресет» зі `available_presets` мінус активні;
+  суб-форма «додати власний DoH-провайдер» (id / URL / назва / select категорії / select
+  `block_signature` дефолт `NULL_IP_OR_NXDOMAIN`) з клієнтським дублем бекендових перевірок;
+  confirm-gated «Видалити» лише на `is_builtin=false`; рядок «N третіх сторін бачать запити» +
+  `filtering_active`-попередження. Провайдер-картку прибрано з `#app-body`'s `render()`,
+  `applyConfig` тепер шле лише `{ timeout_mode }`, `#log-voter` `<select>` наповнюється
+  динамічно з `/admin/providers` (`syncLogVoterOptions`) замість хардкоду 2 провайдерів.
+  Увесь операторський текст (кастомний `display_name`) — через `createElement`+`textContent`,
+  ніколи `innerHTML` (CSP тут не обмежує `innerHTML` — `admin_ui.rs`'s модульний док). Нового
+  CSS майже нема (реюз `.override-*`/`.switch`/`.log-item-badge`; +`#providers-body h4`).
+
+  Ground-truth ритуал: `ui-dto-model.md` — **зачеплений** (додано provider-DTO класи +
+  `filtering_active`). `ui-status-indicator.md` — **зачеплений** (нотатка: вхід умови
+  `NoActiveProvider` змінився з `providers` (2 булі) на `active_providers[]` порожній, семантика
+  та сама). `ui-navigation.md` — **зачеплений** (вузли `Dashboard`/`Providers` + GAP-нотатка про
+  список карток; +T-73 у SOURCES). `UI-SPEC.md` §3.4 — таблиця переписана під реалізовану картку;
+  §3.1 — рядок тумблерів провайдерів позначено як перенесений у §3.4.
+
+  Повний локальний гейт зелений (усі 3 коміти): 417 lib + 5 tray (+~26 нових тестів, +2
+  `#[ignore]`d), conformance 18/2, clippy/fmt/doc/deny/audit чисті (`url` не дав нової ліцензії;
+  yanked `chacha20` — пре-існуючий). Docs: SPEC.md §3.4, CONFIGURATION.md (`[[providers]]`),
+  CLAUDE.md (+ limitations: removed-custom `?voter=`, SSRF literal-host, shipped-default
+  divergence), TASKS.md, UI-SPEC.md §3.1/§3.4, `diagrams/ui-dto-model.md` /
+  `ui-navigation.md` / `ui-status-indicator.md`. CI backend-коміту (`33341097297`) — зелений.

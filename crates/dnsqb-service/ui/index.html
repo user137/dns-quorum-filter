@@ -12,6 +12,14 @@
   <div id="app-body">
     <p>Завантаження…</p>
   </div>
+  <!-- T-72/T-73: the voter (provider) list. Own fetch/render cycle, not on
+       the 2s status poll - the "add custom provider" sub-form has free-text
+       inputs (id / URL / display name) that must not be wiped mid-typing,
+       same reasoning as #overrides-body below. -->
+  <div id="providers-body" class="card">
+    <h3>Провайдери-voter'и</h3>
+    <p>Завантаження…</p>
+  </div>
   <!-- T-47: kept outside #app-body, which the 2s status poll fully
        replaces - a free-text "add domain" input living inside that
        container would lose in-progress typing every refresh. This section

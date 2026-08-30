@@ -62,10 +62,7 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 |---|---|---|---|---|
 | Індикатор стану | `StatusIndicatorState` (§4.6) | §8, §3.3, §7, ВП№10 | іконка + текст, завжди видимий у header | обчислюваний, не редагується користувачем |
 | Бейдж рейтингового фільтра | `bool` | §5.3, T-128 | окремий бейдж поруч з індикатором | видимий лише коли `RatingFilterConfig.enabled = true` |
-| Тумблер Security | `bool` | §3.4 | checkbox/switch | on/off; **дефолт ON** |
-| Тумблер Ads | `bool` | §3.4 | checkbox/switch | on/off; дефолт OFF |
-| Тумблер Adult | `bool` | §3.4 | checkbox/switch | on/off; дефолт OFF |
-| Попередження про порожній набір voters | текст | §3.3, §8.1 | банер, з'являється умовно | показується, коли всі три тумблери вимкнені |
+| Тумблери провайдерів + попередження про порожній набір voters | — | §3.4 | — | ⚠️ T-72/T-73: перенесено на картку `#providers-body` (§3.4) — на Dashboard їх більше немає; `filtering_active` там замінив цей банер |
 | Статистика заблокованого (сьогодні) | `u32` | §8 "статистика заблокованого" | лічильник | обчислюваний з логу — ⚠️ T-139: реалізовано інакше за цей чернетковий рядок — `/admin/ui`'s dashboard показує `blocked`/`total`/`in_flight` (вже `AdminStats`, T-52/T-149) плюс частку у відсотках, обчислену клієнтським JS з тих самих полів (не окремий backend-лічильник, і не "сьогодні" — те саме live log-вікно, що й решта статистики) |
 | Прев'ю останніх N записів логу | `Vec<LogEntry>` (§4.1) | §6 | компактна таблиця, 5-10 рядків | посилання "показати всі" → вкладка Лог |
 | Посилання "Приватність кворуму" | — | §8, ВП№4 | текстове посилання/іконка інфо, **не дрібним шрифтом** | відкриває пояснення тексту з ВП№4 |
@@ -102,17 +99,26 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 
 ### 3.4 Провайдери (Ф1 база / Ф2 розширення)
 
+**T-72/T-73 реалізували провайдер-частину** як окрему картку `#providers-body` на `/admin/ui`
+(власний fetch/render-цикл, поза 2-с status-поллом) поверх маршрутів
+`GET /admin/providers` + `POST /admin/providers/{add,remove,set-enabled}`
+(`ProvidersResponse`/`ProviderView`/`ProviderAddRequest` — `diagrams/ui-dto-model.md`). Режим
+таймауту лишився на картці "Режим таймауту" в `#app-body` (`AdminConfigUpdate` тепер несе лише
+`timeout_mode`). Порт і baseline-резолвер — досі чернетка (не в картці).
+
 | Поле | Тип | Джерело | Контрол UI | Що приймає / валідація | Фаза |
 |---|---|---|---|---|---|
-| Режим таймауту | `TimeoutMode` (§4.5) | §3.3 | radio/select: fail-open / fail-closed / degraded | одне з трьох, дефолт `fail-open` | Ф1 |
-| Значення таймауту (мс) | `u32` | §3.3 | числове поле | дефолт ~2000мс, конфігурований | Ф1 |
-| Порт локального DoH | `u16` | §1 | числове поле | конфліктний порт → **явна помилка**, не мовчазний fallback (§1) | Ф1 |
-| Presets Security | список чекбоксів | §3.4 | список: Quad9 Filtered, Cloudflare Malware, CleanBrowsing Security, DNS4EU Protective | multi-select, дефолт: перші два ON | Ф1 |
-| Presets Ads | список чекбоксів | §3.4 | AdGuard Default | on/off, дефолт OFF (керується головним тумблером Ads) | Ф1 |
-| Presets Adult | список чекбоксів | §3.4 | Cloudflare Family, AdGuard Family, CleanBrowsing Adult, OpenDNS FamilyShield, DNS4EU Child | multi-select, дефолт OFF | Ф1 |
-| Позначка DNS4EU | текст-бейдж | §3.4 | "provider run by EU institution" поруч із назвою | лише читання | Ф1 |
-| Кастомний DoH-провайдер | `ProviderConfig` (§4.5) | §3.4, T-72 | поле "додати" — назва + URL | валідний HTTPS URL; для NextDNS/ControlD персональних ендпоінтів | Ф2 |
-| Baseline-резолвер | `String` (URL) | §3.1, §3.4 | select з дефолтом Cloudflare 1.1.1.1 | одна з baseline-альтернатив таблиці §3.4 | Ф1 |
+| Режим таймауту | `TimeoutMode` (§4.5) | §3.3 | radio: fail_open / fail_closed / degraded, картка `#app-body` | одне з трьох, дефолт `fail_open` | Ф1 ✅ |
+| Значення таймауту (мс) | `u32` | §3.3 | числове поле | дефолт ~2000мс, конфігурований (не в UI-картці) | Ф1 |
+| Порт локального DoH | `u16` | §1 | числове поле | конфліктний порт → **явна помилка**, не мовчазний fallback (§1); не в UI-картці | Ф1 |
+| Список voter'ів, згрупований за категорією | `ProviderView[]` (`ProvidersResponse.active`) | §3.4, T-72/T-73 | заголовки `SECURITY`/`ADS_TRACKERS`/`ADULT_CONTENT`, у кожній рядок із тумблером | тумблер → `POST /admin/providers/set-enabled`; бейдж `block_signature`; дефолт `quad9`+`adguard` ON (розбіжність зі SPEC §3.4/§3.5 "лише Security" — відкрите рішення) | Ф2 ✅ |
+| Додати пресет | `ProviderView[]` (`available_presets` мінус уже активні) | §3.4, T-73 | рядок «назва + бейдж категорії + Додати» | `POST /admin/providers/add` з `{ id }` (решта полів — з таблиці `BUILTIN_PRESETS`) | Ф2 ✅ |
+| Додати власний DoH-провайдер | `ProviderAddRequest` | §3.4, T-72 | суб-форма: `id` (`[a-z0-9-]{1,64}`), URL, показова назва, select категорії, select `block_signature` (дефолт `NULL_IP_OR_NXDOMAIN`) | `POST /admin/providers/add`; клієнт дублює бекендові перевірки `is_valid_provider_id` / `https://`; сервер відхиляє SSRF-хост (loopback/private/link-local літерал), дублікат id, неповну форму — payload-free 400 | Ф2 ✅ |
+| Видалити власний запис | `ProviderRemoveRequest` | §3.4, T-72 | confirm-gated кнопка «Видалити» лише на рядках `is_builtin=false` | `POST /admin/providers/remove` з `{ id }`; пресет видалити не можна (лише вимкнути) | Ф2 ✅ |
+| Рядок «N третіх сторін бачать запити» | `usize` (`third_party_count`) | §3.4, CLAUDE.md «не ховати» | текст, лише читання | увімкнені voter'и + 1 baseline | Ф2 ✅ |
+| Попередження «фільтрація не активна» | `bool` (`filtering_active`) | §3, §8.1, T-72/T-73 closing review | `notice warn`, з'являється умовно | показується, коли жоден voter не увімкнено (легітимний pass-through, але має бути видимим) | Ф2 ✅ |
+| Позначка DNS4EU | текст-бейдж | §3.4 | "provider run by EU institution" поруч із назвою | лише читання; **ще не реалізовано** (бейдж показує лише `block_signature`) | Ф2 |
+| Baseline-резолвер | `String` (URL) | §3.1, §3.4 | select з дефолтом Cloudflare 1.1.1.1 | одна з baseline-альтернатив таблиці §3.4; **поза scope T-72/T-73** (окрема задача) | Ф1 |
 
 ### 3.5 GeoIP (Ф2)
 

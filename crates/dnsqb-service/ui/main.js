@@ -9,6 +9,7 @@
 const statusPill = document.getElementById("status-pill");
 const statusText = document.getElementById("status-text");
 const appBody = document.getElementById("app-body");
+const providersBody = document.getElementById("providers-body");
 const overridesBody = document.getElementById("overrides-body");
 const cacheConfigBody = document.getElementById("cache-config-body");
 const geoipBody = document.getElementById("geoip-body");
@@ -28,21 +29,16 @@ async function getStatus() {
   return response.json();
 }
 
-/// Sends a full `AdminConfigUpdate` (always both fields together - see the
-/// backend's own `AdminConfigUpdate` doc comment for why the wire format is
-/// a full replace, not a per-field patch). Fetches the current status first
-/// so the caller only has to override the one field it actually changed -
-/// the same pattern the deleted Tauri commands used.
+/// Sends an `AdminConfigUpdate`. Since T-72/T-73 that DTO carries only
+/// `timeout_mode` (the voter list moved to its own `/admin/providers/*`
+/// routes), so `applyConfig` is only ever called with `{ timeout_mode }` -
+/// the pre-fetch of the current status is gone with the `providers` field
+/// it used to carry forward.
 async function applyConfig(overrides) {
-  const current = await getStatus();
   const response = await fetch("/admin/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      providers: current.providers,
-      timeout_mode: current.timeout_mode,
-      ...overrides,
-    }),
+    body: JSON.stringify(overrides),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -77,26 +73,9 @@ function blockedPercentLabel(stats) {
 
 function render(status) {
   setPill(true, "Сервіс доступний");
-  const bothOff = !status.providers.quad9 && !status.providers.adguard;
+  // The voter (provider) list moved to its own #providers-body card
+  // (T-72/T-73) - it is no longer part of the 2s status poll's DOM.
   appBody.innerHTML = `
-    ${bothOff ? `<div class="notice warn">Обидва провайдери вимкнено — фільтрація не активна, запити йдуть напряму через baseline-резолвер (Cloudflare), який усе одно бачить кожен новий домен, який ви відвідуєте.</div>` : ""}
-    <div class="card">
-      <h3>Провайдери</h3>
-      <div class="toggle-row">
-        <span>Quad9</span>
-        <label class="switch">
-          <input type="checkbox" id="toggle-quad9" ${status.providers.quad9 ? "checked" : ""} />
-          <span class="track"></span><span class="thumb"></span>
-        </label>
-      </div>
-      <div class="toggle-row">
-        <span>AdGuard</span>
-        <label class="switch">
-          <input type="checkbox" id="toggle-adguard" ${status.providers.adguard ? "checked" : ""} />
-          <span class="track"></span><span class="thumb"></span>
-        </label>
-      </div>
-    </div>
     <div class="card">
       <h3>Режим таймауту</h3>
       <div class="radio-group">
@@ -134,8 +113,6 @@ function render(status) {
     </div>
   `;
 
-  document.getElementById("toggle-quad9").addEventListener("change", onProvidersChanged);
-  document.getElementById("toggle-adguard").addEventListener("change", onProvidersChanged);
   document
     .querySelectorAll('input[name="timeout-mode"]')
     .forEach((el) => el.addEventListener("change", onTimeoutModeChanged));
@@ -148,16 +125,6 @@ function renderError(err) {
   panel.className = "error-panel";
   panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
   appBody.appendChild(panel);
-}
-
-async function onProvidersChanged() {
-  const quad9 = document.getElementById("toggle-quad9").checked;
-  const adguard = document.getElementById("toggle-adguard").checked;
-  try {
-    render(await applyConfig({ providers: { quad9, adguard } }));
-  } catch (err) {
-    renderError(err);
-  }
 }
 
 async function onTimeoutModeChanged(event) {
@@ -971,6 +938,9 @@ const VOTER_STATUS_LABELS = {
   CANCELED: "скасовано",
   DISABLED: "вимкнено",
 };
+// Pretty names for the two Phase-1 provider ids; any other id (a preset
+// toggled on, or a custom entry) falls through to its raw wire id, which is
+// already human-readable enough (e.g. "cloudflare-family").
 const PROVIDER_LABELS = { quad9: "Quad9", adguard: "AdGuard" };
 
 // Built via DOM methods only, same discipline as overrideListItem above -
@@ -1177,17 +1147,15 @@ function buildLogFilterRow() {
 
   const voterSelect = document.createElement("select");
   voterSelect.id = "log-voter";
-  // Hardcoded to the two Phase-1 providers, same as CACHE_CONFIG_FIELDS above
-  // - must match upstream::Provider::as_str()'s output, but nothing enforces
-  // that from the JS side (unlike the decision literals, which do have a
-  // Rust-side drift test). Whoever adds a third provider (T-73 presets) has
-  // to update this list by hand.
-  [["", "Усі voter'и"], ["quad9", "Quad9"], ["adguard", "AdGuard"]].forEach(([value, text]) => {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = text;
-    voterSelect.appendChild(opt);
-  });
+  // T-72/T-73: options are filled in by syncLogVoterOptions() from the live
+  // /admin/providers response (every built-in preset + any active custom
+  // entry), not hardcoded - the provider list is now runtime state. Starts
+  // with just the "all" option so the element exists for currentLogQuery()
+  // even before the providers fetch resolves.
+  const allVoters = document.createElement("option");
+  allVoters.value = "";
+  allVoters.textContent = "Усі voter'и";
+  voterSelect.appendChild(allVoters);
   voterSelect.addEventListener("change", refreshLog);
   filterRow.appendChild(voterSelect);
 
@@ -1292,3 +1260,384 @@ async function refreshLog() {
 // own comment above for the null-deref this fixed).
 buildLogFilterRow();
 refreshLog();
+
+// T-72/T-73: the voter (provider) list editor. Same isolation reasoning as
+// the overrides/geoip sections - #providers-body is its own DOM subtree with
+// its own fetch/render cycle, not on the 2s status poll, so the free-text
+// inputs in the "add custom provider" sub-form aren't wiped mid-typing.
+// Fetches once on load, then re-renders straight from each mutating route's
+// echoed ProvidersResponse (add/remove/set-enabled) - the same
+// render-the-POST-response, never re-GET pattern the geoip card uses, so a
+// failed disk save shows up as persisted:false instead of being hidden by a
+// fresh GET's always-true value.
+
+const PROVIDER_CATEGORY_LABELS = {
+  SECURITY: "Безпека (шкідливе, фішинг)",
+  ADS_TRACKERS: "Реклама і трекери",
+  ADULT_CONTENT: "Дорослий контент",
+};
+const PROVIDER_CATEGORY_ORDER = ["SECURITY", "ADS_TRACKERS", "ADULT_CONTENT"];
+const BLOCK_SIGNATURE_LABELS = {
+  NULL_IP: "0.0.0.0 у відповіді",
+  NXDOMAIN_VS_BASELINE: "NXDOMAIN проти baseline",
+  NULL_IP_OR_NXDOMAIN: "0.0.0.0 або NXDOMAIN",
+};
+
+async function getProviders() {
+  const response = await fetch("/admin/providers");
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function setProviderEnabled(id, enabled) {
+  const response = await fetch("/admin/providers/set-enabled", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, enabled }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function addProvider(spec) {
+  const response = await fetch("/admin/providers/add", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(spec),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function removeProvider(id) {
+  const response = await fetch("/admin/providers/remove", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// Rebuilds #log-voter's options from the live provider list - every built-in
+// preset plus any active custom entry, keyed by id. Runs on every
+// renderProviders() (add/remove/toggle). Preserves the current selection;
+// if it named an entry that no longer exists the browser drops it back to
+// "" (all voters), which is also what the backend's ?voter= validation
+// would 400 anyway.
+function syncLogVoterOptions(data) {
+  const select = document.getElementById("log-voter");
+  if (!select) {
+    return;
+  }
+  const previous = select.value;
+  select.textContent = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "Усі voter'и";
+  select.appendChild(all);
+
+  const seen = new Set();
+  const pairs = [];
+  data.available_presets.concat(data.active).forEach((entry) => {
+    if (!seen.has(entry.id)) {
+      seen.add(entry.id);
+      pairs.push([entry.id, entry.display_name]);
+    }
+  });
+  pairs.forEach(([value, text]) => {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = text;
+    select.appendChild(opt);
+  });
+  select.value = previous;
+}
+
+// Built via DOM methods only (createElement / textContent) - a custom
+// entry's display_name is operator-supplied and reaches the DOM here;
+// admin_ui.rs's own module doc flags that this page's CSP does not restrain
+// innerHTML, so every renderer that shows user text constructs nodes
+// instead of interpolating strings (same discipline as overrideListItem).
+function providerRow(entry) {
+  const li = document.createElement("li");
+  li.className = "override-item";
+
+  const label = document.createElement("span");
+  label.textContent = entry.display_name;
+  li.appendChild(label);
+
+  const sig = document.createElement("span");
+  sig.className = "log-item-badge";
+  sig.title = "Як quorum читає блок-відповідь цього провайдера";
+  sig.textContent = BLOCK_SIGNATURE_LABELS[entry.block_signature] || entry.block_signature;
+  li.appendChild(sig);
+
+  if (!entry.is_builtin) {
+    const custom = document.createElement("span");
+    custom.className = "log-item-badge";
+    custom.textContent = "власний";
+    li.appendChild(custom);
+  }
+
+  const sw = document.createElement("label");
+  sw.className = "switch";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = entry.enabled;
+  cb.addEventListener("change", async () => {
+    try {
+      renderProviders(await setProviderEnabled(entry.id, cb.checked));
+    } catch (err) {
+      cb.checked = entry.enabled;
+      renderProvidersError(err);
+    }
+  });
+  const track = document.createElement("span");
+  track.className = "track";
+  const thumb = document.createElement("span");
+  thumb.className = "thumb";
+  sw.appendChild(cb);
+  sw.appendChild(track);
+  sw.appendChild(thumb);
+  li.appendChild(sw);
+
+  if (!entry.is_builtin) {
+    let armed = false;
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "override-remove";
+    removeBtn.textContent = "Видалити";
+    removeBtn.addEventListener("click", async () => {
+      if (!armed) {
+        armed = true;
+        removeBtn.textContent = "Підтвердити видалення";
+        return;
+      }
+      try {
+        renderProviders(await removeProvider(entry.id));
+      } catch (err) {
+        renderProvidersError(err);
+      }
+    });
+    li.appendChild(removeBtn);
+  }
+
+  return li;
+}
+
+function customProviderForm() {
+  const wrap = document.createElement("div");
+
+  const heading = document.createElement("h4");
+  heading.textContent = "Додати власний DoH-провайдер";
+  wrap.appendChild(heading);
+
+  const row = document.createElement("div");
+  row.className = "override-add-row";
+
+  const idInput = document.createElement("input");
+  idInput.type = "text";
+  idInput.placeholder = "ідентифікатор (a-z, 0-9, -)";
+  idInput.maxLength = 64;
+
+  const urlInput = document.createElement("input");
+  urlInput.type = "text";
+  urlInput.placeholder = "https://xxxx.dns.nextdns.io/dns-query";
+
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.placeholder = "показова назва";
+
+  const catSelect = document.createElement("select");
+  PROVIDER_CATEGORY_ORDER.forEach((cat) => {
+    const opt = document.createElement("option");
+    opt.value = cat;
+    opt.textContent = PROVIDER_CATEGORY_LABELS[cat];
+    catSelect.appendChild(opt);
+  });
+
+  const sigSelect = document.createElement("select");
+  // NULL_IP_OR_NXDOMAIN first: the permissive default for an endpoint whose
+  // block behaviour hasn't been live-verified - matches resolve_providers'
+  // own default on the backend.
+  ["NULL_IP_OR_NXDOMAIN", "NULL_IP", "NXDOMAIN_VS_BASELINE"].forEach((sigValue) => {
+    const opt = document.createElement("option");
+    opt.value = sigValue;
+    opt.textContent = BLOCK_SIGNATURE_LABELS[sigValue];
+    sigSelect.appendChild(opt);
+  });
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Додати";
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+
+  addBtn.addEventListener("click", async () => {
+    const id = idInput.value.trim();
+    const url = urlInput.value.trim();
+    const displayName = nameInput.value.trim();
+    errorLine.textContent = "";
+    // Client-side mirror of the backend's is_valid_provider_id /
+    // validate_provider_url checks - belt and suspenders, the server still
+    // rejects independently and stays payload-free.
+    if (!/^[a-z0-9-]{1,64}$/.test(id)) {
+      errorLine.textContent =
+        "Ідентифікатор: лише малі латинські літери, цифри та дефіс (1-64 символи).";
+      return;
+    }
+    if (!/^https:\/\//i.test(url)) {
+      errorLine.textContent = "URL має починатися з https://";
+      return;
+    }
+    if (!displayName) {
+      errorLine.textContent = "Вкажіть показову назву.";
+      return;
+    }
+    try {
+      renderProviders(
+        await addProvider({
+          id,
+          url,
+          display_name: displayName,
+          category: catSelect.value,
+          block_signature: sigSelect.value,
+        }),
+      );
+    } catch (err) {
+      errorLine.textContent = `Не вдалося додати: ${(err && err.message) || String(err)}`;
+    }
+  });
+
+  row.appendChild(idInput);
+  row.appendChild(urlInput);
+  row.appendChild(nameInput);
+  row.appendChild(catSelect);
+  row.appendChild(sigSelect);
+  row.appendChild(addBtn);
+  wrap.appendChild(row);
+  wrap.appendChild(errorLine);
+  return wrap;
+}
+
+function renderProviders(data) {
+  providersBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Провайдери-voter'и";
+  providersBody.appendChild(heading);
+
+  // SPEC.md / CLAUDE.md: the fan-out privacy tradeoff (more third parties
+  // see uncached browsing history) must stay user-visible, not buried.
+  const fanout = document.createElement("p");
+  fanout.className = "geoip-database-status";
+  fanout.textContent =
+    `Кожен новий (не з кешу) домен бачать ${data.third_party_count} третіх сторін: ` +
+    `${data.third_party_count - 1} увімкнених voter'ів + baseline-резолвер.`;
+  providersBody.appendChild(fanout);
+
+  // T-72/T-73 closing review: the all-disabled state is a legitimate
+  // user choice (SPEC.md §3/§8.1 pass-through), but it must be shown, not
+  // silently in effect - filtering_active is the backend's explicit signal.
+  if (!data.filtering_active) {
+    const off = document.createElement("div");
+    off.className = "notice warn";
+    off.textContent =
+      "Жоден voter не увімкнено - фільтрація не активна. Запити йдуть напряму через " +
+      "baseline-резолвер, який усе одно бачить кожен домен, який ви відвідуєте.";
+    providersBody.appendChild(off);
+  }
+
+  // Same "silent data loss" concern as #overrides-body / #geoip-body (T-47).
+  if (!data.persisted) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    providersBody.appendChild(notPersisted);
+  }
+
+  PROVIDER_CATEGORY_ORDER.forEach((cat) => {
+    const inCategory = data.active.filter((entry) => entry.category === cat);
+    if (inCategory.length === 0) {
+      return;
+    }
+    const catHeading = document.createElement("h4");
+    catHeading.textContent = PROVIDER_CATEGORY_LABELS[cat] || cat;
+    providersBody.appendChild(catHeading);
+    const list = document.createElement("ul");
+    list.className = "override-list";
+    inCategory.forEach((entry) => list.appendChild(providerRow(entry)));
+    providersBody.appendChild(list);
+  });
+
+  const activeIds = new Set(data.active.map((entry) => entry.id));
+  const addable = data.available_presets.filter((preset) => !activeIds.has(preset.id));
+  if (addable.length > 0) {
+    const addHeading = document.createElement("h4");
+    addHeading.textContent = "Додати пресет";
+    providersBody.appendChild(addHeading);
+    const list = document.createElement("ul");
+    list.className = "override-list";
+    addable.forEach((preset) => {
+      const li = document.createElement("li");
+      li.className = "override-item";
+      const label = document.createElement("span");
+      label.textContent = preset.display_name;
+      li.appendChild(label);
+      const catBadge = document.createElement("span");
+      catBadge.className = "log-item-badge";
+      catBadge.textContent = PROVIDER_CATEGORY_LABELS[preset.category] || preset.category;
+      li.appendChild(catBadge);
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "override-remove";
+      addBtn.textContent = "Додати";
+      addBtn.addEventListener("click", async () => {
+        try {
+          renderProviders(await addProvider({ id: preset.id }));
+        } catch (err) {
+          renderProvidersError(err);
+        }
+      });
+      li.appendChild(addBtn);
+      list.appendChild(li);
+    });
+    providersBody.appendChild(list);
+  }
+
+  providersBody.appendChild(customProviderForm());
+
+  syncLogVoterOptions(data);
+}
+
+function renderProvidersError(err) {
+  providersBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Провайдери-voter'и";
+  providersBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  providersBody.appendChild(panel);
+}
+
+async function refreshProviders() {
+  try {
+    renderProviders(await getProviders());
+  } catch (err) {
+    renderProvidersError(err);
+  }
+}
+
+refreshProviders();

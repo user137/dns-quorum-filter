@@ -45,7 +45,9 @@ flowchart TD
 
 Ф1 closure-план (TASKS.md) звузив T-56 до простішого попередника в `dnsqb-tray`'s tooltip
 (`crates/dnsqb-tray/src/status.rs`), не до повного індикатора вище. Реалізовано: умова 2 (0
-voters — уже готове з T-149, `NoActiveProvider`) і частина умови 3 (деградація — `AdminStats.
+voters — уже готове з T-149, `NoActiveProvider`; T-72/T-73 змінило вхід із
+`AdminStatusResponse.providers` (2 булі) на `active_providers: ProviderStatusView[]` — стан
+`NoActiveProvider` = порожній масив, семантика та сама) і частина умови 3 (деградація — `AdminStats.
 degraded_window`/`degraded_events`, `diagrams/ui-dto-model.md`'s власний новий розділ). Умова 1
 (браузер не використовує локальний DoH — блокована на T-134's ще не спроєктованому
 domain→fixed-IP canary-механізмі) і умова 4 (watchdog — Фаза 3 ще не існує) лишаються
