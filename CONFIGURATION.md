@@ -3,7 +3,9 @@
 Довідник по обох конфігураційних TOML-файлах `dnsqb-service`. Обидва — звичайний, редагований
 вручну текст (SPEC.md §5), і обидва тепер мають другий, живий шлях запису через адмін-канал на
 тому ж loopback `DoH`-порту: `resolver_config.toml` — `GET /admin/status`/`POST /admin/config`
-(T-52), `overrides.toml` — `GET /admin/overrides`/`POST /admin/overrides/add`/`remove` (T-47).
+(T-52), плюс `GET /admin/cache-config`/`POST /admin/cache-config/apply` (T-153) і
+`GET /admin/geoip`/`POST /admin/geoip/add`/`remove` (T-77) для двох його вкладених таблиць;
+`overrides.toml` — `GET /admin/overrides`/`POST /admin/overrides/add`/`remove` (T-47).
 Ручна правка обох файлів лишається можливою; `POST /admin/reset` (T-149) перечитує обидва файли з
 диска живцем, без перезапуску сервісу.
 
@@ -27,7 +29,8 @@
 
 Налаштування самого DoH-слухача. **Відсутній файл — це не помилка** (стартує з дефолтів нижче).
 **Файл є, але зламаний (невалідний TOML, невідоме поле, `port = 0`, `timeout_ms = 0`,
-`[cache].clamp_min_secs` більший за `clamp_max_secs` (T-153), або файл більший за 64 КіБ) — це
+`[cache].clamp_min_secs` більший за `clamp_max_secs` (T-153), `[geoip].blocked_countries` містить
+код країни, що не є рівно двома ASCII-літерами (T-76), або файл більший за 64 КіБ) — це
 фатальна помилка**: сервіс завершується з кодом 1, а не мовчки підставляє
 дефолт (SPEC.md §1: жодного тихого fallback на інший порт). Ліміт розміру (T-58) — той самий захист
 від необмеженої алокації, що вже застосований до DoH-повідомлень і адмін-запитів; 64 КіБ — з

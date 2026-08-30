@@ -570,8 +570,11 @@ function geoipListItem(code) {
   removeBtn.textContent = "Видалити";
   removeBtn.addEventListener("click", async () => {
     try {
-      await removeGeoipCountry(code);
-      await refreshGeoip();
+      // Renders the POST response directly (same as renderCacheConfig
+      // below), not add-then-refetch - a re-GET always reports the live
+      // state's own persisted:true and would silently hide a failed save
+      // (advisor-caught during this task's own closing review).
+      renderGeoip(await removeGeoipCountry(code));
     } catch (err) {
       renderGeoipError(err);
     }
@@ -654,9 +657,10 @@ function renderGeoip(data) {
       return;
     }
     try {
-      await addGeoipCountry(code);
-      input.value = "";
-      await refreshGeoip();
+      // Renders the POST response directly - see the remove handler's own
+      // comment above for why add-then-refresh would silently hide a
+      // failed save.
+      renderGeoip(await addGeoipCountry(code));
     } catch (err) {
       errorLine.textContent = `Не вдалося додати "${code}": ${(err && err.message) || String(err)}`;
     }
