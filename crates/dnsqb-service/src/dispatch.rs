@@ -27,7 +27,7 @@ use crate::admin::{
     CacheConfigUpdate, CacheConfigView, DatabaseSource, GeoipCountriesResponse,
     GeoipCountryRequest, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
     MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest, OverrideDomainView,
-    OverrideListsResponse, OverrideRemoveRequest,
+    OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
@@ -41,9 +41,10 @@ use crate::pipeline::{
     PipelineOutcome,
 };
 use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
-use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutConfig;
-use crate::upstream::{DohClient, Provider};
+use crate::upstream::{
+    all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
+};
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -85,6 +86,10 @@ const ADMIN_GEOIP_ADD_PATH: &str = "/admin/geoip/add";
 const ADMIN_GEOIP_REMOVE_PATH: &str = "/admin/geoip/remove";
 const ADMIN_GEOIP_MAXMIND_PATH: &str = "/admin/geoip/maxmind";
 const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
+const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
+const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
+const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
+const ADMIN_PROVIDERS_SET_ENABLED_PATH: &str = "/admin/providers/set-enabled";
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
 const ADMIN_UI_PATH: &str = "/admin/ui";
@@ -116,6 +121,10 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_GEOIP_REMOVE_PATH, &[Method::POST]),
     (ADMIN_GEOIP_MAXMIND_PATH, &[Method::GET, Method::POST]),
     (ADMIN_GEOIP_MAXMIND_CLEAR_PATH, &[Method::POST]),
+    (ADMIN_PROVIDERS_PATH, &[Method::GET]),
+    (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
+    (ADMIN_PROVIDERS_REMOVE_PATH, &[Method::POST]),
+    (ADMIN_PROVIDERS_SET_ENABLED_PATH, &[Method::POST]),
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
@@ -217,18 +226,38 @@ fn content_type_is_json(content_type: Option<&str>) -> bool {
     content_type_matches(content_type, "application/json")
 }
 
-/// The admin-mutable subset of resolver config (T-52) — bundled into one
-/// [`AppState::runtime`] lock rather than two separate locks, so a read/
-/// write is atomic across both fields: a query must never be able to
-/// observe a newly-changed `providers` paired with a stale `timeout`, which
-/// two independent locks could momentarily allow between an admin write to
-/// one and the other.
+/// The admin-mutable timeout config (T-52). Since T-72/T-73 the provider
+/// list is its own [`AppState::providers`] `RwLock<Arc<Vec<ProviderEntry>>>`
+/// slice (edited via `/admin/providers/*`, not `/admin/config`), so this is
+/// down to one field — kept as a struct for a stable `AppState` shape and in
+/// case another admin-mutable scalar joins it.
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeSettings {
-    /// Which providers are currently queried.
-    pub providers: EnabledProviders,
     /// Current timeout mode/duration.
     pub timeout: TimeoutConfig,
+}
+
+/// The admin-mutable resolver settings handed to [`AppState::new`] (T-72/T-73)
+/// — bundles `timeout` with the configured `providers` list so the
+/// constructor stays under `clippy::too_many_arguments`. `AppState::new`
+/// immediately splits it: `timeout` into [`AppState::runtime`], `providers`
+/// into [`AppState::providers`] (its own `RwLock<Arc<_>>`, swapped only by
+/// `/admin/providers/*` and `/admin/reset`).
+#[derive(Debug, Clone)]
+pub struct RuntimeInit {
+    /// Current timeout mode/duration.
+    pub timeout: TimeoutConfig,
+    /// The configured voter list, in order.
+    pub providers: Vec<ProviderEntry>,
+}
+
+impl Default for RuntimeInit {
+    fn default() -> Self {
+        Self {
+            timeout: TimeoutConfig::default(),
+            providers: ProviderEntry::default_active_set(),
+        }
+    }
 }
 
 /// Where (if anywhere) admin-channel config changes should be persisted,
@@ -412,6 +441,9 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // held across the `.await` below.
     let geoip_state = Arc::clone(&state.geoip.read());
     let geoip_countries = Arc::clone(&state.geoip_countries.read());
+    // Same snapshot discipline (T-72/T-73) — `Arc::clone` under the lock,
+    // never held across the `.await`.
+    let providers = Arc::clone(&state.providers.read());
     let cache_context = CacheContext {
         cache: &cache_state.cache,
         config: &cache_state.config,
@@ -424,7 +456,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         &query,
         &state.client,
         &overrides_state.lists,
-        settings.providers,
+        &providers,
         &cache_context,
         &settings.timeout,
         &geoip_filter,
@@ -472,6 +504,10 @@ pub struct AppState<C: DohClient + Sync> {
     client: C,
     overrides: RwLock<Arc<OverridesState>>,
     runtime: RwLock<RuntimeSettings>,
+    /// The configured voter list (T-72/T-73) — swapped by `/admin/providers/*`
+    /// and `apply_admin_reset`, read once per query as an `Arc::clone` under
+    /// the lock (never held across `.await`), same shape as `cache`/`geoip`.
+    providers: RwLock<Arc<Vec<ProviderEntry>>>,
     cache: RwLock<Arc<CacheState>>,
     /// T-75 — swapped by `geoip_updater::run_geoip_updater` after each
     /// successful database refresh, read by `pipeline::handle_query`'s
@@ -577,7 +613,7 @@ impl<C: DohClient + Sync> AppState<C> {
     pub fn new(
         client: C,
         overrides: OverridesState,
-        runtime: RuntimeSettings,
+        runtime: RuntimeInit,
         cache: CacheState,
         geoip: GeoipInit,
         query_log: QueryLog,
@@ -587,7 +623,10 @@ impl<C: DohClient + Sync> AppState<C> {
         Self {
             client,
             overrides: RwLock::new(Arc::new(overrides)),
-            runtime: RwLock::new(runtime),
+            runtime: RwLock::new(RuntimeSettings {
+                timeout: runtime.timeout,
+            }),
+            providers: RwLock::new(Arc::new(runtime.providers)),
             cache: RwLock::new(Arc::new(cache)),
             geoip: RwLock::new(Arc::new(geoip.database)),
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
@@ -620,6 +659,20 @@ impl<C: DohClient + Sync> AppState<C> {
     /// (the loaded database) — see that field's own doc comment.
     pub(crate) fn update_geoip_countries(&self, blocked_countries: Vec<String>) {
         *self.geoip_countries.write() = Arc::new(blocked_countries);
+    }
+
+    /// Swaps in a new configured voter list (T-72/T-73) — the single writer
+    /// `apply_provider_change` (the `/admin/providers/*` routes) and
+    /// `apply_admin_reset` both go through, rather than writing the `RwLock`
+    /// directly.
+    pub(crate) fn update_providers(&self, providers: Vec<ProviderEntry>) {
+        *self.providers.write() = Arc::new(providers);
+    }
+
+    /// A snapshot of the configured voter list, for a handler that needs to
+    /// read-modify-write it or re-serialize it to disk.
+    pub(crate) fn providers_snapshot(&self) -> Vec<ProviderEntry> {
+        self.providers.read().as_ref().clone()
     }
 
     /// Subscribes a new receiver for the shutdown signal (T-149) — each call
@@ -683,7 +736,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
     let settings = *state.runtime.read();
     let entries = state.query_log.snapshot(SystemTime::now());
     AdminStatusResponse {
-        providers: settings.providers,
+        active_providers: ProviderStatusView::active_from(&state.providers.read()),
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
@@ -737,19 +790,23 @@ fn apply_admin_config<C: DohClient + Sync>(
     // ones just written, not "whatever the lock currently holds."
     let settings = {
         let mut guard = state.runtime.write();
-        guard.providers = update.providers;
         guard.timeout.mode = update.timeout_mode;
         *guard
     };
     let cache_config = state.cache.read().config;
     let blocked_countries = state.geoip_countries.read().as_ref().clone();
+    // Cross-field read (T-72/T-73): the voter list is edited by
+    // `/admin/providers/*`, not here, but this write re-serializes the whole
+    // `resolver_config.toml`, so it must carry the list's live value too or
+    // an unrelated timeout toggle would blank `[[providers]]` on save.
+    let providers = state.providers_snapshot();
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => {
             let config = ResolverConfig {
                 port: state.persist.port,
                 timeout_mode: settings.timeout.mode,
                 timeout_ms: timeout_ms(settings.timeout.duration),
-                providers: settings.providers,
+                providers,
                 cache: cache_config,
                 geoip: GeoipConfig { blocked_countries },
             };
@@ -764,7 +821,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         None => false,
     };
     AdminStatusResponse {
-        providers: settings.providers,
+        active_providers: ProviderStatusView::active_from(&state.providers.read()),
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
@@ -912,12 +969,16 @@ fn apply_admin_reset<C: DohClient + Sync>(
         );
     }
     *state.runtime.write() = RuntimeSettings {
-        providers: config.providers,
         timeout: TimeoutConfig {
             mode: config.timeout_mode,
             duration: Duration::from_millis(config.timeout_ms.into()),
         },
     };
+    // T-72/T-73: reset reloads the `[[providers]]` list too — without this a
+    // hand-edited provider list would only take effect at the next process
+    // restart (the same completeness gap `overrides`/`cache`/`geoip_countries`
+    // above already close).
+    state.update_providers(config.providers);
     *state.overrides.write() = Arc::new(OverridesState {
         lists: overrides,
         invalid,
@@ -1177,13 +1238,14 @@ fn apply_cache_config<C: DohClient + Sync>(
     });
     let runtime = *state.runtime.read();
     let blocked_countries = state.geoip_countries.read().as_ref().clone();
+    let providers = state.providers_snapshot();
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => {
             let config = ResolverConfig {
                 port: state.persist.port,
                 timeout_mode: runtime.timeout.mode,
                 timeout_ms: timeout_ms(runtime.timeout.duration),
-                providers: runtime.providers,
+                providers,
                 cache: new_config,
                 geoip: GeoipConfig { blocked_countries },
             };
@@ -1315,13 +1377,14 @@ fn apply_geoip_change<C: DohClient + Sync>(
     state.update_geoip_countries(after.clone());
     let runtime = *state.runtime.read();
     let cache_config = state.cache.read().config;
+    let providers = state.providers_snapshot();
     let persisted = match state.persist.paths.as_ref() {
         Some(paths) => {
             let config = ResolverConfig {
                 port: state.persist.port,
                 timeout_mode: runtime.timeout.mode,
                 timeout_ms: timeout_ms(runtime.timeout.duration),
-                providers: runtime.providers,
+                providers,
                 cache: cache_config,
                 geoip: GeoipConfig {
                     blocked_countries: after.clone(),
@@ -1593,6 +1656,223 @@ where
     })
 }
 
+/// Builds the current [`crate::admin::ProvidersResponse`] from `entries` (T-72/T-73) —
+/// shared by `GET /admin/providers` and the three mutating routes' echo-back.
+fn providers_view(entries: &[ProviderEntry], persisted: bool) -> crate::admin::ProvidersResponse {
+    let enabled_count = entries.iter().filter(|entry| entry.enabled).count();
+    crate::admin::ProvidersResponse {
+        active: entries.iter().map(crate::admin::ProviderView::of).collect(),
+        available_presets: all_builtin_presets()
+            .iter()
+            .map(|spec| crate::admin::ProviderView {
+                id: spec.id.clone(),
+                display_name: spec.display_name.clone(),
+                doh_url: spec.doh_url.clone(),
+                category: spec.category,
+                block_signature: spec.block_signature,
+                enabled: false,
+                is_builtin: true,
+            })
+            .collect(),
+        // enabled voters + 1 baseline resolver — the fan-out the user's
+        // browsing history is exposed to (CLAUDE.md: keep this visible).
+        third_party_count: enabled_count + 1,
+        persisted,
+    }
+}
+
+/// Applies `compute` to the live voter list (T-72/T-73), swaps the result in,
+/// re-serializes `resolver_config.toml` (reading the other live fields first,
+/// same cross-field discipline as `apply_geoip_change`), and returns the
+/// fresh view. Shares `state.persist_lock` with every other
+/// `resolver_config.toml` writer. `Err(StatusCode)` is a rejected request
+/// (`400`), surfaced payload-free.
+fn apply_provider_change<C, F>(
+    state: &AppState<C>,
+    compute: F,
+) -> Result<crate::admin::ProvidersResponse, StatusCode>
+where
+    C: DohClient + Sync,
+    F: FnOnce(Vec<ProviderEntry>) -> Result<Vec<ProviderEntry>, StatusCode>,
+{
+    let _persist_guard = state.persist_lock.lock();
+    let after = compute(state.providers_snapshot())?;
+    state.update_providers(after.clone());
+    let runtime = *state.runtime.read();
+    let cache_config = state.cache.read().config;
+    let blocked_countries = state.geoip_countries.read().as_ref().clone();
+    let persisted = match state.persist.paths.as_ref() {
+        Some(paths) => {
+            let config = ResolverConfig {
+                port: state.persist.port,
+                timeout_mode: runtime.timeout.mode,
+                timeout_ms: timeout_ms(runtime.timeout.duration),
+                providers: after.clone(),
+                cache: cache_config,
+                geoip: GeoipConfig { blocked_countries },
+            };
+            match config.save(&paths.config) {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("failed to persist an admin provider change to disk: {err}");
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+    Ok(providers_view(&after, persisted))
+}
+
+/// `GET /admin/providers` (T-72/T-73) — read-only, no CSRF gate (same as
+/// `GET /admin/geoip`).
+fn serve_admin_providers<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
+    json_response(&providers_view(&state.providers_snapshot(), true))
+}
+
+/// Shared CSRF-gate + body-cap + JSON-decode preamble for the three
+/// `/admin/providers/*` POST routes — returns the decoded body, or `Err` with
+/// the HTTP status to send back instead.
+async fn read_provider_body<B, T>(req: Request<B>) -> Result<T, StatusCode>
+where
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    T: serde::de::DeserializeOwned,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    serde_json::from_slice::<T>(&collected.to_bytes()).map_err(|_| StatusCode::BAD_REQUEST)
+}
+
+/// `POST /admin/providers/add` (T-72/T-73) — a built-in preset (`{id}` only)
+/// or a custom `https` endpoint (`id` + `url` + `display_name` + `category`).
+/// A malformed request, a duplicate id, an invalid id shape, or a
+/// non-public/non-`https` URL is `400` (payload-free).
+async fn serve_admin_providers_add<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let request: crate::admin::ProviderAddRequest = match read_provider_body(req).await {
+        Ok(request) => request,
+        Err(code) => return status_response(code),
+    };
+    let result = apply_provider_change(state, |mut entries| {
+        if !crate::upstream::is_valid_provider_id(&request.id) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if entries.iter().any(|entry| entry.spec.id == request.id) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let spec = if let Some(preset) = builtin_preset(&request.id) {
+            preset
+        } else {
+            let (Some(url), Some(display_name), Some(category)) = (
+                request.url.as_deref(),
+                request.display_name.as_deref(),
+                request.category,
+            ) else {
+                return Err(StatusCode::BAD_REQUEST);
+            };
+            if crate::upstream::validate_provider_url(url).is_err() {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            ProviderSpec {
+                id: request.id.clone(),
+                display_name: display_name.to_string(),
+                doh_url: url.to_string(),
+                category,
+                block_signature: request
+                    .block_signature
+                    .unwrap_or(BlockSignature::NullIpOrNxdomain),
+            }
+        };
+        entries.push(ProviderEntry {
+            spec,
+            enabled: true,
+        });
+        Ok(entries)
+    });
+    match result {
+        Ok(response) => json_response(&response),
+        Err(code) => status_response(code),
+    }
+}
+
+/// `POST /admin/providers/remove` (T-72/T-73) — a **custom** entry only; a
+/// built-in preset can only be disabled (`400` if `id` names one, or names
+/// nothing configured).
+async fn serve_admin_providers_remove<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let request: crate::admin::ProviderRemoveRequest = match read_provider_body(req).await {
+        Ok(request) => request,
+        Err(code) => return status_response(code),
+    };
+    let result = apply_provider_change(state, |mut entries| {
+        if builtin_preset(&request.id).is_some() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let before = entries.len();
+        entries.retain(|entry| entry.spec.id != request.id);
+        if entries.len() == before {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        Ok(entries)
+    });
+    match result {
+        Ok(response) => json_response(&response),
+        Err(code) => status_response(code),
+    }
+}
+
+/// `POST /admin/providers/set-enabled` (T-72/T-73) — toggles one configured
+/// entry (`400` if `id` isn't configured).
+async fn serve_admin_providers_set_enabled<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let request: crate::admin::ProviderSetEnabledRequest = match read_provider_body(req).await {
+        Ok(request) => request,
+        Err(code) => return status_response(code),
+    };
+    let result = apply_provider_change(state, |mut entries| {
+        let Some(entry) = entries.iter_mut().find(|entry| entry.spec.id == request.id) else {
+            return Err(StatusCode::BAD_REQUEST);
+        };
+        entry.enabled = request.enabled;
+        Ok(entries)
+    });
+    match result {
+        Ok(response) => json_response(&response),
+        Err(code) => status_response(code),
+    }
+}
+
 /// `GET /admin/log`'s default result cap (T-54) — a value a user actually
 /// reads in one screen, not [`DEFAULT_MAX_ENTRIES`] (1000): every other
 /// input/output boundary in this crate is explicitly bounded, and a JSON
@@ -1614,7 +1894,12 @@ const MAX_LOG_LIMIT: usize = DEFAULT_MAX_ENTRIES;
 struct LogQuery {
     domain_contains: Option<String>,
     decision: Option<Decision>,
-    voter: Option<Provider>,
+    /// Raw `?voter=` value, still unvalidated here (T-72/T-73 — the set of
+    /// valid provider ids is runtime state `parse_log_query` has no access
+    /// to). [`serve_admin_log`] checks it against the configured + built-in
+    /// preset ids and returns `400` on a value matching neither, staying
+    /// payload-free (the raw text is never echoed back).
+    voter: Option<String>,
     limit: usize,
 }
 
@@ -1681,11 +1966,10 @@ fn parse_log_query(query_string: Option<&str>) -> Result<LogQuery, LogQueryError
                 });
             }
             "voter" => {
-                parsed.voter = Some(
-                    value
-                        .parse::<Provider>()
-                        .map_err(|_| LogQueryError::UnknownVoter)?,
-                );
+                if value.is_empty() {
+                    return Err(LogQueryError::UnknownVoter);
+                }
+                parsed.voter = Some(value.into_owned());
             }
             "limit" => {
                 let limit = value
@@ -1719,10 +2003,27 @@ fn serve_admin_log<C: DohClient + Sync>(
     let Ok(parsed) = parse_log_query(query_string) else {
         return status_response(StatusCode::BAD_REQUEST);
     };
+    // Validate `?voter=` against the ids a log entry could actually carry:
+    // currently-configured voters plus every built-in preset (so filtering
+    // historical entries by a since-removed provider still works). A value
+    // matching neither is a typo → 400, never silently narrowed to nothing.
+    if let Some(voter) = parsed.voter.as_deref() {
+        let known = state
+            .providers
+            .read()
+            .iter()
+            .any(|entry| entry.spec.id == voter)
+            || all_builtin_presets()
+                .iter()
+                .any(|preset| preset.id == voter);
+        if !known {
+            return status_response(StatusCode::BAD_REQUEST);
+        }
+    }
     let filter = LogFilter {
         domain_contains: parsed.domain_contains.as_deref(),
         decision: parsed.decision,
-        voter: parsed.voter,
+        voter: parsed.voter.as_deref(),
     };
     let mut entries = state.query_log.search(SystemTime::now(), &filter);
     let truncated = entries.len() > parsed.limit;
@@ -1917,6 +2218,10 @@ where
         ADMIN_GEOIP_REMOVE_PATH => serve_admin_geoip_remove(req, &state).await,
         ADMIN_GEOIP_MAXMIND_PATH => serve_admin_geoip_maxmind(req, &state).await,
         ADMIN_GEOIP_MAXMIND_CLEAR_PATH => serve_admin_geoip_maxmind_clear(req, &state).await,
+        ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
+        ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
+        ADMIN_PROVIDERS_REMOVE_PATH => serve_admin_providers_remove(req, &state).await,
+        ADMIN_PROVIDERS_SET_ENABLED_PATH => serve_admin_providers_set_enabled(req, &state).await,
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
@@ -1935,8 +2240,8 @@ mod tests {
     use super::{
         admin_status, content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
         wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipState,
-        LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeSettings,
-        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeInit, DEFAULT_LOG_LIMIT,
+        DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
@@ -1948,9 +2253,8 @@ mod tests {
     use crate::config::ResolverConfig;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
-    use crate::quorum::{EnabledProviders, VoterRecord, VoterVerdict};
-    use crate::timeout::TimeoutConfig;
-    use crate::upstream::{doh_get_url, DohClient, Provider, UpstreamError};
+    use crate::quorum::{VoterRecord, VoterVerdict};
+    use crate::upstream::{doh_get_url, DohClient, ProviderEntry, UpstreamError};
     use bytes::Bytes;
     use hickory_proto::op::{Message, Query, ResponseCode};
     use hickory_proto::rr::rdata::A;
@@ -1987,7 +2291,7 @@ mod tests {
             decision,
             decision_source: crate::query_log::DecisionSource::Quorum,
             voters: vec![VoterRecord {
-                provider: Provider::Quad9,
+                provider_id: "quad9".to_string(),
                 verdict: VoterVerdict::Allow,
                 allow_ip_count: Some(1),
                 error_message: None,
@@ -2526,10 +2830,7 @@ mod tests {
                 lists: overrides,
                 invalid: Vec::new(),
             },
-            RuntimeSettings {
-                providers: EnabledProviders::default(),
-                timeout: TimeoutConfig::default(),
-            },
+            RuntimeInit::default(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -2557,10 +2858,7 @@ mod tests {
                 lists: OverrideLists::empty(),
                 invalid: Vec::new(),
             },
-            RuntimeSettings {
-                providers: EnabledProviders::default(),
-                timeout: TimeoutConfig::default(),
-            },
+            RuntimeInit::default(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -2768,7 +3066,12 @@ mod tests {
         let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
             panic!("response body must decode as AdminStatusResponse");
         };
-        assert_eq!(status.providers, EnabledProviders::default());
+        let active_ids: Vec<&str> = status
+            .active_providers
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(active_ids, vec!["quad9", "adguard"]);
         assert!(status.persisted);
         assert_eq!(status.stats.total, 0);
     }
@@ -2831,7 +3134,6 @@ mod tests {
     #[tokio::test]
     async fn serve_admin_config_rejects_a_missing_content_type_even_with_a_valid_json_body() {
         let update = AdminConfigUpdate {
-            providers: EnabledProviders::default(),
             timeout_mode: crate::timeout::TimeoutMode::FailOpen,
         };
         let Ok(json) = serde_json::to_vec(&update) else {
@@ -2854,7 +3156,6 @@ mod tests {
     #[tokio::test]
     async fn serve_admin_config_rejects_a_non_json_content_type_even_with_a_valid_json_body() {
         let update = AdminConfigUpdate {
-            providers: EnabledProviders::default(),
             timeout_mode: crate::timeout::TimeoutMode::FailOpen,
         };
         let Ok(json) = serde_json::to_vec(&update) else {
@@ -2875,16 +3176,15 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
-    // T-52: both providers disabled is newly reachable through a UI (the
-    // admin channel) for the first time - the exact regression shape T-148
-    // already proved at the quorum::resolve level
+    // T-52/T-72: both providers disabled (now via `/admin/providers/set-enabled`)
+    // is a live-reachable state - the exact regression shape T-148 proved at
+    // the quorum::resolve level
     // (quad9_disabled_under_fail_closed_is_still_allow_not_falsely_blocked),
-    // re-proven here at the HTTP admin-channel level: a live-applied
-    // both-disabled update under fail_closed must still resolve via
-    // pass-through, never fail-closed-block, and must never call the
-    // quorum-branch mock at all.
+    // re-proven here at the HTTP admin-channel level: under fail_closed it
+    // must still resolve via pass-through, never fail-closed-block, and must
+    // never call the quorum-branch mock at all.
     #[tokio::test]
-    async fn serve_admin_config_disabling_both_providers_is_pass_through_not_fail_closed() {
+    async fn disabling_every_provider_is_pass_through_not_fail_closed() {
         let ip = Ipv4Addr::new(9, 9, 9, 9);
         let client = MockClient {
             baseline: MockResponse::Instant(allow_message_with_ip(ip)),
@@ -2894,10 +3194,6 @@ mod tests {
         let state = state_with(client);
 
         let update = AdminConfigUpdate {
-            providers: EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
         };
         let config_response = match serve(admin_config_request(update), Arc::clone(&state)).await {
@@ -2905,6 +3201,21 @@ mod tests {
             Err(err) => match err {},
         };
         assert_eq!(config_response.status(), StatusCode::OK);
+        for id in ["quad9", "adguard"] {
+            let response = match serve(
+                admin_post_json(
+                    "/admin/providers/set-enabled",
+                    &serde_json::json!({"id": id, "enabled": false}),
+                ),
+                Arc::clone(&state),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            assert_eq!(response.status(), StatusCode::OK);
+        }
 
         let wire_bytes = query_bytes("example.com.", RecordType::A);
         let query_req = match Request::builder()
@@ -2945,10 +3256,6 @@ mod tests {
         );
 
         let update = AdminConfigUpdate {
-            providers: EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
         };
         let response = match serve(admin_config_request(update), state).await {
@@ -2966,8 +3273,10 @@ mod tests {
             Ok(loaded) => loaded,
             Err(err) => panic!("the saved file must load back: {err}"),
         };
-        assert_eq!(loaded.providers, update.providers);
         assert_eq!(loaded.timeout_mode, update.timeout_mode);
+        // T-72/T-73 cross-field read: a timeout-only change must still write
+        // the live provider list, not blank `[[providers]]`.
+        assert_eq!(loaded.providers, ProviderEntry::default_active_set());
     }
 
     // T-76, advisor-caught before commit: an unrelated `POST /admin/config`
@@ -2997,10 +3306,6 @@ mod tests {
         state.update_geoip_countries(vec!["SE".to_string()]);
 
         let update = AdminConfigUpdate {
-            providers: EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
         };
         let response = match serve(admin_config_request(update), state).await {
@@ -3056,24 +3361,12 @@ mod tests {
 
         let updates = [
             AdminConfigUpdate {
-                providers: EnabledProviders {
-                    quad9: true,
-                    adguard: false,
-                },
                 timeout_mode: crate::timeout::TimeoutMode::FailOpen,
             },
             AdminConfigUpdate {
-                providers: EnabledProviders {
-                    quad9: false,
-                    adguard: true,
-                },
                 timeout_mode: crate::timeout::TimeoutMode::FailClosed,
             },
             AdminConfigUpdate {
-                providers: EnabledProviders {
-                    quad9: true,
-                    adguard: true,
-                },
                 timeout_mode: crate::timeout::TimeoutMode::Degraded,
             },
         ];
@@ -3101,17 +3394,11 @@ mod tests {
             Err(err) => panic!("the persisted file must still load: {err}"),
         };
         assert_eq!(
-            loaded.providers, live.providers,
-            "disk must match the live settings after concurrent admin config writes"
-        );
-        assert_eq!(
             loaded.timeout_mode, live.timeout.mode,
             "disk must match the live settings after concurrent admin config writes"
         );
         assert!(
-            updates
-                .iter()
-                .any(|u| u.providers == live.providers && u.timeout_mode == live.timeout.mode),
+            updates.iter().any(|u| u.timeout_mode == live.timeout.mode),
             "final live settings must match one of the applied updates exactly, not a mix"
         );
     }
@@ -3120,7 +3407,6 @@ mod tests {
     async fn serve_admin_config_reports_not_persisted_when_no_config_path_is_set() {
         let state = state_with(no_op_client());
         let update = AdminConfigUpdate {
-            providers: EnabledProviders::default(),
             timeout_mode: crate::timeout::TimeoutMode::FailOpen,
         };
         let response = match serve(admin_config_request(update), state).await {
@@ -3228,6 +3514,7 @@ mod tests {
         );
         let before_overrides = std::sync::Arc::as_ptr(&state.overrides.read());
         let before_runtime = *state.runtime.read();
+        let before_providers = std::sync::Arc::as_ptr(&state.providers.read());
 
         let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
             Ok(response) => response,
@@ -3239,8 +3526,12 @@ mod tests {
             before_overrides,
             "a malformed overrides file must never swap in a new (even empty) OverrideLists"
         );
+        assert_eq!(
+            std::sync::Arc::as_ptr(&state.providers.read()),
+            before_providers,
+            "a failed reset must not swap in a new provider list"
+        );
         let after_runtime = *state.runtime.read();
-        assert_eq!(after_runtime.providers, before_runtime.providers);
         assert_eq!(after_runtime.timeout.mode, before_runtime.timeout.mode);
         assert_eq!(
             after_runtime.timeout.duration,
@@ -3291,8 +3582,11 @@ mod tests {
         let overrides_path = dir.path().join("overrides.toml");
         if let Err(err) = std::fs::write(
             &config_path,
-            "port = 8443\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 3000\n\n\
-             [providers]\nquad9 = false\nadguard = true\n",
+            concat!(
+                "port = 8443\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 3000\n\n",
+                "[[providers]]\nid = \"quad9\"\nenabled = false\n\n",
+                "[[providers]]\nid = \"adguard\"\nenabled = true\n"
+            ),
         ) {
             panic!("must be able to write the fixture config: {err}");
         }
@@ -3345,13 +3639,15 @@ mod tests {
         let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
             panic!("response body must decode as AdminStatusResponse");
         };
+        let active_ids: Vec<&str> = status
+            .active_providers
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
         assert_eq!(
-            status.providers,
-            EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
-            "reset must reload providers from the fixture file"
+            active_ids,
+            vec!["adguard"],
+            "reset must reload providers from the fixture file (quad9 disabled)"
         );
         assert_eq!(
             status.timeout_mode,
@@ -3485,10 +3781,7 @@ mod tests {
                 lists: OverrideLists::empty(),
                 invalid: Vec::new(),
             },
-            RuntimeSettings {
-                providers: EnabledProviders::default(),
-                timeout: TimeoutConfig::default(),
-            },
+            RuntimeInit::default(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -3758,10 +4051,7 @@ mod tests {
                 lists: overrides,
                 invalid,
             },
-            RuntimeSettings {
-                providers: EnabledProviders::default(),
-                timeout: TimeoutConfig::default(),
-            },
+            RuntimeInit::default(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -4258,10 +4548,6 @@ mod tests {
         );
 
         let config_update = AdminConfigUpdate {
-            providers: EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
         };
         let cache_update = non_default_cache_config_update();
@@ -4294,12 +4580,13 @@ mod tests {
             Err(err) => panic!("the persisted file must still load: {err}"),
         };
         assert_eq!(
-            loaded.providers, config_update.providers,
-            "the providers change must survive a concurrent cache-config write"
-        );
-        assert_eq!(
             loaded.timeout_mode, config_update.timeout_mode,
             "the timeout-mode change must survive a concurrent cache-config write"
+        );
+        assert_eq!(
+            loaded.providers,
+            ProviderEntry::default_active_set(),
+            "the provider list must survive a concurrent cache-config write"
         );
         let loaded_cache_secs = loaded.cache.to_secs();
         assert_eq!(
@@ -4912,10 +5199,6 @@ mod tests {
             },
         );
         let providers_update = AdminConfigUpdate {
-            providers: EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
         };
         let response = match serve(admin_config_request(providers_update), Arc::clone(&state)).await
@@ -4947,8 +5230,9 @@ mod tests {
             Err(err) => panic!("the saved file must load back: {err}"),
         };
         assert_eq!(
-            loaded.providers, providers_update.providers,
-            "an unrelated geoip add must not wipe the providers toggle"
+            loaded.providers,
+            ProviderEntry::default_active_set(),
+            "an unrelated geoip add must not wipe the provider list"
         );
         assert_eq!(
             loaded.timeout_mode, providers_update.timeout_mode,
@@ -5060,7 +5344,7 @@ mod tests {
         let mut adguard_entry =
             sample_log_entry("adguard-voted.example", crate::query_log::Decision::Allowed);
         adguard_entry.voters = vec![VoterRecord {
-            provider: Provider::AdGuard,
+            provider_id: "adguard".to_string(),
             verdict: VoterVerdict::Allow,
             allow_ip_count: Some(1),
             error_message: None,
@@ -5397,6 +5681,10 @@ mod tests {
         ("/admin/geoip/remove", &[Method::POST]),
         ("/admin/geoip/maxmind", &[Method::GET, Method::POST]),
         ("/admin/geoip/maxmind/clear", &[Method::POST]),
+        ("/admin/providers", &[Method::GET]),
+        ("/admin/providers/add", &[Method::POST]),
+        ("/admin/providers/remove", &[Method::POST]),
+        ("/admin/providers/set-enabled", &[Method::POST]),
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
@@ -5460,6 +5748,240 @@ mod tests {
                 }
             }
         }
+    }
+
+    // T-72/T-73: the `/admin/providers/*` route group.
+
+    fn providers_state() -> (tempfile::TempDir, Arc<AppState<MockClient>>) {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: dir.path().join("resolver_config.toml"),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        (dir, state)
+    }
+
+    fn admin_get(uri: &str) -> Request<Full<Bytes>> {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    fn admin_post_json(uri: &str, body: &serde_json::Value) -> Request<Full<Bytes>> {
+        let Ok(json) = serde_json::to_vec(body) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    async fn providers_json(state: Arc<AppState<MockClient>>) -> crate::admin::ProvidersResponse {
+        let response = match serve(admin_get("/admin/providers"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<crate::admin::ProvidersResponse>(&bytes) else {
+            panic!("body must decode as ProvidersResponse");
+        };
+        body
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_lists_the_default_two_and_every_preset() {
+        let (_dir, state) = providers_state();
+        let body = providers_json(state).await;
+        let active_ids: Vec<&str> = body.active.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(active_ids, vec!["quad9", "adguard"]);
+        assert!(body.active.iter().all(|p| p.is_builtin && p.enabled));
+        assert!(body.available_presets.len() >= 10);
+        assert_eq!(body.third_party_count, 3, "2 voters + baseline");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_add_a_preset_then_it_is_active_and_persisted() {
+        let (dir, state) = providers_state();
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/add",
+                &serde_json::json!({"id": "cloudflare-family"}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = providers_json(state).await;
+        assert!(body
+            .active
+            .iter()
+            .any(|p| p.id == "cloudflare-family" && p.enabled));
+        assert_eq!(body.third_party_count, 4);
+        let Ok(loaded) = ResolverConfig::load(&dir.path().join("resolver_config.toml")) else {
+            panic!("saved config must load");
+        };
+        assert!(loaded
+            .providers
+            .iter()
+            .any(|e| e.spec.id == "cloudflare-family"));
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_add_a_custom_https_endpoint() {
+        let (_dir, state) = providers_state();
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/add",
+                &serde_json::json!({
+                    "id": "my-nextdns",
+                    "url": "https://abc123.dns.nextdns.io/dns-query",
+                    "display_name": "NextDNS",
+                    "category": "SECURITY"
+                }),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = providers_json(state).await;
+        let Some(custom) = body.active.iter().find(|p| p.id == "my-nextdns") else {
+            panic!("the custom entry must be in the active list");
+        };
+        assert!(!custom.is_builtin);
+        assert_eq!(custom.doh_url, "https://abc123.dns.nextdns.io/dns-query");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_add_rejects_ssrf_and_duplicate_and_bad_id() {
+        let (_dir, state) = providers_state();
+        for bad in [
+            serde_json::json!({"id": "evil", "url": "https://127.0.0.1/dns-query", "display_name": "x", "category": "SECURITY"}),
+            serde_json::json!({"id": "quad9"}), // already active
+            serde_json::json!({"id": "Bad Id"}),
+            serde_json::json!({"id": "mystery"}), // non-preset, no url/name/category
+        ] {
+            let response = match serve(
+                admin_post_json("/admin/providers/add", &bad),
+                Arc::clone(&state),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "{bad} must be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_remove_a_custom_entry_but_not_a_builtin() {
+        let (_dir, state) = providers_state();
+        let _ = serve(
+            admin_post_json(
+                "/admin/providers/add",
+                &serde_json::json!({"id": "my-controld", "url": "https://dns.controld.com/x", "display_name": "ControlD", "category": "ADS_TRACKERS"}),
+            ),
+            Arc::clone(&state),
+        )
+        .await;
+        // A builtin can't be removed.
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/remove",
+                &serde_json::json!({"id": "quad9"}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        // The custom one can.
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/remove",
+                &serde_json::json!({"id": "my-controld"}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = providers_json(state).await;
+        assert!(!body.active.iter().any(|p| p.id == "my-controld"));
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_set_enabled_toggles_and_status_reflects_it() {
+        let (_dir, state) = providers_state();
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-enabled",
+                &serde_json::json!({"id": "quad9", "enabled": false}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = providers_json(Arc::clone(&state)).await;
+        assert!(body.active.iter().any(|p| p.id == "quad9" && !p.enabled));
+        assert_eq!(body.third_party_count, 2, "only adguard + baseline now");
+
+        let status_response = match serve(admin_get("/admin/status"), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(status_response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("status must decode");
+        };
+        let active: Vec<&str> = status
+            .active_providers
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(active, vec!["adguard"]);
     }
 
     #[tokio::test]

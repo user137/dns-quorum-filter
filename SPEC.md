@@ -392,6 +392,26 @@ DECISIONS.md), не лише маркетинговими сторінками �
   додано в пул baseline-альтернатив (див. таблицю вище), не в security/ads/adult
   категорії.
 
+**Реалізація, T-72/T-73 (2026-08-31, plan+advisor, backend-коміт + окремий UI-коміт).**
+`quorum` більше не хардкодить два провайдери: voter-набір — рантайм-список
+`[[providers]]` у `resolver_config.toml` (`upstream::ProviderEntry` = `ProviderSpec` +
+`enabled`), редагується через `GET /admin/providers` + `POST /admin/providers/{add,
+remove,set-enabled}`, **не** через `/admin/config` (той тепер несе лише `timeout_mode`).
+Усі 10 presets із таблиці §3.4 (Security/Ads/Adult; baseline-альтернативи — окремо, ще
+не admin-вибірні) підключаються за `id`; кастомний провайдер (NextDNS/ControlD) —
+власний `https`-URL + `display_name` + `category`. Детекція блоку — **закритий набір із
+3 евристик** (`upstream::BlockSignature`): `NullIp` (`0.0.0.0`/`::` у відповіді —
+AdGuard/Cloudflare/CleanBrowsing), `NxdomainVsBaseline` (Quad9, OpenDNS FamilyShield —
+потребує звірки з baseline, §3.1), `NullIpOrNxdomain` (дозвільний дефолт для кастомних).
+**Лише Quad9/AdGuard live-звірені** (DECISIONS.md 2026-08-25); решта — з опублікованої
+поведінки провайдера, кожна з `#[ignore]`d live-verify тестом. SSRF: `validate_provider_url`
+відхиляє не-`https` і **літеральний** loopback/private/link-local хост; хостнейм, що
+*резолвиться* у такий IP — не ловиться (заявлена прогалина). Дефолтний активний набір —
+досі `quad9` + `adguard` (`DEFAULT_PROVIDER_IDS`), не §3.4/§3.5-й "лише Security" —
+свідомо не змінено в межах великого рефактора, відкрите рішення. ECS-провайдер (Quad9
+9.9.9.11, не в таблиці §3.4) — видалено `todo!()`-заглушку `ecs_option_for_upstream`,
+перезаведено як **T-164**.
+
 
 - Використовується для (а) звірки в `is_blocked()` (3.1) — відрізнити "заблоковано
   фільтром" від "домену реально не існує", і (б) резолюції доменів з allowlist (4),

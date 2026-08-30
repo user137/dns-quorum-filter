@@ -48,8 +48,11 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheConfig;
-use crate::quorum::EnabledProviders;
 use crate::timeout::TimeoutMode;
+use crate::upstream::{
+    builtin_preset, is_valid_provider_id, validate_provider_url, BlockSignature, Category,
+    ProviderEntry, ProviderSpec,
+};
 
 /// Errors loading the resolver config.
 #[derive(Debug, thiserror::Error)]
@@ -106,6 +109,35 @@ pub enum ConfigError {
     /// comment already states for this file).
     #[error("blocked country code {0:?} is not a valid two-letter ISO 3166-1 alpha-2 code")]
     InvalidCountryCode(String),
+    /// A legacy `[providers]` table (the pre-T-72 `quad9`/`adguard` bools)
+    /// was found — hard cutover, same as T-144/T-145/T-148's own format
+    /// changes: the operator must migrate to `[[providers]]` array-of-tables.
+    #[error(
+        "found a legacy [providers] table - since T-72 the format is an array of tables: \
+         [[providers]] with id/enabled (and url/display_name/category for a custom entry)"
+    )]
+    LegacyProvidersTable,
+    /// Two `[[providers]]` entries share an `id` (T-72). A provider id is
+    /// this service's own config, not a domain name — safe to echo.
+    #[error("duplicate provider id {0:?} in [[providers]]")]
+    DuplicateProviderId(String),
+    /// A `[[providers]]` `id` isn't lowercase `[a-z0-9-]{{1,64}}` (T-72).
+    #[error("provider id {0:?} must be lowercase letters, digits, and hyphens (1-64 chars)")]
+    InvalidProviderId(String),
+    /// A `[[providers]]` entry whose `id` isn't a built-in preset is missing
+    /// a required field (`url`, `display_name`, or `category`) (T-72).
+    #[error("custom provider {0:?} needs url, display_name, and category")]
+    IncompleteCustomProvider(String),
+    /// A `[[providers]]` `url` failed [`validate_provider_url`] (T-72) —
+    /// payload is the entry's `id`, never the URL (which can embed a
+    /// per-account profile id).
+    #[error("provider {0:?} has an invalid or non-public DoH URL")]
+    InvalidProviderUrl(String),
+    /// A built-in preset `id` carried a `url`/`category`/`block_signature`
+    /// that disagrees with the preset table (T-72) — reject rather than
+    /// silently letting the file override a shipped preset's endpoint.
+    #[error("provider {0:?} is a built-in preset - do not override its url/category/signature")]
+    BuiltinPresetOverride(String),
 }
 
 /// Upper bound on `resolver_config.toml`'s on-disk size, checked in
@@ -153,10 +185,12 @@ pub struct ResolverConfig {
     pub timeout_mode: TimeoutMode,
     /// Per-query timeout, in milliseconds.
     pub timeout_ms: u32,
-    /// Which quorum providers are enabled (T-148) — [`EnabledProviders::
-    /// any_enabled`] being `false` is SPEC.md §3/§8.1's explicit
-    /// pass-through case, not fail-closed and not a silent no-op.
-    pub providers: EnabledProviders,
+    /// The configured voter list (T-72/T-73), in order — built-in §3.4
+    /// presets and/or user-added custom `https` endpoints, each with its own
+    /// `enabled` flag. An all-disabled list is SPEC.md §3/§8.1's explicit
+    /// pass-through case (`ProviderEntry::any_enabled` → `false`), not
+    /// fail-closed and not a silent no-op.
+    pub providers: Vec<ProviderEntry>,
     /// Cache TTL clamps/capacity (T-153) — reuses `cache::CacheConfig`
     /// directly rather than a parallel config-only copy, same reasoning
     /// already established for `providers` above: a second type here could
@@ -173,7 +207,7 @@ impl Default for ResolverConfig {
             port: 8443,
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,
-            providers: EnabledProviders::default(),
+            providers: ProviderEntry::default_active_set(),
             cache: CacheConfig::default(),
             geoip: GeoipConfig::default(),
         }
@@ -221,6 +255,16 @@ impl ResolverConfig {
         if u64::try_from(read).unwrap_or(u64::MAX) > MAX_CONFIG_FILE_SIZE {
             return Err(ConfigError::TooLarge);
         }
+        // Legacy-sibling presence check (T-72, same pattern as T-144/T-145/
+        // T-148): a bare `[providers]` table header is the pre-T-72 format;
+        // `[[providers]]` (array of tables) is the new one. Checked before
+        // the parse so the error names the migration, not just "invalid TOML".
+        if raw
+            .lines()
+            .any(|line| line.trim_end() == "[providers]" || line.trim_end() == "[ providers ]")
+        {
+            return Err(ConfigError::LegacyProvidersTable);
+        }
         let file: ResolverConfigFile = toml::from_str(&raw).map_err(ConfigError::Toml)?;
 
         if file.port == 0 {
@@ -250,7 +294,7 @@ impl ResolverConfig {
             port: file.port,
             timeout_mode: file.timeout_mode,
             timeout_ms: file.timeout_ms,
-            providers: file.providers,
+            providers: resolve_providers(&file.providers)?,
             cache,
             geoip: GeoipConfig { blocked_countries },
         })
@@ -280,7 +324,7 @@ impl ResolverConfig {
             port: self.port,
             timeout_mode: self.timeout_mode,
             timeout_ms: self.timeout_ms,
-            providers: self.providers,
+            providers: self.providers.iter().map(ProviderFileEntry::from).collect(),
             cache: CacheConfigFile {
                 clamp_min_secs: cache_secs.clamp_min_secs,
                 clamp_max_secs: cache_secs.clamp_max_secs,
@@ -310,6 +354,62 @@ pub(crate) fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
     }
 }
 
+/// Turns the parsed `[[providers]]` entries into the live [`ProviderEntry`]
+/// list (T-72/T-73). An empty list (no `[[providers]]` at all) becomes
+/// [`ProviderEntry::default_active_set`] (unchanged fresh-install behaviour).
+/// A built-in `id` pulls `url`/`category`/`block_signature` from the preset
+/// table and must not carry its own; a non-built-in `id` must carry `url`,
+/// `display_name`, and `category`, with a `url` that passes
+/// [`validate_provider_url`]. Ids must be unique and wire-shaped.
+fn resolve_providers(entries: &[ProviderFileEntry]) -> Result<Vec<ProviderEntry>, ConfigError> {
+    if entries.is_empty() {
+        return Ok(ProviderEntry::default_active_set());
+    }
+    let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
+    let mut resolved = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if !is_valid_provider_id(&entry.id) {
+            return Err(ConfigError::InvalidProviderId(entry.id.clone()));
+        }
+        if seen.contains(&entry.id.as_str()) {
+            return Err(ConfigError::DuplicateProviderId(entry.id.clone()));
+        }
+        seen.push(&entry.id);
+
+        let spec = if let Some(preset) = builtin_preset(&entry.id) {
+            if entry.url.is_some() || entry.category.is_some() || entry.block_signature.is_some() {
+                return Err(ConfigError::BuiltinPresetOverride(entry.id.clone()));
+            }
+            preset
+        } else {
+            let (Some(url), Some(display_name), Some(category)) = (
+                entry.url.as_deref(),
+                entry.display_name.as_deref(),
+                entry.category,
+            ) else {
+                return Err(ConfigError::IncompleteCustomProvider(entry.id.clone()));
+            };
+            if validate_provider_url(url).is_err() {
+                return Err(ConfigError::InvalidProviderUrl(entry.id.clone()));
+            }
+            ProviderSpec {
+                id: entry.id.clone(),
+                display_name: display_name.to_string(),
+                doh_url: url.to_string(),
+                category,
+                block_signature: entry
+                    .block_signature
+                    .unwrap_or(BlockSignature::NullIpOrNxdomain),
+            }
+        };
+        resolved.push(ProviderEntry {
+            spec,
+            enabled: entry.enabled,
+        });
+    }
+    Ok(resolved)
+}
+
 /// On-disk shape — a plain, hand-editable TOML table (same spirit as
 /// `overrides.rs`'s own `OverrideListsFile`). Struct-level `#[serde(default)]`
 /// (backed by `impl Default` below, mirroring [`ResolverConfig::default`])
@@ -322,9 +422,59 @@ struct ResolverConfigFile {
     port: u16,
     timeout_mode: TimeoutMode,
     timeout_ms: u32,
-    providers: EnabledProviders,
+    providers: Vec<ProviderFileEntry>,
     cache: CacheConfigFile,
     geoip: GeoipConfigFile,
+}
+
+/// One `[[providers]]` array-of-tables entry (T-72/T-73). For a built-in
+/// preset `id`, only `id` + `enabled` are written; a custom entry also
+/// carries `url` / `display_name` / `category` / `block_signature`.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ProviderFileEntry {
+    id: String,
+    #[serde(default = "default_provider_enabled")]
+    enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<Category>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    block_signature: Option<BlockSignature>,
+}
+
+fn default_provider_enabled() -> bool {
+    true
+}
+
+impl From<&ProviderEntry> for ProviderFileEntry {
+    /// Round-trips the live entry back to disk shape — a built-in preset
+    /// writes only `id` + `enabled` (its other fields come from the preset
+    /// table on the next load), a custom entry writes all of them.
+    fn from(entry: &ProviderEntry) -> Self {
+        if builtin_preset(&entry.spec.id).is_some() {
+            Self {
+                id: entry.spec.id.clone(),
+                enabled: entry.enabled,
+                url: None,
+                display_name: None,
+                category: None,
+                block_signature: None,
+            }
+        } else {
+            Self {
+                id: entry.spec.id.clone(),
+                enabled: entry.enabled,
+                url: Some(entry.spec.doh_url.clone()),
+                display_name: Some(entry.spec.display_name.clone()),
+                category: Some(entry.spec.category),
+                block_signature: Some(entry.spec.block_signature),
+            }
+        }
+    }
 }
 
 impl Default for ResolverConfigFile {
@@ -335,7 +485,11 @@ impl Default for ResolverConfigFile {
             port: defaults.port,
             timeout_mode: defaults.timeout_mode,
             timeout_ms: defaults.timeout_ms,
-            providers: defaults.providers,
+            providers: defaults
+                .providers
+                .iter()
+                .map(ProviderFileEntry::from)
+                .collect(),
             cache: CacheConfigFile {
                 clamp_min_secs: cache_secs.clamp_min_secs,
                 clamp_max_secs: cache_secs.clamp_max_secs,
@@ -394,9 +548,17 @@ impl Default for CacheConfigFile {
 #[cfg(test)]
 mod tests {
     use super::{CacheConfig, ConfigError, GeoipConfig, ResolverConfig};
-    use crate::quorum::EnabledProviders;
     use crate::timeout::TimeoutMode;
+    use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
     use std::fs;
+
+    /// One built-in-preset voter entry with the given `enabled` flag.
+    fn preset_entry(id: &str, enabled: bool) -> ProviderEntry {
+        let Some(spec) = builtin_preset(id) else {
+            panic!("{id} is a builtin preset");
+        };
+        ProviderEntry { spec, enabled }
+    }
 
     fn temp_config_path() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = match tempfile::tempdir() {
@@ -420,7 +582,11 @@ mod tests {
     #[test]
     fn load_of_a_fully_specified_file_returns_exactly_those_values() {
         let (_dir, path) = temp_config_path();
-        let toml = "port = 9000\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 5000\n\n[providers]\nquad9 = false\nadguard = false\n";
+        let toml = concat!(
+            "port = 9000\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 5000\n\n",
+            "[[providers]]\nid = \"quad9\"\nenabled = false\n\n",
+            "[[providers]]\nid = \"adguard\"\nenabled = false\n"
+        );
         if let Err(err) = fs::write(&path, toml) {
             panic!("must be able to write the fixture file: {err}");
         }
@@ -434,45 +600,111 @@ mod tests {
                 port: 9000,
                 timeout_mode: TimeoutMode::FailClosed,
                 timeout_ms: 5000,
-                providers: EnabledProviders {
-                    quad9: false,
-                    adguard: false,
-                },
+                providers: vec![preset_entry("quad9", false), preset_entry("adguard", false)],
                 cache: CacheConfig::default(),
                 geoip: GeoipConfig::default(),
             }
         );
     }
 
-    // T-148: EnabledProviders is a nested TOML table, not a flat field -
-    // confirmed empirically (not assumed) that struct-level
-    // #[serde(default, deny_unknown_fields)] composes the same way one level
-    // deep inside a [providers] table as it does at the top level of the
-    // file (CLAUDE.md's own T-144 gotcha only verified the top-level case).
-
+    // T-72/T-73: `[[providers]]` is an ordered array of tables; the list is
+    // exactly what's written, no "fill the other from default" (that was the
+    // pre-T-72 two-bool `[providers]` table).
     #[test]
-    fn load_of_a_partial_providers_table_fills_the_other_provider_from_default() {
+    fn load_of_a_providers_array_keeps_exactly_the_listed_entries() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, "[providers]\nquad9 = false\n") {
+        if let Err(err) = fs::write(&path, "[[providers]]\nid = \"cloudflare-malware\"\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         let config = match ResolverConfig::load(&path) {
             Ok(config) => config,
-            Err(err) => panic!("a partial [providers] table must still load: {err}"),
+            Err(err) => panic!("a valid [[providers]] file must load: {err}"),
         };
         assert_eq!(
             config.providers,
-            EnabledProviders {
-                quad9: false,
-                adguard: true,
-            }
+            vec![preset_entry("cloudflare-malware", true)]
         );
     }
 
     #[test]
-    fn load_rejects_a_misspelled_key_inside_the_providers_table() {
+    fn load_of_a_custom_provider_entry_carries_its_own_url_and_signature() {
         let (_dir, path) = temp_config_path();
-        if let Err(err) = fs::write(&path, "[providers]\nadgaurd = false\n") {
+        let toml = concat!(
+            "[[providers]]\nid = \"my-nextdns\"\nenabled = true\n",
+            "url = \"https://abc123.dns.nextdns.io/dns-query\"\n",
+            "display_name = \"NextDNS (personal)\"\ncategory = \"SECURITY\"\n"
+        );
+        if let Err(err) = fs::write(&path, toml) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let Ok(config) = ResolverConfig::load(&path) else {
+            panic!("a valid custom provider must load");
+        };
+        assert_eq!(config.providers.len(), 1);
+        let entry = &config.providers[0];
+        assert_eq!(entry.spec.id, "my-nextdns");
+        assert_eq!(
+            entry.spec.doh_url,
+            "https://abc123.dns.nextdns.io/dns-query"
+        );
+        assert_eq!(entry.spec.category, Category::Security);
+        assert_eq!(entry.spec.block_signature, BlockSignature::NullIpOrNxdomain);
+    }
+
+    #[test]
+    fn load_rejects_a_legacy_providers_table() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[providers]\nquad9 = false\nadguard = false\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::LegacyProvidersTable)
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_custom_provider_with_an_ssrf_url() {
+        let (_dir, path) = temp_config_path();
+        let toml = concat!(
+            "[[providers]]\nid = \"evil\"\nurl = \"https://127.0.0.1/dns-query\"\n",
+            "display_name = \"x\"\ncategory = \"SECURITY\"\n"
+        );
+        if let Err(err) = fs::write(&path, toml) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidProviderUrl(_))
+        ));
+    }
+
+    #[test]
+    fn load_rejects_duplicate_provider_ids_and_incomplete_custom_entries() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[[providers]]\nid = \"quad9\"\n\n[[providers]]\nid = \"quad9\"\n",
+        ) {
+            panic!("write fixture: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::DuplicateProviderId(_))
+        ));
+        if let Err(err) = fs::write(&path, "[[providers]]\nid = \"mystery-provider\"\n") {
+            panic!("write fixture: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::IncompleteCustomProvider(_))
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_key_inside_a_providers_entry() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[[providers]]\nid = \"quad9\"\nenbaled = false\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(
@@ -589,14 +821,26 @@ mod tests {
             Ok(cache) => cache,
             Err(err) => panic!("valid input must not be rejected: {err}"),
         };
+        let Some(mut custom) = builtin_preset("quad9") else {
+            panic!("quad9 is a builtin preset");
+        };
+        custom.id = "my-controld".to_string();
+        custom.doh_url = "https://dns.controld.com/personal".to_string();
+        custom.display_name = "ControlD".to_string();
+        custom.category = Category::AdsTrackers;
+        custom.block_signature = BlockSignature::NullIp;
         let config = ResolverConfig {
             port: 9443,
             timeout_mode: TimeoutMode::FailClosed,
             timeout_ms: 3500,
-            providers: EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
+            providers: vec![
+                preset_entry("quad9", false),
+                preset_entry("adguard", true),
+                ProviderEntry {
+                    spec: custom,
+                    enabled: true,
+                },
+            ],
             cache,
             geoip: GeoipConfig {
                 blocked_countries: vec!["SE".to_string(), "DE".to_string()],

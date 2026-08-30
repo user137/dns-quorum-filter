@@ -34,8 +34,9 @@
 use crate::cache::{CacheConfig, CacheConfigError};
 use crate::overrides::ListKind;
 use crate::query_log::{Decision, DecisionSource, LogEntry};
-use crate::quorum::{EnabledProviders, VoterRecord, VoterVerdict};
+use crate::quorum::{VoterRecord, VoterVerdict};
 use crate::timeout::TimeoutMode;
+use crate::upstream::{Category, ProviderEntry};
 use hickory_proto::rr::RecordType;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -67,10 +68,12 @@ use std::time::SystemTime;
 /// half was already closed structurally, `dispatch::ROUTES`, TASKS-DONE.md).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminStatusResponse {
-    /// Which providers are currently queried. Reuses `quorum::
-    /// EnabledProviders` directly — see this struct's own doc comment for
-    /// the T-53 reuse-vs-projection verdict.
-    pub providers: EnabledProviders,
+    /// The currently **enabled** voters, in configured order (T-72/T-73) — a
+    /// projection of the enabled entries of `dispatch::AppState::providers`,
+    /// enough for the tray tooltip / status indicator (`empty` =
+    /// `NoActiveProvider`). The full editable list (including disabled and
+    /// custom entries) is `GET /admin/providers`, not this field.
+    pub active_providers: Vec<ProviderStatusView>,
     /// Current timeout-interpretation mode. Reuses `timeout::TimeoutMode`
     /// directly — same verdict as `providers` above.
     pub timeout_mode: TimeoutMode,
@@ -144,14 +147,136 @@ pub struct AdminStats {
 /// uses it: the dashboard always has both controls' current values on hand
 /// and sends them together, so there's no scenario needing
 /// `Option<Option<T>>`-style patch semantics for this slice's two controls.
-/// Also reuses `EnabledProviders`/`TimeoutMode` directly on the *input*
-/// side — same T-53 verdict as [`AdminStatusResponse`]'s own doc comment.
+/// Since T-72/T-73 the provider list is edited through `/admin/providers/*`,
+/// not here — this body carries only the timeout mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminConfigUpdate {
-    /// The desired provider toggles.
-    pub providers: EnabledProviders,
     /// The desired timeout mode.
     pub timeout_mode: TimeoutMode,
+}
+
+/// One enabled voter in [`AdminStatusResponse::active_providers`] (T-72/T-73).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderStatusView {
+    /// The voter's lowercase `id`.
+    pub id: String,
+    /// Its human-readable name.
+    pub display_name: String,
+    /// Which `/admin/ui` group it belongs to.
+    pub category: Category,
+}
+
+impl ProviderStatusView {
+    /// Projects the **enabled** entries of a configured voter list.
+    #[must_use]
+    pub fn active_from(entries: &[ProviderEntry]) -> Vec<Self> {
+        entries
+            .iter()
+            .filter(|entry| entry.enabled)
+            .map(|entry| Self {
+                id: entry.spec.id.clone(),
+                display_name: entry.spec.display_name.clone(),
+                category: entry.spec.category,
+            })
+            .collect()
+    }
+}
+
+/// One configured voter as shown by `GET /admin/providers` (T-72/T-73) — the
+/// full editable view (unlike [`ProviderStatusView`], includes disabled and
+/// custom entries and the `is_builtin`/`block_signature` a UI needs).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderView {
+    /// Lowercase wire id.
+    pub id: String,
+    /// Human-readable name.
+    pub display_name: String,
+    /// The `DoH` endpoint.
+    pub doh_url: String,
+    /// `/admin/ui` group.
+    pub category: Category,
+    /// How the quorum reads this provider's block responses.
+    pub block_signature: crate::upstream::BlockSignature,
+    /// Whether it's queried this round.
+    pub enabled: bool,
+    /// `true` for a built-in §3.4 preset, `false` for a user-added custom
+    /// entry (the UI offers "remove" only for the latter).
+    pub is_builtin: bool,
+}
+
+/// The body of `GET /admin/providers`, echoed by the mutating routes after a
+/// change (T-72/T-73).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProvidersResponse {
+    /// The configured voter list, in order.
+    pub active: Vec<ProviderView>,
+    /// Every built-in §3.4 preset (for the "add a preset" UI), whether or not
+    /// it's already in `active`.
+    pub available_presets: Vec<ProviderView>,
+    /// How many third parties see each uncached query with the current list:
+    /// enabled voters + 1 (the baseline resolver). Surfaced so the fan-out
+    /// privacy tradeoff stays visible (CLAUDE.md / SPEC.md — "not buried").
+    pub third_party_count: usize,
+    /// Whether the change that produced this response was written to disk —
+    /// same convention as [`OverrideListsResponse::persisted`]. Always `true`
+    /// for a plain `GET`.
+    pub persisted: bool,
+}
+
+impl ProviderView {
+    /// Full view of one configured entry.
+    #[must_use]
+    pub fn of(entry: &ProviderEntry) -> Self {
+        Self {
+            id: entry.spec.id.clone(),
+            display_name: entry.spec.display_name.clone(),
+            doh_url: entry.spec.doh_url.clone(),
+            category: entry.spec.category,
+            block_signature: entry.spec.block_signature,
+            enabled: entry.enabled,
+            is_builtin: crate::upstream::builtin_preset(&entry.spec.id).is_some(),
+        }
+    }
+}
+
+/// `POST /admin/providers/add`'s body (T-72/T-73). For a built-in preset,
+/// send just `{ "id": "cloudflare-family" }`; for a custom endpoint, also
+/// `url` + `display_name` + `category` (+ optional `block_signature`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderAddRequest {
+    /// Lowercase wire id — must be unique in the current list.
+    pub id: String,
+    /// Required for a non-preset id; must be `https` and not a
+    /// loopback/private/link-local literal host.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Required for a non-preset id.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Required for a non-preset id.
+    #[serde(default)]
+    pub category: Option<Category>,
+    /// Optional for a custom entry — defaults to
+    /// `BlockSignature::NullIpOrNxdomain`.
+    #[serde(default)]
+    pub block_signature: Option<crate::upstream::BlockSignature>,
+}
+
+/// `POST /admin/providers/remove`'s body (T-72/T-73) — a built-in preset
+/// can't be removed, only disabled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRemoveRequest {
+    /// The custom entry's id.
+    pub id: String,
+}
+
+/// `POST /admin/providers/set-enabled`'s body (T-72/T-73).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderSetEnabledRequest {
+    /// The entry's id.
+    pub id: String,
+    /// Desired state.
+    pub enabled: bool,
 }
 
 /// One override-list entry as shown to a client (T-47) — a projection of
@@ -602,10 +727,10 @@ impl From<&VoterRecord> for VoterVerdictView {
 /// SPEC.md §8 `VoterResult` DTO (T-54).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VoterResultView {
-    /// [`crate::upstream::Provider::as_str`] — the same lowercase identifier
-    /// `EnabledProviders`'s own field names and the `GET /admin/log?voter=`
-    /// facet use, so a client can round-trip a value from here straight back
-    /// into that filter.
+    /// [`crate::quorum::VoterRecord::provider_id`] — the same lowercase
+    /// identifier the `GET /admin/log?voter=` facet matches against, so a
+    /// client can round-trip a value from here straight back into that
+    /// filter.
     pub provider_name: String,
     pub status: VoterVerdictView,
 }
@@ -613,7 +738,7 @@ pub struct VoterResultView {
 impl From<&VoterRecord> for VoterResultView {
     fn from(record: &VoterRecord) -> Self {
         Self {
-            provider_name: record.provider.as_str().to_string(),
+            provider_name: record.provider_id.clone(),
             status: VoterVerdictView::from(record),
         }
     }
@@ -979,6 +1104,90 @@ impl AdminClient {
             .map_err(AdminClientError::Request)?;
         response.json().await.map_err(AdminClientError::Request)
     }
+
+    /// Reads the configured voter list plus the available built-in presets
+    /// (T-72/T-73).
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable or the
+    /// response doesn't decode as [`ProvidersResponse`].
+    pub async fn providers(&self) -> Result<ProvidersResponse, AdminClientError> {
+        let response = self
+            .client
+            .get(format!("{}/admin/providers", self.base_url))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Adds a voter — a built-in preset (`id` only) or a custom `https`
+    /// endpoint (T-72/T-73).
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, the
+    /// request was rejected (`400`), or the response doesn't decode.
+    pub async fn add_provider(
+        &self,
+        request: &ProviderAddRequest,
+    ) -> Result<ProvidersResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/providers/add", self.base_url))
+            .json(request)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Removes a **custom** voter by id (T-72/T-73) — a built-in preset can
+    /// only be disabled.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, the id
+    /// wasn't a removable custom entry (`400`), or the response doesn't decode.
+    pub async fn remove_provider(&self, id: &str) -> Result<ProvidersResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/providers/remove", self.base_url))
+            .json(&ProviderRemoveRequest { id: id.to_string() })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Enables or disables a configured voter by id (T-72/T-73).
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, the id
+    /// isn't configured (`400`), or the response doesn't decode.
+    pub async fn set_provider_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<ProvidersResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/providers/set-enabled", self.base_url))
+            .json(&ProviderSetEnabledRequest {
+                id: id.to_string(),
+                enabled,
+            })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
 }
 
 #[cfg(test)]
@@ -1016,7 +1225,7 @@ mod tests {
 
     fn voter(verdict: VoterVerdict) -> VoterRecord {
         VoterRecord {
-            provider: Provider::Quad9,
+            provider_id: "quad9".to_string(),
             verdict,
             allow_ip_count: None,
             error_message: None,
@@ -1155,7 +1364,6 @@ mod tests {
         VoterVerdictView,
     };
     use crate::quorum::{VoterRecord, VoterVerdict};
-    use crate::upstream::Provider;
 
     fn json_of<T: serde::Serialize>(value: &T) -> String {
         match serde_json::to_string(value) {
@@ -1254,7 +1462,7 @@ mod tests {
 
     fn voter_record(verdict: VoterVerdict) -> VoterRecord {
         VoterRecord {
-            provider: Provider::Quad9,
+            provider_id: "quad9".to_string(),
             verdict,
             allow_ip_count: match verdict {
                 VoterVerdict::Allow => Some(3),

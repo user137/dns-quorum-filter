@@ -40,6 +40,7 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = ["tls1
 toml = "1.1.4"
 tracing = "0.1.41"
 tracing-subscriber = "0.3"
+url = "2.5.8"
 zeroize = "1.9.0"
 
 [dev-dependencies]

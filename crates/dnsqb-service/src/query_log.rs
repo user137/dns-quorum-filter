@@ -25,8 +25,8 @@
 //! [`VoterRecord`]/`VoterVerdict` moved to `quorum.rs` at T-147 — which
 //! providers cast a vote and what their outcome means is quorum's own
 //! domain, not the log's; this module just records it. See `quorum.rs`'s own
-//! doc comment for why `VoterRecord` carries [`crate::upstream::Provider`]
-//! (two variants) rather than `quorum::Slot`'s three (baseline never casts an
+//! doc comment for why `VoterRecord` carries a `provider_id` string (a
+//! configured voter) rather than the baseline slot (baseline never casts an
 //! OR-logic vote).
 //!
 //! **Producer since T-147**: `dispatch::resolve_doh_request` builds and
@@ -36,7 +36,6 @@
 //! gap).
 
 use crate::quorum::{VoterRecord, VoterVerdict};
-use crate::upstream::Provider;
 use hickory_proto::rr::RecordType;
 use parking_lot::RwLock;
 use std::collections::VecDeque;
@@ -273,7 +272,7 @@ pub struct LogFilter<'a> {
     /// provider actually caught" ambiguity this project's T-66 benchmark
     /// entry already recorded for a different reason, not a bug in this
     /// filter.
-    pub voter: Option<Provider>,
+    pub voter: Option<&'a str>,
 }
 
 /// `lowercased_needle` is `filter.domain_contains`, already lowercased once
@@ -295,14 +294,14 @@ fn matches_filter(
             return false;
         }
     }
-    if let Some(provider) = filter.voter {
+    if let Some(provider_id) = filter.voter {
         // T-148: Disabled excluded explicitly - that provider was never
         // asked to vote, so it must not count as "participated" (see
         // LogFilter::voter's own doc comment).
         if !entry
             .voters
             .iter()
-            .any(|v| v.provider == provider && v.verdict != VoterVerdict::Disabled)
+            .any(|v| v.provider_id == provider_id && v.verdict != VoterVerdict::Disabled)
         {
             return false;
         }
@@ -321,7 +320,6 @@ impl Default for QueryLog {
 mod tests {
     use super::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
     use crate::quorum::{VoterRecord, VoterVerdict};
-    use crate::upstream::Provider;
     use hickory_proto::rr::RecordType;
     use std::time::{Duration, SystemTime};
 
@@ -555,7 +553,7 @@ mod tests {
         let mut quad9_entry = entry_at(now);
         quad9_entry.domain = "quad9-voted.example".to_string();
         quad9_entry.voters = vec![VoterRecord {
-            provider: Provider::Quad9,
+            provider_id: "quad9".to_string(),
             verdict: VoterVerdict::Allow,
             allow_ip_count: Some(1),
             error_message: None,
@@ -564,7 +562,7 @@ mod tests {
         let mut adguard_entry = entry_at(now);
         adguard_entry.domain = "adguard-voted.example".to_string();
         adguard_entry.voters = vec![VoterRecord {
-            provider: Provider::AdGuard,
+            provider_id: "adguard".to_string(),
             verdict: VoterVerdict::Allow,
             allow_ip_count: Some(1),
             error_message: None,
@@ -574,7 +572,7 @@ mod tests {
         let results = log.search(
             now,
             &LogFilter {
-                voter: Some(Provider::Quad9),
+                voter: Some("quad9"),
                 ..LogFilter::default()
             },
         );
@@ -601,7 +599,7 @@ mod tests {
         let results = log.search(
             now,
             &LogFilter {
-                voter: Some(Provider::Quad9),
+                voter: Some("quad9"),
                 ..LogFilter::default()
             },
         );
@@ -622,13 +620,13 @@ mod tests {
         disabled_entry.domain = "quad9-disabled.example".to_string();
         disabled_entry.voters = vec![
             VoterRecord {
-                provider: Provider::Quad9,
+                provider_id: "quad9".to_string(),
                 verdict: VoterVerdict::Disabled,
                 allow_ip_count: None,
                 error_message: None,
             },
             VoterRecord {
-                provider: Provider::AdGuard,
+                provider_id: "adguard".to_string(),
                 verdict: VoterVerdict::Allow,
                 allow_ip_count: Some(1),
                 error_message: None,
@@ -639,7 +637,7 @@ mod tests {
         let results = log.search(
             now,
             &LogFilter {
-                voter: Some(Provider::Quad9),
+                voter: Some("quad9"),
                 ..LogFilter::default()
             },
         );

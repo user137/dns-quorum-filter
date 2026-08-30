@@ -100,17 +100,55 @@ classDiagram
     }
 
     class Category {
-        <<enum>>
+        <<enum, T-72/T-73 реалізовано як upstream::Category>>
         SECURITY
-        ADS
-        ADULT
+        ADS_TRACKERS
+        ADULT_CONTENT
     }
-    class ProviderConfig {
-        +String name
+    class BlockSignature {
+        <<enum, T-72/T-73 реалізовано>>
+        NULL_IP
+        NXDOMAIN_VS_BASELINE
+        NULL_IP_OR_NXDOMAIN
+    }
+    class ProviderSpec {
+        <<T-72/T-73, реалізовано — upstream::ProviderSpec>>
+        +String id
+        +String display_name
         +String doh_url
         +Category category
-        +bool built_in
+        +BlockSignature block_signature
+    }
+    class ProviderView {
+        <<T-72/T-73, реалізовано — GET/POST /admin/providers>>
+        +String id
+        +String display_name
+        +String doh_url
+        +Category category
+        +BlockSignature block_signature
         +bool enabled
+        +bool is_builtin
+    }
+    class ProvidersResponse {
+        <<T-72/T-73, реалізовано>>
+        +ProviderView[] active
+        +ProviderView[] available_presets
+        +usize third_party_count
+        +bool persisted
+    }
+    class ProviderAddRequest {
+        <<T-72/T-73, реалізовано>>
+        +String id
+        +Option~String~ url
+        +Option~String~ display_name
+        +Option~Category~ category
+        +Option~BlockSignature~ block_signature
+    }
+    class ProviderStatusView {
+        <<T-72/T-73, реалізовано — AdminStatusResponse.active_providers>>
+        +String id
+        +String display_name
+        +Category category
     }
     class TimeoutMode {
         <<enum>>
@@ -124,18 +162,17 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52, реалізовано>>
-        +EnabledProviders providers
+        <<T-52 / T-72 реалізовано>>
+        +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
         +u16 port
         +AdminStats stats
         +bool persisted
     }
-    class EnabledProviders {
-        <<T-148, реалізовано>>
-        +bool quad9
-        +bool adguard
+    class AdminConfigUpdate {
+        <<T-52 / T-72 — лише timeout>>
+        +TimeoutMode timeout_mode
     }
     class AdminStats {
         <<T-52, реалізовано; in_flight — T-149; degraded_* — T-56>>
@@ -228,7 +265,14 @@ classDiagram
     OverrideListsResponse --> ListKind
     OverrideAddRequest --> ListKind
     OverrideRemoveRequest --> ListKind
-    ProviderConfig --> Category
+    ProviderSpec --> Category
+    ProviderSpec --> BlockSignature
+    ProviderView --> Category
+    ProviderView --> BlockSignature
+    ProvidersResponse --> ProviderView
+    ProviderAddRequest --> Category
+    AdminStatusResponse --> ProviderStatusView
+    ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck
 ```
@@ -252,12 +296,11 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 **Сьомий варіант, `Disabled` (T-148, код, не SPEC.md)**: `crates/dnsqb-service/src/quorum.rs`'s
 `VoterVerdict` виріс до шести бекенд-варіантів (`Block/Allow/Timeout/Error/Canceled/Disabled`) —
 `Disabled` означає "провайдер адміністративно вимкнений цього разу, взагалі не опитувався"
-(`quorum::EnabledProviders`), відмінний і від `Canceled` (був придатний, просто не дочекались), і
-від `Timeout` (питали, не відповів). На відміну від `Pending`, тут нема зворотної асиметрії —
-`Disabled` термінальний в обох напрямках (бекенд і DTO), додано в `VoterStatus` вище напряму, без
-окремого пояснення-мапінгу. `ProviderConfig.enabled: bool` (DTO вище) вже передбачав саме цей
-перемикач для майбутнього UI (T-52/T-53) — нова backend-можливість узгоджується з уже
-запланованою формою DTO, не суперечить їй.
+(з T-72/T-73 — `ProviderEntry { enabled: false }` у рантайм-списку), відмінний і від `Canceled`
+(був придатний, просто не дочекались), і від `Timeout` (питали, не відповів). На відміну від
+`Pending`, тут нема зворотної асиметрії — `Disabled` термінальний в обох напрямках (бекенд і DTO),
+додано в `VoterStatus` вище напряму. `ProviderView.enabled: bool` (DTO вище) несе цей самий стан
+у `GET /admin/providers`.
 
 Це узгоджується з рештою §3.3 (три режими таймауту — там `TIMEOUT` явно
 згадується як результат) і з §3.6 (`CANCELED` явно відрізняється від `TIMEOUT`
@@ -284,8 +327,9 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 `dnsqb-tray`'s три стани tooltip'а (`Unreachable`/`NoActiveProvider{in_flight}`/
 `Filtering{in_flight,blocked,total,degraded_events,degraded_window}`,
 `crates/dnsqb-tray/src/status.rs`) — це **не** нова DTO-форма на дроті, а чисто клієнтська
-інтерпретація вже існуючого `AdminStatusResponse` (той самий `providers`/`stats`, вище):
-`NoActiveProvider` = `!providers.quad9 && !providers.adguard`, `Filtering` = інакше, з
+інтерпретація вже існуючого `AdminStatusResponse` (той самий `stats`, вище):
+`NoActiveProvider` = `active_providers.is_empty()` (з T-72/T-73 — раніше було
+`!providers.quad9 && !providers.adguard`), `Filtering` = інакше, з
 `degraded_events`/`degraded_window` просто скопійованими з `stats` (T-56). Не діаграмується як
 окремий клас — похідне, не передане окремим JSON-полем.
 
@@ -303,19 +347,23 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 не мав би джерела в SPEC.md. Немає перевірки браузера (умова 1) чи watchdog (умова 4, Фаза 3 ще не
 існує) — обидва лишаються майбутнім, повний draft у `ui-status-indicator.md` не переписано.
 
-## `AdminStatusResponse`/`AdminStats`/`EnabledProviders` — реальна реалізація, ширша за чернетку
+## `AdminStatusResponse`/`AdminStats` та провайдер-DTO (T-52 → T-72/T-73)
 
 `ResolverSettings` (вище) — чернетка з UI-SPEC.md §5, ще не реалізована як окремий DTO.
 `AdminStatusResponse` (T-52) — те, що реально повертають `GET /admin/status`/`POST /admin/config`
-на новому адмін-каналі (SPEC.md §0, рядки 12a/12b — розщеплені з колишнього рядка 12 при T-149)
-— покриває той самий `timeout_mode`/`timeout_ms`/`port`,
-що й чернетковий `ResolverSettings`, плюс `providers: EnabledProviders` (T-148, а не категорійний
-перемикач — Ф1 має лише 2 провайдери, не категорії) і `stats: AdminStats` (лічильники з поточного
-вікна логу — не персистований, не "сьогодні" в календарному сенсі). Не заміна `ResolverSettings` за
-задумом (той DTO лишається чернеткою на майбутнє, коли з'явиться `set_doh_port`/`get_provider_config`
-з окремою структурою) — це паралельна, вже реально повернута форма для того, що T-52 встиг покрити.
-T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна точка звести це до однієї форми, не
-раніше.
+на адмін-каналі — покриває `timeout_mode`/`timeout_ms`/`port` + `stats: AdminStats` (лічильники з
+поточного вікна логу).
+
+**T-72/T-73 переробило провайдер-частину.** Замість `providers: EnabledProviders` (2 `bool`)
+`AdminStatusResponse` тепер несе `active_providers: ProviderStatusView[]` (лише увімкнені voter'и,
+достатньо для tooltip'а трею / індикатора). `AdminConfigUpdate` **втратив** `providers` — лише
+`timeout_mode`. Повний редагований список voter'ів — окрема трійця маршрутів
+`GET /admin/providers` + `POST /admin/providers/{add,remove,set-enabled}` з `ProvidersResponse`
+(`active: ProviderView[]` + `available_presets: ProviderView[]` + `third_party_count` — скільки
+третіх сторін бачить кожен uncached-запит, увімкнені voter'и + baseline). Кастомний провайдер
+додається `ProviderAddRequest` (`id` + `url`/`display_name`/`category` для не-preset). Внутрішній
+`upstream::ProviderSpec` → `ProviderView` — свідома проєкція (додає `is_builtin`), не reuse.
+`EnabledProviders` — видалено з коду.
 
 ## `OverrideDomainView`/`OverrideListsResponse` — реальна реалізація, відмінна від чернеткового `OverrideEntry` (T-47)
 
@@ -326,9 +374,9 @@ T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна
 `conflicts: List~String~`, обчислений сервером із наявного `OverrideLists::conflicts()` (SPEC.md
 §5's вимога явно показувати конфлікт allowlist/blocklist, а не мовчки застосовувати). Це свідома
 проєкція, не дублікат `OverrideEntry`, який міг би розійтись — та ж причина, що вже пояснена вище
-для `AdminStatusResponse`, а не той відкритий T-53 напруг ("DTO замість прямої експозиції
-внутрішніх структур", досі невирішений для `AdminConfigUpdate`/`EnabledProviders`) — тут проєкція
-з реальною зміною форми (розщеплення по списку), не пряме перевикористання.
+для `AdminStatusResponse` — тут проєкція з реальною зміною форми (розщеплення по списку), не
+пряме перевикористання. (T-53's "DTO замість прямої експозиції" тепер закрито й для провайдерів:
+`ProviderView` — проєкція `upstream::ProviderSpec`, T-72/T-73.)
 
 `POST /admin/overrides/add`'s тіло — `OverrideAddRequest { pattern, list }`: `pattern` може
 нести провідний `*.` (той самий формат, що й `overrides.toml`), парситься сервером через

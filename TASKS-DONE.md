@@ -1854,3 +1854,94 @@
   `toml`/`reqwest`/`tempfile`/`sha2`/`tar` вже в дереві; yanked `chacha20` — пре-існуючий,
   транзитивний). Docs: SPEC.md §3.5 (dated T-162-part note + T-163 pointer), TASKS.md (progress +
   нова `- [ ] T-163`), CLAUDE.md, CONFIGURATION.md, UI-SPEC.md §3.5, `diagrams/ui-dto-model.md`.
+
+- [x] T-72 + T-73 (backend) — runtime-configured provider list: кастомний DoH-провайдер +
+  усі §3.4 presets, генералізація жорстко-закодованої 2-voter моделі (SPEC.md §3.4) —
+  plan-mode + advisor до і після; **розбито на 2 коміти** (backend + окремий UI-картковий),
+  бо єдиний діф вийшов ~3000 рядків через ~10 файлів + ~150 тест-сайтів у найбезпекочутливішому
+  модулі (ризик-нотатка плану спрацювала — розбиття явно нею дозволене).
+
+  **Ядро.** `upstream.rs`: видалено `enum Provider` та `todo!()`-заглушку
+  `ecs_option_for_upstream` (панікувала при виклику, `pub`, несла номер T-73 — перезаведено як
+  T-164). Нове: `ProviderSpec { id, display_name, doh_url, category, block_signature }`,
+  `ProviderEntry { spec, enabled }`, closed enum `Category`
+  (`SECURITY`/`ADS_TRACKERS`/`ADULT_CONTENT`) та `BlockSignature`
+  (`NULL_IP`/`NXDOMAIN_VS_BASELINE`/`NULL_IP_OR_NXDOMAIN`), `BUILTIN_PRESETS` — усі 10 рядків
+  §3.4 as data + `builtin_preset`/`all_builtin_presets`. `DEFAULT_PROVIDER_IDS = ["quad9",
+  "adguard"]` — дефолтний активний набір **не змінено** на §3.4/§3.5-й "лише Security"
+  (заявлено як відкрите рішення, не тихо збережено й не тихо змінено — advisor).
+
+  **`quorum.rs` (основний обсяг).** `resolve(&[ProviderEntry])` замість
+  `resolve(EnabledProviders)`; `enum Slot { Voter(usize), Baseline }`; три іменовані
+  `Option<VoterOutcome>` → `Vec<Option<VoterOutcome>>` index-aligned з `entries`;
+  `evaluate(BlockSignature)` замість `evaluate(Provider)` — `NULL_IP` = стара AdGuard-гілка,
+  `NXDOMAIN_VS_BASELINE` = стара Quad9-гілка, `NULL_IP_OR_NXDOMAIN` = або-або.
+  `combine`/`finalize_outcome`/`voter_records`/`representative_allow_answer`/`known_signal`/
+  `is_blocked` — усі беруть `&[ProviderEntry]`+`&[Option<VoterOutcome>]` або `BlockSignature`.
+  `VoterRecord.provider: Provider` → `provider_id: String`. **Збережено дві задокументовані
+  тонкощі** (advisor): `representative_allow_answer` виключає voter із нерозв'язаним
+  `NeedsBaseline`-сигналом (не лише `Blocked`), а `combine`'s `incomplete` тримає слабшу
+  `Responded`-значить-повно семантику (від якої залежить `should_serve_stale`-нотатка в
+  CLAUDE.md). Baseline досі опитується завжди. `Disabled` voter досі ніколи не coerce-иться в
+  `TimedOut` (fail-closed safety).
+
+  **`config.rs`.** `[providers]` (2 `bool`) → `[[providers]]` array-of-tables, жорсткий cutover:
+  старий `[providers]` header → `ConfigError::LegacyProvidersTable` (legacy-sibling presence
+  check перед парсом, той самий патерн, що T-144/T-145/T-148). `resolve_providers`: builtin `id`
+  → з preset-таблиці (не може нести власний url/category — `BuiltinPresetOverride`), кастомний
+  `id` → мусить нести `url`+`display_name`+`category` (`IncompleteCustomProvider`), url через
+  `validate_provider_url` (`InvalidProviderUrl`); id унікальні (`DuplicateProviderId`) й
+  wire-shaped (`InvalidProviderId`). Порожній/відсутній список → `default_active_set()`.
+
+  **SSRF (реальний ризик T-72).** `upstream::validate_provider_url` (нова пряма залежність
+  `url`, вже в дереві транзитивно через `reqwest`/`hickory-proto` — 0 нових ліцензій): відхиляє
+  не-`https` + **літеральний** loopback/private/link-local хост (IPv4 `is_loopback`/`is_private`/
+  `is_link_local`; IPv6 `::1`, `fc00::/7`, `fe80::/10` вручну — стабільні API відсутні).
+  **Заявлена прогалина**: хостнейм, що *резолвиться* у такий IP, не ловиться (resolve-then-pin —
+  окремий механізм). У CLAUDE.md "Known limitations".
+
+  **`admin.rs` / `dispatch.rs`.** `AdminConfigUpdate` **втратив** `providers` (лише
+  `timeout_mode` — редагування списку через власну групу маршрутів, уникає cross-field-read
+  bug-класу — advisor). `AdminStatusResponse.providers: EnabledProviders` →
+  `active_providers: Vec<ProviderStatusView>`. Нові DTO: `ProviderView`/`ProvidersResponse`
+  (`third_party_count` = увімкнені voter'и + baseline — CLAUDE.md: fan-out має лишатись
+  видимим)/`ProviderAddRequest`/`ProviderRemoveRequest`/`ProviderSetEnabledRequest`. Маршрути
+  `GET /admin/providers` + `POST /admin/providers/{add,remove,set-enabled}` (у `ROUTES` + у
+  незалежну hand-written копію тесту), усі CSRF-gated, усі ділять `persist_lock` і читають
+  інші живі поля `resolver_config.toml` перед save. `AppState`: `RuntimeSettings` втратив
+  `providers` (лишив `timeout`); нове поле `providers: RwLock<Arc<Vec<ProviderEntry>>>`
+  (патерн `geoip_countries`), swap-иться `/admin/providers/*` **і** `apply_admin_reset`.
+  `AppState::new` дістав `RuntimeInit { timeout, providers }` bundle (уникає 8-го параметра →
+  структурний фікс `too_many_arguments`, ~40 тест-сайтів). `GET /admin/log?voter=` тепер
+  валідує raw-рядок проти (активні id ∪ усі builtin preset id) у `serve_admin_log` (не в
+  `parse_log_query`, у якого нема доступу до рантайм-стану), 400 payload-free на невідоме.
+
+  **Тести (~150 сайтів мігровано).** Containment-хелпери: `preset_entry`/`default_voters`/
+  `voters`/`voters_flagged` у pipeline+quorum тестах, `combine2`/`voter_record2` shim'и в
+  quorum (стара 2-voter форма), MockClient keyed на `QUAD9_URL`/`ADGUARD_URL` літерали замість
+  `Provider::Quad9.doh_url()`. 3 тести переосмислено семантично (не механічно): "disabling
+  both providers pass-through" тепер через `/admin/providers/set-enabled`; "single provider
+  disabled" через `voters_flagged([("quad9",false),("adguard",true)])` (щоб Disabled-запис
+  досі існував — у новій моделі voter поза списком просто не показується); reset-fixture
+  переписано на `[[providers]]`. Нові: 7 provider-route тестів у dispatch, `validate_provider_url`
+  SSRF-набір + `is_valid_provider_id` у upstream, 6 config-тестів (legacy-table reject, custom
+  provider, SSRF url, duplicate id, incomplete custom, misspelled key), `DatabaseSource` не
+  чіпано. `ecs`-conformance-рядок (`rfc_7871.rs`) → assertion-free T-164-плейсхолдер.
+
+  **Doc-link fixups (rustdoc gate).** 4 стейл intra-doc `[...]` на видалені типи
+  (`EnabledProviders`/`Provider`/`ProvidersResponse` без шляху) — переформульовано.
+  `examples/phase1_metrics.rs` мігровано (`builtin_preset` + `BlockSignature`).
+
+  Ground-truth ритуал: `ui-dto-model.md` — **зачеплений** (додано `ProviderSpec`/`ProviderView`/
+  `ProvidersResponse`/`ProviderAddRequest`/`ProviderStatusView`/`BlockSignature`, оновлено
+  `Category`/`AdminStatusResponse`/`AdminConfigUpdate`, видалено `EnabledProviders`, зв'язки,
+  наративні секції). `ui-status-indicator.md` — умова `NoActiveProvider` (`!providers.quad9 &&
+  !providers.adguard` → `active_providers.is_empty()`) — енкодиться лише в `ui-dto-model.md`,
+  оновлено там. `ui-navigation.md` — нова картка (у UI-коміті) не вузол навігації, **не
+  зачеплений**.
+
+  Повний локальний гейт зелений: 416 lib + 5 tray (+~25 нових тестів, +2 `#[ignore]`d),
+  conformance 18/2, clippy/fmt/doc/deny/audit чисті (`url` не дав нової ліцензії; yanked
+  `chacha20` — пре-існуючий). Docs: SPEC.md §3.4, CONFIGURATION.md (`[[providers]]`),
+  CLAUDE.md, TASKS.md (+`- [ ] T-164`, T-72/73 UI-коміт лишається), `diagrams/ui-dto-model.md`.
+  **UI-коміт (наступний):** картка `#providers-body` + `main.js` + UI-SPEC.md §3.4.

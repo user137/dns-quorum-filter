@@ -1,14 +1,14 @@
 //! `DoH` transport to a single upstream (RFC 8484 GET, T-9/T-21; T-22
-//! baseline client; T-24 upstream client). Fixed to the two Phase-1 presets
-//! (Quad9 Filtered, `AdGuard` Default) — more presets are Фаза 2 (T-73), not
-//! this batch.
+//! baseline client; T-24 upstream client). Since T-72/T-73 the voter set is a
+//! runtime-configured list of [`ProviderSpec`]s (built-in §3.4 presets or a
+//! user-added custom `https` endpoint), not a fixed 2-variant enum.
 
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use hickory_proto::op::Message;
-use hickory_proto::rr::rdata::opt::EdnsOption;
 use hickory_proto::ProtoError;
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::time::Duration;
 
@@ -35,71 +35,289 @@ pub fn doh_get_url(base: &str, message_bytes: &[u8]) -> String {
     format!("{base}?dns={encoded}")
 }
 
-/// RFC 7871 (T-8): EDNS Client Subnet option for a named upstream variant —
-/// `None` unless the identifier names an ECS-enabled variant. Neither
-/// Phase-1 preset ([`Provider::Quad9`]'s `dns.quad9.net`, 9.9.9.9, nor
-/// `AdGuard` Default) uses ECS; Quad9's ECS-enabled 9.9.9.11 variant isn't a
-/// wired preset yet (SPEC.md §3.4, TASKS.md T-73, Фаза 2). Kept as a stub
-/// pending that preset — implementing it now against a string identifier
-/// nothing in this batch actually produces would guard nothing.
+/// Filtering category a preset belongs to (SPEC.md §3.4) — drives the
+/// `/admin/ui` grouping and the first-run default (Security only, see
+/// `config::ResolverConfig`). Baseline-resolver alternatives from §3.4 are a
+/// separate concern (the baseline endpoint is not admin-selectable yet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Category {
+    /// Malware / phishing (Quad9 Filtered, `Cloudflare` Malware, ...).
+    Security,
+    /// Ads + trackers + malware (`AdGuard` Default).
+    AdsTrackers,
+    /// Adds adult-content blocking (`Cloudflare` Family, `OpenDNS`
+    /// `FamilyShield`, ...).
+    AdultContent,
+}
+
+/// How [`crate::quorum`] decides a given upstream's response means "blocked"
+/// (T-72/T-73). Only Quad9 and `AdGuard` were live-verified (DECISIONS.md
+/// 2026-08-25, n=1); every other preset's value is derived from that
+/// provider's published behaviour and carries a `#[ignore]`d live-verify
+/// test until confirmed. A user-added custom provider defaults to the
+/// permissive [`BlockSignature::NullIpOrNxdomain`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BlockSignature {
+    /// An `A`/`AAAA` answer containing `0.0.0.0` / `::` (`AdGuard`,
+    /// `Cloudflare` Malware/Family, `CleanBrowsing`).
+    NullIp,
+    /// `NXDOMAIN`, undecidable on its own — needs the baseline resolver to
+    /// tell a filter block from genuine non-existence (Quad9, `OpenDNS`
+    /// `FamilyShield`). SPEC.md §3.1.
+    NxdomainVsBaseline,
+    /// Either of the above — the permissive default for a custom endpoint
+    /// whose block shape isn't known ahead of time.
+    NullIpOrNxdomain,
+}
+
+/// One upstream filtering resolver in the quorum's voter set (T-72/T-73).
+/// Built either from a built-in §3.4 preset ([`builtin_preset`]) or from a
+/// user-added custom entry in `resolver_config.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderSpec {
+    /// Lowercase wire identifier, unique within the active set — the value
+    /// the `GET /admin/log?voter=` facet and `VoterRecord::provider_id`
+    /// carry.
+    pub id: String,
+    /// Human-readable name for the `/admin/ui` list.
+    pub display_name: String,
+    /// The `DoH` endpoint — always `https://` (enforced on config load and
+    /// on `POST /admin/providers/add`).
+    pub doh_url: String,
+    /// Which `/admin/ui` group this provider sits in.
+    pub category: Category,
+    /// How the quorum reads this provider's block responses.
+    pub block_signature: BlockSignature,
+}
+
+/// A configured voter: its [`ProviderSpec`] plus whether it is currently
+/// enabled (T-72/T-73). `resolve` is handed the whole list — a disabled
+/// entry still produces a [`crate::quorum::VoterRecord`] with
+/// [`crate::quorum::VoterVerdict::Disabled`], so the query log stays honest
+/// about who was configured but silent (T-148's invariant, generalized).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderEntry {
+    /// The provider definition.
+    pub spec: ProviderSpec,
+    /// Whether it is queried this round.
+    pub enabled: bool,
+}
+
+impl ProviderEntry {
+    /// The two Phase-1 voters, both enabled — the fresh-install default when
+    /// `resolver_config.toml` has no `[[providers]]` (unchanged behaviour).
+    #[must_use]
+    pub fn default_active_set() -> Vec<Self> {
+        DEFAULT_PROVIDER_IDS
+            .iter()
+            .filter_map(|id| builtin_preset(id))
+            .map(|spec| Self {
+                spec,
+                enabled: true,
+            })
+            .collect()
+    }
+
+    /// Whether at least one configured provider is enabled. `false` is
+    /// SPEC.md §3/§8.1's explicit pass-through case — resolution goes through
+    /// the unfiltered baseline resolver instead of calling `quorum::resolve`.
+    #[must_use]
+    pub fn any_enabled(entries: &[Self]) -> bool {
+        entries.iter().any(|entry| entry.enabled)
+    }
+}
+
+/// The built-in §3.4 presets, in display order. `IPv4` bootstrap addresses
+/// from that table are omitted deliberately — `ReqwestDohClient` resolves
+/// each URL's host via the system resolver; a bootstrap-IP field would imply
+/// a custom-bootstrap feature this project doesn't have.
+const BUILTIN_PRESETS: &[(&str, &str, &str, Category, BlockSignature)] = &[
+    (
+        "quad9",
+        "Quad9 Filtered",
+        "https://dns.quad9.net/dns-query",
+        Category::Security,
+        BlockSignature::NxdomainVsBaseline,
+    ),
+    (
+        "cloudflare-malware",
+        "Cloudflare Malware (1.1.1.2)",
+        "https://security.cloudflare-dns.com/dns-query",
+        Category::Security,
+        BlockSignature::NullIp,
+    ),
+    (
+        "cleanbrowsing-security",
+        "CleanBrowsing Security",
+        "https://doh.cleanbrowsing.org/doh/security-filter/",
+        Category::Security,
+        BlockSignature::NullIp,
+    ),
+    (
+        "dns4eu-protective",
+        "DNS4EU Protective",
+        "https://protective.joindns4.eu/dns-query",
+        Category::Security,
+        BlockSignature::NullIpOrNxdomain,
+    ),
+    (
+        "adguard",
+        "AdGuard Default",
+        "https://dns.adguard-dns.com/dns-query",
+        Category::AdsTrackers,
+        BlockSignature::NullIp,
+    ),
+    (
+        "cloudflare-family",
+        "Cloudflare Family (1.1.1.3)",
+        "https://family.cloudflare-dns.com/dns-query",
+        Category::AdultContent,
+        BlockSignature::NullIp,
+    ),
+    (
+        "adguard-family",
+        "AdGuard Family",
+        "https://family.adguard-dns.com/dns-query",
+        Category::AdultContent,
+        BlockSignature::NullIp,
+    ),
+    (
+        "cleanbrowsing-adult",
+        "CleanBrowsing Adult",
+        "https://doh.cleanbrowsing.org/doh/adult-filter/",
+        Category::AdultContent,
+        BlockSignature::NullIp,
+    ),
+    (
+        "opendns-familyshield",
+        "OpenDNS FamilyShield",
+        "https://doh.familyshield.opendns.com/dns-query",
+        Category::AdultContent,
+        BlockSignature::NxdomainVsBaseline,
+    ),
+    (
+        "dns4eu-child",
+        "DNS4EU Child",
+        "https://child.joindns4.eu/dns-query",
+        Category::AdultContent,
+        BlockSignature::NullIpOrNxdomain,
+    ),
+];
+
+/// The `id`s of the presets enabled on a fresh install with no
+/// `[[providers]]` in `resolver_config.toml` — the two Phase-1 voters,
+/// unchanged. SPEC.md §3.4/§3.5's "Security category only" first-run default
+/// is a separate, still-open decision (see `TASKS.md`).
+pub const DEFAULT_PROVIDER_IDS: &[&str] = &["quad9", "adguard"];
+
+/// Resolve a built-in preset `id` to its full [`ProviderSpec`], or `None` if
+/// `id` names no preset (i.e. it must be a custom entry carrying its own
+/// `url`/`category`).
 #[must_use]
-pub fn ecs_option_for_upstream(_upstream: &str) -> Option<EdnsOption> {
-    todo!("Фаза 2: T-73 — ECS-enabled upstream preset")
+pub fn builtin_preset(id: &str) -> Option<ProviderSpec> {
+    BUILTIN_PRESETS
+        .iter()
+        .find(|(preset_id, ..)| *preset_id == id)
+        .map(
+            |&(id, display_name, doh_url, category, block_signature)| ProviderSpec {
+                id: id.to_string(),
+                display_name: display_name.to_string(),
+                doh_url: doh_url.to_string(),
+                category,
+                block_signature,
+            },
+        )
 }
 
-/// The Phase-1 upstream `DoH` providers (SPEC.md "Фазований план", Фаза 1:
-/// Quad9 + `AdGuard` DNS, literally). Adding more presets is T-73 (Фаза 2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Provider {
-    /// Quad9 Filtered (Security category) — malware/phishing blocking.
-    Quad9,
-    /// `AdGuard` Default — ads/trackers/malware blocking.
-    AdGuard,
+/// Every built-in preset as a [`ProviderSpec`], display order — for the
+/// `GET /admin/providers` "available presets" list.
+#[must_use]
+pub fn all_builtin_presets() -> Vec<ProviderSpec> {
+    BUILTIN_PRESETS
+        .iter()
+        .map(
+            |&(id, display_name, doh_url, category, block_signature)| ProviderSpec {
+                id: id.to_string(),
+                display_name: display_name.to_string(),
+                doh_url: doh_url.to_string(),
+                category,
+                block_signature,
+            },
+        )
+        .collect()
 }
 
-impl Provider {
-    /// The provider's Phase-1 `DoH` endpoint (SPEC.md §3.4).
-    #[must_use]
-    pub fn doh_url(self) -> &'static str {
-        match self {
-            Self::Quad9 => "https://dns.quad9.net/dns-query",
-            Self::AdGuard => "https://dns.adguard-dns.com/dns-query",
-        }
-    }
-
-    /// The lowercase wire identifier this provider is known by across the
-    /// admin channel (`quorum::EnabledProviders`'s own field names, T-148;
-    /// `admin::VoterResultView::provider_name`/the `GET /admin/log?voter=`
-    /// facet, T-54) — the single source of truth both directions of that
-    /// round trip share, so they can't independently drift out of sync.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Quad9 => "quad9",
-            Self::AdGuard => "adguard",
-        }
-    }
+/// A custom provider's `id` must fit the same lowercase wire shape the
+/// built-in ids use — the value flows into `VoterRecord::provider_id`, the
+/// `?voter=` log facet, and the on-disk `[[providers]]` key.
+#[must_use]
+pub fn is_valid_provider_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// `"quad9"`/`"adguard"` didn't match either [`Provider`] variant (T-54,
-/// `GET /admin/log?voter=` facet parsing) — payload-free, same discipline as
-/// this crate's other closed, coarse error enums (no arbitrary client input
-/// echoed back).
+/// Why a custom `DoH` provider URL was rejected (T-72). Payload-free — the
+/// URL can embed a per-account NextDNS/ControlD profile id, so the reason
+/// never carries the URL text itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("not a recognized provider identifier")]
-pub struct ParseProviderError;
+pub enum ProviderUrlError {
+    /// Not a parseable absolute URL.
+    #[error("provider URL is not a valid absolute URL")]
+    Unparseable,
+    /// Scheme is not `https`.
+    #[error("provider URL must use https")]
+    NotHttps,
+    /// No host component.
+    #[error("provider URL has no host")]
+    NoHost,
+    /// The host is a literal loopback / private / link-local IP address — a
+    /// custom provider URL must point at a public resolver, never back at
+    /// this machine or an internal service (SSRF). **Stated gap:** a
+    /// *hostname* that later resolves to such an address is not caught here.
+    #[error("provider URL host is a loopback, private, or link-local address")]
+    NonPublicHost,
+}
 
-impl std::str::FromStr for Provider {
-    type Err = ParseProviderError;
-
-    /// The exact inverse of [`Provider::as_str`] — round-trips through the
-    /// same two lowercase identifiers, nothing else (not the SPEC.md display
-    /// names, not case-insensitive matching).
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "quad9" => Ok(Self::Quad9),
-            "adguard" => Ok(Self::AdGuard),
-            _ => Err(ParseProviderError),
+/// Validates a candidate custom `DoH` provider URL (T-72). Reused by
+/// `config::ResolverConfig::load` and `POST /admin/providers/add` so both
+/// reject the same shapes. See [`ProviderUrlError`] for what "public" means
+/// and the gap that leaves.
+///
+/// # Errors
+///
+/// A [`ProviderUrlError`] variant for each rejected shape.
+pub fn validate_provider_url(url: &str) -> Result<(), ProviderUrlError> {
+    let parsed = url::Url::parse(url).map_err(|_| ProviderUrlError::Unparseable)?;
+    if parsed.scheme() != "https" {
+        return Err(ProviderUrlError::NotHttps);
+    }
+    match parsed.host() {
+        None => Err(ProviderUrlError::NoHost),
+        Some(url::Host::Domain(_)) => Ok(()),
+        Some(url::Host::Ipv4(ip)) => {
+            if ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified() {
+                Err(ProviderUrlError::NonPublicHost)
+            } else {
+                Ok(())
+            }
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            // `Ipv6Addr::is_unique_local`/`is_unicast_link_local` are unstable;
+            // check the documented prefixes directly. fc00::/7 (ULA),
+            // fe80::/10 (link-local).
+            let seg = ip.segments();
+            let ula = (seg[0] & 0xfe00) == 0xfc00;
+            let link_local = (seg[0] & 0xffc0) == 0xfe80;
+            if ip.is_loopback() || ip.is_unspecified() || ula || link_local {
+                Err(ProviderUrlError::NonPublicHost)
+            } else {
+                Ok(())
+            }
         }
     }
 }
@@ -186,32 +404,104 @@ impl DohClient for ReqwestDohClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{DohClient, Provider, ReqwestDohClient};
+    use super::{
+        all_builtin_presets, builtin_preset, is_valid_provider_id, validate_provider_url,
+        BlockSignature, Category, DohClient, ProviderSpec, ProviderUrlError, ReqwestDohClient,
+    };
     use hickory_proto::op::{Message, Query};
     use hickory_proto::rr::{DNSClass, Name, RecordType};
     use std::str::FromStr;
 
-    // T-54: `as_str`/`FromStr` must be exact inverses - this is the round
-    // trip `GET /admin/log?voter=` and `VoterResultView::provider_name` both
-    // depend on.
+    // T-72/T-73: the two live-verified Phase-1 signatures must survive the
+    // move into the preset table unchanged (DECISIONS.md 2026-08-25).
     #[test]
-    fn as_str_and_from_str_round_trip_for_every_provider() {
-        for provider in [Provider::Quad9, Provider::AdGuard] {
-            assert_eq!(Provider::from_str(provider.as_str()), Ok(provider));
+    fn builtin_preset_resolves_the_two_phase1_voters_with_their_verified_signatures() {
+        let (Some(quad9), Some(adguard)) = (builtin_preset("quad9"), builtin_preset("adguard"))
+        else {
+            panic!("quad9 and adguard are builtin presets");
+        };
+        assert_eq!(quad9.doh_url, "https://dns.quad9.net/dns-query");
+        assert_eq!(quad9.category, Category::Security);
+        assert_eq!(quad9.block_signature, BlockSignature::NxdomainVsBaseline);
+        assert_eq!(adguard.doh_url, "https://dns.adguard-dns.com/dns-query");
+        assert_eq!(adguard.category, Category::AdsTrackers);
+        assert_eq!(adguard.block_signature, BlockSignature::NullIp);
+    }
+
+    #[test]
+    fn builtin_preset_returns_none_for_an_unknown_id() {
+        assert_eq!(builtin_preset("Quad9"), None, "ids are lowercase, exact");
+        assert_eq!(builtin_preset(""), None);
+        assert_eq!(builtin_preset("my-custom-nextdns"), None);
+    }
+
+    #[test]
+    fn every_builtin_preset_has_a_unique_lowercase_id_and_https_url() {
+        let presets = all_builtin_presets();
+        let mut ids: Vec<&str> = presets
+            .iter()
+            .map(|p: &ProviderSpec| p.id.as_str())
+            .collect();
+        ids.sort_unstable();
+        let count = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "preset ids must be unique");
+        for preset in &presets {
+            assert_eq!(preset.id, preset.id.to_lowercase(), "ids are lowercase");
+            assert!(
+                preset.doh_url.starts_with("https://"),
+                "{} must be https",
+                preset.id
+            );
         }
     }
 
     #[test]
-    fn from_str_rejects_an_unrecognized_identifier() {
-        assert!(
-            Provider::from_str("Quad9").is_err(),
-            "must not accept display-case names"
+    fn validate_provider_url_accepts_a_public_https_endpoint() {
+        assert_eq!(
+            validate_provider_url("https://abcd1234.dns.nextdns.io/dns-query"),
+            Ok(())
         );
-        assert!(Provider::from_str("").is_err());
-        assert!(
-            Provider::from_str("quad9 ").is_err(),
-            "must not trim whitespace"
+        assert_eq!(validate_provider_url("https://8.8.8.8/dns-query"), Ok(()));
+    }
+
+    #[test]
+    fn validate_provider_url_rejects_non_https_and_ssrf_hosts() {
+        assert_eq!(
+            validate_provider_url("http://dns.example.com/dns-query"),
+            Err(ProviderUrlError::NotHttps)
         );
+        assert_eq!(
+            validate_provider_url("not a url"),
+            Err(ProviderUrlError::Unparseable)
+        );
+        for ssrf in [
+            "https://127.0.0.1/dns-query",
+            "https://localhost.localdomain@127.0.0.1/dns-query",
+            "https://10.0.0.5/dns-query",
+            "https://192.168.1.1/dns-query",
+            "https://169.254.169.254/latest/meta-data",
+            "https://[::1]/dns-query",
+            "https://[fe80::1]/dns-query",
+            "https://[fd00::1]/dns-query",
+        ] {
+            assert_eq!(
+                validate_provider_url(ssrf),
+                Err(ProviderUrlError::NonPublicHost),
+                "{ssrf} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn is_valid_provider_id_matches_the_wire_shape() {
+        assert!(is_valid_provider_id("my-nextdns-1"));
+        assert!(is_valid_provider_id("quad9"));
+        assert!(!is_valid_provider_id(""));
+        assert!(!is_valid_provider_id("MyNextDNS"));
+        assert!(!is_valid_provider_id("has space"));
+        assert!(!is_valid_provider_id("under_score"));
+        assert!(!is_valid_provider_id(&"x".repeat(65)));
     }
 
     // T-31: proves the keep-alive/pool builder options are accepted by the
@@ -250,7 +540,9 @@ mod tests {
         let mut query = Message::query();
         query.add_query(question);
 
-        let result = client.query(Provider::Quad9.doh_url(), &query).await;
+        let result = client
+            .query("https://dns.quad9.net/dns-query", &query)
+            .await;
         if let Err(err) = result {
             panic!("expected a decoded DNS response, got: {err}");
         }

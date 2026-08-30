@@ -54,17 +54,19 @@ pub enum TrayStatus {
 
 impl TrayStatus {
     fn from_response(response: &AdminStatusResponse) -> Self {
-        if response.providers.quad9 || response.providers.adguard {
+        // T-72/T-73: `active_providers` is the enabled voter list; empty =
+        // SPEC.md §3/§8.1 pass-through (`NoActiveProvider`).
+        if response.active_providers.is_empty() {
+            Self::NoActiveProvider {
+                in_flight: response.stats.in_flight,
+            }
+        } else {
             Self::Filtering {
                 in_flight: response.stats.in_flight,
                 blocked: response.stats.blocked,
                 total: response.stats.total,
                 degraded_events: response.stats.degraded_events,
                 degraded_window: response.stats.degraded_window,
-            }
-        } else {
-            Self::NoActiveProvider {
-                in_flight: response.stats.in_flight,
             }
         }
     }
@@ -108,11 +110,14 @@ impl TrayStatus {
 #[cfg(test)]
 mod tests {
     use super::TrayStatus;
-    use dnsqb_service::{AdminStats, AdminStatusResponse, EnabledProviders, TimeoutMode};
+    use dnsqb_service::{AdminStats, AdminStatusResponse, ProviderStatusView, TimeoutMode};
 
-    fn response(providers: EnabledProviders, stats: AdminStats) -> AdminStatusResponse {
+    fn response(
+        active_providers: Vec<ProviderStatusView>,
+        stats: AdminStats,
+    ) -> AdminStatusResponse {
         AdminStatusResponse {
-            providers,
+            active_providers,
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,
             port: 8443,
@@ -133,7 +138,14 @@ mod tests {
 
     #[test]
     fn from_response_carries_degraded_counts_through_when_filtering() {
-        let resp = response(EnabledProviders::default(), stats(20, 3));
+        let resp = response(
+            vec![ProviderStatusView {
+                id: "quad9".to_string(),
+                display_name: "Quad9 Filtered".to_string(),
+                category: dnsqb_service::Category::Security,
+            }],
+            stats(20, 3),
+        );
         let status = TrayStatus::from_response(&resp);
         assert_eq!(
             status,
@@ -149,7 +161,14 @@ mod tests {
 
     #[test]
     fn tooltip_omits_the_degraded_suffix_when_no_events_are_recorded() {
-        let resp = response(EnabledProviders::default(), stats(20, 0));
+        let resp = response(
+            vec![ProviderStatusView {
+                id: "quad9".to_string(),
+                display_name: "Quad9 Filtered".to_string(),
+                category: dnsqb_service::Category::Security,
+            }],
+            stats(20, 0),
+        );
         let tooltip = TrayStatus::from_response(&resp).tooltip();
         assert!(
             !tooltip.contains("тайм-аут"),
@@ -159,7 +178,14 @@ mod tests {
 
     #[test]
     fn tooltip_includes_the_raw_degraded_counts_when_events_are_recorded() {
-        let resp = response(EnabledProviders::default(), stats(20, 3));
+        let resp = response(
+            vec![ProviderStatusView {
+                id: "quad9".to_string(),
+                display_name: "Quad9 Filtered".to_string(),
+                category: dnsqb_service::Category::Security,
+            }],
+            stats(20, 3),
+        );
         let tooltip = TrayStatus::from_response(&resp).tooltip();
         assert!(
             tooltip.contains("3/20"),
@@ -173,11 +199,7 @@ mod tests {
         // were disabled (AdminStats::degraded_events's own doc comment) -
         // NoActiveProvider is a distinct pass-through state, no voters run
         // there at all.
-        let providers = EnabledProviders {
-            quad9: false,
-            adguard: false,
-        };
-        let resp = response(providers, stats(20, 5));
+        let resp = response(Vec::new(), stats(20, 5));
         assert_eq!(
             TrayStatus::from_response(&resp),
             TrayStatus::NoActiveProvider { in_flight: 0 }

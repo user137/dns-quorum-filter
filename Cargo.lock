@@ -562,6 +562,7 @@ dependencies = [
  "toml 1.1.4+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "url",
  "x509-parser",
  "zeroize",
 ]

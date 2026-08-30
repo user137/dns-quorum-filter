@@ -28,10 +28,10 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | Module | Responsibility |
 |---|---|
 | `pipeline` | `handle_query` request flow; `invalidate_changed` (cache eviction on override-list reload) |
-| `quorum` | OR-logic `resolve()` over `EnabledProviders`; per-provider `is_blocked` signature table; early-return via `FuturesUnordered`; `VoterRecord`/`VoterVerdict` |
+| `quorum` | OR-logic `resolve(&[ProviderEntry])` over a runtime voter list (T-72/T-73); `evaluate(BlockSignature)` (3 heuristics: `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`); early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict` |
 | `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear` |
 | `overrides` | allowlist/blocklist `load`/`save`/`decision`/`conflicts`; suffix-wildcard match; `InvalidEntry` (domain-redacting) |
-| `upstream` | `Provider` enum; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive) |
+| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive) |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource`, `LogFilter` search, `clear` |
@@ -48,7 +48,9 @@ write route, the full set enumerated in `dispatch::ROUTES` (a path/method not in
 never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset`,
 `/admin/shutdown`; `GET|POST /admin/overrides[/add|/remove]`, `/admin/cache-config[/apply]`,
 `/admin/geoip[/add|/remove]`, `GET|POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
-(T-162, MaxMind creds; POST persists then runs a save-time probe → `check`), `/admin/log[/clear]`;
+(T-162, MaxMind creds; POST persists then runs a save-time probe → `check`), `GET /admin/providers`
++ `POST /admin/providers/{add,remove,set-enabled}` (T-72/T-73; provider list edited here, **not**
+`/admin/config` — which now carries only `timeout_mode`), `/admin/log[/clear]`;
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. `geoip_maxmind.toml` is its own file
 with a single writer (that one POST route), not part of `resolver_config.toml` — no shared lock.
 Every route that re-serializes `resolver_config.toml` shares
@@ -83,8 +85,12 @@ MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO), T-1
 closed enum showing the *loaded* source; plaintext file kept, ACL-restricted).
 
 **The GeoIP workstream (T-74–T-82) is complete.** Remaining Ф2 work is separate: cert automation
-(T-69 rotation → T-67 DPAPI, each needs its own plan+advisor cycle) and custom DoH provider +
-presets (T-72/T-73, the phase's riskiest — `quorum` is hardcoded to two named providers).
+(T-69 rotation → T-67 DPAPI, each needs its own plan+advisor cycle). **T-72/T-73 backend done**
+(2026-08-31, plan+advisor, split into a backend commit + a `/admin/ui`-card commit) — `quorum` is
+no longer hardcoded to two providers: runtime `[[providers]]` list, all 10 §3.4 presets +
+custom-URL entry, 3 `BlockSignature` heuristics, 4 `/admin/providers/*` routes, `AdminConfigUpdate`
+loses `providers`, `AdminStatusResponse.providers` → `active_providers`. **T-164** re-files the
+deleted `ecs_option_for_upstream` stub (ECS-enabled upstream preset).
 **T-163** (the rest of T-162: DPAPI for `geoip_maxmind.toml`; `POST /admin/reset` re-read +
 `run_geoip_updater` reading `GeoipSource` from shared state so a creds change needs no restart;
 detecting creds that break *after* acceptance) stays open, not the critical path. macOS-dependent
@@ -123,9 +129,17 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   blocking IP's country, populated only on `GEOIP` rows; `resolved_ip_country` (T-161) is the
   first-IP field the log UI actually renders.
 - **`quorum::resolve` has an unenforced precondition** (documented on its doc comment): called with
-  `EnabledProviders { quad9: false, adguard: false }` it returns a cacheable baseline ALLOW
-  indistinguishable from a filtered one. The one shipped caller gates this out; a newtype was
-  judged over-engineering for two providers.
+  an all-disabled `&[ProviderEntry]` it returns a cacheable baseline ALLOW indistinguishable from a
+  filtered one. The one shipped caller (`pipeline::handle_query`) gates this out via
+  `ProviderEntry::any_enabled`.
+- **Custom provider URL SSRF check is literal-host only (T-72)** — `validate_provider_url` rejects
+  a non-`https` scheme and a loopback/private/link-local *literal IP* host, but a hostname that
+  *resolves* to such an address at request time is not caught (resolve-then-pin is a bigger
+  mechanism). Stated gap.
+- **Shipped default provider set (`quad9` + `adguard`) still differs from SPEC.md §3.4/§3.5's
+  first-run "Security category only"** (Quad9 Filtered + Cloudflare Malware). T-72/T-73 kept the
+  shipped default rather than change what gets filtered inside a large refactor — open decision,
+  `DEFAULT_PROVIDER_IDS` in `upstream.rs`.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
@@ -181,6 +195,8 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 - `parking_lot` — `query_log` ring-buffer lock (no critical section holds it across `.await`).
 - `thiserror`, `base64`, `futures-util` (`FuturesUnordered` only), `tracing` (+`tracing-subscriber`
   — every call site grepped for domain-name leaks before the first real subscriber was wired).
+- `url` — custom DoH provider URL parsing + literal-host SSRF classification (T-72). Already in the
+  tree transitively via `reqwest`/`hickory-proto`; promoted to a direct dep, no new licence entry.
 - `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot`;
   depends on `dnsqb-service` as a library for `AdminClient`.
 - Dev-only: `tempfile` (`overrides` load tests), `x509-parser` (`cert` DER assertions), `proptest`

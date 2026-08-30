@@ -145,6 +145,8 @@ mod wire;
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
     DatabaseSource, MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
+    ProviderAddRequest, ProviderRemoveRequest, ProviderSetEnabledRequest, ProviderStatusView,
+    ProviderView, ProvidersResponse,
 };
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError,
@@ -155,7 +157,7 @@ pub use cert_rotation::{rotate_certificate, RotationError, RotationReport};
 pub use config::{ConfigError, GeoipConfig, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
-    PersistTarget, RuntimeSettings,
+    PersistTarget, RuntimeInit, RuntimeSettings,
 };
 pub use geoip::{GeoipError, GeoipReader};
 pub use geoip_credentials::{
@@ -173,15 +175,15 @@ pub use pipeline::{
 };
 pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
 pub use quorum::{
-    is_blocked, requires_quorum, resolve, EnabledProviders, QuorumOutcome, QuorumVerdict,
-    VoterRecord, VoterVerdict,
+    is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict, VoterRecord, VoterVerdict,
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
 pub use trust_store::{ensure_installed, uninstall, TrustStoreError, TrustStoreOutcome};
 pub use upstream::{
-    doh_get_url, ecs_option_for_upstream, DohClient, Provider, ReqwestDohClient, UpstreamError,
-    BASELINE_DOH_URL,
+    all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, validate_provider_url,
+    BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec, ProviderUrlError,
+    ReqwestDohClient, UpstreamError, BASELINE_DOH_URL, DEFAULT_PROVIDER_IDS,
 };
 pub use wire::{
     attach_edns, build_block_response, decode_wire_message, encode_wire_message, forward_response,

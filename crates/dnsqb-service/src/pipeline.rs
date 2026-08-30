@@ -11,9 +11,10 @@
 //!
 //! T-41 added a pass-through for SPEC.md §3/§8.1's "every quorum provider
 //! disabled" case (originally a 2-variant `Voters` enum); T-148 replaced
-//! that all-or-nothing switch with [`crate::quorum::EnabledProviders`], a
-//! real per-provider toggle — see `handle_query`'s `enabled.any_enabled()`
-//! branch.
+//! that all-or-nothing switch with a per-provider `EnabledProviders`
+//! toggle; T-72/T-73 in turn replaced *that* with a runtime
+//! `[[providers]]` list (`&[upstream::ProviderEntry]`) — see `handle_query`'s
+//! `ProviderEntry::any_enabled` branch.
 //!
 //! T-76 wires SPEC.md §3.5's `GeoIP` filter into the two points named there:
 //! a cache-hit `Allow` replay ([`cache_hit_response_with_meta`]) and a fresh
@@ -42,9 +43,9 @@ use crate::geoip::{self, GeoipReader};
 use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
 use crate::query_log::{Decision, DecisionSource};
-use crate::quorum::{requires_quorum, resolve, EnabledProviders, QuorumVerdict, VoterRecord};
+use crate::quorum::{requires_quorum, resolve, QuorumVerdict, VoterRecord};
 use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
-use crate::upstream::{DohClient, BASELINE_DOH_URL};
+use crate::upstream::{DohClient, ProviderEntry, BASELINE_DOH_URL};
 use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, SOA};
@@ -299,7 +300,7 @@ pub async fn handle_query<C: DohClient + Sync>(
     query: &Message,
     client: &C,
     overrides: &OverrideLists,
-    enabled: EnabledProviders,
+    voters: &[ProviderEntry],
     cache: &CacheContext<'_>,
     timeout_config: &TimeoutConfig,
     geoip: &GeoipFilter<'_>,
@@ -351,7 +352,7 @@ pub async fn handle_query<C: DohClient + Sync>(
         return (PipelineOutcome::ProxyToSingleUpstream, None);
     }
 
-    if !enabled.any_enabled() {
+    if !ProviderEntry::any_enabled(voters) {
         // SPEC.md §3, §8.1: explicit pass-through, not fail-closed, not a
         // silent no-op — OR-logic over an empty voter set is semantically
         // undefined, so resolution goes through the baseline resolver with
@@ -421,7 +422,7 @@ pub async fn handle_query<C: DohClient + Sync>(
         }
     }
 
-    let outcome = resolve(client, query, timeout_config, enabled).await;
+    let outcome = resolve(client, query, timeout_config, voters).await;
     match outcome.verdict {
         QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
@@ -783,9 +784,42 @@ mod tests {
     use crate::geoip::GeoipReader;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{Decision, DecisionSource};
-    use crate::quorum::{EnabledProviders, VoterVerdict};
+    use crate::quorum::VoterVerdict;
     use crate::timeout::{TimeoutConfig, TimeoutMode};
-    use crate::upstream::{DohClient, Provider, UpstreamError};
+    use crate::upstream::{builtin_preset, DohClient, ProviderEntry, UpstreamError};
+
+    const QUAD9_URL: &str = "https://dns.quad9.net/dns-query";
+    const ADGUARD_URL: &str = "https://dns.adguard-dns.com/dns-query";
+
+    /// Both Phase-1 voters enabled — the common `handle_query` voter set (the
+    /// old `EnabledProviders::default()`).
+    fn default_voters() -> Vec<ProviderEntry> {
+        ProviderEntry::default_active_set()
+    }
+
+    /// A configured voter list with every entry disabled — SPEC.md §3/§8.1's
+    /// pass-through case (the old `EnabledProviders { quad9: false, adguard:
+    /// false }`).
+    fn no_voters() -> Vec<ProviderEntry> {
+        default_voters()
+            .into_iter()
+            .map(|mut entry| {
+                entry.enabled = false;
+                entry
+            })
+            .collect()
+    }
+
+    /// Named built-in presets with per-entry `enabled` flags — for a test
+    /// that needs a *configured but disabled* voter in the list (so it still
+    /// gets a `VoterVerdict::Disabled` record).
+    fn voters_flagged(pairs: &[(&str, bool)]) -> Vec<ProviderEntry> {
+        pairs
+            .iter()
+            .filter_map(|(id, enabled)| builtin_preset(id).map(|spec| (spec, *enabled)))
+            .map(|(spec, enabled)| ProviderEntry { spec, enabled })
+            .collect()
+    }
     use hickory_proto::op::{Message, Query, ResponseCode};
     use hickory_proto::rr::rdata::{A, SOA};
     use hickory_proto::rr::{Name, RData, Record, RecordType};
@@ -897,9 +931,9 @@ mod tests {
             _query: &Message,
         ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let response = if url == Provider::Quad9.doh_url() {
+            let response = if url == QUAD9_URL {
                 &self.quad9
-            } else if url == Provider::AdGuard.doh_url() {
+            } else if url == ADGUARD_URL {
                 &self.adguard
             } else {
                 &self.baseline
@@ -966,7 +1000,7 @@ mod tests {
             &query,
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1014,7 +1048,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1046,7 +1080,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1094,7 +1128,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1122,7 +1156,7 @@ mod tests {
             &query_for("example.com.", RecordType::MX),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1159,7 +1193,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1210,7 +1244,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1253,7 +1287,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1279,7 +1313,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1315,7 +1349,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1346,7 +1380,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1382,7 +1416,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1409,7 +1443,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1447,7 +1481,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1480,7 +1514,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1522,7 +1556,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1703,10 +1737,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1739,10 +1770,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1781,10 +1809,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1828,10 +1853,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1913,10 +1935,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -1958,10 +1977,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2004,7 +2020,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2044,7 +2060,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2081,7 +2097,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2132,7 +2148,7 @@ mod tests {
             &query_for("blocked.example.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2154,7 +2170,7 @@ mod tests {
             &query_for("allowed.example.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2188,7 +2204,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2228,7 +2244,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2267,10 +2283,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2310,10 +2323,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: true,
-            },
+            &voters_flagged(&[("quad9", false), ("adguard", true)]),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2337,7 +2347,7 @@ mod tests {
         // would pass even if handle_query silently dropped the verdict on
         // its way from QuorumOutcome into QueryLogMeta).
         assert_eq!(meta.voters.len(), 2);
-        let Some(quad9) = meta.voters.iter().find(|v| v.provider == Provider::Quad9) else {
+        let Some(quad9) = meta.voters.iter().find(|v| v.provider_id == "quad9") else {
             panic!("expected a Quad9 voter record");
         };
         assert_eq!(quad9.verdict, VoterVerdict::Disabled);
@@ -2353,7 +2363,7 @@ mod tests {
             &query_for("example.com.", RecordType::MX),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2378,7 +2388,7 @@ mod tests {
             &Message::query(),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2417,7 +2427,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2469,7 +2479,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2538,7 +2548,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &cache_context,
             &timeout_config(),
             &GeoipFilter {
@@ -2580,7 +2590,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &MockClient::all_panic(),
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &cache_context,
             &timeout_config(),
             &GeoipFilter {
@@ -2639,7 +2649,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2696,10 +2706,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders {
-                quad9: false,
-                adguard: false,
-            },
+            &no_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),
@@ -2752,7 +2759,7 @@ mod tests {
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
-            EnabledProviders::default(),
+            &default_voters(),
             &CacheContext {
                 cache: &cache,
                 config: &cache_config(),

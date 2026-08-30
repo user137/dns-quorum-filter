@@ -196,9 +196,13 @@ advisor) — MaxMind-режим отримав UX: адмін-маршрут `GE
 save-time проба проти `download.maxmind.com` (`check`: VERIFIED/REJECTED/UNVERIFIED — Три Б),
 `database_source` (closed enum) на `GeoipCountriesResponse` з метаданих завантаженого reader-а.
 Plaintext-файл лишається (ACL-обмежений). **Решта T-162 → T-163** (DPAPI, `/admin/reset` re-read +
-runtime-підхоплення джерела, виявлення "зламалися пізніше"). Далі в Ф2-плані — T-72/T-73
-(кастомний DoH-провайдер + presets), тоді T-67 (приватний ключ у DPAPI). Порядок — за вибором
-користувача (поточний: T-162 → T-72/T-73 → T-67).
+runtime-підхоплення джерела, виявлення "зламалися пізніше"). T-72/T-73 **backend done** (TASKS-DONE.md,
+2026-08-31, plan-mode + advisor, розбито на backend-коміт + окремий UI-картковий коміт) — `quorum`
+більше не хардкодить 2 провайдери: рантайм-список `[[providers]]`, усі 10 presets §3.4 + кастомний
+`https`-URL, 3 евристики `BlockSignature`, маршрути `GET /admin/providers` +
+`POST /admin/providers/{add,remove,set-enabled}`, `AdminConfigUpdate` втрачає `providers`,
+`AdminStatusResponse.providers` → `active_providers`; SSRF-валідація (літеральний хост), `url` як
+пряма залежність. Далі — T-67 (приватний ключ у DPAPI). ECS-провайдер → **T-164**.
 
 - [ ] T-67 — Інсталятор генерує leaf-сертифікат, приватний ключ у platform secure storage (DPAPI / Keychain / Secret Service) (2)
 - [ ] T-68 — **Windows-половина (install) звужена — готово, T-49 (TASKS-DONE.md, 2026-08-29),
@@ -207,8 +211,12 @@ runtime-підхоплення джерела, виявлення "зламал�
   який реальний деінсталятор викличе.** Лишається: сам пакетований деінсталятор (MSI/MSIX,
   T-156) фактично викликає його при видаленні застосунку; macOS-половина (Keychain).
 - [ ] T-71 — Портувати на другу платформу: Windows + macOS автоматизовано; Linux — можлива третя ціль цієї ж фази з ручною інсталяцією сертифіката (NSS DB-автоматизація лишається окремо, T-132) (Фазований план, Фаза 2)
-- [ ] T-72 — UI для додавання кастомного DoH-провайдера (довільний URL — NextDNS/ControlD) (3.4, Фазований план Фаза 2)
-- [ ] T-73 — UI: додати решту вбудованих presets із таблиці 3.4 (CleanBrowsing, DNS4EU, Cloudflare Family, OpenDNS FamilyShield тощо), не лише custom-provider URL (3.4, Фазований план Фаза 2)
+- [ ] T-72/T-73 — **backend done** (TASKS-DONE.md, 2026-08-31). Лишається **UI-коміт**: картка
+  `#providers-body` на `/admin/ui` (presets за категоріями + форма кастомного провайдера +
+  "N третіх сторін бачать запити"), `main.js`-рендерери, `UI-SPEC.md` §3.4, діаграми. (3.4)
+- [ ] T-164 — ECS-enabled upstream preset (Quad9 9.9.9.11, не в таблиці §3.4) — перезаведено з T-73
+  після видалення `todo!()`-заглушки `ecs_option_for_upstream` у T-72/T-73. Потрібен: preset із
+  ECS Subnet-опцією + шлях у quorum, що чіпляє її лише для цього preset (RFC 7871). (3.4)
 - [ ] T-83 — CI: розширити build matrix на другу платформу (Windows + macOS; Linux — можлива третя ціль, див. T-71) (Фазований план, Фаза 2)
 - [ ] T-163 — Залишок T-162 (частина 1+3-save-time+5 доставлена в T-162, TASKS-DONE.md 2026-08-31):
   (1) **DPAPI** для `geoip_maxmind.toml` замість plaintext — той самий T-67-прецедент про

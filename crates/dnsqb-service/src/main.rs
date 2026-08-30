@@ -14,7 +14,7 @@ use dnsqb_service::{
     app_data_dir, bind_listener, load_maxmind_credentials, load_or_generate_server_config,
     run_geoip_updater, serve, AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader,
     GeoipSource, GeoipState, InvalidEntry, OverrideLists, OverridesState, PersistPaths,
-    PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig, RuntimeSettings, TimeoutConfig,
+    PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig, RuntimeInit, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -73,8 +73,8 @@ async fn main() {
 
     let (overrides, invalid_overrides) = load_overrides(app_data.as_deref());
 
-    let runtime = RuntimeSettings {
-        providers: resolver_config.providers,
+    let runtime = RuntimeInit {
+        providers: resolver_config.providers.clone(),
         timeout: TimeoutConfig {
             mode: resolver_config.timeout_mode,
             duration: Duration::from_millis(resolver_config.timeout_ms.into()),

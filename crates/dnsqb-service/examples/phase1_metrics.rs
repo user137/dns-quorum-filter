@@ -63,8 +63,8 @@
 //! threat feed, churns constantly, no reason to keep it here).
 
 use dnsqb_service::{
-    decode_wire_message, doh_get_url, encode_wire_message, is_blocked, DohClient, Provider,
-    ReqwestDohClient, BASELINE_DOH_URL,
+    builtin_preset, decode_wire_message, doh_get_url, encode_wire_message, is_blocked,
+    BlockSignature, DohClient, ReqwestDohClient, BASELINE_DOH_URL,
 };
 use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -217,10 +217,12 @@ async fn resolve_all_three(
     if baseline.metadata.response_code != ResponseCode::NoError {
         return Ok(None);
     }
-    let quad9 = client.query(Provider::Quad9.doh_url(), &query).await?;
-    let adguard = client.query(Provider::AdGuard.doh_url(), &query).await?;
-    let quad9_blocked = is_blocked(Provider::Quad9, &quad9, &baseline);
-    let adguard_blocked = is_blocked(Provider::AdGuard, &adguard, &baseline);
+    let quad9_spec = builtin_preset("quad9").ok_or("quad9 preset must exist")?;
+    let adguard_spec = builtin_preset("adguard").ok_or("adguard preset must exist")?;
+    let quad9 = client.query(&quad9_spec.doh_url, &query).await?;
+    let adguard = client.query(&adguard_spec.doh_url, &query).await?;
+    let quad9_blocked = is_blocked(BlockSignature::NxdomainVsBaseline, &quad9, &baseline);
+    let adguard_blocked = is_blocked(BlockSignature::NullIp, &adguard, &baseline);
     Ok(Some(DomainResult {
         domain: domain.to_string(),
         baseline_rcode: baseline.metadata.response_code,
