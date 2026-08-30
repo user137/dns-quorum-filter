@@ -41,7 +41,7 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient`; embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
-| `geoip` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; DB-IP Lite bounded download + integrity gate + atomic swap + 24h background refresh |
+| `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, `geoip_maxmind.toml` creds, Basic auth, `.tar.gz` extract — T-80); bounded download + integrity gate + atomic swap + 24h background refresh |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
 write route, the full set enumerated in `dispatch::ROUTES` (a path/method not in that table can
@@ -66,9 +66,12 @@ confirm-gated `/admin/shutdown`, "Close" exits the tray only. Replaced the delet
 Done: T-74 (`GeoipReader`), T-75 (background updater), T-76 (pipeline wiring + `[geoip]` config +
 `DecisionSource::Geoip`), T-79 (`geoip_country` in the log), T-82 (unit-test task, docs-only), T-77
 (admin routes + `/admin/ui` card), T-78 (DB build-date indicator), T-161 (`resolved_ip_country` on
-every real-answer log row). **Next: T-80** — opt-in advanced MaxMind GeoLite2 mode with the user's
-own key. Then **T-81** — DB-IP Lite attribution in the UI About/Credits (license is **CC BY 4.0**,
-not CC BY-SA 4.0 as older SPEC text said — corrected at T-75).
+every real-answer log row), T-80 (opt-in MaxMind GeoLite2 source — `geoip_credentials.rs` reads a
+plaintext `geoip_maxmind.toml`, `geoip_updater` branches on `GeoipSource`; Basic-auth download of
+the modern permalink, opportunistic `.tar.gz.sha256`, in-memory `.mmdb` extraction from the
+tarball; UI + DPAPI + broken-creds signal deferred to **T-162**). **Next: T-81** — DB-IP Lite
+attribution in the UI About/Credits (license is **CC BY 4.0**, not CC BY-SA 4.0 as older SPEC text
+said — corrected at T-75).
 
 GeoIP design invariants (SPEC.md §3.5): the verdict is never cached — a cheap local lookup applied
 live on every cached-or-fresh ALLOW, so a blocked-country-list change takes effect on the next
@@ -109,6 +112,11 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
+- **Broken MaxMind credentials only produce a `tracing::warn!` (T-80)** — a malformed
+  `geoip_maxmind.toml`, or a valid one MaxMind then rejects with 401/403, silently falls back to
+  DB-IP Lite (or a stale/absent DB); the user gets no in-UI signal. Surfacing that state is part
+  of **T-162** (which also adds the admin route + DPAPI storage). `geoip_maxmind.toml` is also
+  **not** re-read by `POST /admin/reset` — only a process restart picks up a credentials change.
 - **Admin-channel fuzz (T-58, narrowed)** covers `parse_pattern` / `wire_bytes_from_get` /
   `/admin/config` POST body only — other routes and the `/dns-query` POST body are not fuzzed.
 - **The status indicator (T-56, narrowed)** — browser-DoH-usage detection and watchdog state are
@@ -145,7 +153,10 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   activates). `rcgen` (`aws_lc_rs` / `pem` / `zeroize`, not `ring`) + `zeroize` — cert generation.
 - `moka` — `default-features = false`, `future` (per-entry TTL `Expiry`).
 - `maxminddb` (+`ipnetwork`, `default-features = false`) — GeoIP; `flate2` (`miniz_oxide` backend) +
-  `sha1` (RustCrypto) — bounded gzip decompress + checksum-sidecar verify (T-75).
+  `sha1` (RustCrypto) — bounded gzip decompress + `.sha1` checksum-sidecar verify (T-75).
+- `sha2` (RustCrypto — shares `digest`/`cpufeatures`/etc. with `sha1`) + `tar` (+`filetime`,
+  `default-features = false`) — T-80's MaxMind GeoLite2 path: `.tar.gz.sha256` verify + read-only
+  in-memory `.mmdb` extraction from the tarball (no hand-rolled tar parser).
 - `serde` (+`derive`) / `serde_json` — admin JSON DTOs + embedded web UI. `toml` — both on-disk
   config files (`resolver_config.toml`, `overrides.toml`); replaced JSON at T-145 (DECISIONS.md).
 - `parking_lot` — `query_log` ring-buffer lock (no critical section holds it across `.await`).

@@ -175,7 +175,13 @@ OR-по-кількох-IP і nop-на-порожньому-списку вже �
 задач, закритих напряму в TASKS-DONE.md без окремого рядка тут) — `LogEntry`/`LogEntryView`
 отримали `resolved_ip_country`, інформаційна країна першої резолвленої IP для КОЖНОГО рядка логу
 з реальною відповіддю (не лише `decision_source=GEOIP`, на відміну від наявного `geoip_country`).
-Наступна задача в роботі: **T-80** (advanced-режим MaxMind GeoLite2), потім T-81.
+T-80 done (TASKS-DONE.md, 2026-08-30, один коміт) — опційний MaxMind GeoLite2 як джерело GeoIP-бази:
+новий `geoip_credentials.rs` читає plaintext `geoip_maxmind.toml`, `geoip_updater` гілкується на
+`GeoipSource` (DB-IP Lite / MaxMind); Basic-auth завантаження модерного permalink (ендпоінт
+перевірено `curl`-пробою — `401`, не `404`), опортуністичний `.tar.gz.sha256`, розпаковка
+`.mmdb`-члена з `.tar.gz` у памʼяті (`tar`-крейт, без хендмейд-парсера). UI + DPAPI +
+UI-сигнал про зламані креденшели свідомо відкладені на **T-162** (той самий T-74/T-75→T-77
+backend-before-UI поділ). Наступна задача в роботі: **T-81**.
 
 - [ ] T-67 — Інсталятор генерує leaf-сертифікат, приватний ключ у platform secure storage (DPAPI / Keychain / Secret Service) (2)
 - [ ] T-68 — **Windows-половина (install) звужена — готово, T-49 (TASKS-DONE.md, 2026-08-29),
@@ -190,9 +196,16 @@ OR-по-кількох-IP і nop-на-порожньому-списку вже �
 - [ ] T-71 — Портувати на другу платформу: Windows + macOS автоматизовано; Linux — можлива третя ціль цієї ж фази з ручною інсталяцією сертифіката (NSS DB-автоматизація лишається окремо, T-132) (Фазований план, Фаза 2)
 - [ ] T-72 — UI для додавання кастомного DoH-провайдера (довільний URL — NextDNS/ControlD) (3.4, Фазований план Фаза 2)
 - [ ] T-73 — UI: додати решту вбудованих presets із таблиці 3.4 (CleanBrowsing, DNS4EU, Cloudflare Family, OpenDNS FamilyShield тощо), не лише custom-provider URL (3.4, Фазований план Фаза 2)
-- [ ] T-80 — Опційний advanced-режим MaxMind GeoLite2 із власним ключем користувача, поза дефолтною конфігурацією (3.5)
 - [ ] T-81 — Атрибуція DB-IP Lite (CC BY-SA 4.0) в UI About/Credits (3.5, Наскрізні вимоги)
 - [ ] T-83 — CI: розширити build matrix на другу платформу (Windows + macOS; Linux — можлива третя ціль, див. T-71) (Фазований план, Фаза 2)
+- [ ] T-162 — Doведення T-80's MaxMind GeoLite2-режиму до повного UX: (1) адмін-маршрут
+  `GET`/`POST /admin/geoip/maxmind` + картка на `/admin/ui` для введення/очищення `account_id` +
+  `license_key` (замість ручної правки `geoip_maxmind.toml`); (2) platform secure storage (DPAPI)
+  для ключа замість plaintext-файлу — той самий T-67-прецедент про крейт-широкий
+  `#![forbid(unsafe_code)]` vs сирий Win32 FFI, потребує власного plan+advisor циклу; (3) видимий
+  у UI стан "MaxMind-креденшели зламані / відхилені" — зараз лише `tracing::warn!` + тихий відкат
+  на DB-IP Lite чи застарілу базу (Три Б, user safety); (4) `POST /admin/reset` має також
+  перечитувати `geoip_maxmind.toml` (зараз лише перезапуск процесу підхоплює зміну). (3.5)
 
 ## Фаза 3 — Продакшн-hardening
 

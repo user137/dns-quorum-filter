@@ -126,6 +126,7 @@ mod cert;
 mod config;
 mod dispatch;
 mod geoip;
+mod geoip_credentials;
 mod geoip_download;
 mod geoip_updater;
 mod listener;
@@ -154,7 +155,10 @@ pub use dispatch::{
     PersistTarget, RuntimeSettings,
 };
 pub use geoip::{GeoipError, GeoipReader};
-pub use geoip_updater::{run_geoip_updater, GeoipUpdateError, GEOIP_CHECK_INTERVAL};
+pub use geoip_credentials::{
+    load as load_maxmind_credentials, CredentialsError, LicenseKey, MaxmindCredentials,
+};
+pub use geoip_updater::{run_geoip_updater, GeoipSource, GeoipUpdateError, GEOIP_CHECK_INTERVAL};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,

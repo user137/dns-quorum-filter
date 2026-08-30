@@ -488,6 +488,32 @@ CRC32/ISIZE-трейлер + структурну `MaxMind`-DB-валідаці�
 включно з приміткою "хто перший запустить це проти живого db-ip.com — звірте,
 який шлях спрацював, і допишіть сюди".
 
+**Уточнення до цього пункту, T-80 (2026-08-30) — advanced-режим MaxMind
+GeoLite2.** Реалізовано як **опційний**, поза дефолтом: якщо в теці даних лежить
+`geoip_maxmind.toml` з `account_id` + `license_key`, `geoip_updater.rs`
+переходить із DB-IP Lite на MaxMind GeoLite2-Country. Знахідки цієї сесії
+(перевірено `curl`-пробою проти живого `download.maxmind.com`, не з памʼяті):
+(1) **ендпоінт** — модерний permalink
+`https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`
+(відповідає `401 WWW-Authenticate: Basic realm="geoip-download"` — реальний шлях;
+неіснуючий сусідній шлях дає `404`), автентифікація — HTTP Basic (account id :
+license key), **ніколи не query-параметр** (щоб ключ не потрапляв ні в URL, ні в
+`reqwest::Error`'s `Display` — той самий клас витоку, що вже кусав проєкт на DoH).
+(2) **checksum** — шлях `?suffix=tar.gz.sha256` теж існує (`401`, не `404`), але чи
+віддає він реальний дайджест на реліз — без справжніх креденшелів не підтверджено,
+тож той самий опортуністичний підхід, що й для DB-IP (`.sha256`-сайдкар: наявний
+mismatch — жорстка помилка; відсутній — відкат на TLS + gzip-CRC + структурну
+валідацію), розширений із SHA-1 на SHA-256. (3) **формат** — GeoLite2 віддається
+`.tar.gz` (архів із `GeoLite2-Country.mmdb` + `LICENSE.txt`/`COPYRIGHT.txt`), тож
+доданий `tar`-крейт для розпаковки одного `.mmdb`-члена в памʼяті, обмеженого за
+розміром (не хендмейд-парсер 512-байтових заголовків — той самий принцип, що й
+`hickory-dns` замість власного DNS-парсера). (4) `reqwest` 0.13 **знімає**
+`Authorization` на крос-хостовому редіректі MaxMind → Cloudflare R2 (перевірено в
+вендореному `redirect.rs`), тож ключ не покидає origin MaxMind. Ключ на диску —
+**відкритий текст**, свідомий MVP-tech-debt (як `key.pem`); DPAPI + адмін-маршрут +
+UI-сигнал про зламані креденшели — **T-162**. `GEOIP_CHECK_INTERVAL` лишається 24 год
+для обох джерел.
+
 #### 3.6. Latency-оптимізація: early return при першому BLOCK, HTTP/2 keep-alive до апстрімів
 
 **Early return.** OR-логіці для BLOCK-вердикту не треба чекати відповіді всіх N

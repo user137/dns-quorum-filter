@@ -1485,3 +1485,98 @@
   отримав речення про нові поля відповіді. `CONFIGURATION.md` **перевірено, не відредаговано** —
   жодне TOML-поле не змінилось (T-78 додає лише поля відповіді, не конфігурації), редагування
   заради симетрії з T-77 свідомо не зроблено.
+
+- [x] T-80 — Опційний advanced-режим MaxMind GeoLite2 із власним ключем користувача, поза
+  дефолтною конфігурацією (3.5) — один коміт, plan-mode + advisor до і після.
+
+  Дев'ятий GeoIP-зріз Ф2. Усе нижче за DTO/downstream базою вже було джерело-агностичним із
+  самого T-74 (`GeoipReader` читає `["country","iso_code"]`-шлях, спільний для DB-IP Lite і
+  GeoLite2) — бракувало лише *шляху отримання*: `geoip_updater.rs`/`geoip_download.rs` були
+  побудовані повністю навколо DB-IP Lite's URL-схеми (`dbip-country-lite-YYYY-MM.mmdb.gz`, голий
+  gzip, без auth).
+
+  **Скоуп (рішення користувача, AskUserQuestion): config + updater + deps + тести + докс.**
+  Адмін-маршрут, картка `/admin/ui`, і secure storage для ключа — відкладені на новий **T-162**
+  (той самий T-74/T-75→T-77 backend-before-UI поділ).
+
+  **Перевірено `curl`-пробою проти живого `download.maxmind.com` цієї сесії (не з памʼяті, не
+  реконструкція з доків — обидва `WebFetch` не повернули точний шлях):**
+  - Ендпоінт `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`
+    → `401 WWW-Authenticate: Basic realm="geoip-download"` (реальний шлях; неіснуючий сусідній —
+    `404`). Auth — HTTP Basic (account id : license key), **не** query-параметр.
+  - `?suffix=tar.gz.sha256` теж існує (`401`, не `404`) — але чи віддає реальний дайджест на
+    реліз, без справжніх креденшелів не підтверджено → опортуністичний (наявний mismatch —
+    жорстка помилка; відсутній — відкат на TLS + gzip-CRC + структурну валідацію, та сама
+    резолюція, що користувач обрав для DB-IP на T-75), розширений з SHA-1 на SHA-256.
+  - `reqwest` 0.13 **знімає** `Authorization` на крос-хостовому редіректі MaxMind → Cloudflare R2
+    (перевірено читанням вендореного `redirect.rs::remove_sensitive_headers`) — ключ не покидає
+    origin MaxMind, two-step fetch не потрібен.
+
+  **Advisor pre-gate знайшов 4 речі до написання коду:** (1) ендпоінт треба пробити, не
+  реконструювати — зроблено (вище); (2) sha256-сайдкар **не** робити обовʼязковим (той самий
+  `fetch_checksum_sidecar` advisor-catch у цьому ж файлі: обовʼязковий сайдкар, якого немає =
+  вічна жорстка помилка кожного рефрешу, гірше за його відсутність — Три Б); (3) перевірити, чи
+  `Authorization` переживає редірект (перевірено — знімається); (4) **не** писати path-traversal
+  guard для tar — член розпаковується в памʼять і пишеться у власний фіксований `geoip.mmdb`,
+  шлях члена вживається лише для *вибору* `.mmdb`-члена, тож `../` нікуди не веде; guard був би
+  захисним кодом для неможливого сценарію (заборонено правилами проєкту).
+
+  **Реалізація:**
+  - **Новий `geoip_credentials.rs`**: `MaxmindCredentials { account_id, license_key: LicenseKey }`.
+    `LicenseKey` — newtype з рукописним редагуючим `Debug` (`LicenseKey("<redacted>")`), без
+    `Display` — той самий accidental-`Debug`-leak шлях, що `overrides::InvalidEntry` вже
+    закриває, з власним регресійним тестом. `load()` — відсутній файл → `Ok(None)` (звичайний
+    дефолт-режим), зламаний/завеликий (>8 KiB)/порожнє поле → payload-free `Err` (форма
+    `overrides::OverrideError::Parse`, ніколи не обгортає `toml::de::Error`).
+  - **Окремий файл `geoip_maxmind.toml`, не таблиця в `resolver_config.toml`** — головна причина
+    (сильніша за parse-error-snippet): `ResolverConfig::save()` має 4 виклики, що
+    ре-серіалізують увесь файл і мусять read-and-echo кожне невʼязане поле — рекурентний
+    cross-field-read клас багів (T-57/T-139/T-149/T-47/T-77). Секрет у `[geoip]` зробив би
+    "мовчки витерти MaxMind-креденшели на невʼязаному cache-config save" пʼятим випадком. Окремий
+    файл — жоден адмін-маршрут його не чіпає. Також дзеркалить MaxMind's власну `GeoIP.conf`
+    конвенцію.
+  - **`geoip_download.rs`**: `maxmind_download_url(edition, suffix)`; `extract_mmdb_from_tar_gz` —
+    декомпресія зовнішнього gzip (наявний `decompress_bounded`, обмежена
+    `MAX_GEOIP_DECOMPRESSED_BYTES`), потім `tar::Archive`, вибір першого члена з розширенням
+    `.mmdb`. **Closing-advisor-катч**: перший драфт мав ще й `Read::take(max+1)` на рідері члена
+    — advisor показав, що це dead code (член ≤ весь tar ≤ `max_bytes`, тож перевірка ніколи не
+    спрацює), а тест "член завеликий" насправді зеленів на зовнішньому gzip-bound. Прибрано (той
+    самий "admit", що й для path-traversal guard — обидва вартують неможливого сценарію); doc і
+    назва тесту виправлені бути чесними, що обмеження — це decompress-стадія. Не хендмейд-парсер
+    512-байтових заголовків — той самий принцип, що `hickory-dns` замість власного DNS-парсера
+    (SPEC.md §"Технічний стек").
+  - **`geoip_updater.rs`**: `GeoipSource { DbIpLite, Maxmind(creds) }` (обирається раз при старті
+    `main.rs`). `refresh_once` гілкується; DB-IP шлях **незмінний**. MaxMind шлях — один URL
+    (без month-math), `.basic_auth(account_id, Some(key.expose_secret()))`. **Гігієна помилок**:
+    кожен MaxMind `reqwest::Error` **дропається** (`.map_err(|_| ...)`) — ніколи не обгортається,
+    ніколи не логується через `Display` (несе Basic-auth секрет) → коарс-лейбли
+    `MaxmindDownloadFailed` / `MaxmindAuthRejected` (401/403) / `MaxmindChecksumMismatch` /
+    `MaxmindArchiveInvalid` (той самий `quorum::error_kind` принцип, застосований до секрету, не
+    домену). `GEOIP_CHECK_INTERVAL` лишається 24 год для обох джерел (щоденний poll ловить
+    двічі-на-тиждень реліз GeoLite2 в межах доби; частіший poll ризикує rate-limit MaxMind).
+  - **`main.rs`**: `load_geoip_source` — відсутній app-data / відсутній файл / **зламаний** файл →
+    усі відкат на DB-IP Lite (`tracing::warn!` з payload-free помилкою, ніколи не фатально —
+    той самий підхід, що `load_overrides`). Лог-рядок ніколи не містить креденшелів (навіть
+    account_id — узгоджено з doc-коментарем `MaxmindCredentials`).
+  - **`LicenseKey::new` — `#[cfg(test)]`-only** (перший не-тестовий виклик — з T-162's адмін-
+    маршрутом); `#[ignore]`d живий тест `fetch_and_verify_against_live_maxmind` (читає
+    `MAXMIND_ACCOUNT_ID`/`MAXMIND_LICENSE_KEY` з env) — той самий "manual, not CI-gated"
+    прецедент, що `fetch_and_verify_against_live_db_ip`.
+
+  **Залишена відкритою обмеженість (записана в CLAUDE.md, не фікс)**: зламані MaxMind-креденшели
+  дають лише `tracing::warn!` — користувач не бачить сигналу, застаріла/відсутня база лишається.
+  Належить T-162 разом з адмін-маршрутом + DPAPI + `POST /admin/reset` перечитуванням
+  `geoip_maxmind.toml`.
+
+  **Нові залежності**: `sha2` 0.10.9 (RustCrypto — ділить `digest`/`cpufeatures`/etc. з наявним
+  `sha1`, нуль нових shared-версій), `tar` 0.4.46 (+`filetime`, `default-features = false` —
+  unix-only `xattr` і так виключений `deny.toml`'s target-обмеженням). SECURITY.md отримав два
+  рядки. `cargo deny check` / `cargo audit` — чисті, жодної зміни license-allowlist (усі
+  `MIT OR Apache-2.0`).
+
+  Повний локальний гейт зелений: 384 lib/bins тести (+18 нових T-80), 4 ignored (+1 живий
+  MaxMind), conformance 18/2, clippy/fmt/doc/deny/audit чисті (той самий набір інформаційних
+  advisories, що на кожному попередньому GeoIP-зрізі). Docs: SPEC.md §3.5 (датований T-80 запис,
+  стиль T-75), CONFIGURATION.md (нова секція `geoip_maxmind.toml`), SECURITY.md (2 dep-рядки +
+  plaintext-tech-debt bullet + GeoIP-feeds bullet), CLAUDE.md (module table + known-limitations +
+  deps), TASKS.md (T-162 заведено).

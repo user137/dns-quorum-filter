@@ -1,10 +1,11 @@
-//! Pure helpers for T-75's `GeoIP` database updater: DB-IP Lite candidate
-//! download-URL construction (the URL embeds the calendar year-month) and
-//! bounded gzip decompression. Kept separate from `geoip_updater.rs`'s
-//! network/orchestration code so this arithmetic and decompression logic is
-//! testable with plain byte buffers, no HTTP mocking needed —
-//! `geoip_updater.rs`'s own `#[ignore]`d live test is what exercises the
-//! real network path.
+//! Pure helpers for the `GeoIP` database updater: DB-IP Lite candidate
+//! download-URL construction (the URL embeds the calendar year-month, T-75),
+//! bounded gzip decompression, and — for T-80's `MaxMind GeoLite2` advanced
+//! mode — permalink-URL construction and bounded `.tar.gz` member
+//! extraction. Kept separate from `geoip_updater.rs`'s network/orchestration
+//! code so this arithmetic / decompression / un-tar logic is testable with
+//! plain byte buffers, no HTTP mocking needed — `geoip_updater.rs`'s own
+//! `#[ignore]`d live tests are what exercise the real network paths.
 
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,6 +15,10 @@ use flate2::read::GzDecoder;
 /// Base URL DB-IP Lite's Country-level `MaxMind`-format database is served
 /// from, no registration required (SPEC.md §3.5).
 pub(crate) const DB_IP_BASE_URL: &str = "https://download.db-ip.com/free/";
+
+/// The `MaxMind GeoLite2` edition this service downloads in advanced mode
+/// (T-80) — a fixed country-level edition id, never user input.
+pub(crate) const MAXMIND_EDITION: &str = "GeoLite2-Country";
 
 /// Upper bound on the compressed download. The real file is a few MB as of
 /// 2026-08 (per a live web search — `download.db-ip.com` itself isn't
@@ -43,6 +48,19 @@ pub(crate) fn candidate_download_urls(now: SystemTime) -> [String; 2] {
 /// opportunistically, never required.
 pub(crate) fn checksum_sidecar_url(mmdb_url: &str) -> String {
     format!("{mmdb_url}.sha1")
+}
+
+/// `MaxMind`'s modern permalink download endpoint (T-80). `edition` and
+/// `suffix` are the only variables; authentication is an HTTP
+/// `Authorization: Basic` header (account id : license key), never a URL
+/// query parameter — so this URL, unlike the legacy
+/// `?license_key=` form, is safe to appear in a log line. Verified this
+/// session that the built URL answers `401 WWW-Authenticate: Basic
+/// realm="geoip-download"` (a real endpoint; a bogus sibling answers `404`).
+/// Pass `"tar.gz"` for the database, `"tar.gz.sha256"` for the checksum
+/// sidecar.
+pub(crate) fn maxmind_download_url(edition: &str, suffix: &str) -> String {
+    format!("https://download.maxmind.com/geoip/databases/{edition}/download?suffix={suffix}")
 }
 
 fn mmdb_gz_url(year: i32, month: u32) -> String {
@@ -125,6 +143,81 @@ pub(crate) enum DecompressError {
     TooLarge { max_bytes: u64 },
 }
 
+/// Decompresses a `MaxMind GeoLite2` `.tar.gz` and returns the bytes of its
+/// single `.mmdb` member (T-80). The archive also carries `LICENSE.txt` /
+/// `COPYRIGHT.txt` under a `GeoLite2-Country_YYYYMMDD/` directory; the first
+/// entry whose path ends in `.mmdb` is the database.
+///
+/// **The allocation bound is the outer [`decompress_bounded`] call**, and it
+/// covers the `.mmdb` member for free: a tar is its member plus a 512-byte
+/// header, padding, and end blocks, so `member ≤ whole tar ≤ max_bytes`
+/// whenever that call returns `Ok` (SPEC.md §8.1: bound the allocation, not a
+/// separately-measured length). A second `take()` on the tar entry itself
+/// would be dead code — it could never fire — so there isn't one, the same
+/// reasoning that omits a path-traversal guard here: the entry path is used
+/// only to *select* the `.mmdb` member; the bytes are returned in memory and
+/// the caller writes them to its own fixed `geoip.mmdb`, so a `../`-laden
+/// member name can't escape anywhere. `decompress_bounded` reads the gzip
+/// stream to its real EOF, so its CRC32/ISIZE trailer check runs on anything
+/// not already rejected as oversized.
+///
+/// Uses the `tar` crate rather than a hand-rolled 512-byte-header parser:
+/// untrusted network input into a hand-written archive parser is exactly the
+/// code class `hickory-dns` was chosen to avoid (SPEC.md §"Технічний стек").
+///
+/// # Errors
+///
+/// [`ArchiveError::TooLarge`] if the decompressed archive exceeds
+/// `max_bytes`, [`ArchiveError::Gzip`] on a malformed outer gzip (including a
+/// CRC32/ISIZE trailer mismatch), [`ArchiveError::Tar`] on a malformed tar
+/// stream, or [`ArchiveError::NoDatabaseMember`] if no `.mmdb` entry is
+/// present.
+pub(crate) fn extract_mmdb_from_tar_gz(
+    gz_bytes: &[u8],
+    max_bytes: u64,
+) -> Result<Vec<u8>, ArchiveError> {
+    let tar_bytes = decompress_bounded(gz_bytes, max_bytes).map_err(|err| match err {
+        DecompressError::Io(io) => ArchiveError::Gzip(io.to_string()),
+        DecompressError::TooLarge { max_bytes } => ArchiveError::TooLarge { max_bytes },
+    })?;
+
+    let mut archive = tar::Archive::new(tar_bytes.as_slice());
+    let entries = archive
+        .entries()
+        .map_err(|err| ArchiveError::Tar(err.to_string()))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|err| ArchiveError::Tar(err.to_string()))?;
+        let is_mmdb = entry.path().is_ok_and(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("mmdb"))
+        });
+        if !is_mmdb {
+            continue;
+        }
+        // A tar entry reader is already length-delimited by the archive
+        // header, and the whole decompressed archive is bounded above - so
+        // this read is transitively bounded without its own `take()` cap.
+        let mut out = Vec::new();
+        entry
+            .read_to_end(&mut out)
+            .map_err(|err| ArchiveError::Tar(err.to_string()))?;
+        return Ok(out);
+    }
+    Err(ArchiveError::NoDatabaseMember)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ArchiveError {
+    #[error("outer gzip stream is malformed or its checksum doesn't match: {0}")]
+    Gzip(String),
+    #[error("tar archive is malformed: {0}")]
+    Tar(String),
+    #[error("tar archive contains no .mmdb database member")]
+    NoDatabaseMember,
+    #[error("decompressed archive exceeds the {max_bytes}-byte size limit")]
+    TooLarge { max_bytes: u64 },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +287,92 @@ mod tests {
             checksum_sidecar_url("https://download.db-ip.com/free/x.mmdb.gz"),
             "https://download.db-ip.com/free/x.mmdb.gz.sha1"
         );
+    }
+
+    #[test]
+    fn maxmind_download_url_is_the_modern_permalink() {
+        assert_eq!(
+            maxmind_download_url(MAXMIND_EDITION, "tar.gz"),
+            "https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz"
+        );
+        assert_eq!(
+            maxmind_download_url(MAXMIND_EDITION, "tar.gz.sha256"),
+            "https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz.sha256"
+        );
+        // The key is never in the URL - it's an Authorization header.
+        assert!(!maxmind_download_url(MAXMIND_EDITION, "tar.gz").contains("license_key"));
+    }
+
+    /// Builds a gzipped tar carrying `members` as `(path, contents)` pairs.
+    fn tar_gz(members: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (path, contents) in members {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(u64::try_from(contents.len()).unwrap_or(0));
+            header.set_mode(0o644);
+            header.set_cksum();
+            let Ok(()) = builder.append_data(&mut header, path, *contents) else {
+                panic!("in-memory tar append cannot fail");
+            };
+        }
+        let Ok(tar_bytes) = builder.into_inner() else {
+            panic!("in-memory tar finish cannot fail");
+        };
+        gzip(&tar_bytes)
+    }
+
+    #[test]
+    fn extract_mmdb_picks_the_database_member_past_the_license_decoys() {
+        let db = b"\xde\xad\xbe\xef pretend this is an mmdb";
+        let archive = tar_gz(&[
+            ("GeoLite2-Country_20260830/COPYRIGHT.txt", b"(c) MaxMind"),
+            ("GeoLite2-Country_20260830/LICENSE.txt", b"CC BY-SA 4.0"),
+            ("GeoLite2-Country_20260830/GeoLite2-Country.mmdb", db),
+        ]);
+        let Ok(extracted) = extract_mmdb_from_tar_gz(&archive, MAX_GEOIP_DECOMPRESSED_BYTES) else {
+            panic!("a well-formed archive with an .mmdb member must extract");
+        };
+        assert_eq!(extracted, db);
+    }
+
+    #[test]
+    fn extract_mmdb_rejects_an_archive_with_no_database_member() {
+        let archive = tar_gz(&[("GeoLite2-Country_20260830/LICENSE.txt", b"CC BY-SA 4.0")]);
+        assert!(matches!(
+            extract_mmdb_from_tar_gz(&archive, MAX_GEOIP_DECOMPRESSED_BYTES),
+            Err(ArchiveError::NoDatabaseMember)
+        ));
+    }
+
+    #[test]
+    fn extract_mmdb_rejects_an_oversized_archive() {
+        // A real gzipped tar whose *decompressed* size exceeds a small test
+        // cap - proves the rejection is driven by bytes actually decompressed
+        // (decompress_bounded reading the stream), not a spoofable declared
+        // length, and without allocating a real 256 MiB buffer. The member
+        // bytes are what push it over: 4 KiB of 'a' against a 2 KiB cap.
+        let cap = 2 * 1024;
+        let oversized = vec![b'a'; 4 * 1024];
+        let archive = tar_gz(&[("dir/GeoLite2-Country.mmdb", &oversized)]);
+        let Err(err) = extract_mmdb_from_tar_gz(&archive, cap) else {
+            panic!("an oversized archive must be rejected");
+        };
+        assert!(matches!(err, ArchiveError::TooLarge { max_bytes } if max_bytes == cap));
+    }
+
+    #[test]
+    fn extract_mmdb_rejects_a_malformed_outer_gzip() {
+        assert!(matches!(
+            extract_mmdb_from_tar_gz(b"not gzip at all", MAX_GEOIP_DECOMPRESSED_BYTES),
+            Err(ArchiveError::Gzip(_))
+        ));
+    }
+
+    #[test]
+    fn extract_mmdb_rejects_a_gzip_that_is_not_a_tar() {
+        // Valid gzip, but the decompressed bytes aren't a tar stream.
+        let not_a_tar = gzip(b"just some plain text, definitely not a tar archive");
+        assert!(extract_mmdb_from_tar_gz(&not_a_tar, MAX_GEOIP_DECOMPRESSED_BYTES).is_err());
     }
 
     fn gzip(data: &[u8]) -> Vec<u8> {

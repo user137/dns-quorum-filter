@@ -36,6 +36,40 @@
 //! "manual, not CI-gated" precedent as `upstream.rs`'s live-Quad9 test) —
 //! and fold that confirmation back into this doc comment.
 //!
+//! **`MaxMind GeoLite2` advanced mode (T-80).** When the operator drops a
+//! complete `geoip_maxmind.toml` in the app-data dir
+//! ([`crate::geoip_credentials`]), [`GeoipSource::Maxmind`] replaces DB-IP
+//! Lite: a single download of `MaxMind`'s modern permalink,
+//! `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`,
+//! authenticated with an HTTP `Authorization: Basic` header (account id :
+//! license key), never a URL query parameter. **Verified this session** (not
+//! reconstructed from docs): that path answers `401 WWW-Authenticate: Basic
+//! realm="geoip-download"` — a real endpoint, where a bogus sibling answers
+//! `404` — and `reqwest` 0.13 strips `Authorization` on the cross-host
+//! redirect to Cloudflare R2 (`reqwest/src/redirect.rs::remove_sensitive_headers`),
+//! so the credential never leaves `MaxMind`'s origin. **Not verified without
+//! real credentials**: whether the `?suffix=tar.gz.sha256` sidecar returns a
+//! usable digest per release (the path exists — `401`, not `404`), so it's
+//! fetched opportunistically and a *present* mismatch hard-fails, while its
+//! absence falls back to the same TLS + gzip-CRC + structural-parse gate as
+//! DB-IP (the resolution the user already chose at T-75). The `GeoLite2`
+//! download is a `.tar.gz` carrying `GeoLite2-Country.mmdb` alongside
+//! `LICENSE.txt`/`COPYRIGHT.txt`;
+//! [`crate::geoip_download::extract_mmdb_from_tar_gz`] pulls the single
+//! `.mmdb` member, bounded. A `MaxMind` `reqwest::Error` is **never** logged
+//! via `Display` — mapped to a coarse [`GeoipUpdateError`] label instead
+//! ([`GeoipUpdateError::MaxmindDownloadFailed`] /
+//! [`GeoipUpdateError::MaxmindAuthRejected`]), the same `quorum::error_kind`
+//! discipline applied to a Basic-auth secret rather than a domain.
+//! `GEOIP_CHECK_INTERVAL` stays 24h — a daily poll catches `GeoLite2`'s
+//! twice-weekly (Tue/Fri) release well within a day, and polling `MaxMind`
+//! harder risks their documented rate-limiting.
+//!
+//! **Whoever first runs this against real `MaxMind` credentials** should note
+//! in this doc comment whether the `.tar.gz.sha256` sidecar fired — see
+//! `tests::fetch_and_verify_against_live_maxmind` (`#[ignore]`d, reads
+//! `MAXMIND_ACCOUNT_ID` / `MAXMIND_LICENSE_KEY` from the environment).
+//!
 //! A failed refresh (network error, checksum mismatch, corrupt download,
 //! wrong database type) never clears an already-loaded database — SPEC.md's
 //! own user-safety framing: a stale country list is far better than
@@ -50,20 +84,42 @@ use std::time::{Duration, SystemTime};
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use sha1::{Digest, Sha1};
+use sha2::Sha256;
 
 use crate::dispatch::{AppState, GeoipState};
 use crate::geoip::{GeoipError, GeoipReader};
+use crate::geoip_credentials::MaxmindCredentials;
 use crate::geoip_download::{
-    candidate_download_urls, checksum_sidecar_url, decompress_bounded, MAX_GEOIP_COMPRESSED_BYTES,
+    candidate_download_urls, checksum_sidecar_url, decompress_bounded, extract_mmdb_from_tar_gz,
+    maxmind_download_url, MAXMIND_EDITION, MAX_GEOIP_COMPRESSED_BYTES,
     MAX_GEOIP_DECOMPRESSED_BYTES,
 };
 use crate::upstream::ReqwestDohClient;
 
-/// How often to check for a new DB-IP Lite release. SPEC.md §3.5 says the
-/// source updates monthly — a daily check is generous headroom, not tuned
-/// to any published release-day guarantee (DB-IP's exact publish schedule
-/// within a month isn't confirmed from this dev environment either, see
-/// this module's own doc comment).
+/// Which upstream a [`run_geoip_updater`] instance pulls its database from
+/// (T-80). Chosen once at startup by `main.rs` from
+/// [`crate::geoip_credentials::load`] — DB-IP Lite (SPEC.md §3.5's
+/// registration-free default) unless the operator dropped a complete
+/// `geoip_maxmind.toml` in the app-data dir, in which case `MaxMind GeoLite2`
+/// (twice-weekly updates, the operator's own key).
+///
+/// `Debug` is derived but safe to log: the key inside [`MaxmindCredentials`]
+/// is a [`crate::geoip_credentials::LicenseKey`], whose own `Debug` redacts.
+#[derive(Debug, Clone)]
+pub enum GeoipSource {
+    /// DB-IP Lite Country — monthly, no credentials (SPEC.md §3.5 default).
+    DbIpLite,
+    /// `MaxMind GeoLite2` Country — twice-weekly, operator-supplied credentials.
+    Maxmind(MaxmindCredentials),
+}
+
+/// How often to check for a new `GeoIP` database release — both sources
+/// (T-80). DB-IP Lite updates monthly (SPEC.md §3.5); `MaxMind GeoLite2`
+/// twice weekly. A daily check is generous headroom for either — it catches
+/// a twice-weekly release well within a day — and not tuned to a published
+/// release-day guarantee (neither source's exact within-window schedule is
+/// confirmed from this dev environment; polling `MaxMind` harder also risks
+/// their documented rate-limiting). See this module's own doc comment.
 pub const GEOIP_CHECK_INTERVAL: Duration = Duration::from_hours(24);
 
 /// Upper bound on one candidate release's whole fetch-verify-swap attempt
@@ -122,6 +178,30 @@ pub enum GeoipUpdateError {
     /// failure.
     #[error("timed out after {GEOIP_FETCH_TIMEOUT:?}")]
     Timeout,
+    /// `MaxMind` advanced mode (T-80): the download request failed (network
+    /// error, or a non-2xx status other than an auth rejection).
+    /// **Deliberately carries no `reqwest::Error`** — its `Display` can echo
+    /// the request URL and, on some error paths, header material, and this
+    /// request carries an HTTP Basic credential; a coarse label only, the
+    /// same discipline as `quorum::error_kind` applied to a secret rather
+    /// than a domain name.
+    #[error("MaxMind database download failed")]
+    MaxmindDownloadFailed,
+    /// `MaxMind` advanced mode: the server returned `401`/`403` — the account
+    /// id / license key in `geoip_maxmind.toml` is wrong, expired, or lacks
+    /// `GeoLite2` access.
+    #[error("MaxMind rejected the supplied account id / license key")]
+    MaxmindAuthRejected,
+    /// `MaxMind` advanced mode: a `.tar.gz.sha256` sidecar was fetched but
+    /// didn't match the downloaded archive.
+    #[error("downloaded MaxMind database doesn't match its published SHA-256 checksum")]
+    MaxmindChecksumMismatch,
+    /// `MaxMind` advanced mode: the downloaded `.tar.gz` couldn't be
+    /// decompressed, had no `.mmdb` member, or the member was oversized — a
+    /// flat `String` for the same `private_interfaces` reason as
+    /// [`GeoipUpdateError::Decompress`].
+    #[error("downloaded MaxMind archive is invalid: {0}")]
+    MaxmindArchiveInvalid(String),
 }
 
 /// Runs [`refresh_once`] immediately (so a fresh install gets a database
@@ -135,9 +215,10 @@ pub async fn run_geoip_updater(
     client: reqwest::Client,
     target_path: PathBuf,
     state: Arc<AppState<ReqwestDohClient>>,
+    source: GeoipSource,
 ) {
     loop {
-        match refresh_once(&client, &target_path, &state).await {
+        match refresh_once(&client, &target_path, &state, &source).await {
             Ok(()) => tracing::info!("GeoIP database refreshed"),
             Err(err) => tracing::warn!(
                 "GeoIP database refresh failed, keeping the last-known-good database: {err}"
@@ -147,16 +228,39 @@ pub async fn run_geoip_updater(
     }
 }
 
-/// One fetch-verify-swap cycle. Tries [`candidate_download_urls`]'s two
-/// candidates in order (current calendar month, then the previous one); the
-/// first that both downloads and passes verification wins.
+/// One fetch-verify-swap cycle, dispatched on the configured [`GeoipSource`]
+/// (T-80). DB-IP Lite is the unchanged default path; `MaxMind GeoLite2` is the
+/// opt-in advanced mode — see this module's doc comment.
+///
+/// # Errors
+///
+/// Propagates whichever source-specific path failed — see
+/// [`refresh_db_ip_lite`] and [`try_one_maxmind_release_bounded`].
+pub(crate) async fn refresh_once(
+    client: &reqwest::Client,
+    target_path: &Path,
+    state: &AppState<ReqwestDohClient>,
+    source: &GeoipSource,
+) -> Result<(), GeoipUpdateError> {
+    match source {
+        GeoipSource::DbIpLite => refresh_db_ip_lite(client, target_path, state).await,
+        GeoipSource::Maxmind(creds) => {
+            try_one_maxmind_release_bounded(client, creds, target_path, state).await
+        }
+    }
+}
+
+/// The DB-IP Lite fetch-verify-swap cycle (T-75). Tries
+/// [`candidate_download_urls`]'s two candidates in order (current calendar
+/// month, then the previous one); the first that both downloads and passes
+/// verification wins.
 ///
 /// # Errors
 ///
 /// Returns [`GeoipUpdateError::NoReleaseFound`] (wrapping the previous
 /// month's own error - the current month's is logged, not discarded) if
 /// both candidates failed.
-pub(crate) async fn refresh_once(
+async fn refresh_db_ip_lite(
     client: &reqwest::Client,
     target_path: &Path,
     state: &AppState<ReqwestDohClient>,
@@ -236,6 +340,147 @@ async fn try_one_release(
         updated_at,
     });
     Ok(())
+}
+
+/// [`try_one_maxmind_release`], bounded to [`GEOIP_FETCH_TIMEOUT`] — same
+/// hazard and reasoning as [`try_one_release_bounded`] for the DB-IP path.
+async fn try_one_maxmind_release_bounded(
+    client: &reqwest::Client,
+    creds: &MaxmindCredentials,
+    target_path: &Path,
+    state: &AppState<ReqwestDohClient>,
+) -> Result<(), GeoipUpdateError> {
+    match tokio::time::timeout(
+        GEOIP_FETCH_TIMEOUT,
+        try_one_maxmind_release(client, creds, target_path, state),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_elapsed) => Err(GeoipUpdateError::Timeout),
+    }
+}
+
+/// `MaxMind GeoLite2` advanced mode (T-80): one download-verify-swap of
+/// `MaxMind`'s modern permalink, authenticated with HTTP Basic (account id :
+/// license key). No calendar-month candidates — the permalink always serves
+/// the latest release. See this module's doc comment for what is and isn't
+/// verified about this path.
+async fn try_one_maxmind_release(
+    client: &reqwest::Client,
+    creds: &MaxmindCredentials,
+    target_path: &Path,
+    state: &AppState<ReqwestDohClient>,
+) -> Result<(), GeoipUpdateError> {
+    let url = maxmind_download_url(MAXMIND_EDITION, "tar.gz");
+    let gz_bytes = fetch_bounded_authed(client, &url, creds).await?;
+
+    if let Some(expected) = fetch_maxmind_checksum_sidecar(client, creds).await {
+        if !checksum_matches_sha256(&expected, &gz_bytes) {
+            return Err(GeoipUpdateError::MaxmindChecksumMismatch);
+        }
+    }
+
+    let decompressed = extract_mmdb_from_tar_gz(&gz_bytes, MAX_GEOIP_DECOMPRESSED_BYTES)
+        .map_err(|err| GeoipUpdateError::MaxmindArchiveInvalid(err.to_string()))?;
+    let reader =
+        GeoipReader::from_bytes(decompressed.clone()).map_err(GeoipUpdateError::InvalidDatabase)?;
+    let database_type = reader.database_type().to_ascii_lowercase();
+    if !database_type.contains("country") {
+        return Err(GeoipUpdateError::UnexpectedDatabaseType(database_type));
+    }
+
+    persist_atomically(target_path, &decompressed).map_err(GeoipUpdateError::Io)?;
+    // The database's own embedded build time, not "when this refresh ran" -
+    // same reasoning as the DB-IP path above (`GeoipReader::build_time`).
+    let updated_at = reader.build_time();
+    state.update_geoip(GeoipState {
+        reader: Some(Arc::new(reader)),
+        updated_at,
+    });
+    Ok(())
+}
+
+/// Like [`fetch_bounded`] but with an HTTP `Authorization: Basic` header
+/// (T-80). Every `reqwest::Error` is dropped here — never wrapped, never
+/// logged via `Display` — because this request carries a Basic-auth
+/// credential; failures collapse to a coarse
+/// [`GeoipUpdateError::MaxmindDownloadFailed`] (or
+/// [`GeoipUpdateError::MaxmindAuthRejected`] on a `401`/`403`).
+async fn fetch_bounded_authed(
+    client: &reqwest::Client,
+    url: &str,
+    creds: &MaxmindCredentials,
+) -> Result<Bytes, GeoipUpdateError> {
+    let response = client
+        .get(url)
+        .basic_auth(&creds.account_id, Some(creds.license_key.expose_secret()))
+        .send()
+        .await
+        .map_err(|_| GeoipUpdateError::MaxmindDownloadFailed)?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(GeoipUpdateError::MaxmindAuthRejected);
+    }
+    let response = response
+        .error_for_status()
+        .map_err(|_| GeoipUpdateError::MaxmindDownloadFailed)?;
+    let mut body = BytesMut::new();
+    let mut stream = std::pin::pin!(response.bytes_stream());
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| GeoipUpdateError::MaxmindDownloadFailed)?;
+        let total = u64::try_from(body.len() + chunk.len()).unwrap_or(u64::MAX);
+        if total > MAX_GEOIP_COMPRESSED_BYTES {
+            return Err(GeoipUpdateError::CompressedTooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body.freeze())
+}
+
+/// Fetches `MaxMind`'s `?suffix=tar.gz.sha256` sidecar and returns its hex
+/// digest, or `None` if it isn't a `2xx`, isn't shaped like a SHA-256
+/// digest, or couldn't be fetched — opportunistic, never an error (see this
+/// module's doc comment and [`fetch_checksum_sidecar`]'s own note on why a
+/// `2xx` alone isn't proof the sidecar exists).
+async fn fetch_maxmind_checksum_sidecar(
+    client: &reqwest::Client,
+    creds: &MaxmindCredentials,
+) -> Option<String> {
+    let url = maxmind_download_url(MAXMIND_EDITION, "tar.gz.sha256");
+    let response = client
+        .get(&url)
+        .basic_auth(&creds.account_id, Some(creds.license_key.expose_secret()))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let text = response.text().await.ok()?;
+    // MaxMind's sidecar is `sha256sum` style: `<64 hex>  <filename>` - take
+    // only the first whitespace-delimited token.
+    let token = text.split_whitespace().next()?.to_ascii_lowercase();
+    looks_like_sha256_hex(&token).then_some(token)
+}
+
+fn looks_like_sha256_hex(token: &str) -> bool {
+    token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+fn checksum_matches_sha256(expected_hex: &str, bytes: &[u8]) -> bool {
+    expected_hex.trim().eq_ignore_ascii_case(&sha256_hex(bytes))
 }
 
 /// Downloads `url`, bounded to [`MAX_GEOIP_COMPRESSED_BYTES`] — streamed
@@ -445,5 +690,96 @@ mod tests {
             }
         }
         panic!("no candidate release URL succeeded against the live db-ip.com");
+    }
+
+    // T-80: SHA-256 sidecar helpers, mirroring the SHA-1 tests above.
+
+    #[test]
+    fn looks_like_sha256_hex_accepts_a_real_digest() {
+        assert!(looks_like_sha256_hex(&sha256_hex(b"anything")));
+    }
+
+    #[test]
+    fn looks_like_sha256_hex_rejects_wrong_length_or_alphabet() {
+        assert!(!looks_like_sha256_hex("<!doctype"));
+        assert!(!looks_like_sha256_hex(""));
+        // A real SHA-1 digest is 40 hex chars - right alphabet, wrong length.
+        assert!(!looks_like_sha256_hex(&sha1_hex(b"anything")));
+        // Right length, wrong alphabet.
+        assert!(!looks_like_sha256_hex(&"g".repeat(64)));
+    }
+
+    #[test]
+    fn checksum_matches_sha256_is_case_and_whitespace_insensitive() {
+        let hex = sha256_hex(b"hello maxmind");
+        assert!(checksum_matches_sha256(
+            &hex.to_ascii_uppercase(),
+            b"hello maxmind"
+        ));
+        assert!(checksum_matches_sha256(
+            &format!("  {hex}\n"),
+            b"hello maxmind"
+        ));
+    }
+
+    #[test]
+    fn checksum_matches_sha256_rejects_a_wrong_digest() {
+        let hex = sha256_hex(b"hello maxmind");
+        assert!(!checksum_matches_sha256(&hex, b"something else entirely"));
+    }
+
+    /// Exercises the real `MaxMind GeoLite2` download path end to end — needs
+    /// real credentials (`MAXMIND_ACCOUNT_ID` / `MAXMIND_LICENSE_KEY` env
+    /// vars), so it's `#[ignore]`d, the same "manual, not CI-gated" precedent
+    /// as `fetch_and_verify_against_live_db_ip` above. Whoever runs this
+    /// should note in this module's doc comment whether the
+    /// `?suffix=tar.gz.sha256` sidecar actually returned a usable digest.
+    #[tokio::test]
+    #[ignore = "hits the real network; needs real MAXMIND_ACCOUNT_ID / MAXMIND_LICENSE_KEY env vars"]
+    async fn fetch_and_verify_against_live_maxmind() {
+        let (Ok(account_id), Ok(license_key)) = (
+            std::env::var("MAXMIND_ACCOUNT_ID"),
+            std::env::var("MAXMIND_LICENSE_KEY"),
+        ) else {
+            panic!("set MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY to run this test");
+        };
+        let creds = MaxmindCredentials {
+            account_id,
+            license_key: crate::geoip_credentials::LicenseKey::new(license_key),
+        };
+        let Ok(client) = reqwest::Client::builder().build() else {
+            panic!("must be able to build a plain reqwest client");
+        };
+
+        let url = maxmind_download_url(MAXMIND_EDITION, "tar.gz");
+        let gz_bytes = match fetch_bounded_authed(&client, &url, &creds).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("live MaxMind download failed: {err}"),
+        };
+        let sidecar = fetch_maxmind_checksum_sidecar(&client, &creds).await;
+        println!(
+            "MaxMind sha256 sidecar: {}",
+            sidecar.as_deref().unwrap_or("not found / not usable")
+        );
+        if let Some(expected) = &sidecar {
+            assert!(
+                checksum_matches_sha256(expected, &gz_bytes),
+                "sidecar digest must match the downloaded archive"
+            );
+        }
+        let Ok(mmdb) = extract_mmdb_from_tar_gz(&gz_bytes, MAX_GEOIP_DECOMPRESSED_BYTES) else {
+            panic!("live MaxMind archive must contain an extractable .mmdb member");
+        };
+        let Ok(reader) = GeoipReader::from_bytes(mmdb) else {
+            panic!("extracted MaxMind database must parse");
+        };
+        assert!(
+            reader
+                .database_type()
+                .to_ascii_lowercase()
+                .contains("country"),
+            "database_type was {:?}",
+            reader.database_type()
+        );
     }
 }

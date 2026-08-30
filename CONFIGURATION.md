@@ -14,6 +14,7 @@
 ```
 %LOCALAPPDATA%\dns-quorum-filter\resolver_config.toml
 %LOCALAPPDATA%\dns-quorum-filter\overrides.toml
+%LOCALAPPDATA%\dns-quorum-filter\geoip_maxmind.toml   (опційний, T-80 — див. нижче)
 ```
 
 (`paths::app_data_dir` в коді — `crates/dnsqb-service/src/paths.rs`.)
@@ -231,6 +232,48 @@ SERVICES.md), тепер у звичайному браузері: сторін�
 стилю. **До кліку "Встановити сертифікат" у `dnsqb-tray` (T-49, автоматизовано, але не автоматично при
 старті — SERVICES.md)** браузер покаже попередження про недовірений сертифікат перед самою
 сторінкою — очікувано, не баг.
+
+* * *
+
+## `geoip_maxmind.toml` — опційний advanced-режим MaxMind GeoLite2 (SPEC.md §3.5, T-80)
+
+За замовчуванням GeoIP-база — DB-IP Lite Country (без реєстрації, щомісячне оновлення,
+`geoip_updater.rs`). Хто має власний **MaxMind**-акаунт і хоче частіші оновлення (GeoLite2 —
+двічі на тиждень), може створити цей файл вручну:
+
+```
+%LOCALAPPDATA%\dns-quorum-filter\geoip_maxmind.toml
+```
+
+```toml
+account_id  = "123456"
+license_key = "ВАШ_MAXMIND_LICENSE_KEY"
+```
+
+| Поле | Тип | Обовʼязкове | Опис |
+|---|---|---|---|
+| `account_id` | рядок | так | MaxMind Account ID (той самий, що в `GeoIP.conf` `geoipupdate`; HTTP Basic-username при завантаженні). |
+| `license_key` | рядок | так | MaxMind License Key (HTTP Basic-password). |
+
+- **Файл відсутній** → DB-IP Lite (дефолт, незмінна поведінка).
+- **Файл є, обидва поля непорожні** → MaxMind GeoLite2-Country: одне завантаження модерного
+  permalink `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`
+  з `Authorization: Basic` (ключ ніколи не в URL), опортуністична перевірка `.tar.gz.sha256`-
+  сайдкара, розпаковка `.mmdb`-члена з `.tar.gz` (обмежена за розміром), та сама атомарна
+  підміна файлу `geoip.mmdb`, що й для DB-IP.
+- **Файл є, але зламаний / завеликий (>8 KiB) / порожнє поле** → у лог пишеться (без ключа!)
+  попередження, і сервіс **відкочується на DB-IP Lite**, а не відмовляється стартувати.
+
+> **Ключ зберігається у відкритому вигляді** — свідомий MVP-компроміс, той самий, що й для
+> приватного ключа TLS-сертифіката (`key.pem`, SECURITY.md). Platform secure storage (DPAPI),
+> адмін-маршрут для введення ключа, і UI-сигнал про зламані креденшели — відкладено на **T-162**.
+> Наразі файл редагується лише вручну; жоден адмін-маршрут його не чіпає (саме тому це окремий
+> файл, а не таблиця в `resolver_config.toml` — інакше невʼязаний `POST /admin/config` міг би
+> його мовчки перезаписати, повторюючи відомий клас багів проєкту).
+
+> Зміна цього файлу набирає чинності лише при **перезапуску процесу** — на відміну від
+> `resolver_config.toml`/`overrides.toml`, `POST /admin/reset` його не перечитує (T-80; це теж
+> частина T-162).
 
 * * *
 

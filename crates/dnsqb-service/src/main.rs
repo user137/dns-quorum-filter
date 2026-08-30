@@ -11,10 +11,10 @@
 //! manual smoke-test step recorded for T-143 in `TASKS-DONE.md` instead.
 
 use dnsqb_service::{
-    app_data_dir, bind_listener, load_or_generate_server_config, run_geoip_updater, serve,
-    AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader, GeoipState, InvalidEntry,
-    OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient,
-    ResolverConfig, RuntimeSettings, TimeoutConfig,
+    app_data_dir, bind_listener, load_maxmind_credentials, load_or_generate_server_config,
+    run_geoip_updater, serve, AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader,
+    GeoipSource, GeoipState, InvalidEntry, OverrideLists, OverridesState, PersistPaths,
+    PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig, RuntimeSettings, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -135,14 +135,21 @@ async fn main() {
     ));
 
     // T-75: the GeoIP database updater talks to a public third party
-    // (db-ip.com), never this service's own pinned-cert admin channel - a
-    // separate, plainly-configured `reqwest::Client` with normal public-CA
-    // validation, the same construction `ReqwestDohClient` itself uses for
-    // its own public upstream queries (Quad9/AdGuard/Cloudflare).
+    // (db-ip.com, or download.maxmind.com in T-80's advanced mode), never
+    // this service's own pinned-cert admin channel - a separate,
+    // plainly-configured `reqwest::Client` with normal public-CA validation,
+    // the same construction `ReqwestDohClient` itself uses for its own public
+    // upstream queries (Quad9/AdGuard/Cloudflare).
     if let Some(path) = geoip_path {
+        let geoip_source = load_geoip_source(app_data.as_deref());
         match reqwest::Client::builder().build() {
             Ok(geoip_client) => {
-                tokio::spawn(run_geoip_updater(geoip_client, path, Arc::clone(&state)));
+                tokio::spawn(run_geoip_updater(
+                    geoip_client,
+                    path,
+                    Arc::clone(&state),
+                    geoip_source,
+                ));
             }
             Err(err) => {
                 tracing::error!("failed to build the GeoIP update HTTP client: {err}");
@@ -183,6 +190,35 @@ fn load_geoip_state(path: Option<&Path>) -> GeoipState {
             }
         }
         Err(_) => GeoipState::default(),
+    }
+}
+
+/// Decides which upstream the `GeoIP` database updater pulls from (T-80).
+/// DB-IP Lite (SPEC.md §3.5's registration-free default) unless the operator
+/// dropped a complete `geoip_maxmind.toml` in the app-data dir. A missing
+/// app-data dir, an absent file, or a *malformed* file all fall back to
+/// DB-IP Lite — a broken credentials file is logged (payload-free) and
+/// non-fatal, same posture as [`load_overrides`]/[`load_geoip_state`]. The
+/// log line never contains the credentials.
+fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
+    let Some(dir) = app_data else {
+        return GeoipSource::DbIpLite;
+    };
+    match load_maxmind_credentials(&dir.join("geoip_maxmind.toml")) {
+        Ok(Some(creds)) => {
+            tracing::info!(
+                "GeoIP source: MaxMind GeoLite2 (credentials loaded from geoip_maxmind.toml)"
+            );
+            GeoipSource::Maxmind(creds)
+        }
+        Ok(None) => {
+            tracing::info!("GeoIP source: DB-IP Lite (default; no geoip_maxmind.toml present)");
+            GeoipSource::DbIpLite
+        }
+        Err(err) => {
+            tracing::warn!("ignoring geoip_maxmind.toml ({err}), using DB-IP Lite");
+            GeoipSource::DbIpLite
+        }
     }
 }
 
