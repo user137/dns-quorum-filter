@@ -1359,7 +1359,12 @@ function syncLogVoterOptions(data) {
     opt.textContent = text;
     select.appendChild(opt);
   });
-  select.value = previous;
+  // Only restore the prior selection if it still names a real option -
+  // assigning a missing value sets selectedIndex to -1, which renders the
+  // dropdown blank (currentLogQuery() would still read "", so the filter is
+  // correct, but it looks broken).
+  const stillPresent = Array.from(select.options).some((opt) => opt.value === previous);
+  select.value = stillPresent ? previous : "";
 }
 
 // Built via DOM methods only (createElement / textContent) - a custom
@@ -1434,7 +1439,33 @@ function providerRow(entry) {
   return li;
 }
 
+// Ukrainian count agreement: 1 / 2-4 / everything else (0, 5-20, then by the
+// last digit). Used for the fan-out privacy line, which CLAUDE.md requires
+// stay prominent and in the user's language.
+function pluralUk(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) {
+    return one;
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return few;
+  }
+  return many;
+}
+
+// Built exactly once and re-appended (not rebuilt) on every renderProviders()
+// - a toggle/add/remove elsewhere in the card must not wipe a half-typed
+// custom endpoint URL + token out of these five fields. Same reasoning and
+// pattern as buildLogFilterRow()'s once-built filter chrome above; the
+// weaker "accept the wipe" trade logItem() makes for the single overrides
+// input doesn't carry to a five-field form sitting right below the toggles.
+let customFormNode = null;
+
 function customProviderForm() {
+  if (customFormNode) {
+    return customFormNode;
+  }
   const wrap = document.createElement("div");
 
   const heading = document.createElement("h4");
@@ -1527,6 +1558,7 @@ function customProviderForm() {
   row.appendChild(addBtn);
   wrap.appendChild(row);
   wrap.appendChild(errorLine);
+  customFormNode = wrap;
   return wrap;
 }
 
@@ -1541,9 +1573,13 @@ function renderProviders(data) {
   // see uncached browsing history) must stay user-visible, not buried.
   const fanout = document.createElement("p");
   fanout.className = "geoip-database-status";
+  const parties = data.third_party_count;
+  const voterCount = parties - 1;
   fanout.textContent =
-    `Кожен новий (не з кешу) домен бачать ${data.third_party_count} третіх сторін: ` +
-    `${data.third_party_count - 1} увімкнених voter'ів + baseline-резолвер.`;
+    `Кожен запит поза кешем ${pluralUk(parties, "бачить", "бачать", "бачать")} ${parties} ` +
+    `${pluralUk(parties, "третю сторону", "треті сторони", "третіх сторін")}: ` +
+    `${voterCount} ${pluralUk(voterCount, "увімкнений voter", "увімкнені voter'и", "увімкнених voter'ів")} ` +
+    `+ baseline-резолвер.`;
   providersBody.appendChild(fanout);
 
   // T-72/T-73 closing review: the all-disabled state is a legitimate

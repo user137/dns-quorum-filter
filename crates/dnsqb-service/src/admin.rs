@@ -48,19 +48,22 @@ use std::time::SystemTime;
 /// applying an update.
 ///
 /// **T-53 DTO audit (2026-08-29), verdict for this file as a whole:**
-/// `providers`/`timeout_mode` below are the only two fields in this module
-/// that reuse an internal domain type directly (`quorum::EnabledProviders`,
-/// `timeout::TimeoutMode`) rather than going through a `*View` projection —
-/// checked by re-reading every DTO in this file against the type it's built
-/// from. Deliberate, not an oversight: both are already flat, `Serialize`-
-/// carrying config *values* (T-144/T-148), not internal implementation
-/// types with anything to leak (no `LogEntry`/`VoterRecord`-shaped payload,
-/// neither derives `Serialize` at all — confirmed by grep, so neither can be
-/// accidentally handed to `json_response` regardless). Wrapping them in a
-/// parallel DTO would recreate exactly the drift risk T-148's own module
-/// doc comment already named for `config::ResolverConfig::providers`
-/// reusing `EnabledProviders` — a duplicate type could represent a
-/// combination `quorum::resolve` doesn't actually honor. Every other DTO in
+/// (T-72/T-73 update: the old `providers: quorum::EnabledProviders` reuse is
+/// gone — `active_providers` is now a genuine `ProviderStatusView`
+/// projection.) `timeout_mode` is the last field in this module that reuses
+/// an internal domain type directly (`timeout::TimeoutMode`) rather than
+/// going through a `*View` projection — checked by re-reading every DTO in
+/// this file against the type it's built from. Deliberate, not an oversight:
+/// it is already a flat, `Serialize`-carrying config *value* (T-144/T-148),
+/// not an internal implementation type with anything to leak (no
+/// `LogEntry`/`VoterRecord`-shaped payload — that type doesn't derive
+/// `Serialize` at all, confirmed by grep, so it can't be accidentally handed
+/// to `json_response` regardless). Wrapping it in a parallel DTO would
+/// recreate exactly the drift risk T-148's own module doc comment already
+/// named for `config::ResolverConfig` reusing a config enum — a duplicate
+/// type could represent a combination the resolver doesn't actually honor.
+/// (`ProviderStatusView` itself reuses the flat `Category` enum, same
+/// reasoning.) Every other DTO in
 /// this file (`OverrideDomainView`, `CacheConfigView`, `QTypeView`,
 /// `DecisionView`, `DecisionSourceView`, `VoterVerdictView`,
 /// `VoterResultView`, `LogEntryView`) is a genuine projection with its own
