@@ -406,7 +406,8 @@ impl DohClient for ReqwestDohClient {
 mod tests {
     use super::{
         all_builtin_presets, builtin_preset, is_valid_provider_id, validate_provider_url,
-        BlockSignature, Category, DohClient, ProviderSpec, ProviderUrlError, ReqwestDohClient,
+        BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec, ProviderUrlError,
+        ReqwestDohClient, DEFAULT_PROVIDER_IDS,
     };
     use hickory_proto::op::{Message, Query};
     use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -426,6 +427,18 @@ mod tests {
         assert_eq!(adguard.doh_url, "https://dns.adguard-dns.com/dns-query");
         assert_eq!(adguard.category, Category::AdsTrackers);
         assert_eq!(adguard.block_signature, BlockSignature::NullIp);
+    }
+
+    // `default_active_set` builds via `filter_map(builtin_preset)`, which
+    // silently drops an id that names no preset — a typo in
+    // `DEFAULT_PROVIDER_IDS` would quietly shrink (or empty) the fresh-install
+    // voter set, i.e. ship with filtering off. Pin the count.
+    #[test]
+    fn every_default_provider_id_resolves_to_a_preset() {
+        let set = ProviderEntry::default_active_set();
+        assert_eq!(set.len(), DEFAULT_PROVIDER_IDS.len());
+        assert!(!set.is_empty(), "a fresh install must have voters");
+        assert!(set.iter().all(|entry| entry.enabled));
     }
 
     #[test]

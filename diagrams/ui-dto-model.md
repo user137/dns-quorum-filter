@@ -134,6 +134,7 @@ classDiagram
         +ProviderView[] active
         +ProviderView[] available_presets
         +usize third_party_count
+        +bool filtering_active
         +bool persisted
     }
     class ProviderAddRequest {
@@ -360,7 +361,8 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 `timeout_mode`. Повний редагований список voter'ів — окрема трійця маршрутів
 `GET /admin/providers` + `POST /admin/providers/{add,remove,set-enabled}` з `ProvidersResponse`
 (`active: ProviderView[]` + `available_presets: ProviderView[]` + `third_party_count` — скільки
-третіх сторін бачить кожен uncached-запит, увімкнені voter'и + baseline). Кастомний провайдер
+третіх сторін бачить кожен uncached-запит, увімкнені voter'и + baseline — + `filtering_active`,
+`false` коли жоден voter не увімкнено, тобто всі запити йдуть повз фільтр на baseline). Кастомний провайдер
 додається `ProviderAddRequest` (`id` + `url`/`display_name`/`category` для не-preset). Внутрішній
 `upstream::ProviderSpec` → `ProviderView` — свідома проєкція (додає `is_builtin`), не reuse.
 `EnabledProviders` — видалено з коду.

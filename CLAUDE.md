@@ -136,6 +136,10 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   a non-`https` scheme and a loopback/private/link-local *literal IP* host, but a hostname that
   *resolves* to such an address at request time is not caught (resolve-then-pin is a bigger
   mechanism). Stated gap.
+- **`GET /admin/log?voter=<id>` for a *removed custom* provider is a 400 (T-72/T-73)** —
+  `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
+  so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's
+  historical log rows become unfilterable by voter. Not worth a full log scan for the id.
 - **Shipped default provider set (`quad9` + `adguard`) still differs from SPEC.md §3.4/§3.5's
   first-run "Security category only"** (Quad9 Filtered + Cloudflare Malware). T-72/T-73 kept the
   shipped default rather than change what gets filtered inside a large refactor — open decision,

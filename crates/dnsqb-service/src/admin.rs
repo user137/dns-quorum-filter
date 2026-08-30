@@ -217,6 +217,11 @@ pub struct ProvidersResponse {
     /// enabled voters + 1 (the baseline resolver). Surfaced so the fan-out
     /// privacy tradeoff stays visible (CLAUDE.md / SPEC.md — "not buried").
     pub third_party_count: usize,
+    /// `false` when no voter is enabled — every query then falls through to the
+    /// unfiltered baseline resolver (SPEC.md §3 / §8.1: a legitimate,
+    /// user-chosen state, not a failure — but the UI must show it, not bury
+    /// it). `add`/`remove`/`set-enabled` can all reach it in one request.
+    pub filtering_active: bool,
     /// Whether the change that produced this response was written to disk —
     /// same convention as [`OverrideListsResponse::persisted`]. Always `true`
     /// for a plain `GET`.

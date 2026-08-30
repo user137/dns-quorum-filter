@@ -1677,6 +1677,7 @@ fn providers_view(entries: &[ProviderEntry], persisted: bool) -> crate::admin::P
         // enabled voters + 1 baseline resolver — the fan-out the user's
         // browsing history is exposed to (CLAUDE.md: keep this visible).
         third_party_count: enabled_count + 1,
+        filtering_active: enabled_count > 0,
         persisted,
     }
 }
@@ -2003,10 +2004,14 @@ fn serve_admin_log<C: DohClient + Sync>(
     let Ok(parsed) = parse_log_query(query_string) else {
         return status_response(StatusCode::BAD_REQUEST);
     };
-    // Validate `?voter=` against the ids a log entry could actually carry:
-    // currently-configured voters plus every built-in preset (so filtering
-    // historical entries by a since-removed provider still works). A value
-    // matching neither is a typo → 400, never silently narrowed to nothing.
+    // Validate `?voter=` against the ids a log entry could plausibly carry:
+    // currently-configured voters plus every built-in preset — so a preset
+    // that was toggled off (still in `all_builtin_presets`) stays filterable
+    // against its historical rows. A *removed custom* id matches neither and
+    // is rejected 400; its historical rows become unfilterable by voter (a
+    // stated limitation, CLAUDE.md — not worth a full log scan for the id).
+    // A value matching neither is otherwise a typo → 400, never silently
+    // narrowed to an empty result.
     if let Some(voter) = parsed.voter.as_deref() {
         let known = state
             .providers
@@ -3216,6 +3221,13 @@ mod tests {
             };
             assert_eq!(response.status(), StatusCode::OK);
         }
+
+        let providers = providers_json(Arc::clone(&state)).await;
+        assert!(
+            !providers.filtering_active,
+            "no voter enabled — the UI must be told filtering is off"
+        );
+        assert_eq!(providers.third_party_count, 1, "baseline only");
 
         let wire_bytes = query_bytes("example.com.", RecordType::A);
         let query_req = match Request::builder()
