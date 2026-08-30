@@ -334,13 +334,14 @@ fn confirm_uninstall_cert() -> bool {
 
 /// Native confirm dialog before certificate rotation — names every consequence
 /// *before* the user acts: the old `CurrentUser\Root` entries are removed, a
-/// fresh key is generated and the new certificate installed, and the running
-/// `dnsqb-service` keeps serving the old certificate (it holds its TLS config
-/// from startup) until it is restarted. Until that restart the tray tooltip
-/// shows `Unreachable` even though filtering still works, because
-/// [`status::spawn`]'s probe re-pins to the new `cert.pem` and can't complete
-/// the handshake against the still-running old one — expected, and it clears on
-/// restart.
+/// fresh key is generated and the new certificate installed in their place, and
+/// the running `dnsqb-service` keeps serving the *previous* certificate (it
+/// holds its TLS config from startup) until it is restarted. In that window the
+/// browser shows an untrusted-certificate warning on `/admin/ui` because the
+/// certificate on the wire is no longer in the trust store; restarting
+/// `dnsqb-service` clears it. (The tray's own status poll is unaffected —
+/// [`status::spawn`] keeps its cached client, still pinned to and matching the
+/// still-served previous certificate.)
 fn confirm_rotate_cert() -> bool {
     let result = rfd::MessageDialog::new()
         .set_title("Перевипустити сертифікат")
@@ -349,8 +350,9 @@ fn confirm_rotate_cert() -> bool {
              Старі записи цього проєкту прибираються з довірених кореневих сертифікатів \
              (CurrentUser\\Root), новий сертифікат встановлюється замість них. \
              dnsqb-service потрібно перезапустити, щоб новий сертифікат почав діяти — до \
-             перезапуску трей показуватиме стан «Unreachable», хоча фільтрація працює. \
-             Продовжити?",
+             перезапуску сервіс віддає попередній сертифікат, і браузер показуватиме \
+             попередження про недовірений сертифікат на сторінці налаштувань. Після \
+             перезапуску воно зникає. Продовжити?",
         )
         .set_level(rfd::MessageLevel::Warning)
         .set_buttons(rfd::MessageButtons::YesNo)

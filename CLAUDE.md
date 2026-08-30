@@ -57,8 +57,9 @@ menu: "Restart" = soft `/admin/reset` (clear cache + log, re-read both TOMLs), "
 confirm-gated `/admin/shutdown`, "Close" exits the tray only, plus a confirm-gated cert group
 (T-49/T-69): "Встановити"/"Видалити сертифікат" (`ensure_installed`/`uninstall`) and "Перевипустити
 сертифікат" (`cert_rotation::rotate_certificate` — reissue + re-trust; needs a manual `dnsqb-service`
-restart, and the tooltip reads `Unreachable` until that restart). Replaced the deleted Tauri
-`dnsqb-ui` (T-149, DECISIONS.md). Tooltip has three top-level states (`Unreachable` / `NoActiveProvider` /
+restart before the new cert is served — until then the running service still presents the previous,
+now-untrusted cert and the browser warns on `/admin/ui`; the tray's own cached-client status poll
+is unaffected). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tooltip has three top-level states (`Unreachable` / `NoActiveProvider` /
 `Filtering`); `Filtering` appends a degraded-upstream suffix when `AdminStats.degraded_events > 0`
 (raw counts over the last 20 `QUORUM` log entries — T-56, narrowed), not a fourth state.
 
