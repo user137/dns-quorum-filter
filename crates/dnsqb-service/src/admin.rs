@@ -563,6 +563,11 @@ pub struct LogEntryView {
     /// only when `decision_source` is `GeoIp`, a direct passthrough of the
     /// internal [`LogEntry`]'s own field of the same name and rule.
     pub geoip_country: Option<String>,
+    /// The ISO country code of the first resolved A/AAAA record (T-161) —
+    /// direct passthrough of the internal [`LogEntry`]'s own field of the
+    /// same name and rule; independent of `geoip_country` above, see that
+    /// field's own doc comment.
+    pub resolved_ip_country: Option<String>,
     pub latency_ms: u64,
 }
 
@@ -578,6 +583,7 @@ impl LogEntryView {
             voter_scope: VoterScopeView::Full,
             voters: entry.voters.iter().map(VoterResultView::from).collect(),
             geoip_country: entry.geoip_country.clone(),
+            resolved_ip_country: entry.resolved_ip_country.clone(),
             latency_ms: entry.latency_ms,
         }
     }
@@ -840,6 +846,7 @@ mod tests {
             decision_source,
             voters,
             geoip_country: None,
+            resolved_ip_country: None,
             latency_ms: 1,
         }
     }

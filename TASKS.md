@@ -170,8 +170,12 @@ OR-по-кількох-IP і nop-на-порожньому-списку вже �
 /admin/geoip/add`/`remove` + `#geoip-body` на `/admin/ui`, перший живий шлях запису
 `[geoip] blocked_countries` без ручної правки TOML. T-78 done (TASKS-DONE.md, 2026-08-30, один
 коміт) — `GeoipCountriesResponse` розширено `database_loaded`/`database_built_at_ms`, три
-завжди-видимих рядки на `#geoip-body` замість одного банера. Наступна задача в роботі: **T-80**
-(advanced-режим MaxMind GeoLite2), потім T-81.
+завжди-видимих рядки на `#geoip-body` замість одного банера. T-161 done (TASKS-DONE.md,
+2026-08-30, один коміт, поза фазами — той самий T-134/T-139/T-141-прецедент нумерованих ad-hoc
+задач, закритих напряму в TASKS-DONE.md без окремого рядка тут) — `LogEntry`/`LogEntryView`
+отримали `resolved_ip_country`, інформаційна країна першої резолвленої IP для КОЖНОГО рядка логу
+з реальною відповіддю (не лише `decision_source=GEOIP`, на відміну від наявного `geoip_country`).
+Наступна задача в роботі: **T-80** (advanced-режим MaxMind GeoLite2), потім T-81.
 
 - [ ] T-67 — Інсталятор генерує leaf-сертифікат, приватний ключ у platform secure storage (DPAPI / Keychain / Secret Service) (2)
 - [ ] T-68 — **Windows-половина (install) звужена — готово, T-49 (TASKS-DONE.md, 2026-08-29),

@@ -203,6 +203,28 @@ pub(crate) fn blocking_country(
     })
 }
 
+/// Informational country lookup for the first A/AAAA answer record in
+/// `ips` (T-161) — `ips` is expected to be [`crate::pipeline`]'s own
+/// `extract_ips` output, which already skips CNAME records, so "first" here
+/// means the first A/AAAA record in answer order, not the first record of
+/// any type. `None` if `reader` is `None` (no database loaded), `ips` is
+/// empty, or the lookup misses — same "absence is normal, not an error"
+/// framing as [`GeoipReader::country`]'s own doc comment.
+///
+/// Deliberately does **not** take `blocked_countries` at all, unlike
+/// [`blocking_country`] — this is purely informational metadata for the log
+/// (SPEC.md §6's `resolved_ip_country`), independent of whether any country
+/// is even configured as blocked. Keeping the two functions structurally
+/// separate (rather than one function with an `Option<&[String]>` mode
+/// switch) means this one can never silently acquire filtering semantics
+/// later.
+#[must_use]
+pub(crate) fn resolved_ip_country(reader: Option<&GeoipReader>, ips: &[IpAddr]) -> Option<String> {
+    let reader = reader?;
+    let ip = ips.first()?;
+    reader.country(*ip).map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,5 +433,41 @@ mod tests {
             blocking_country(Some(&reader), &blocked, &[gb_ip(), se_ip()]),
             Some("GB".to_string())
         );
+    }
+
+    // T-161: resolved_ip_country's own coverage - deliberately mirrors
+    // blocking_country's shape (no-reader, empty-ips, unmatched-ip, real
+    // lookup) but never touches blocked_countries at all, since this
+    // function doesn't take one.
+    #[test]
+    fn resolved_ip_country_reports_the_first_ips_country() {
+        let reader = open_fixture();
+        assert_eq!(
+            resolved_ip_country(Some(&reader), &[se_ip(), gb_ip()]),
+            Some("SE".to_string())
+        );
+        assert_eq!(
+            resolved_ip_country(Some(&reader), &[gb_ip(), se_ip()]),
+            Some("GB".to_string()),
+            "must report the FIRST ip's country, not the second one's, even though both resolve"
+        );
+    }
+
+    #[test]
+    fn resolved_ip_country_is_none_with_no_ips() {
+        let reader = open_fixture();
+        assert_eq!(resolved_ip_country(Some(&reader), &[]), None);
+    }
+
+    #[test]
+    fn resolved_ip_country_is_none_with_no_database_loaded() {
+        assert_eq!(resolved_ip_country(None, &[se_ip()]), None);
+    }
+
+    #[test]
+    fn resolved_ip_country_is_none_for_an_ip_outside_the_database() {
+        let reader = open_fixture();
+        let unmatched = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1));
+        assert_eq!(resolved_ip_country(Some(&reader), &[unmatched]), None);
     }
 }

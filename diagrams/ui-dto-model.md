@@ -18,6 +18,7 @@ classDiagram
         +VoterScope voter_scope
         +List~VoterResult~ voters
         +String? geoip_country
+        +String? resolved_ip_country
         +u32 latency_ms
     }
     class QType {
@@ -360,7 +361,17 @@ backend-тип `query_log::LogEntry` (вужчий, 5 значень `decision_s
 `Option<String>` на T-79) тепер повертає саме ISO-код країни, що спрацювала, а не лише `bool` —
 проведений без змін через `QueryLogMeta` → `LogEntry` → `LogEntryView::from_entry`, `Some` лише коли
 `decision_source = GEOIP`, `null` для решти джерел (той самий "порожньо/відсутньо, крім одного
-джерела" патерн, що й `voters`). Решта полів — пряме відображення.
+джерела" патерн, що й `voters`). `resolved_ip_country` **новий, T-161** — окреме, суто
+інформаційне поле (`geoip::resolved_ip_country`, не бере `blocked_countries` взагалі): ISO-код
+країни **першої** резолвленої A/AAAA-адреси, заповнюється незалежно від `decision_source` чи
+того, чи взагалі налаштовано `GeoIP`-блокування — `null` лише для синтетичної відповіді
+(blocklist/quorum-block) чи відсутньої відповіді (SERVFAIL/NXDOMAIN/NODATA). Навмисно може
+відрізнятись від `geoip_country` вище, коли заблокувала не перша, а інша IP у списку — два
+незалежно обчислені поля, не аліаси. UI (`main.js`'s `logItem()`) рендерить його як бейдж поруч
+із `qtype`, **навмисно приховуючи на рядках `decision_source=GEOIP`** (щоб не читатись як
+причина блоку, коли нею є `geoip_country`, а не перша IP) — `geoip_country` сам досі не має
+власного UI-споживача (прогалина з T-79, не виправлена в цьому проході, названа окремо вище).
+Решта полів — пряме відображення.
 
 **`DecisionSourceView`'s два варіанти (`CcTldBlock`/`GeoIp`) потребують явного `#[serde(rename)]`**
 — автоматична `SCREAMING_SNAKE_CASE`-конверсія serde дала б `CC_TLD_BLOCK`/`GEO_IP`, не

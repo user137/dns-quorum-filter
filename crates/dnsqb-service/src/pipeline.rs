@@ -126,6 +126,18 @@ pub struct QueryLogMeta {
     /// `Some` only when `decision_source` is `DecisionSource::Geoip`,
     /// `None` otherwise, matching `LogEntry.geoip_country`'s own rule.
     pub geoip_country: Option<String>,
+    /// The ISO country code of the first resolved A/AAAA record (T-161) —
+    /// purely informational, `Some` whenever a real IP was actually
+    /// resolved (regardless of `decision_source` or whether `GeoIP`
+    /// blocking is even configured), `None` for a synthetic response
+    /// (blocklist/quorum block) or no answer at all (SERVFAIL/NXDOMAIN/
+    /// NODATA). Deliberately independent of [`geoip_country`] above, which
+    /// can name a *different* IP's country when a response carries several
+    /// and a later one is the one that matched `blocked_countries` — see
+    /// [`geoip::resolved_ip_country`]'s own doc comment.
+    ///
+    /// [`geoip_country`]: Self::geoip_country
+    pub resolved_ip_country: Option<String>,
 }
 
 /// `Decision::Allowed` vs `Decision::Failed` from a resolved [`Message`] —
@@ -149,6 +161,12 @@ fn decision_from_response(message: &Message) -> Decision {
 /// `voters` is always empty here, nothing was actually consulted for either
 /// caller. Pulled out purely to keep `handle_query` itself readable, not
 /// reused for any other reason.
+///
+/// Computes `resolved_ip_country` (T-161) from the real forwarded answer
+/// even though both callers are exempt from `GeoIP` *filtering* (SPEC.md
+/// §3.5's own pipeline snippet) — this is informational annotation of an IP
+/// already being sent to the client, not a filtering decision, so it
+/// doesn't contradict that exemption.
 async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
     client: &C,
     query: &Message,
@@ -156,8 +174,11 @@ async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
     domain: String,
     qtype: RecordType,
     decision_source: DecisionSource,
+    geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
     let message = resolve_via_baseline(client, query, timeout_config).await;
+    let resolved_ip_country =
+        geoip::resolved_ip_country(geoip.reader, &extract_ips(&message.answers));
     let meta = QueryLogMeta {
         domain,
         qtype,
@@ -165,6 +186,7 @@ async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
         decision_source,
         voters: Vec::new(),
         geoip_country: None,
+        resolved_ip_country,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -186,6 +208,9 @@ fn blocklist_response_with_meta(
         decision_source: DecisionSource::Blocklist,
         voters: Vec::new(),
         geoip_country: None,
+        // A blocklist response is synthesized (0.0.0.0/::, wire.rs), never
+        // a real resolved IP - no country to report (T-161).
+        resolved_ip_country: None,
     };
     (
         PipelineOutcome::Response(build_block_response(query, ttl)),
@@ -216,6 +241,13 @@ fn cache_hit_response_with_meta(
     cache_config: &CacheConfig,
     geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    // Computed once regardless of which branch below returns (T-161) - a
+    // `GeoIP`-blocked hit still resolved a real IP, it's just not
+    // necessarily the same one `blocking_country` matched below.
+    let resolved_ip_country = match &entry.verdict {
+        Verdict::Allow(ips) => geoip::resolved_ip_country(geoip.reader, ips),
+        Verdict::Block => None,
+    };
     if let Verdict::Allow(ips) = &entry.verdict {
         if let Some(country) = geoip::blocking_country(geoip.reader, geoip.blocked_countries, ips) {
             let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
@@ -226,6 +258,7 @@ fn cache_hit_response_with_meta(
                 decision_source: DecisionSource::Geoip,
                 voters: Vec::new(),
                 geoip_country: Some(country),
+                resolved_ip_country,
             };
             return (
                 PipelineOutcome::Response(build_block_response(query, ttl)),
@@ -244,6 +277,7 @@ fn cache_hit_response_with_meta(
         decision_source: DecisionSource::Cache,
         voters: Vec::new(),
         geoip_country: None,
+        resolved_ip_country,
     };
     (
         PipelineOutcome::Response(response_from_cache_entry(query, entry, now)),
@@ -303,6 +337,7 @@ pub async fn handle_query<C: DohClient + Sync>(
                 log_domain.clone(),
                 qtype,
                 DecisionSource::Allowlist,
+                geoip,
             )
             .await;
         }
@@ -349,6 +384,7 @@ pub async fn handle_query<C: DohClient + Sync>(
             log_domain.clone(),
             qtype,
             DecisionSource::Quorum,
+            geoip,
         )
         .await;
     }
@@ -401,6 +437,9 @@ pub async fn handle_query<C: DohClient + Sync>(
                 decision_source: DecisionSource::Quorum,
                 voters: outcome.voters,
                 geoip_country: None,
+                // A quorum block response is synthesized (0.0.0.0/::), same
+                // as a blocklist match - no real resolved IP (T-161).
+                resolved_ip_country: None,
             };
             (
                 PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl))),
@@ -430,24 +469,40 @@ async fn quorum_allow_response_with_meta(
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
     let voters = outcome.voters;
     let result = handle_allow(cache, key, query, outcome.answer, geoip).await;
-    let (message, decision, decision_source, voters, geoip_country) = match result {
-        AllowResult::Answer(message) => {
-            let decision = decision_from_response(&message);
-            (message, decision, DecisionSource::Quorum, voters, None)
-        }
-        // SPEC.md §3.5: the quorum verdict itself was Allow (and is cached
-        // as such, unchanged — see handle_allow's own doc comment for why)
-        // - GeoIP overrides only the response actually sent, and only this
-        // log entry's own decision/decision_source/voters/geoip_country, not
-        // the cached Verdict a later, country-list-edited query will re-read.
-        AllowResult::GeoipBlocked { response, country } => (
-            response,
-            Decision::Blocked,
-            DecisionSource::Geoip,
-            Vec::new(),
-            Some(country),
-        ),
-    };
+    let (message, decision, decision_source, voters, geoip_country, resolved_ip_country) =
+        match result {
+            AllowResult::Answer {
+                response,
+                resolved_ip_country,
+            } => {
+                let decision = decision_from_response(&response);
+                (
+                    response,
+                    decision,
+                    DecisionSource::Quorum,
+                    voters,
+                    None,
+                    resolved_ip_country,
+                )
+            }
+            // SPEC.md §3.5: the quorum verdict itself was Allow (and is cached
+            // as such, unchanged — see handle_allow's own doc comment for why)
+            // - GeoIP overrides only the response actually sent, and only this
+            // log entry's own decision/decision_source/voters/geoip_country, not
+            // the cached Verdict a later, country-list-edited query will re-read.
+            AllowResult::GeoipBlocked {
+                response,
+                country,
+                resolved_ip_country,
+            } => (
+                response,
+                Decision::Blocked,
+                DecisionSource::Geoip,
+                Vec::new(),
+                Some(country),
+                resolved_ip_country,
+            ),
+        };
     let meta = QueryLogMeta {
         domain: log_domain,
         qtype,
@@ -455,6 +510,7 @@ async fn quorum_allow_response_with_meta(
         decision_source,
         voters,
         geoip_country,
+        resolved_ip_country,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -508,7 +564,17 @@ pub async fn proxy_to_single_upstream<C: DohClient + Sync>(
 /// rather than derive from the response — see `handle_query`'s own match on
 /// this type.
 enum AllowResult {
-    Answer(Message),
+    /// A named struct variant (T-161, widening the single-field tuple
+    /// variant T-79 left here), not `(Message)` — matches `GeoipBlocked`'s
+    /// own already-named shape below rather than introducing a new
+    /// positional-tuple pattern for the second field.
+    Answer {
+        response: Message,
+        /// The first resolved IP's country (T-161), independent of whether
+        /// `GeoIP` blocking applies — `None` for a `SERVFAIL`/empty-answer
+        /// response (no real IP to look up).
+        resolved_ip_country: Option<String>,
+    },
     /// A named struct variant (T-79), not a `(Message, String)` tuple — the
     /// caller destructures this by field name, so a future third field can't
     /// silently land at the wrong tuple position the way it could in a
@@ -516,6 +582,11 @@ enum AllowResult {
     GeoipBlocked {
         response: Message,
         country: String,
+        /// Same meaning as `Answer`'s own field of the same name (T-161) —
+        /// the first IP's country, which may differ from `country` above
+        /// when a *later* IP in the answer is the one that actually
+        /// matched `blocked_countries`.
+        resolved_ip_country: Option<String>,
     },
 }
 
@@ -548,8 +619,15 @@ async fn handle_allow(
         // misleading empty NoError that a browser would read as "this
         // domain has no record" (SPEC.md §3.2's own reasoning about
         // misleading responses applies here too).
-        return AllowResult::Answer(build_servfail_response(query));
+        return AllowResult::Answer {
+            response: build_servfail_response(query),
+            resolved_ip_country: None,
+        };
     };
+
+    // Set below only in the non-empty-answers branch (T-161) - stays `None`
+    // for a genuine NXDOMAIN/NODATA, which has no IPs to look up.
+    let mut resolved_ip_country = None;
 
     if message.answers.is_empty() {
         // Genuine NXDOMAIN/NODATA (not a block - quorum already ruled that
@@ -582,12 +660,14 @@ async fn handle_allow(
                 .insert(key, CacheEntry::new(Verdict::Allow(ips.clone()), ttl))
                 .await;
         }
+        resolved_ip_country = geoip::resolved_ip_country(geoip.reader, &ips);
         if let Some(country) = geoip::blocking_country(geoip.reader, geoip.blocked_countries, &ips)
         {
             let block_ttl = duration_to_ttl_secs(cache.config.block_verdict_ttl);
             return AllowResult::GeoipBlocked {
                 response: build_block_response(query, block_ttl),
                 country,
+                resolved_ip_country,
             };
         }
     }
@@ -599,7 +679,10 @@ async fn handle_allow(
     // Cache-hit replay is the one place that collapses NXDOMAIN into
     // NODATA-shaped (`response_from_cache_entry` below) - a deliberate,
     // documented difference between the two paths, not an inconsistency.
-    AllowResult::Answer(crate::wire::forward_response(query, &message))
+    AllowResult::Answer {
+        response: crate::wire::forward_response(query, &message),
+        resolved_ip_country,
+    }
 }
 
 /// SPEC.md §5 (T-40): apply the `Cache` invalidation implied by an
@@ -2358,6 +2441,11 @@ mod tests {
         };
         assert_eq!(meta.decision, Decision::Allowed);
         assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        assert_eq!(
+            meta.resolved_ip_country,
+            Some("SE".to_string()),
+            "resolved_ip_country (T-161) must be populated regardless of blocked_countries being empty"
+        );
     }
 
     #[tokio::test]
@@ -2410,6 +2498,12 @@ mod tests {
             meta.voters.is_empty(),
             "GeoIP isn't a quorum vote - voters must stay empty on a GeoIP-blocked entry"
         );
+        // T-161: resolved_ip_country is the FIRST ip's country
+        // (unmatched_ip, not in the database), deliberately different from
+        // geoip_country above (SE, the SECOND ip - the one that actually
+        // matched) - proves the two fields are independently computed, not
+        // aliases of each other.
+        assert_eq!(meta.resolved_ip_country, None);
     }
 
     #[tokio::test]
@@ -2465,6 +2559,7 @@ mod tests {
         };
         assert_eq!(meta.decision_source, DecisionSource::Geoip);
         assert_eq!(meta.geoip_country, Some("SE".to_string()));
+        assert_eq!(meta.resolved_ip_country, Some("SE".to_string()));
 
         let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
             panic!("valid domain");
@@ -2511,6 +2606,11 @@ mod tests {
             "a country-list edit must take effect on the very next query, no cache invalidation"
         );
         assert_eq!(meta.geoip_country, None);
+        assert_eq!(
+            meta.resolved_ip_country,
+            Some("SE".to_string()),
+            "resolved_ip_country stays populated on an ordinary cache hit, unlike geoip_country"
+        );
     }
 
     #[tokio::test]
@@ -2564,6 +2664,7 @@ mod tests {
         assert_eq!(meta.decision, Decision::Blocked);
         assert_eq!(meta.decision_source, DecisionSource::Geoip);
         assert_eq!(meta.geoip_country, Some("SE".to_string()));
+        assert_eq!(meta.resolved_ip_country, Some("SE".to_string()));
 
         // Unaffected by the GeoIP block - still the original Allow.
         let Some(cached) = cache.get(&key).await else {
@@ -2621,6 +2722,10 @@ mod tests {
             panic!("expected Some(meta)");
         };
         assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        // T-161: the informational resolved_ip_country still populates here
+        // even though GeoIP *blocking* is exempt on this branch - annotation
+        // is not filtering, so the exemption above doesn't cover this field.
+        assert_eq!(meta.resolved_ip_country, Some("SE".to_string()));
     }
 
     #[tokio::test]
@@ -2643,7 +2748,7 @@ mod tests {
         };
         let reader = geoip_fixture();
 
-        let (outcome, _meta) = handle_query(
+        let (outcome, meta) = handle_query(
             &query_for("example.com.", RecordType::A),
             &client,
             &overrides,
@@ -2666,5 +2771,11 @@ mod tests {
             panic!("expected the real baseline A answer, not a NULL-blocked one");
         };
         assert!(matches!(answer.data, RData::A(a) if a.0 == ip));
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        // T-161: same "annotation, not filtering" property as the
+        // every-provider-disabled test above.
+        assert_eq!(meta.resolved_ip_country, Some("SE".to_string()));
     }
 }

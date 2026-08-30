@@ -123,6 +123,15 @@ pub struct LogEntry {
     /// which copies straight from `pipeline::QueryLogMeta`), a materially
     /// narrower blast radius than that precedent's multi-writer case.
     pub geoip_country: Option<String>,
+    /// The ISO country code of the first resolved A/AAAA record (T-161) —
+    /// `Some` whenever a real IP was actually resolved, regardless of
+    /// `decision_source` or whether `GeoIP` blocking is even configured;
+    /// `None` for a synthetic response (blocklist/quorum block) or no
+    /// answer at all. Deliberately independent of `geoip_country` above,
+    /// which can name a *different* IP when a response carries several and
+    /// a later one is the one that matched the blocked-country list — see
+    /// `pipeline::QueryLogMeta::resolved_ip_country`'s own doc comment.
+    pub resolved_ip_country: Option<String>,
     /// Total response latency.
     pub latency_ms: u64,
 }
@@ -325,6 +334,7 @@ mod tests {
             decision_source: DecisionSource::Quorum,
             voters: Vec::new(),
             geoip_country: None,
+            resolved_ip_country: None,
             latency_ms: 5,
         }
     }

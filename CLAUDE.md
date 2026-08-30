@@ -4,6 +4,67 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Поза фазами, T-161 done (TASKS-DONE.md, one commit): user asked (mid-session, right after T-78)
+whether the log could show which country a resolved IP belongs to, since the `GeoIP` database is
+already loaded — `AskUserQuestion` narrowed scope before planning: a new field alongside the
+existing `geoip_country` (not replacing it), populated for every log row with a real resolved
+answer (not just a `GeoIP`-block), using the first IP in the response when there are several. New
+pure `geoip::resolved_ip_country(reader, ips) -> Option<String>` deliberately does **not** take
+`blocked_countries` at all, unlike `blocking_country` — this is informational metadata, not a
+filtering decision, kept structurally incapable of acquiring filter semantics later. Populated at
+every point in `pipeline.rs` that resolves a real IP: `handle_allow`'s non-empty-answer branch
+(`AllowResult::Answer(Message)` widened to a named-field variant, `Answer { response,
+resolved_ip_country }`, the same T-79 precedent that already made `GeoipBlocked` named rather than
+positional, now extended to its sibling); `cache_hit_response_with_meta`'s `Verdict::Allow(ips)`
+branch; `baseline_passthrough_with_meta` (shared by the allowlist branch and the
+every-provider-disabled pass-through, both newly taking a `GeoipFilter` parameter to extract IPs
+from the real forwarded answer) — stated explicitly: SPEC.md §3.5 exempts these two branches from
+`GeoIP` *filtering*, but this is annotation of an IP already being sent to the client, not
+filtering, so it doesn't contradict that exemption. Synthetic responses (blocklist, quorum block)
+and no-answer responses (SERVFAIL/NXDOMAIN/NODATA) stay `None`. **Advisor-caught blocker on the
+plan before implementing**: the first draft's UI badge would have rendered `resolved_ip_country`
+on every row including a `GeoIP`-blocked one — misattribution risk, since on that row
+`resolved_ip_country` (first IP) and `geoip_country` (whichever IP actually matched
+`blocked_countries`) can legitimately differ, and showing only the first-IP badge there would read
+as the block reason when it might not be (same class as T-57's privacy undercount and T-78's own
+two-states-collapsed-into-one catch: "what does the user conclude from this value"). Fixed by
+suppressing the badge specifically on `decision_source = GEOIP` rows in `main.js`'s `logItem()` —
+`geoip_country` itself still has no UI consumer at all (a pre-existing gap since T-79, not fixed in
+this pass, same "don't silently fix an unrelated bug while touching the file" precedent T-77
+already set for `#overrides-body`). A second advisor catch: the plan's first draft never mentioned
+`UI-SPEC.md` §3.2 (the log screen's own field table per the docs-ownership map) — fixed, a new row
+added next to the existing `geoip_country` row, which itself got reannotated (DTO ready, UI column
+still not built). Tests: 4 new in `geoip.rs` mirroring `blocking_country`'s own coverage shape (no
+`blocked_countries` parameter at all, so simpler); no new `#[test]` functions in `pipeline.rs`, new
+assertions added to the six existing `GeoIP` tests instead — one of them
+(`geoip_blocks_a_fresh_quorum_allow_when_a_non_first_ip_matches`) deliberately uses an unmatched
+first IP so `resolved_ip_country: None` and `geoip_country: Some("SE")` diverge in one assertion,
+proving the two fields are independently computed, not aliases; the two exemption tests
+(`voters_disabled_pass_through_is_exempt_from_geoip`/`allowlist_match_is_exempt_from_geoip`) gained
+a new, previously-uncovered property: the informational field populates even on branches exempt
+from `GeoIP` filtering itself. Full local gate green (367 lib/bins tests, +4 new; clippy/fmt/doc/
+doctest/deny all clean, same pre-existing informational advisories as every prior slice).
+**Live-verified against the real binary, both branches, not just one** — this session's sandbox
+can reach `db-ip.com` (same environmental finding as T-78), so a fresh scratch instance downloaded
+a real current database; a real DoH GET for `example.com/A` through live quorum (Quad9+AdGuard both
+`ALLOW`) produced a `GET /admin/log` entry with `decision_source: QUORUM`, `geoip_country: null`,
+`resolved_ip_country: "CA"`; a live `POST /admin/geoip/add {"country":"CA"}` followed by the same
+query again produced a second entry with `decision_source: GEOIP`, `geoip_country: "CA"`,
+`resolved_ip_country: "CA"` (equal here since the first IP happened to be the match — the
+divergent case is covered by the unit test above, not by this live pass). Confirmed the served
+`main.js` carries both the badge render and its `GEOIP`-suppression condition — **only that the
+code is present in the served bundle, not that the suppression's rendered effect was actually
+observed**: the live log has exactly the two rows (QUORUM/CA, GEOIP/CA) needed to check it, but
+with no Chrome connection the real render was never watched. Chrome browser automation was still
+unavailable this session (`tabs_context_mcp`: "extension is not connected") — an actual
+click-through/badge-visibility check is **not** verified, same T-77/T-78 fallback to a direct
+HTTPS round-trip, named honestly rather than glossed over.
+SPEC.md §6's log-field table gained one new row after `geoip_country`, stating the "first IP, not
+the blocking IP" distinction explicitly. Diagram ground-truth ritual run:
+`diagrams/ui-dto-model.md`'s `LogEntry` class and its own prose section updated; `ui-navigation.md`'s
+Log node checked, unaffected (describes the screen at a coarse level, never enumerated individual
+columns — same as `geoip_country` itself).
+
 Фаза 2, seventh GeoIP slice (T-78 — TASKS-DONE.md, one commit): the last remaining row of
 `#geoip-body` (T-77) — `GeoipCountriesResponse` gained `database_loaded: bool` and
 `database_built_at_ms: Option<u64>`, rendered as three always-visible text lines (never a banner,

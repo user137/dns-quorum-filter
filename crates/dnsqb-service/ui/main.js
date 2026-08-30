@@ -836,6 +836,20 @@ function logItem(entry) {
   qtype.textContent = QTYPE_LABELS[entry.qtype] || entry.qtype;
   row.appendChild(qtype);
 
+  // T-161: informational country of the first resolved IP - deliberately
+  // suppressed on a GEOIP-decision row, where entry.geoip_country (the IP
+  // that actually matched the blocked-country list, not necessarily the
+  // first one) is the meaningful value; showing this badge there would read
+  // as the block reason when it might not be. geoip_country itself still has
+  // no UI consumer (a pre-existing gap since T-79, named not fixed here).
+  if (entry.resolved_ip_country != null && entry.decision_source !== "GEOIP") {
+    const geoBadge = document.createElement("span");
+    geoBadge.className = "log-item-badge";
+    geoBadge.title = "Країна першої резолвленої IP-адреси";
+    geoBadge.textContent = entry.resolved_ip_country;
+    row.appendChild(geoBadge);
+  }
+
   const decision = DECISION_LABELS[entry.decision] || { text: entry.decision, cls: "" };
   const decisionBadge = document.createElement("span");
   decisionBadge.className = `log-item-badge log-item-decision ${decision.cls}`;

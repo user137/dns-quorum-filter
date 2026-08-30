@@ -427,6 +427,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
                     decision_source: meta.decision_source,
                     voters: meta.voters,
                     geoip_country: meta.geoip_country,
+                    resolved_ip_country: meta.resolved_ip_country,
                     latency_ms,
                 });
             }
@@ -1791,6 +1792,7 @@ mod tests {
                 error_message: None,
             }],
             geoip_country: None,
+            resolved_ip_country: None,
             latency_ms: 5,
         }
     }
