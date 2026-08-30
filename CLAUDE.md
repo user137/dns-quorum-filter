@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Фаза 2, sixth GeoIP slice (T-77 — TASKS-DONE.md, two commits): the first live-write path for
+Фаза 2, sixth GeoIP slice (T-77 — TASKS-DONE.md, three commits — two planned per the T-153 split,
+plus one from a real advisor review of the already-committed result, not the plan): the first
+live-write path for
 `[geoip] blocked_countries` — new `GET /admin/geoip`/`POST /admin/geoip/add`/`POST
 /admin/geoip/remove` plus a `#geoip-body` card on `/admin/ui`, matching the T-47 overrides-card
 shape. Plan mode + a real advisor review of the plan before implementing (this repo's global
@@ -34,7 +36,25 @@ real binary via direct HTTP round-trips (Chrome browser automation wasn't connec
 environment) — add/remove/persist-to-disk/lowercase-normalization/invalid-code-400 all confirmed
 against a running `dnsqb-service.exe` and its real `resolver_config.toml`; the actual browser
 click-through and warning-banner visibility are **not** verified this slice, named honestly
-rather than glossed over. Found while researching, folded into this task: `CONFIGURATION.md` had
+rather than glossed over.
+
+**Third commit — the closing advisor review of the actual committed diff (not a repeat of the
+pre-implementation plan check) found a real bug the first two commits missed**: `renderGeoip`'s
+`!data.persisted` warning branch could never fire — both `submitAdd` and the remove button
+discarded the `POST` response and called `refreshGeoip()` (a re-`GET`, which always reports the
+live state's own `persisted: true`), the same failure class this project has fixed four times
+before (T-57/T-139/T-149/T-47) — a failed disk save would leave the user seeing the country tag
+appear with zero indication it wouldn't survive a restart. Fixed by rendering the `POST` response
+directly (`renderGeoip(await addGeoipCountry(code))`), the same pattern
+`renderCacheConfig(await applyCacheConfig(update))` already uses one section above in the same
+file — deliberately **not** applied to `#overrides-body`, which has the identical latent bug from
+T-47's own add-then-refresh shape, named as a pre-existing gap outside this task's scope rather
+than silently fixed in passing. Same review added two small `CONFIGURATION.md` clarifications:
+the fatal-load-error enumeration didn't name an invalid country code (`ConfigError::
+InvalidCountryCode` also exits 1), and the intro paragraph's live-write-path list predated the
+cache-config/geoip routes.
+
+Found while researching, folded into this task: `CONFIGURATION.md` had
 zero mentions of `[geoip]`/`blocked_countries` at all — a pre-existing gap from T-76, now fixed
 with a full section mirroring `[cache]`'s own shape. Diagram ground-truth ritual run: `ui-dto-
 model.md` gained the new `GeoipCountriesResponse`/`GeoipCountryRequest` DTO pair and re-marked the
