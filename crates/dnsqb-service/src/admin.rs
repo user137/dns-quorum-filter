@@ -316,6 +316,25 @@ pub struct GeoipCountriesResponse {
     /// [`OverrideListsResponse::persisted`]/[`CacheConfigView::persisted`].
     /// Always `true` for a plain `GET`.
     pub persisted: bool,
+    /// Whether a `GeoIP` database is currently loaded at all (T-78) —
+    /// `false` before the first successful download/refresh
+    /// (`geoip_updater`/`main.rs`'s startup load), independent of
+    /// `blocked_countries`: a non-empty list with `database_loaded: false`
+    /// means `GeoIP` filtering is **not** happening despite the configured
+    /// list (`geoip::blocking_country` short-circuits to `None` with no
+    /// reader loaded, SPEC.md §3.5) - a state the UI must show honestly,
+    /// not collapse into "date unknown" alongside
+    /// `database_built_at_ms: None` (advisor-caught while planning this
+    /// task: those are two different reasons a date could be absent, one of
+    /// them meaning filtering is off).
+    pub database_loaded: bool,
+    /// When the loaded database was **built** by its publisher (`GeoipReader::
+    /// build_time`'s embedded `build_epoch`, not a refresh-poll timestamp -
+    /// see the T-75 gotcha in `CLAUDE.md` on why `SystemTime::now()` would
+    /// be a wrong, always-"today" value here), milliseconds since the Unix
+    /// epoch. `None` when `database_loaded` is `false`, or when a loaded
+    /// database's own metadata doesn't carry a build time.
+    pub database_built_at_ms: Option<u64>,
 }
 
 /// `POST /admin/geoip/add`/`POST /admin/geoip/remove`'s shared body (T-77) —
@@ -508,8 +527,11 @@ impl From<&VoterRecord> for VoterResultView {
 }
 
 /// Milliseconds since the Unix epoch, saturating rather than panicking on a
-/// (practically unreachable) pre-epoch `SystemTime`.
-fn unix_millis(time: SystemTime) -> u64 {
+/// (practically unreachable) pre-epoch `SystemTime`. `pub(crate)` as of
+/// T-78, since `dispatch.rs` reuses it to convert `GeoipState::updated_at`
+/// for [`GeoipCountriesResponse::database_built_at_ms`], the same
+/// conversion [`LogEntryView::timestamp_ms`] below already applies.
+pub(crate) fn unix_millis(time: SystemTime) -> u64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| {
             u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)

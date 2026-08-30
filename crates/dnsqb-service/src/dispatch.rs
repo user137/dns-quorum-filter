@@ -23,9 +23,10 @@
 //! without colliding.
 
 use crate::admin::{
-    compute_stats, AdminConfigUpdate, AdminStats, AdminStatusResponse, CacheConfigUpdate,
-    CacheConfigView, GeoipCountriesResponse, GeoipCountryRequest, LogEntryView, LogQueryResponse,
-    OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
+    compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
+    CacheConfigUpdate, CacheConfigView, GeoipCountriesResponse, GeoipCountryRequest, LogEntryView,
+    LogQueryResponse, OverrideAddRequest, OverrideDomainView, OverrideListsResponse,
+    OverrideRemoveRequest,
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError};
@@ -1213,12 +1214,24 @@ where
 }
 
 /// Shared view builder for `GET /admin/geoip` and the two mutating routes
-/// below (T-77) — same "always return the fresh live state" shape as
-/// [`overrides_view`]/[`CacheConfigView::from_config`].
-fn geoip_view(blocked_countries: &[String], persisted: bool) -> GeoipCountriesResponse {
+/// below (T-77/T-78) — same "always return the fresh live state" shape as
+/// [`overrides_view`]/[`CacheConfigView::from_config`]. `database` is read
+/// fresh by each caller (never cached in this function) so
+/// `database_loaded`/`database_built_at_ms` reflect the live
+/// `GeoipState`, not a snapshot from whenever the list last changed — a
+/// database refresh (`geoip_updater`) and a country-list edit are two
+/// independent swaps (see `AppState::geoip`'s own doc comment) that can
+/// interleave in either order.
+fn geoip_view(
+    blocked_countries: &[String],
+    persisted: bool,
+    database: &GeoipState,
+) -> GeoipCountriesResponse {
     GeoipCountriesResponse {
         blocked_countries: blocked_countries.to_vec(),
         persisted,
+        database_loaded: database.reader.is_some(),
+        database_built_at_ms: database.updated_at.map(unix_millis),
     }
 }
 
@@ -1226,7 +1239,11 @@ fn geoip_view(blocked_countries: &[String], persisted: bool) -> GeoipCountriesRe
 /// [`serve`]'s `ROUTES` check, not re-checked here. Read-only, no CSRF gate
 /// needed (same as `GET /admin/status`/`/admin/overrides`/`/admin/cache-config`).
 fn serve_admin_geoip<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
-    json_response(&geoip_view(&state.geoip_countries.read(), true))
+    json_response(&geoip_view(
+        &state.geoip_countries.read(),
+        true,
+        &state.geoip.read(),
+    ))
 }
 
 /// Applies `compute_new` to `state`'s live `GeoIP` blocked-country list
@@ -1242,7 +1259,11 @@ fn serve_admin_geoip<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<
 /// file this writes reflects all three fields' live values, not
 /// stale/default ones — the same cross-field-read requirement
 /// `apply_admin_config`/`apply_cache_config` already apply in the other two
-/// directions.
+/// directions. Also reads `state.geoip` (T-78) for the returned view's
+/// `database_loaded`/`database_built_at_ms` — that field is never written
+/// here (only `geoip_updater` swaps it after a database refresh), so this
+/// read needs no lock ordering against `persist_lock`, just a fresh
+/// snapshot for the response.
 ///
 /// **No cache-invalidation call here, unlike [`apply_overrides_change`]** —
 /// a `GeoIP` verdict is never cached (SPEC.md §3.5's own stated reason: it's
@@ -1288,7 +1309,7 @@ fn apply_geoip_change<C: DohClient + Sync>(
         }
         None => false,
     };
-    Ok(geoip_view(&after, persisted))
+    Ok(geoip_view(&after, persisted, &state.geoip.read()))
 }
 
 /// `POST /admin/geoip/add` (T-77) — method allowlisting happens centrally
@@ -2316,6 +2337,40 @@ mod tests {
             },
             QueryLog::default(),
             persist,
+        ))
+    }
+
+    /// Like [`state_with`], but with a caller-supplied `GeoipState` (T-78) —
+    /// `state_with`'s own `GeoipState::default()` (`reader: None`) can only
+    /// ever exercise the "no database loaded" branch of
+    /// `GeoipCountriesResponse::database_loaded`/`database_built_at_ms`.
+    fn state_with_geoip_database(
+        client: MockClient,
+        database: GeoipState,
+    ) -> Arc<AppState<MockClient>> {
+        Arc::new(AppState::new(
+            client,
+            OverridesState {
+                lists: OverrideLists::empty(),
+                invalid: Vec::new(),
+            },
+            RuntimeSettings {
+                providers: EnabledProviders::default(),
+                timeout: TimeoutConfig::default(),
+            },
+            CacheState {
+                cache: Cache::new(&CacheConfig::default()),
+                config: CacheConfig::default(),
+            },
+            GeoipInit {
+                database,
+                blocked_countries: Vec::new(),
+            },
+            QueryLog::default(),
+            PersistTarget {
+                port: 8443,
+                paths: None,
+            },
         ))
     }
 
@@ -4168,6 +4223,99 @@ mod tests {
             panic!("fixture request must build");
         };
         req
+    }
+
+    fn admin_geoip_get_request() -> Request<Full<Bytes>> {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/geoip")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        req
+    }
+
+    /// The vendored fixture `geoip.rs`/`pipeline.rs`'s own tests already
+    /// use (T-74) — a real, structurally valid `MaxMind` database, not a
+    /// hand-built one.
+    fn open_geoip_fixture() -> crate::geoip::GeoipReader {
+        let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/geoip/GeoIP2-Country-Test.mmdb");
+        let Ok(reader) = crate::geoip::GeoipReader::open(&fixture_path) else {
+            panic!("geoip fixture must load");
+        };
+        reader
+    }
+
+    // T-78: `database_loaded`/`database_built_at_ms` have three reachable
+    // combinations (`AppState::geoip`'s own doc comment) - this test and
+    // the two below each cover one, advisor-caught during this task's own
+    // planning as needing to stay distinguishable rather than collapsing
+    // into a single `Option<u64>` ("date unknown" must not read the same
+    // as "GeoIP filtering isn't happening at all").
+    #[tokio::test]
+    async fn serve_admin_geoip_reports_no_database_loaded_when_none_is_configured() {
+        let state = state_with(no_op_client());
+        let response = match serve(admin_geoip_get_request(), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert!(!body.database_loaded);
+        assert_eq!(body.database_built_at_ms, None);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_reports_the_loaded_databases_build_time() {
+        let built_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let state = state_with_geoip_database(
+            no_op_client(),
+            GeoipState {
+                reader: Some(Arc::new(open_geoip_fixture())),
+                updated_at: Some(built_at),
+            },
+        );
+        let response = match serve(admin_geoip_get_request(), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert!(body.database_loaded);
+        assert_eq!(body.database_built_at_ms, Some(1_700_000_000_000));
+    }
+
+    #[tokio::test]
+    async fn serve_admin_geoip_reports_a_loaded_database_with_no_known_build_time() {
+        let state = state_with_geoip_database(
+            no_op_client(),
+            GeoipState {
+                reader: Some(Arc::new(open_geoip_fixture())),
+                updated_at: None,
+            },
+        );
+        let response = match serve(admin_geoip_get_request(), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<GeoipCountriesResponse>(&bytes) else {
+            panic!("response body must decode as GeoipCountriesResponse");
+        };
+        assert!(
+            body.database_loaded,
+            "a loaded reader must report database_loaded even without a known build time"
+        );
+        assert_eq!(body.database_built_at_ms, None);
     }
 
     #[tokio::test]

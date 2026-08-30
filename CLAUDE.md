@@ -4,6 +4,63 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
+Фаза 2, seventh GeoIP slice (T-78 — TASKS-DONE.md, one commit): the last remaining row of
+`#geoip-body` (T-77) — `GeoipCountriesResponse` gained `database_loaded: bool` and
+`database_built_at_ms: Option<u64>`, rendered as three always-visible text lines (never a banner,
+same "always-on warning is functionally identical to no warning" reasoning already recorded for
+T-56/T-57) instead of a single date field. Below the plan+advisor threshold (additive DTO field,
+no new route/lock/state machine), so no Plan mode — a lighter `advisor` consult before writing any
+code still caught a real design gap: `GeoipState` (T-75) has three reachable combinations —
+`reader: None` (no database loaded, `GeoIP` filtering isn't happening regardless of
+`blocked_countries`), `reader: Some` + a known build time, and `reader: Some` with `build_time()`
+returning `None` — and a lone `Option<u64>` field couldn't distinguish the first from the third,
+the same Три-Б "the user sees an absent date and assumes filtering is on" shape this project keeps
+catching. Fixed by adding `database_loaded` as its own field rather than overloading the
+`Option`. `admin::unix_millis` (already used for `LogEntryView.timestamp_ms`) widened to
+`pub(crate)` and reused rather than duplicated. `database_built_at_ms` is the database's own
+**build date** (`GeoipReader::build_time`'s embedded `build_epoch`), never a refresh-poll
+timestamp — the same T-75 gotcha already in this file about why `SystemTime::now()` would be a
+misleading, always-"today" value here; the UI label says "Дата збірки бази" (build date), not
+"дата оновлення" (update date), for the same reason. 3 new `dispatch.rs` tests, one per
+`GeoipState` combination — a new `state_with_geoip_database` test helper (since the existing
+`state_with`'s `GeoipState::default()` can only ever exercise the "no database" branch) plus the
+already-vendored `GeoIP2-Country-Test.mmdb` fixture. **Live-verified against the real binary, and
+more thoroughly than planned**: copied the vendored fixture into a scratch `%LOCALAPPDATA%`,
+started a real `dnsqb-service.exe` against it — `geoip_updater::run_geoip_updater` (T-75, runs
+immediately at startup) **successfully downloaded a real, current DB-IP Lite database** (the file
+grew from the 19,492-byte test fixture to 8,284,207 bytes, with a plausible recent
+`database_built_at_ms`), unlike every prior session in this project (T-75/T-76/T-79 all recorded
+`db-ip.com` as DNS-blocked in this dev sandbox) — this session's sandbox could actually reach it.
+`GET /admin/geoip` against the running service returned `database_loaded: true` with the real
+downloaded database's own build time, the first time this project's live verification has covered
+the whole `geoip_updater` → `AppState::geoip` → `GET /admin/geoip` path against a genuine
+network-fetched database rather than only the vendored fixture — named honestly as a one-off
+environmental difference, not evidence the DNS block is gone for good. Both live queries landed
+*after* the refresh completed (the "GeoIP database refreshed" log line preceded both requests), so
+the fixture's own build time was never actually observed through this DTO live — that stays
+covered only by `geoip.rs`'s pre-existing `build_time_reports_a_plausible_past_date_not_the_
+current_moment` unit test, not overclaimed as a live result here. Chrome browser automation
+was still unavailable this slice (`tabs_context_mcp`: "extension is not connected") — the actual
+click-through and the three text lines' visibility are **not** verified, same T-77-precedent
+fallback to a direct HTTPS round-trip (confirmed the rebuilt `main.js`/`style.css` were actually
+served, both before and after the live query). Diagram ground-truth ritual run:
+`diagrams/ui-dto-model.md`'s `GeoipCountriesResponse` class and its own prose section updated
+(the real two-field shape vs. the draft's single `DateTime`, with the Три-Б reason named
+explicitly); `diagrams/ui-navigation.md`'s GeoIP node **actually checked this time** (not silently
+skipped, the way T-76/T-79 both left it) — its own third bullet already correctly named T-78, no
+edit needed. `UI-SPEC.md` §3.5 marks the third row done with a note on the real DTO shape.
+`SERVICES.md`'s `/admin/geoip` paragraph gained a sentence on the two new response fields.
+`CONFIGURATION.md` checked, not edited — no TOML field changed, T-78 only adds response fields, a
+deliberate non-edit rather than a symmetry-driven one. **New backlog item found while verifying
+live and put directly to the user's question, not silently acted on**: `main.rs`'s
+`load_geoip_state` reads the on-disk `geoip.mmdb` synchronously before the listener starts
+accepting connections, unconditionally (even with an empty `blocked_countries`) — a real, if
+one-time, startup-latency cost now empirically sized (8.3MB) rather than theoretical; per-query
+behavior was already correct (the whole file is read once into memory, `maxminddb`'s `mmap`
+feature deliberately left off per this crate's `#![forbid(unsafe_code)]` posture, never re-read
+from disk per lookup). Filed as **T-160** (TASKS.md backlog), not designed or implemented this
+slice.
+
 Фаза 2, sixth GeoIP slice (T-77 — TASKS-DONE.md, three commits — two planned per the T-153 split,
 plus one from a real advisor review of the already-committed result, not the plan): the first
 live-write path for
@@ -246,7 +303,10 @@ failed refresh never clears an already-loaded database (SPEC.md's own user-safet
 beats silently unfiltered). **Real environment blocker, same class as the earlier macOS one,
 surfaced to the user rather than guessed past**: `db-ip.com`/`download.db-ip.com` are unreachable
 from this dev sandbox (DNS-blocked — confirmed via both `curl` and `WebFetch`, while an unrelated
-domain resolves fine), so whether DB-IP publishes a machine-readable checksum sidecar next to the
+domain resolves fine) — **not a permanent property of every session**: T-78 (2026-08-30) recorded
+`db-ip.com` as actually reachable in that session's sandbox, a real live download succeeded; don't
+treat this line as still-current without re-checking, only as the state observed at T-75's own
+time of writing. So whether DB-IP publishes a machine-readable checksum sidecar next to the
 `.mmdb.gz` file (their download *page* only shows an MD5/SHA1 as HTML text) couldn't be confirmed
 before writing this code — and SPEC.md §3.5 calls integrity verification "not optional." Put to the
 user via `AskUserQuestion`; chosen: a **defensive fallback** — try a `.sha1` sidecar opportunistically

@@ -143,6 +143,9 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .override-item .conflict-note { color: var(--warn); font-size: 11.5px; }
 .override-item.conflict { background: var(--warn-soft); border-radius: 6px; padding-left: 0.4rem; }
 
+/* T-78: GeoIP database build-date indicator (#geoip-body, main.js) */
+.geoip-database-status { font-size: 11.5px; color: var(--text-muted); margin: 0 0 0.6rem; }
+
 /* T-153: cache TTL/capacity editor (#cache-config-body, main.js) */
 .cache-config-flush-notice { font-size: 11.5px; color: var(--text-muted); margin: 0 0 0.6rem; }
 .cache-config-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.6rem; }

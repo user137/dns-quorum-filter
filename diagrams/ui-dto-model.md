@@ -163,9 +163,11 @@ classDiagram
     }
 
     class GeoipCountriesResponse {
-        <<T-77, реалізовано>>
+        <<T-77/T-78, реалізовано>>
         +List~String~ blocked_countries
         +bool persisted
+        +bool database_loaded
+        +Option~u64~ database_built_at_ms
     }
     class GeoipCountryRequest {
         <<T-77, реалізовано>>
@@ -316,12 +318,24 @@ T-53/T-54 (формальний allowlist, tagged-enum DTO) — природна
 `OverrideListsResponse` вище: відповідь завжди відображає живий стан, значення заявки не
 обов'язково збігаються з ним, якщо валідація відхилила (`clamp_min_secs > clamp_max_secs`).
 
-## `GeoipCountriesResponse`/`GeoipCountryRequest` — нова пара DTO, не `GeoIPConfig` з чернетки (T-77)
+## `GeoipCountriesResponse`/`GeoipCountryRequest` — нова пара DTO, не `GeoIPConfig` з чернетки (T-77/T-78)
 
-`GET /admin/geoip`/`POST /admin/geoip/add`/`POST /admin/geoip/remove` реалізують лише перший
-рядок UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`) — не увесь клас: `db_
-updated_at` (T-78) і атрибуція (T-81) залишаються не доставленими, тож `GeoIPConfig` вище
-позначений як чернетка, а не реалізований DTO. `GeoipCountriesResponse`/`GeoipCountryRequest` —
+`GET /admin/geoip`/`POST /admin/geoip/add`/`POST /admin/geoip/remove` реалізують перші два рядки
+UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`, T-77; дата останнього
+оновлення бази, T-78) — не увесь клас: атрибуція (T-81) залишається не доставленою, тож
+`GeoIPConfig` вище лишається позначеним як чернетка, а не реалізований DTO. Реальна форма дати
+розходиться з чернетковою: замість одного `DateTime db_updated_at` — два поля,
+`database_loaded: bool` + `database_built_at_ms: Option<u64>` (мілісекунди від епохи Unix, той
+самий конверт, що й `LogEntryView.timestamp_ms`). Розходження навмисне, не спрощення:
+`GeoipState` (`dispatch.rs`) має три реальних стани — жодної завантаженої бази (фільтрація за
+країною **не діє**, незалежно від `blocked_countries`), завантажена база з відомою датою збірки,
+і завантажена база з невідомою датою збірки (`GeoipReader::build_time()` повернув `None`) —
+одинарний `Option<u64>` не може розрізнити перший і третій стани, а це саме той Три-Б
+"користувач бачить порожню дату і вважає, що фільтрація працює" ризик, який ця задача мала
+уникнути (advisor-catch під час планування). `database_built_at_ms` — це дата **збірки бази
+видавцем** (`build_epoch` з метаданих `MaxMind`-формату), не час останнього опитування
+`geoip_updater` — той самий T-75 gotcha (`CLAUDE.md`), що вже пояснює, чому `SystemTime::now()`
+тут була б хибним, завжди-"сьогодні" величиною. `GeoipCountriesResponse`/`GeoipCountryRequest` —
 той самий "окремий маршрут, не додаток до `/admin/config`" патерн, що й
 `CacheConfigView`/`CacheConfigUpdate` вище, з тієї самої причини (невʼязана зміна тумблера
 провайдера не повинна нести чи застосовувати поточний список країн як побічний ефект). На

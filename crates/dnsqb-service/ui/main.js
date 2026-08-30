@@ -590,6 +590,28 @@ function renderGeoip(data) {
   heading.textContent = "GeoIP-блокування";
   geoipBody.appendChild(heading);
 
+  // T-78: three distinct, always-visible lines - not a banner - for three
+  // states that must not collapse into one another (advisor-caught while
+  // planning this task): no database at all (filtering isn't happening,
+  // regardless of blocked_countries below), a loaded database with a known
+  // build date, and a loaded database whose own metadata has no build
+  // date. `database_built_at_ms` is the publisher's own build time, not a
+  // refresh-poll timestamp - see CLAUDE.md's T-75 note on why "last
+  // updated" would be a misleading label here.
+  const databaseStatus = document.createElement("p");
+  databaseStatus.className = "geoip-database-status";
+  if (!data.database_loaded) {
+    databaseStatus.textContent =
+      "База GeoIP ще не завантажена - фільтрація за країною зараз не діє, незалежно від списку нижче.";
+  } else if (data.database_built_at_ms == null) {
+    databaseStatus.textContent = "База GeoIP завантажена, дата збірки невідома.";
+  } else {
+    databaseStatus.textContent = `Дата збірки бази GeoIP (DB-IP): ${new Date(
+      data.database_built_at_ms,
+    ).toLocaleString()}`;
+  }
+  geoipBody.appendChild(databaseStatus);
+
   // Same "silent data loss" concern as #overrides-body's own persisted
   // warning (T-47).
   if (!data.persisted) {
