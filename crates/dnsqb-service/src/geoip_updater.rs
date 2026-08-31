@@ -272,12 +272,20 @@ pub async fn run_geoip_updater(
         if let Some(health) = health_after_refresh(source.as_ref(), &result) {
             state.update_maxmind_health(health);
         }
-        tokio::select! {
-            () = tokio::time::sleep(GEOIP_CHECK_INTERVAL) => {}
-            () = wake.notified() => {
-                tracing::info!("GeoIP refresh woken by a source change");
-            }
-        }
+        park_until_due(&wake).await;
+    }
+}
+
+/// Park between refresh cycles (T-163): return when the periodic timer
+/// elapses **or** a `wake_geoip_refresh()` signal fires, whichever is first.
+/// `Notify::notify_one` before this is entered is remembered (one permit), so
+/// a source change *during* the preceding refresh still resolves the next
+/// park immediately — the "no lost wake" property. Extracted so a test
+/// exercises this exact function rather than a hand-written `select!` copy.
+async fn park_until_due(wake: &tokio::sync::Notify) {
+    tokio::select! {
+        () = tokio::time::sleep(GEOIP_CHECK_INTERVAL) => {}
+        () = wake.notified() => tracing::info!("GeoIP refresh woken by a source change"),
     }
 }
 
@@ -744,6 +752,32 @@ mod tests {
             health_after_refresh(&GeoipSource::DbIpLite, &Err(GeoipUpdateError::Timeout)),
             Some(MaxmindHealth::NotApplicable)
         );
+    }
+
+    // The T-163 wake channel's load-bearing property, tested against the real
+    // `park_until_due` (not a `select!` copy): a wake made *before* the park
+    // is entered — e.g. a source change during the preceding refresh — still
+    // resolves the next park immediately. A lost wake means the operator
+    // waits up to `GEOIP_CHECK_INTERVAL` (24h) with no signal. Paused-time
+    // "assert elapsed ≈ 0", same technique as T-30's cancellation tests.
+    #[tokio::test(start_paused = true)]
+    async fn park_until_due_returns_at_once_on_a_wake_permit_left_from_before_the_park() {
+        let wake = Arc::new(tokio::sync::Notify::new());
+        wake.notify_one();
+        let start = tokio::time::Instant::now();
+        park_until_due(&wake).await;
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "a remembered wake permit must resolve the park, not the 24h interval"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn park_until_due_waits_the_full_interval_when_nothing_wakes_it() {
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let start = tokio::time::Instant::now();
+        park_until_due(&wake).await;
+        assert_eq!(start.elapsed(), GEOIP_CHECK_INTERVAL);
     }
 
     #[test]

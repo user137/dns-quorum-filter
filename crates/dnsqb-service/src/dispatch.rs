@@ -629,6 +629,24 @@ pub struct AppState<C: DohClient + Sync> {
     /// has no equivalent concern because reset never writes
     /// `resolver_config.toml` back to disk, only `state.runtime` in memory.
     overrides_persist_lock: Mutex<()>,
+    /// Orders the *read-decide-write* of `geoip_source` + `maxmind_health`
+    /// across its three writers — `apply_admin_reset` and the two
+    /// `/admin/geoip/maxmind[/clear]` routes (T-163). Each reads the stored
+    /// credentials, decides the new `GeoipSource`, then calls
+    /// `update_geoip_source`; without this lock two near-simultaneous edits
+    /// (a `/reset` racing a `/maxmind` POST — "two quick clicks") can commit
+    /// in the opposite order from their reads, leaving the credential store
+    /// holding a key while the live source is DB-IP Lite until the next
+    /// reset/restart — the same live-vs-stored divergence class
+    /// `persist_lock` / `overrides_persist_lock` guard for their own files
+    /// (T-57 / T-139 / T-149 / T-47 / T-77). A **separate** lock, not
+    /// `persist_lock`: the credentials aren't in `resolver_config.toml`, and
+    /// sharing would make a key edit block behind an unrelated config save.
+    /// Acquired **outermost** — before `persist_lock` in `apply_admin_reset`
+    /// (which is the only function that holds it alongside the other two);
+    /// the maxmind routes hold only this one. Never held across an `.await`
+    /// (the routes drop it before the credential probe).
+    geoip_source_lock: Mutex<()>,
 }
 
 impl<C: DohClient + Sync> AppState<C> {
@@ -683,6 +701,7 @@ impl<C: DohClient + Sync> AppState<C> {
             shutdown_tx,
             persist_lock: Mutex::new(()),
             overrides_persist_lock: Mutex::new(()),
+            geoip_source_lock: Mutex::new(()),
         }
     }
 
@@ -1024,9 +1043,14 @@ enum AdminResetError {
 /// memory-write and disk-write under `persist_lock`, then reset's own
 /// memory-write lands *after* — leaving memory holding reset's stale values
 /// while disk holds the concurrent POST's new ones, diverged until restart.
-/// No deadlock risk holding both locks here: this is the only function that
-/// ever holds both, always in this order, and no other function holds
-/// either concurrently with the other.
+///
+/// **`state.geoip_source_lock` is held outermost (T-163 closing review)** —
+/// across the credential re-read → `update_geoip_source`, so a concurrent
+/// `/admin/geoip/maxmind[/clear]` POST can't commit its own source change in
+/// the gap. Acquisition order is always `geoip_source_lock` → `persist_lock`
+/// → `overrides_persist_lock`; `apply_admin_reset` is the only holder of all
+/// three, the maxmind routes hold only `geoip_source_lock`, and no other
+/// function holds any of them concurrently with another — so no deadlock.
 fn apply_admin_reset<C: DohClient + Sync>(
     state: &AppState<C>,
 ) -> Result<AdminStatusResponse, AdminResetError> {
@@ -1035,12 +1059,16 @@ fn apply_admin_reset<C: DohClient + Sync>(
         .paths
         .as_ref()
         .ok_or(AdminResetError::NoAppData)?;
-    // T-163: re-read the MaxMind credentials from the OS credential store
-    // *before* taking the persist locks — it's a synchronous Credential
-    // Manager round-trip, and the GeoIP source isn't part of the
-    // `resolver_config.toml` cross-field-read invariant those locks protect,
-    // so ordering here is free. Applied (with a wake) after the file reloads
-    // below.
+    // T-163: `geoip_source_lock` is acquired **outermost** and held across
+    // this whole function's read-of-credentials → `update_geoip_source`, so a
+    // concurrent `/admin/geoip/maxmind[/clear]` POST can't commit its own
+    // source change in the gap between reset's read and reset's write (which
+    // would leave the store holding a key while the live source is DB-IP Lite
+    // until the next reset/restart). The credential read itself is a
+    // synchronous Credential Manager round-trip and stays **outside**
+    // `persist_lock` — the source isn't part of the `resolver_config.toml`
+    // cross-field-read invariant that lock protects.
+    let _geoip_source_guard = state.geoip_source_lock.lock();
     let geoip_source = match geoip_credentials::load(&paths.app_data_dir()) {
         Ok(Some(creds)) => GeoipSource::Maxmind(creds),
         Ok(None) => GeoipSource::DbIpLite,
@@ -1697,11 +1725,38 @@ where
         });
     };
 
-    match geoip_credentials::save(
-        &paths.app_data_dir(),
-        &request.account_id,
-        &request.license_key,
-    ) {
+    // T-163 closing review: hold `geoip_source_lock` across store →
+    // read-back → `update_geoip_source` so a concurrent `/admin/reset` can't
+    // interleave and clobber the source. Dropped before the credential
+    // probe's `.await` (the `parking_lot` guard is `!Send`); the probe
+    // doesn't touch the source.
+    let save_outcome = {
+        let _geoip_source_guard = state.geoip_source_lock.lock();
+        let outcome = geoip_credentials::save(
+            &paths.app_data_dir(),
+            &request.account_id,
+            &request.license_key,
+        );
+        if outcome.is_ok() {
+            // The stored credentials are now the live GeoIP source. Read them
+            // back (also a store round-trip check) and wake the updater so
+            // the new key is used within seconds, no restart. A read-back
+            // miss here is not fatal — it just leaves the previous source
+            // until the next reset/restart.
+            match geoip_credentials::load(&paths.app_data_dir()) {
+                Ok(Some(creds)) => {
+                    state.update_geoip_source(GeoipSource::Maxmind(creds));
+                    state.wake_geoip_refresh();
+                }
+                other => tracing::warn!(
+                    "MaxMind credentials saved but not readable back for runtime pickup: {other:?}"
+                ),
+            }
+        }
+        outcome
+    };
+
+    match save_outcome {
         Err(CredentialsError::Malformed) => status_response(StatusCode::BAD_REQUEST),
         Err(err) => {
             tracing::warn!("failed to persist MaxMind credentials to the store: {err}");
@@ -1714,20 +1769,6 @@ where
             })
         }
         Ok(()) => {
-            // T-163: the stored credentials are now the live GeoIP source.
-            // Read them back (also a store round-trip check) and wake the
-            // updater so the new key is used within seconds, no restart. A
-            // read-back miss here is not fatal — it just leaves the previous
-            // source until the next reset/restart.
-            match geoip_credentials::load(&paths.app_data_dir()) {
-                Ok(Some(creds)) => {
-                    state.update_geoip_source(GeoipSource::Maxmind(creds));
-                    state.wake_geoip_refresh();
-                }
-                other => tracing::warn!(
-                    "MaxMind credentials saved but not readable back for runtime pickup: {other:?}"
-                ),
-            }
             // A one-off, operator-initiated outbound call — not the
             // status-poll hot path the "don't rebuild a TLS client 30x/min"
             // concern (T-149) was about. Talks to the public
@@ -1773,19 +1814,27 @@ where
     if limited.collect().await.is_err() {
         return status_response(StatusCode::BAD_REQUEST);
     }
-    let persisted = match state.persist.paths.as_ref() {
-        Some(paths) => match geoip_credentials::clear(&paths.app_data_dir()) {
-            Ok(()) => true,
-            Err(err) => {
-                tracing::warn!("failed to remove stored MaxMind credentials: {err}");
-                false
-            }
-        },
-        None => false,
+    // T-163 closing review: `geoip_source_lock` across clear →
+    // `update_geoip_source` for the same reason the POST route holds it —
+    // ordering against a concurrent `/admin/reset`. All sync, no `.await`
+    // inside.
+    let persisted = {
+        let _geoip_source_guard = state.geoip_source_lock.lock();
+        let persisted = match state.persist.paths.as_ref() {
+            Some(paths) => match geoip_credentials::clear(&paths.app_data_dir()) {
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("failed to remove stored MaxMind credentials: {err}");
+                    false
+                }
+            },
+            None => false,
+        };
+        // Back to DB-IP Lite as the live source, effective now.
+        state.update_geoip_source(GeoipSource::DbIpLite);
+        state.wake_geoip_refresh();
+        persisted
     };
-    // T-163: back to DB-IP Lite as the live source, effective now.
-    state.update_geoip_source(GeoipSource::DbIpLite);
-    state.wake_geoip_refresh();
     json_response(&MaxmindCredentialsView {
         configured: false,
         account_id: None,
@@ -2956,6 +3005,10 @@ mod tests {
         )
     }
 
+    // NB: a test that drives `POST /admin/reset` against a state built here
+    // with `paths: Some(..)` must also take `crate::key_store::STORE_TEST_GUARD`
+    // — `apply_admin_reset` reads the OS credential store (T-163), and that
+    // backend races under concurrent access from one process.
     fn state_with_persist(client: MockClient, persist: PersistTarget) -> Arc<AppState<MockClient>> {
         state_with_overrides_and_persist(client, OverrideLists::empty(), persist)
     }
@@ -3698,6 +3751,9 @@ mod tests {
     // a real 500 through the admin-reset route, not get lost in translation.
     #[tokio::test]
     async fn serve_admin_reset_returns_500_for_an_oversized_resolver_config_file() {
+        // `apply_admin_reset` reads the OS credential store (T-163); serialize
+        // like every other credential-store test in this crate.
+        let _store_guard = store_test_guard();
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -3728,6 +3784,7 @@ mod tests {
 
     #[tokio::test]
     async fn serve_admin_reset_reloads_settings_and_clears_state() {
+        let _store_guard = store_test_guard();
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -3851,6 +3908,7 @@ mod tests {
     // unread `[cache]` table would fail every assertion below, not just one.
     #[tokio::test]
     async fn serve_admin_reset_reloads_cache_config_from_the_fixture_file() {
+        let _store_guard = store_test_guard();
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -3907,6 +3965,7 @@ mod tests {
     // of whether the reload actually happened, proving nothing.
     #[tokio::test]
     async fn serve_admin_reset_reloads_the_geoip_blocked_country_list_from_the_fixture_file() {
+        let _store_guard = store_test_guard();
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -4972,6 +5031,17 @@ mod tests {
         );
     }
 
+    /// Holds [`crate::key_store::STORE_TEST_GUARD`] behind an opaque type so
+    /// an `async` test can keep it alive across `.await` without tripping
+    /// `clippy::await_holding_lock` (which only tracks bare `MutexGuard`
+    /// locals) — the same mechanism `MaxmindTestDir`'s `_guard` field relies
+    /// on. For credential-store tests that don't build a `MaxmindTestDir`.
+    struct StoreTestGuard(#[allow(dead_code)] parking_lot::MutexGuard<'static, ()>);
+
+    fn store_test_guard() -> StoreTestGuard {
+        StoreTestGuard(crate::key_store::STORE_TEST_GUARD.lock())
+    }
+
     /// A scratch app-data dir plus a `Drop` that deletes the `MaxMind`
     /// credentials keyring entry derived from it — so these tests, which now
     /// hit the real OS credential store (T-163), never leak an entry into the
@@ -5162,44 +5232,21 @@ mod tests {
         ));
     }
 
-    // The T-163 wake channel's load-bearing property: a source change made
-    // *before* `run_geoip_updater` parks (e.g. during an in-flight refresh)
-    // must still wake the next park — a lost wake means the operator waits up
-    // to `GEOIP_CHECK_INTERVAL` (24h) with no signal, the exact bug T-163
-    // exists to kill. `Notify::notify_one` keeps one permit, so the park
-    // resolves immediately rather than sleeping out the interval. Same
-    // paused-time "assert elapsed stays near zero" technique as T-30's
-    // cancellation tests.
+    // The wake channel's "no lost wake" property is tested against the real
+    // `geoip_updater::park_until_due`, not re-implemented here. This test only
+    // covers that `AppState::wake_geoip_refresh` reaches the same `Notify` the
+    // updater parks on.
     #[tokio::test(start_paused = true)]
-    async fn a_wake_before_the_updater_parks_resolves_the_next_park_immediately() {
+    async fn wake_geoip_refresh_leaves_a_permit_on_the_handle_the_updater_parks_on() {
         let state = state_with(no_op_client());
         let wake = state.geoip_refresh_wake_handle();
-        state.wake_geoip_refresh(); // change happened before the park below
-
+        state.wake_geoip_refresh();
         let start = tokio::time::Instant::now();
-        tokio::select! {
-            () = tokio::time::sleep(crate::geoip_updater::GEOIP_CHECK_INTERVAL) => {
-                panic!("a pending wake permit must not wait out the 24h check interval");
-            }
-            () = wake.notified() => {}
-        }
+        wake.notified().await;
         assert!(
             start.elapsed() < std::time::Duration::from_secs(1),
-            "the park must resolve on the remembered wake permit, not the interval"
+            "wake_geoip_refresh must leave a permit on geoip_refresh_wake_handle()"
         );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn with_no_wake_the_updater_parks_for_the_whole_check_interval() {
-        let state = state_with(no_op_client());
-        let wake = state.geoip_refresh_wake_handle();
-
-        let start = tokio::time::Instant::now();
-        tokio::select! {
-            () = tokio::time::sleep(crate::geoip_updater::GEOIP_CHECK_INTERVAL) => {}
-            () = wake.notified() => panic!("nothing signalled the wake"),
-        }
-        assert_eq!(start.elapsed(), crate::geoip_updater::GEOIP_CHECK_INTERVAL);
     }
 
     #[test]

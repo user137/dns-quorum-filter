@@ -1973,6 +1973,33 @@
   SPEC.md §2, CONFIGURATION.md (`geoip_maxmind.toml` не пишеться/читається), CLAUDE.md,
   `diagrams/ui-dto-model.md`, TASKS.md (`- [ ] T-163` знято).
 
+  **Closing-review follow-up (окремий коміт, як `0c9055b` для T-67):**
+  1. **`geoip_source_lock` — новий м'ютекс.** Коміт B розсинхронив read-creds і
+     `update_geoip_source` у `apply_admin_reset` через два lock-acquire та fallible config-load, тож
+     конкурентний `POST /admin/geoip/maxmind` міг проскочити між читанням і записом reset-а й
+     лишити креденшели в сторі при живому DB-IP Lite — той самий live-vs-stored клас (T-57/T-139/
+     T-149/T-47/T-77). Новий `geoip_source_lock`, тримається зовнішнім у `apply_admin_reset`
+     (`geoip_source_lock` → `persist_lock` → `overrides_persist_lock`) і в обох maxmind-маршрутах
+     через save→read-back→`update_geoip_source` (скидається перед `.await` проби — `parking_lot`
+     guard `!Send`).
+  2. **`park_until_due` винесено.** Wake-тест був `select!`-копією циклу, не самим циклом (5-й
+     екземпляр форми з CLAUDE.md — `IsCa::NoCa`/`icacls`/`ROUTES`/`erase_and_remove`). Тепер
+     `run_geoip_updater` кличе `park_until_due(&wake)`, і два `#[tokio::test(start_paused = true)]`
+     тести кличуть саме її (permit-до-парку → elapsed ≈ 0; без permit → повний інтервал). Dispatch-
+     тести-мимики видалені; лишився один, що перевіряє лише "`wake_geoip_refresh` дає permit на той
+     самий handle".
+  3. **`STORE_TEST_GUARD` на 4 reset-тестах.** `apply_admin_reset` тепер безумовно читає credential
+     store при `paths: Some`, тож `serve_admin_reset_reloads_*` / `_returns_500_for_an_oversized_*`
+     теж стор-тести — додано `store_test_guard()` (opaque-обгортка над `MutexGuard`, щоб async-тест
+     не тригерив `await_holding_lock`) + примітка на `state_with_persist`.
+  4. `MaxmindRefreshHealth` додано у `pub use admin::{…}` (публічне поле DTO, тип із приватного
+     модуля — `dnsqb-tray` не зміг би на нього зматчитись).
+  5. Відомий gap записано в CLAUDE.md: `refresh_health: AUTH_REJECTED` зʼявляється лише на
+     наступному завантаженні картки (власний fetch-цикл, щоб поле ключа не гинуло від 2-сек
+     поллінгу) — не live-push.
+  Гейт: 438 lib + 5 bins, clippy/fmt/rustdoc/doctest/conformance/deny/audit чисті, 4× повтор
+  suite зелений.
+
 - [x] T-162 (частина) — MaxMind GeoLite2-режим: адмін-маршрут + картка на `/admin/ui` +
   показ активного джерела бази (SPEC.md §3.5) — один коміт, plan-mode + advisor до і після.
 

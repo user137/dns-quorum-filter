@@ -149,6 +149,11 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
+- **`refresh_health: AUTH_REJECTED` (T-163) only appears on the next `/admin/ui` load / operator
+  action** — the `#geoip-maxmind` card has its own fetch cycle (so a key field being typed isn't
+  wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
+  no live banner until the page is reloaded or the card is interacted with. Acceptable; stated,
+  not a live push.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
   delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
   but nothing calls it for the *TLS key* entry on uninstall. A left-behind
