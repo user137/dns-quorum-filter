@@ -7,8 +7,12 @@
 //! `dns.quad9.net` vs `dns11.quad9.net`) showed `9.9.9.11` forwards the
 //! client's real public /24 to every authoritative server with no option
 //! supplied by us, and a resolver on `127.0.0.1` cannot make that /24
-//! coarser — so the project deliberately never emits an ECS option: an
-//! outgoing upstream query carries exactly the client's OPT record or none.
+//! coarser. ECS therefore stays a deliberate non-target. This is verified
+//! by reading, not enforced by a test: as of 2026-08-31 no code path
+//! constructs an ECS option — `quorum::resolve` forwards the client
+//! `Message` to every upstream unmodified, and `attach_edns` (the only
+//! OPT-writing helper) has no production caller. If `attach_edns` is ever
+//! wired into the upstream path, re-check that invariant.
 //! Full record: SPEC.md §3.4 "Розглянуті й відхилені провайдери",
 //! TASKS-DONE.md T-164.
 //!
@@ -16,13 +20,14 @@
 //! conformance module list still names this RFC row.
 
 #[test]
-#[ignore = "T-164 rejected 2026-08-31 — ECS is a permanent non-target, no surface to test"]
+#[ignore = "T-164 rejected 2026-08-31 — ECS is a deliberate non-target, no surface to test"]
 fn ecs_variant_upstream_gets_a_subnet_option() {
-    // Intentionally empty: no ECS-enabled preset exists or will (T-164 rejected).
+    // Intentionally empty: no ECS-enabled preset exists (T-164 rejected).
 }
 
 #[test]
-#[ignore = "T-164 rejected 2026-08-31 — ECS is a permanent non-target, no surface to test"]
+#[ignore = "T-164 rejected 2026-08-31 — ECS is a deliberate non-target, no surface to test"]
 fn default_upstream_gets_no_ecs_option() {
-    // Intentionally empty: the crate never attaches a Subnet option to any upstream query.
+    // Intentionally empty: as of 2026-08-31 no code path constructs a Subnet
+    // option (verified by reading quorum::resolve, not enforced here).
 }
