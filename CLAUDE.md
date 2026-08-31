@@ -4,9 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase:** Фаза 2 (GeoIP workstream) in progress. Фаза 1 formally closed 2026-08-29 (SPEC.md
-§"Фазований план"); Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done. Фаза 1
-target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open).
+**Phase:** Фаза 2 (cert automation, Windows) **formally closed 2026-08-31** (SPEC.md §"Фазований
+план" / TASKS.md §"Фаза 2"). **Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging)
+is next, not started.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
+RFC-conformance table T-1–T-19) done. Target platform is Windows (DECISIONS.md, 2026-08-25 —
+SPEC.md left it open); macOS/Linux are Фаза 6.
+
+Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstaller must call
+`trust_store::uninstall()` + `key_store::delete_secret`, blocked on T-156 MSIX packaging); the
+**Ф1 metrics gate** (T-66 showed no quorum gain over the best single provider; no recorded live
+"browser → local DoH" run); **`DEFAULT_PROVIDER_IDS`** still `quad9`+`adguard`, not §3.4/§3.5's
+"Security only" — an open no-number decision.
 
 Per-task history — design rationale, advisor catches, verification notes — is recorded in
 `TASKS-DONE.md` (one line + implementation note per task), `DECISIONS.md` (reversals of shipped
@@ -89,10 +97,11 @@ showing the *loaded* source), T-163 (MaxMind creds → OS secret store + one-tim
 restart; `MaxmindHealth`/`refresh_health` detecting a key that starts failing at a later refresh —
 3 commits).
 
-**The GeoIP workstream (T-74–T-82) is complete.** Remaining Ф2 work is separate: cert rotation
-(T-69, its own plan+advisor cycle). **T-72/T-73 backend done** (2026-08-31, plan+advisor, split
-into a backend commit + a `/admin/ui`-card commit) — `quorum` is no longer hardcoded to two
-providers: runtime `[[providers]]` list, all 10 §3.4 presets + custom-URL entry, 3
+**The GeoIP workstream (T-74–T-82) is complete.** Фаза 2 as a whole is **closed 2026-08-31** (see
+the Project state phase line above for what carried into Фаза 3). **T-72/T-73 backend done**
+(2026-08-31, plan+advisor, split into a backend commit + a `/admin/ui`-card commit) — `quorum` is
+no longer hardcoded to two providers: runtime `[[providers]]` list, all 10 §3.4 presets +
+custom-URL entry, 3
 `BlockSignature` heuristics, 4 `/admin/providers/*` routes, `AdminConfigUpdate` loses `providers`,
 `AdminStatusResponse.providers` → `active_providers`. **T-164** (ECS-enabled upstream preset,
 ex-`ecs_option_for_upstream` stub) was **rejected 2026-08-31** — a live probe showed

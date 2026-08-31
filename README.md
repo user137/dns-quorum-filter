@@ -5,7 +5,7 @@
 
 [![CI](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: Phase 1 complete, Phase 2 not started](https://img.shields.io/badge/status-Phase%201%20complete%20%C2%B7%20Phase%202%20not%20started-yellow)
+![Status: Phase 2 complete, Phase 3 not started](https://img.shields.io/badge/status-Phase%202%20complete%20%C2%B7%20Phase%203%20not%20started-yellow)
 
 [`SPEC.md`](SPEC.md) · [`SERVICES.md`](SERVICES.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`SECURITY.md`](SECURITY.md)
 
@@ -55,20 +55,22 @@ SPEC.md §"Чому саме такий дизайн"):
 
 ## Статус
 
-Фаза 1 (PoC) формально закрита 2026-08-29: 1 платформа (Windows), 2 upstream-провайдери (Quad9 +
-AdGuard), self-signed leaf-сертифікат (встановлення тепер автоматизоване, T-49 — понад початкову
-MVP-вимогу "вручну"), override-списки + in-memory лог, без watchdog'а (як і планувалось на цьому
-етапі). **Два розриви, названі явно, не приховані**: живий прохід через реально налаштований
-Chrome Custom DoH provider (не лише DoH-клієнтський/`Invoke-WebRequest`-рівень) ще не зафіксовано,
-і метрики (T-66) не підтвердили приріст кворуму над найкращим одиночним провайдером на зібраному
-зразку — обидва відкриті перед повноцінним стартом Фази 2. Живий, детальний статус по кожному
-зрізу роботи — [`CLAUDE.md`](CLAUDE.md), розділ "Project state"; повний фазований план — SPEC.md.
+Фаза 1 (PoC) формально закрита 2026-08-29; **Фаза 2 (автоматизація сертифіката, Windows) формально
+закрита 2026-08-31**. Поставлено у Фазі 2: приватний ключ у Windows Credential Manager (T-67),
+install/uninstall + ротація сертифіката (T-49/T-69), GeoIP-блокування з DB-IP Lite / опційним
+MaxMind (T-74–T-82), рантайм-список DoH-провайдерів + кастомний URL (T-72/T-73). **Наступна —
+Фаза 3 (продакшн-hardening: `dnsqb-watcher`, MSIX-пакування), ще не почата.** Несеться у Фазу 3,
+не втрачено: пакетований деінсталятор (T-70, заблокований на T-156), і **два Ф1-розриви** — живий
+прохід через реально налаштований Chrome Custom DoH provider не зафіксовано, і метрики (T-66) не
+підтвердили приріст кворуму над найкращим одиночним провайдером. Живий, детальний статус по
+кожному зрізу роботи — [`CLAUDE.md`](CLAUDE.md), розділ "Project state"; повний фазований план — SPEC.md.
 
 ## Workspace
 
 ```
 crates/
-  dnsqb-service/   # DoH-сервер + quorum-резолвер — реально працює (Фаза 1)
+  dnsqb-service/   # DoH-сервер + quorum-резолвер + GeoIP + admin-канал — реально працює (Фази 1–2)
+  dnsqb-tray/      # трей-іконка + меню (сертифікат, restart, stop) — реально працює (Фаза 2)
   dnsqb-watcher/   # watchdog, взаємний heartbeat — заглушка (Фаза 3)
 ```
 
