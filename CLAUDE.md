@@ -36,23 +36,26 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource`, `LogFilter` search, `clear` |
 | `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables; per-field validation, loud errors |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); restricted-ACL `icacls` helpers (T-50) kept for `geoip_maxmind.toml`; `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient`; embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
-| `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, `geoip_maxmind.toml` creds, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::save`/`clear` (T-162, ACL-restricted via `cert::write_user_restricted_file`) back `POST /admin/geoip/maxmind[/clear]`; `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check. Bounded download + integrity gate + atomic swap + 24h background refresh |
+| `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
 write route, the full set enumerated in `dispatch::ROUTES` (a path/method not in that table can
 never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset`,
 `/admin/shutdown`; `GET|POST /admin/overrides[/add|/remove]`, `/admin/cache-config[/apply]`,
 `/admin/geoip[/add|/remove]`, `GET|POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
-(T-162, MaxMind creds; POST persists then runs a save-time probe → `check`), `GET /admin/providers`
+(T-162/T-163, MaxMind creds → OS secret store; POST stores then runs a save-time probe → `check`,
+and updates the live `GeoipSource` + wakes the updater; `refresh_health` on the view flags a key
+that started failing later), `GET /admin/providers`
 + `POST /admin/providers/{add,remove,set-enabled}` (T-72/T-73; provider list edited here, **not**
 `/admin/config` — which now carries only `timeout_mode`), `/admin/log[/clear]`;
-`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. `geoip_maxmind.toml` is its own file
-with a single writer (that one POST route), not part of `resolver_config.toml` — no shared lock.
+`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. The MaxMind creds are their own OS
+secret-store entry with a single writer (that one POST route), not part of `resolver_config.toml`
+— no shared lock.
 Every route that re-serializes `resolver_config.toml` shares
 `state.persist_lock` and reads the other fields' live values before saving — the cross-field-read
 discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77).
@@ -75,26 +78,25 @@ is unaffected). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Too
 Done: T-74 (`GeoipReader`), T-75 (background updater), T-76 (pipeline wiring + `[geoip]` config +
 `DecisionSource::Geoip`), T-79 (`geoip_country` in the log), T-82 (unit-test task, docs-only), T-77
 (admin routes + `/admin/ui` card), T-78 (DB build-date indicator), T-161 (`resolved_ip_country` on
-every real-answer log row), T-80 (opt-in MaxMind GeoLite2 source — `geoip_credentials.rs` reads a
-plaintext `geoip_maxmind.toml`, `geoip_updater` branches on `GeoipSource`; Basic-auth download of
-the modern permalink, opportunistic `.tar.gz.sha256`, in-memory `.mmdb` extraction from the
-tarball; UI + DPAPI + broken-creds signal deferred to **T-162**), T-81 (attribution footer
+every real-answer log row), T-80 (opt-in MaxMind GeoLite2 source — `geoip_updater` branches on `GeoipSource`; Basic-auth
+download of the modern permalink, opportunistic `.tar.gz.sha256`, in-memory `.mmdb` extraction
+from the tarball), T-81 (attribution footer
 `#credits` on `/admin/ui` — DB-IP link-back + **CC BY 4.0** (confirmed direct against db-ip.com),
-MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO), T-162 **partial**
-(admin route + `/admin/ui` card for MaxMind creds + save-time `check` probe + `database_source`
-closed enum showing the *loaded* source; plaintext file kept, ACL-restricted).
+MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO), T-162 (admin route +
+`/admin/ui` card for MaxMind creds + save-time `check` probe + `database_source` closed enum
+showing the *loaded* source), T-163 (MaxMind creds → OS secret store + one-time file migration +
+`icacls` helpers removed; `GeoipSource` on `AppState` + `Notify` wake so a creds change needs no
+restart; `MaxmindHealth`/`refresh_health` detecting a key that starts failing at a later refresh —
+3 commits).
 
-**The GeoIP workstream (T-74–T-82) is complete.** Remaining Ф2 work is separate: cert automation
-(T-69 rotation → T-67 DPAPI, each needs its own plan+advisor cycle). **T-72/T-73 backend done**
-(2026-08-31, plan+advisor, split into a backend commit + a `/admin/ui`-card commit) — `quorum` is
-no longer hardcoded to two providers: runtime `[[providers]]` list, all 10 §3.4 presets +
-custom-URL entry, 3 `BlockSignature` heuristics, 4 `/admin/providers/*` routes, `AdminConfigUpdate`
-loses `providers`, `AdminStatusResponse.providers` → `active_providers`. **T-164** re-files the
-deleted `ecs_option_for_upstream` stub (ECS-enabled upstream preset).
-**T-163** (the rest of T-162: DPAPI for `geoip_maxmind.toml`; `POST /admin/reset` re-read +
-`run_geoip_updater` reading `GeoipSource` from shared state so a creds change needs no restart;
-detecting creds that break *after* acceptance) stays open, not the critical path. macOS-dependent
-tasks (T-68/T-70 halves, T-71, T-83) remain deferred — no macOS access.
+**The GeoIP workstream (T-74–T-82) is complete.** Remaining Ф2 work is separate: cert rotation
+(T-69, its own plan+advisor cycle). **T-72/T-73 backend done** (2026-08-31, plan+advisor, split
+into a backend commit + a `/admin/ui`-card commit) — `quorum` is no longer hardcoded to two
+providers: runtime `[[providers]]` list, all 10 §3.4 presets + custom-URL entry, 3
+`BlockSignature` heuristics, 4 `/admin/providers/*` routes, `AdminConfigUpdate` loses `providers`,
+`AdminStatusResponse.providers` → `active_providers`. **T-164** re-files the deleted
+`ecs_option_for_upstream` stub (ECS-enabled upstream preset). macOS-dependent tasks (T-68/T-70
+halves, T-71, T-83) remain deferred — no macOS access.
 
 GeoIP design invariants (SPEC.md §3.5): the verdict is never cached — a cheap local lookup applied
 live on every cached-or-fresh ALLOW, so a blocked-country-list change takes effect on the next
@@ -147,19 +149,14 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
-- **MaxMind credentials that break *after* being accepted still only produce a `tracing::warn!`** —
-  T-162 added a **save-time** probe (`POST /admin/geoip/maxmind` → `check`: `VERIFIED`/`REJECTED`/
-  `UNVERIFIED`), so a bad key typed into the UI is caught immediately; but a key that MaxMind later
-  starts rejecting at a scheduled 24h refresh still silently falls back to DB-IP Lite / a stale DB
-  with no in-UI signal. `geoip_maxmind.toml` is also **not** re-read by `POST /admin/reset` (and
-  the background updater holds the `GeoipSource` it was spawned with), so a creds change needs a
-  process restart. Both, plus DPAPI instead of the ACL-restricted plaintext file, are **T-163**.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
-  delete_private_key` exists but is `#[cfg(test)]`; nothing un-gates or calls it. A left-behind
+  delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
+  but nothing calls it for the *TLS key* entry on uninstall. A left-behind
   key in Windows Credential Manager after the app is removed is the same class of security bug as
-  a left-behind trusted cert (SECURITY.md). Un-gating + calling it is folded into **T-70** (the
-  packaged uninstaller). Also T-67's `overwrite_with_zeros` before deleting `key.pem` is a
-  best-effort scrub only — no defence against VSS shadow copies or SSD wear-levelling.
+  a left-behind trusted cert (SECURITY.md). Calling it for the TLS-key entry on uninstall is
+  folded into **T-70** (the packaged uninstaller). Also `key_store::overwrite_with_zeros` before
+  unlinking a migrated plaintext file is a best-effort scrub only — no defence against VSS shadow
+  copies or SSD wear-levelling.
 - **Admin-channel fuzz (T-58, narrowed)** covers `parse_pattern` / `wire_bytes_from_get` /
   `/admin/config` POST body only — other routes and the `/dns-query` POST body are not fuzzed.
 - **The status indicator (T-56, narrowed)** — browser-DoH-usage detection and watchdog state are
@@ -181,10 +178,12 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   legacy-sibling *presence* check warns (T-144 / T-145 / T-148).
 - **A new `LogEntry` / DTO field is `None`/absent except for its one owning `decision_source`** —
   `voters` (Quorum only), `geoip_country` (Geoip only).
-- **Migration/cutover code that removes the source defers the delete until the destination is
-  proven usable** — `cert::discard_legacy_key_file` erases `key.pem` only on `tls` load-success,
-  not right after the copy-into-store (T-67 closing-review: a mismatched plaintext key must
-  survive as a recovery path).
+- **Migration/cutover code that removes the source defers the delete only when the source is
+  irreplaceable** — `cert::discard_legacy_key_file` erases `key.pem` only on `tls` load-success
+  (T-67 closing-review: a mismatched plaintext key must survive as a recovery path), but
+  `geoip_credentials::migrate_legacy_credentials_file` (T-163) unlinks in the same step it stores,
+  because a `store_secret` `Ok` is the confirmation and a MaxMind credential is re-typeable from
+  the portal. Decide per the *replaceability of the thing*, not a blanket rule.
 
 ### Runtime dependencies
 
@@ -211,10 +210,11 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   — every call site grepped for domain-name leaks before the first real subscriber was wired).
 - `url` — custom DoH provider URL parsing + literal-host SSRF classification (T-72). Already in the
   tree transitively via `reqwest`/`hickory-proto`; promoted to a direct dep, no new licence entry.
-- `keyring` (`default-features = false`, `features = ["v1"]`) — TLS private key in the OS secret
-  store (T-67, `key_store.rs`). `v1` is required (compile error without it); it also lists the
-  Unix/Apple store crates target-gated — lockfile-only for windows-msvc, no `deny.toml` change.
-  `unsafe` FFI is contained in `windows-native-keyring-store`, `#![forbid(unsafe_code)]` intact.
+- `keyring` (`default-features = false`, `features = ["v1"]`) — the OS secret store (`key_store.rs`):
+  the TLS private key (T-67) and the MaxMind account-id+license-key blob (T-163). `v1` is required
+  (compile error without it); it also lists the Unix/Apple store crates target-gated — lockfile-only
+  for windows-msvc, no `deny.toml` change. `unsafe` FFI is contained in
+  `windows-native-keyring-store`, `#![forbid(unsafe_code)]` intact.
 - `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot`;
   depends on `dnsqb-service` as a library for `AdminClient`.
 - Dev-only: `tempfile` (`overrides` load tests), `x509-parser` (`cert` DER assertions), `proptest`
@@ -294,10 +294,15 @@ reasoning (search by section number rather than re-deriving a decision from scra
   static guard also misfires on `/flag:value` args or `X:`-shaped substrings in a command that
   also runs `Remove-Item` ("Remove-Item on system path … is blocked") — split the delete out.
 - **Verifying an OS-secret-store entry (`keyring`, T-67 / T-163):** use a scratch `cargo` bin
-  calling `keyring` directly (re-derive `key_store::entry_name_for_dir` = sha1 of the lowercased,
-  trailing-separator-stripped app-data dir) — `pwsh` can't load WinRT `PasswordVault` and the
-  backend is Win32 `Cred*` anyway. `windows-latest` CI has a working session Credential Manager,
-  so these round-trip tests run un-`#[ignore]`d (unlike T-50's `icacls` DACLs).
+  calling `keyring` directly (re-derive `key_store::tls_key_entry` / `maxmind_credentials_entry` =
+  `<prefix>:` + sha1 of the lowercased, trailing-separator-stripped app-data dir) — `pwsh` can't
+  load WinRT `PasswordVault` and the backend is Win32 `Cred*` anyway. `windows-latest` CI has a
+  working session Credential Manager, so these round-trip tests run un-`#[ignore]`d (unlike T-50's
+  `icacls` DACLs). **But the Windows backend races under concurrent access from one process** even
+  on distinct entries (a just-written secret intermittently reads back absent) — every
+  credential-store test across the crate takes `key_store::STORE_TEST_GUARD` (a `parking_lot`
+  static) on its first line, held via the per-test scratch guard; without it the suite is flaky,
+  single-threaded it passes.
 - Adding any `rustls`-backed dependency tends to surface new `cargo deny` license entries (seen:
   `ISC` for `aws-lc-rs`/`rustls-webpki`, `CDLA-Permissive-2.0` for `webpki-root-certs`) — expect
   and vet each one in `deny.toml`, don't reflexively widen the allowlist.
@@ -464,6 +469,11 @@ reasoning (search by section number rather than re-deriving a decision from scra
   first draft had `CertError::AppDataDir(#[from] paths::PathsError)`; fixed by dropping the
   `#[from]`/source-chain and using a flat `CertError::MissingLocalAppData` variant instead, the
   same shape as the enum's other single-cause env-var-missing variants (`cert.rs`, T-50).
+- **The `icacls` ACL helpers were deleted in T-163** (`cert::write_user_restricted_file` /
+  `restrict_to_current_user` / `other_principals` / `icacls_path` — nothing writes a plaintext
+  secret to disk any more; code in git history). The next several gotchas are kept as durable
+  *lessons*, not a live-code index — the strongest being: "confirmed empirically on one machine"
+  is a weaker class of evidence than CI on the actual target image.
 - **`icacls` resolves a bare, unqualified `%USERNAME%` against the local machine first** —
   confirmed empirically (`icacls <path> /grant:r <name>:F` with no domain/computer prefix), not
   assumed from docs. No need to build a `%USERDOMAIN%\%USERNAME%` principal string, which the

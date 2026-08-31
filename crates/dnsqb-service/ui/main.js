@@ -720,14 +720,16 @@ async function refreshGeoip() {
 
 refreshGeoip();
 
-// T-162: MaxMind GeoLite2 credentials card. Own fetch/render cycle (a
+// T-162/T-163: MaxMind GeoLite2 credentials card. Own fetch/render cycle (a
 // license-key field the operator is typing must not be wiped by the 2s
 // status poll), same pattern as the GeoIP card above. The POST response
 // carries a `check` field - the result of one authenticated probe the
 // service runs against MaxMind right after saving - so the operator learns
 // immediately whether the credentials were accepted (Три Б: hand-editing the
-// file gave no such signal). A credentials change only takes effect after a
-// dnsqb-service restart (runtime pickup is T-163).
+// file gave no such signal). `refresh_health` is the complementary signal:
+// whether the *stored* credentials are still being accepted at the scheduled
+// 24h background refresh (a key can be revoked after it was accepted). A
+// credentials change takes effect immediately - no dnsqb-service restart.
 
 const MAXMIND_CHECK_MESSAGES = {
   VERIFIED: { cls: "notice ok", text: "MaxMind підтвердив ці креденшели." },
@@ -737,7 +739,7 @@ const MAXMIND_CHECK_MESSAGES = {
   },
   UNVERIFIED: {
     cls: "notice warn",
-    text: "Не вдалося перевірити креденшели зараз (мережа?) - файл збережено, перевірка відбудеться при наступному оновленні бази.",
+    text: "Не вдалося перевірити креденшели зараз (мережа?) - креденшели збережено, перевірка відбудеться при наступному оновленні бази.",
   },
 };
 
@@ -783,7 +785,7 @@ function renderMaxmind(data) {
   const state = document.createElement("p");
   state.className = "geoip-database-status";
   state.textContent = data.configured
-    ? `Налаштовано. Account ID: ${data.account_id}. Діє після перезапуску dnsqb-service.`
+    ? `Налаштовано. Account ID: ${data.account_id}. Діє одразу.`
     : "Не налаштовано - використовується DB-IP Lite (за замовчуванням).";
   geoipMaxmindBody.appendChild(state);
 
@@ -791,8 +793,16 @@ function renderMaxmind(data) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
     notPersisted.textContent =
-      "Зміну НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+      "Зміну НЕ збережено - вона не переживе перезапуск сервісу.";
     geoipMaxmindBody.appendChild(notPersisted);
+  }
+
+  if (data.refresh_health === "AUTH_REJECTED") {
+    const brokenLater = document.createElement("div");
+    brokenLater.className = "notice warn";
+    brokenLater.textContent =
+      "MaxMind більше не приймає збережені креденшели на плановому оновленні бази - перезбережіть account ID та ліцензійний ключ.";
+    geoipMaxmindBody.appendChild(brokenLater);
   }
 
   const check = MAXMIND_CHECK_MESSAGES[data.check];

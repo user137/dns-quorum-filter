@@ -165,7 +165,9 @@ pub use geoip_credentials::{
     load as load_maxmind_credentials, migrate_legacy_credentials_file, CredentialsError,
     LicenseKey, MaxmindCredentials,
 };
-pub use geoip_updater::{run_geoip_updater, GeoipSource, GeoipUpdateError, GEOIP_CHECK_INTERVAL};
+pub use geoip_updater::{
+    run_geoip_updater, GeoipSource, GeoipUpdateError, MaxmindHealth, GEOIP_CHECK_INTERVAL,
+};
 pub use listener::{bind_listener, BindError};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,

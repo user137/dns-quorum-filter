@@ -227,16 +227,6 @@ TASKS-DONE.md. macOS Keychain / Linux Secret Service `keyring` абстрагу�
   після видалення `todo!()`-заглушки `ecs_option_for_upstream` у T-72/T-73. Потрібен: preset із
   ECS Subnet-опцією + шлях у quorum, що чіпляє її лише для цього preset (RFC 7871). (3.4)
 - [ ] T-83 — CI: розширити build matrix на другу платформу (Windows + macOS; Linux — можлива третя ціль, див. T-71) (Фазований план, Фаза 2)
-- [ ] T-163 — Залишок T-162 (частина 1+3-save-time+5 доставлена в T-162, TASKS-DONE.md 2026-08-31):
-  (1) винести `geoip_maxmind.toml` із plaintext у secure storage — найпростіше тим самим
-  `keyring`-примітивом, що T-67 уже завів (`key_store.rs`), а не сирим Win32 DPAPI FFI; власний
-  plan+advisor цикл; (2) `POST /admin/reset` має перечитувати `geoip_maxmind.toml`
-  **+** фоновий `run_geoip_updater` має читати `GeoipSource` зі спільного стану `AppState`, щоб
-  зміна креденшелів діяла без перезапуску процесу (зараз апдейтер тримає `GeoipSource`, з яким
-  його заспавнили); (3) **ongoing** виявлення: показувати в UI, що раніше прийняті креденшели
-  почав відхиляти MaxMind на пізнішому плановому оновленні бази (T-162 перевіряє лише при
-  записі). (3.5)
-
 ## Фаза 3 — Продакшн-hardening
 
 - [ ] T-84 — `dnsqb-watcher`: канал 1, IPC heartbeat (Unix socket / named pipe) (7)

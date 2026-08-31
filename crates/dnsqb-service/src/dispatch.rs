@@ -34,7 +34,9 @@ use crate::cache::{Cache, CacheConfig, CacheConfigError};
 use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
-use crate::geoip_updater::{check_maxmind_credentials, GeoipSource, GeoipUpdateError};
+use crate::geoip_updater::{
+    check_maxmind_credentials, GeoipSource, GeoipUpdateError, MaxmindHealth,
+};
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
@@ -553,6 +555,12 @@ pub struct AppState<C: DohClient + Sync> {
     /// still wakes the next park; several rapid changes coalesce to one extra
     /// refresh.
     geoip_refresh_wake: Arc<Notify>,
+    /// T-163 — whether the stored `MaxMind` credentials are still being
+    /// accepted at the scheduled background refresh (the signal the save-time
+    /// probe can't give). Written by `run_geoip_updater` after each refresh
+    /// and reset by `update_geoip_source` when the source changes; surfaced on
+    /// the `/admin/ui` `#geoip-maxmind` card via `MaxmindCredentialsView`.
+    maxmind_health: RwLock<Arc<MaxmindHealth>>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -650,6 +658,12 @@ impl<C: DohClient + Sync> AppState<C> {
         persist: PersistTarget,
     ) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
+        // T-163: a MaxMind source starts `Pending` (no background refresh has
+        // run yet); DB-IP Lite is `NotApplicable`.
+        let initial_health = match &geoip.source {
+            GeoipSource::Maxmind(_) => MaxmindHealth::Pending,
+            GeoipSource::DbIpLite => MaxmindHealth::NotApplicable,
+        };
         Self {
             client,
             overrides: RwLock::new(Arc::new(overrides)),
@@ -662,6 +676,7 @@ impl<C: DohClient + Sync> AppState<C> {
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
             geoip_source: RwLock::new(Arc::new(geoip.source)),
             geoip_refresh_wake: Arc::new(Notify::new()),
+            maxmind_health: RwLock::new(Arc::new(initial_health)),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
@@ -703,9 +718,30 @@ impl<C: DohClient + Sync> AppState<C> {
     /// Swaps in a new `GeoIP` database source (T-163) — the single writer
     /// `apply_admin_reset` and the `/admin/geoip/maxmind[/clear]` routes
     /// share. Callers pair this with [`Self::wake_geoip_refresh`] so the
-    /// background updater acts on the change immediately.
+    /// background updater acts on the change immediately. Also resets the
+    /// `MaxMind` health signal: a fresh `Maxmind` source is `Pending` (the
+    /// woken refresh's outcome resolves it), a `DbIpLite` source is
+    /// `NotApplicable`.
     pub(crate) fn update_geoip_source(&self, source: GeoipSource) {
+        let health = match &source {
+            GeoipSource::Maxmind(_) => MaxmindHealth::Pending,
+            GeoipSource::DbIpLite => MaxmindHealth::NotApplicable,
+        };
         *self.geoip_source.write() = Arc::new(source);
+        self.update_maxmind_health(health);
+    }
+
+    /// A snapshot of the current `MaxMind` credential-health signal (T-163) —
+    /// read by `maxmind_view` for the `/admin/ui` card.
+    pub(crate) fn maxmind_health_snapshot(&self) -> MaxmindHealth {
+        **self.maxmind_health.read()
+    }
+
+    /// Sets the `MaxMind` health signal (T-163) — written by
+    /// `run_geoip_updater` after each refresh and by [`Self::update_geoip_source`]
+    /// on a source change.
+    pub(crate) fn update_maxmind_health(&self, health: MaxmindHealth) {
+        *self.maxmind_health.write() = Arc::new(health);
     }
 
     /// Wakes `run_geoip_updater` out of its inter-cycle sleep (T-163). Safe
@@ -1566,13 +1602,12 @@ where
     }
 }
 
-/// Builds the current [`MaxmindCredentialsView`] from `geoip_maxmind.toml`
+/// Builds the current [`MaxmindCredentialsView`] from the stored credentials
 /// (T-162) — shared by the GET route and the two mutating routes' echo-back.
-/// A missing app-data dir, a missing file, or a malformed file all read as
-/// `configured: false`: the operator re-enters through `POST` either way, and
-/// a malformed on-disk hand-edit is exactly what this route exists to
-/// replace. `check` is always [`MaxmindCredentialCheck::Skipped`] here — only
-/// `POST` runs the probe.
+/// A missing app-data dir or no stored credentials read as `configured:
+/// false`. `check` is always [`MaxmindCredentialCheck::Skipped`] here — only
+/// `POST` runs the probe. `refresh_health` reflects the live
+/// `AppState::maxmind_health` (T-163).
 fn maxmind_view<C: DohClient + Sync>(
     state: &AppState<C>,
     persisted: bool,
@@ -1591,6 +1626,7 @@ fn maxmind_view<C: DohClient + Sync>(
         configured: account_id.is_some(),
         account_id,
         check: MaxmindCredentialCheck::Skipped,
+        refresh_health: state.maxmind_health_snapshot().into(),
         persisted,
     }
 }
@@ -1656,6 +1692,7 @@ where
             configured: false,
             account_id: Some(request.account_id),
             check: MaxmindCredentialCheck::Skipped,
+            refresh_health: state.maxmind_health_snapshot().into(),
             persisted: false,
         });
     };
@@ -1667,11 +1704,12 @@ where
     ) {
         Err(CredentialsError::Malformed) => status_response(StatusCode::BAD_REQUEST),
         Err(err) => {
-            tracing::warn!("failed to persist MaxMind credentials to disk: {err}");
+            tracing::warn!("failed to persist MaxMind credentials to the store: {err}");
             json_response(&MaxmindCredentialsView {
                 configured: false,
                 account_id: Some(request.account_id),
                 check: MaxmindCredentialCheck::Skipped,
+                refresh_health: state.maxmind_health_snapshot().into(),
                 persisted: false,
             })
         }
@@ -1705,6 +1743,7 @@ where
                 configured: true,
                 account_id: Some(request.account_id),
                 check,
+                refresh_health: state.maxmind_health_snapshot().into(),
                 persisted: true,
             })
         }
@@ -1751,6 +1790,7 @@ where
         configured: false,
         account_id: None,
         check: MaxmindCredentialCheck::Skipped,
+        refresh_health: state.maxmind_health_snapshot().into(),
         persisted,
     })
 }
@@ -5160,6 +5200,39 @@ mod tests {
             () = wake.notified() => panic!("nothing signalled the wake"),
         }
         assert_eq!(start.elapsed(), crate::geoip_updater::GEOIP_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn maxmind_health_starts_not_applicable_and_tracks_source_changes() {
+        let state = state_with(no_op_client());
+        // A DB-IP Lite start (the test helper's default) is NotApplicable.
+        assert_eq!(
+            state.maxmind_health_snapshot(),
+            crate::geoip_updater::MaxmindHealth::NotApplicable
+        );
+        // Switching to MaxMind resets to Pending (a woken refresh resolves it).
+        state.update_geoip_source(GeoipSource::Maxmind(
+            crate::geoip_credentials::MaxmindCredentials {
+                account_id: "acct".to_string(),
+                license_key: crate::geoip_credentials::LicenseKey::new("k".to_string()),
+            },
+        ));
+        assert_eq!(
+            state.maxmind_health_snapshot(),
+            crate::geoip_updater::MaxmindHealth::Pending
+        );
+        // A later refresh outcome lands...
+        state.update_maxmind_health(crate::geoip_updater::MaxmindHealth::AuthRejected);
+        assert_eq!(
+            state.maxmind_health_snapshot(),
+            crate::geoip_updater::MaxmindHealth::AuthRejected
+        );
+        // ...and switching back to DB-IP Lite clears it.
+        state.update_geoip_source(GeoipSource::DbIpLite);
+        assert_eq!(
+            state.maxmind_health_snapshot(),
+            crate::geoip_updater::MaxmindHealth::NotApplicable
+        );
     }
 
     #[test]

@@ -550,9 +550,10 @@ CRC32/ISIZE-трейлер + структурну `MaxMind`-DB-валідаці�
 який шлях спрацював, і допишіть сюди".
 
 **Уточнення до цього пункту, T-80 (2026-08-30) — advanced-режим MaxMind
-GeoLite2.** Реалізовано як **опційний**, поза дефолтом: якщо в теці даних лежить
-`geoip_maxmind.toml` з `account_id` + `license_key`, `geoip_updater.rs`
-переходить із DB-IP Lite на MaxMind GeoLite2-Country. Знахідки цієї сесії
+GeoLite2.** Реалізовано як **опційний**, поза дефолтом: якщо оператор зберіг
+`account_id` + `license_key` (з T-163 — в OS secret store, до того — у файлі
+`geoip_maxmind.toml`), `geoip_updater.rs` переходить із DB-IP Lite на MaxMind
+GeoLite2-Country. Знахідки цієї сесії
 (перевірено `curl`-пробою проти живого `download.maxmind.com`, не з памʼяті):
 (1) **ендпоінт** — модерний permalink
 `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`
@@ -570,28 +571,42 @@ mismatch — жорстка помилка; відсутній — відкат 
 розміром (не хендмейд-парсер 512-байтових заголовків — той самий принцип, що й
 `hickory-dns` замість власного DNS-парсера). (4) `reqwest` 0.13 **знімає**
 `Authorization` на крос-хостовому редіректі MaxMind → Cloudflare R2 (перевірено в
-вендореному `redirect.rs`), тож ключ не покидає origin MaxMind. Ключ на диску —
-**відкритий текст**, свідомий MVP-tech-debt (як `key.pem`). `GEOIP_CHECK_INTERVAL`
-лишається 24 год для обох джерел.
+вендореному `redirect.rs`), тож ключ не покидає origin MaxMind.
+`GEOIP_CHECK_INTERVAL` лишається 24 год для обох джерел. (Ключ на диску був
+відкритим текстом як MVP-tech-debt — закрито в T-163, див. нижче.)
 
-**Уточнення, T-162 (2026-08-31) — часткова доставка UX MaxMind-режиму.**
-Реалізовано: (1) `GET`/`POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
-та картка на `/admin/ui` замість ручного редагування `geoip_maxmind.toml`;
-`geoip_credentials::save` пише файл із ACL, обмеженим поточним користувачем (той самий
-`cert::write_user_restricted_file`, що й для `key.pem` — interim-мітигація до DPAPI).
+**Уточнення, T-162 (2026-08-31) — UX MaxMind-режиму.** Реалізовано:
+(1) `GET`/`POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear` та
+картка на `/admin/ui` замість ручного редагування файлу.
 (2) Save-time проба: `POST` робить один автентифікований запит до
 `download.maxmind.com` одразу після запису й повертає `check`
 (`VERIFIED`/`REJECTED`/`UNVERIFIED`) — Три Б: ручне редагування такого сигналу не
 давало. Власний короткий таймаут (10 с, не 120 с), лише статус-код, coarse-мітки.
 (3) `database_source` (`Option<DatabaseSource>`, closed enum) на
 `GeoipCountriesResponse` — класифікація з метаданих **завантаженого** reader-а, не з
-налаштованого `GeoipSource` (розходяться, коли креденшели задані, але відхилені);
-UI показує активне джерело в GeoIP-картці. Футер `#credits` лишається статичним
-(T-81) — обидві атрибуції завжди присутні (недоатрибуція = регресія CC BY 4.0).
-**Відкладено на T-163**: DPAPI замість plaintext; перечитування `geoip_maxmind.toml`
-на `POST /admin/reset` + runtime-підхоплення нового `GeoipSource` фоновим апдейтером
-(зараз зміна діє лише після ручного перезапуску `dnsqb-service`); виявлення
-креденшелів, які зламалися **після** прийняття (ця задача перевіряє лише при записі).
+налаштованого `GeoipSource`; UI показує активне джерело в GeoIP-картці. Футер
+`#credits` лишається статичним (T-81) — обидві атрибуції завжди присутні
+(недоатрибуція = регресія CC BY 4.0).
+
+**Уточнення, T-163 (2026-08-31) — решта MaxMind-режиму.** (1) **Secure storage**:
+`account_id` + `license_key` тепер у OS secret store (Windows Credential Manager
+через `keyring`, той самий примітив `key_store.rs`, що й для TLS-ключа —
+`maxmind-credentials:<sha1(теки)[..8]>`, JSON-блоб), не у файлі. Плейнтекст
+`geoip_maxmind.toml` з інсталяцій до T-163 одноразово мігрує при старті
+(`migrate_legacy_credentials_file`: розбір → запис → занулення й видалення файлу);
+delete-after-store тут безпечний (на відміну від TLS-ключа — креденшел
+відновлюваний з порталу MaxMind). `icacls`-ACL-хелпери прибрані разом з останнім
+plaintext-секретом — `dnsqb-service` більше не пише на диск жодного секрету.
+(2) **Runtime-підхоплення**: `GeoipSource` живе в `AppState` (`RwLock<Arc<_>>`),
+`run_geoip_updater` пересчитує його щоцикл; `POST /admin/geoip/maxmind[/clear]` і
+`POST /admin/reset` оновлюють джерело і будять апдейтер через `tokio::sync::Notify`
+— зміна діє за секунди, без перезапуску. (3) **Злам після прийняття**: `AppState`
+тримає `MaxmindHealth` (`NotApplicable`/`Pending`/`Accepted`/`AuthRejected`),
+записуваний після кожного фонового оновлення — тільки реальний `401`/`403` дає
+`AuthRejected`, транзієнтна помилка не чіпає відомий вердикт;
+`MaxmindCredentialsView.refresh_health` виносить це на картку `/admin/ui`
+(попередження на `AUTH_REJECTED`). **Ф2-хвіст DPAPI-замість-`keyring`** не робиться —
+`keyring` і був вибором користувача (план T-67).
 
 #### 3.6. Latency-оптимізація: early return при першому BLOCK, HTTP/2 keep-alive до апстрімів
 

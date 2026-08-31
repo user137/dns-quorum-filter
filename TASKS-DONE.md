@@ -1899,6 +1899,80 @@
   CONFIGURATION.md (`key.pem`-згадка в geoip-секції знята), TASKS.md (T-70 отримав обов'язок
   прибирати ключ зі сховища).
 
+- [x] T-163 — Залишок T-162: MaxMind-креденшели в secure storage + runtime-підхоплення +
+  виявлення зламу після прийняття (SPEC.md §3.5) — **три коміти** (A: secure storage; B: runtime
+  pickup; C: health), plan-mode + advisor до і після; AskUserQuestion: канал пробудження
+  (`tokio::sync::Notify`), частину 3 — робити зараз.
+
+  **Коміт A — креденшели у OS secret store.**
+  - `key_store.rs`: генералізовано T-67-API — `store_private_key`/`load_private_key`/
+    `delete_private_key` → `store_secret`/`load_secret`/`delete_secret`; `entry_name_for_dir` став
+    приватним нормалізатором за двома обгортками `tls_key_entry` / `maxmind_credentials_entry`;
+    `delete_secret` більше не `#[cfg(test)]` (маршрут /clear його кличе). `overwrite_with_zeros` /
+    `erase_and_remove` переїхали сюди з `cert.rs` (гігієна секрет-файлів — до секрет-стор модуля),
+    повертають `io::Result`.
+  - `geoip_credentials.rs`: файл → keyring. `save`/`load`/`clear` беруть app-data-теку; креденшели
+    — один `serde_json`-блоб. `migrate_legacy_credentials_file` одноразово копіює
+    pre-T-163 `geoip_maxmind.toml` у стор і **одразу** видаляє файл — delete-after-store тут
+    безпечний (на відміну від deferred-delete TLS-ключа: `store_secret` `Ok` — це підтвердження, а
+    креденшел відновлюваний). `CredentialsError::Write(CertError)` → `KeyStore(#[from] …)`.
+  - `cert.rs`: `write_user_restricted_file` + `restrict_to_current_user` + `other_principals` +
+    `icacls_path` та їхні 4 варіанти `CertError` **видалені** — існували лише щоб мітигувати
+    plaintext-секрет на диску, а це — останній. Урок про двофазний `icacls` (CI-vs-local DACL)
+    лишається у gotchas CLAUDE.md (сховище знань, не інвентар живого коду). `dnsqb-tray/browser.rs`
+    коментар-прецедент перенаправлено на `trust_store.rs`'s `certutil.exe`. (advisor: видаляти в
+    цьому пасі, не пізніше — commit має бути зелений одразу.)
+  - `PersistPaths::geoip_maxmind()` → `app_data_dir()`.
+  - **Серіалізація стор-тестів усього крейта** за `key_store::STORE_TEST_GUARD`
+    (`parking_lot::Mutex`, вже в дереві) — Windows-backend періодично повертає щойно записаний
+    секрет як відсутній під конкурентним доступом з одного процесу, навіть на різних записах
+    (single-thread і guarded-прогони зелені, 5+ повторів). Гард тримається в
+    `ScratchEntry`/`ScratchDir`/`MaxmindTestDir`/`StoredKeyGuard`.
+
+  **Коміт B — runtime-підхоплення (спільне джерело + канал пробудження).**
+  - `AppState`: `geoip_source: RwLock<Arc<GeoipSource>>` + `geoip_refresh_wake: Arc<Notify>`,
+    single-writer методи `geoip_source_snapshot`/`update_geoip_source`/`wake_geoip_refresh`/
+    `geoip_refresh_wake_handle`. `GeoipInit` дістає `source`.
+  - `run_geoip_updater` втрачає параметр `source`, пересчитує його зі стану щоцикл, паркується на
+    `tokio::select! { sleep(GEOIP_CHECK_INTERVAL), wake.notified() }`.
+  - `apply_admin_reset` перечитує креденшели **поза** обома `persist`-локами (тепер це синхронний
+    Credential Manager round-trip, а джерело не в cross-field-read інваріанті цих локів — advisor),
+    потім `update_geoip_source` + `wake_geoip_refresh`. Обидва `/admin/geoip/maxmind[/clear]` —
+    те саме. `main.rs` резолвить `load_geoip_source` до `AppState::new`.
+  - Тести: пробудження **до** парку розв'язує наступний парк одразу
+    (`#[tokio::test(start_paused = true)]` — та сама техніка "elapsed ≈ 0", що T-30; втрачене
+    пробудження = 24-год тихе очікування, той самий баг, який T-163 закриває); без пробудження —
+    парк на повний інтервал; `geoip_source_snapshot()` Debug не містить ключ; `/admin/reset`
+    підхоплює зміну.
+
+  **Коміт C — виявлення зламу після прийняття.**
+  - `geoip_updater.rs`: `pub enum MaxmindHealth { NotApplicable, Pending, Accepted, AuthRejected }`
+    (варіант `Accepted`, не `Ok` — щоб не читалось як `Result::Ok` у тій самій `(_, Ok(()))`-гілці;
+    advisor). `AppState.maxmind_health: RwLock<Arc<_>>`, `maxmind_health_snapshot`/
+    `update_maxmind_health`. Чиста `health_after_refresh(source, result)` (той самий pure/impure
+    поділ, що `cert::migration_action`): `DbIpLite` → `NotApplicable`; `Maxmind`+`Ok` → `Accepted`;
+    `Maxmind`+`MaxmindAuthRejected` → `AuthRejected`; `Maxmind`+інша `Err` → `None` (транзієнтна
+    помилка не чіпає відомий вердикт). `update_geoip_source` теж скидає health (`Pending`/
+    `NotApplicable`).
+  - `admin.rs`: `MaxmindRefreshHealth` (closed enum, `SCREAMING_SNAKE_CASE`) + `From<MaxmindHealth>`;
+    `MaxmindCredentialsView.refresh_health`. `maxmind_view` читає снапшот.
+  - `ui/main.js`: `#geoip-maxmind` рядок-попередження на `refresh_health === "AUTH_REJECTED"`
+    (`createElement`+`textContent`, CSP); "діє після перезапуску" → "діє одразу". Перебудова
+    `dnsqb-service` (UI — `include_str!`).
+  - Тести: `health_after_refresh` (4 — 401/success/transient/DB-IP); `MaxmindRefreshHealth`
+    wire-рядки + variant-for-variant мапа; `maxmind_health` стартує `NotApplicable` і трекає зміни
+    джерела.
+
+  Ground-truth ритуал: `ui-dto-model.md` — **зачеплений** (`refresh_health`, `MaxmindRefreshHealth`
+  + клас, зв'язок, наративна секція). `ui-navigation.md` / `ui-status-indicator.md` — **ні**.
+
+  Повний локальний гейт зелений: 437 lib + 5 bins (+18 нових тестів, 4 ignored), conformance 18/2,
+  clippy `-D warnings` / fmt / rustdoc `-D warnings` / doctest / `cargo deny check` / `cargo audit`
+  чисті. **Жодної нової залежності** (`STORE_TEST_GUARD` — вже наявний `parking_lot`). Docs:
+  SPEC.md §3.5 (dated T-163-note), SECURITY.md (bullet 2 закрито + `keyring`/`zeroize`-рядки),
+  SPEC.md §2, CONFIGURATION.md (`geoip_maxmind.toml` не пишеться/читається), CLAUDE.md,
+  `diagrams/ui-dto-model.md`, TASKS.md (`- [ ] T-163` знято).
+
 - [x] T-162 (частина) — MaxMind GeoLite2-режим: адмін-маршрут + картка на `/admin/ui` +
   показ активного джерела бази (SPEC.md §3.5) — один коміт, plan-mode + advisor до і після.
 

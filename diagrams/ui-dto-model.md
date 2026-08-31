@@ -220,10 +220,11 @@ classDiagram
         OTHER
     }
     class MaxmindCredentialsView {
-        <<T-162, реалізовано>>
+        <<T-162/T-163, реалізовано>>
         +bool configured
         +Option~String~ account_id
         +MaxmindCredentialCheck check
+        +MaxmindRefreshHealth refresh_health
         +bool persisted
     }
     class MaxmindCredentialsRequest {
@@ -237,6 +238,13 @@ classDiagram
         VERIFIED
         REJECTED
         UNVERIFIED
+    }
+    class MaxmindRefreshHealth {
+        <<T-163, реалізовано — enum>>
+        NOT_APPLICABLE
+        PENDING
+        ACCEPTED
+        AUTH_REJECTED
     }
     class GeoIPConfig {
         <<чернетка UI-SPEC.md §3.5 — не реальний DTO>>
@@ -276,6 +284,7 @@ classDiagram
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck
+    MaxmindCredentialsView --> MaxmindRefreshHealth
 ```
 
 ## Розбіжність у джерелі — вирішено, див. DECISIONS.md
@@ -426,7 +435,7 @@ UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`, 
 без нормалізації на `remove` малий регістр у запиті мовчки не збігався б із завжди-великим
 збереженим кодом).
 
-## `database_source` + `MaxmindCredentialsView`/`MaxmindCredentialsRequest`/`MaxmindCredentialCheck` (T-162)
+## `database_source` + `MaxmindCredentialsView`/`MaxmindCredentialsRequest`/`MaxmindCredentialCheck`/`MaxmindRefreshHealth` (T-162/T-163)
 
 `GeoipCountriesResponse` отримує `database_source: Option<DatabaseSource>` — закритий enum
 (`DB_IP_LITE`/`GEO_LITE2`/`OTHER`), класифікований **на сервері** з метаданих
@@ -435,16 +444,22 @@ UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`, 
 досі DB-IP Lite). Той самий "response-тип ніколи не повертає невірифікований рядок дослівно"
 принцип, що вже задокументований для `QTypeView`. `None`, коли `database_loaded == false`.
 
-Нова трійка DTO для `GET`/`POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear` —
-опційний режим MaxMind GeoLite2 (`geoip_maxmind.toml`). `MaxmindCredentialsView` **не має поля
-`license_key`** — секрет write-only, не представлений у відповіді, а не просто пропущений
-(`LicenseKey` навмисно не `Serialize`). `MaxmindCredentialCheck` — результат однієї
-автентифікованої проби, яку сервіс робить проти MaxMind одразу після запису файлу (Три Б:
-ручне редагування файлу такого сигналу не давало); `REJECTED` = 401/403 (єдиний випадок, який
-оператор може виправити перевведенням), `UNVERIFIED` = мережа/таймаут (файл усе одно
-збережено), `SKIPPED` = звичайний `GET` та `/clear`. Виявлення креденшелів, які **зламалися
-пізніше**, DPAPI замість plaintext, і перечитування файлу на `POST /admin/reset` — окрема
-задача **T-163**. Зміна креденшелів діє лише після ручного перезапуску `dnsqb-service`.
+DTO для `GET`/`POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear` — опційний режим
+MaxMind GeoLite2 (креденшели з T-163 — в OS secret store, не у файлі). `MaxmindCredentialsView`
+**не має поля `license_key`** — секрет write-only, не представлений у відповіді, а не просто
+пропущений (`LicenseKey` навмисно не `Serialize`). `MaxmindCredentialCheck` — результат однієї
+автентифікованої проби, яку сервіс робить проти MaxMind одразу після запису (Три Б: ручне
+редагування такого сигналу не давало); `REJECTED` = 401/403 (єдиний випадок, який оператор
+може виправити перевведенням), `UNVERIFIED` = мережа/таймаут (креденшели все одно збережено),
+`SKIPPED` = звичайний `GET` та `/clear`.
+
+`MaxmindRefreshHealth` (T-163) — комплементарний сигнал: чи **збережені** креденшели досі
+приймаються на плановому 24-год фоновому оновленні (ключ можна відкликати вже після
+прийняття). `NOT_APPLICABLE` (джерело — DB-IP Lite) / `PENDING` (MaxMind, фонове оновлення ще
+не завершилось) / `ACCEPTED` / `AUTH_REJECTED` (останнє оновлення отримало 401/403 — картка
+`/admin/ui` показує попередження). Транзієнтна помилка (мережа/таймаут) не чіпає відомий
+вердикт. Зміна креденшелів (`POST /admin/geoip/maxmind[/clear]`, `POST /admin/reset`) діє
+одразу — джерело в `AppState`, апдейтер будиться через `tokio::sync::Notify`.
 
 ## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`VoterScope`/`QType` — реальна реалізація (T-54)
 

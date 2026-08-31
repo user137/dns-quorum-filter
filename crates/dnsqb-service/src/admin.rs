@@ -526,16 +526,50 @@ pub struct MaxmindCredentialsView {
     /// [`MaxmindCredentialCheck::Skipped`] for a plain `GET` and for
     /// `/clear`.
     pub check: MaxmindCredentialCheck,
+    /// Whether the stored credentials are still being accepted at the
+    /// scheduled background refresh (T-163) — the signal `check` can't give,
+    /// since a key can be revoked *after* it was accepted. `AUTH_REJECTED`
+    /// drives the warning line on the `/admin/ui` card.
+    pub refresh_health: MaxmindRefreshHealth,
     /// Whether the change that produced this response was written to disk —
     /// same `persisted` convention as [`GeoipCountriesResponse::persisted`] /
     /// [`OverrideListsResponse::persisted`]. Always `true` for a plain `GET`.
     pub persisted: bool,
 }
 
+/// Wire form of [`crate::geoip_updater::MaxmindHealth`] on
+/// [`MaxmindCredentialsView`] (T-163) — a closed enum, `SCREAMING_SNAKE_CASE`
+/// on the wire like [`MaxmindCredentialCheck`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MaxmindRefreshHealth {
+    /// The source is DB-IP Lite — no `MaxMind` credentials in play.
+    NotApplicable,
+    /// `MaxMind` is the source but no background refresh has completed yet.
+    Pending,
+    /// The most recent background refresh authenticated successfully.
+    Accepted,
+    /// The most recent background refresh got `401`/`403` — the stored key is
+    /// being rejected; the operator must re-enter it.
+    AuthRejected,
+}
+
+impl From<crate::geoip_updater::MaxmindHealth> for MaxmindRefreshHealth {
+    fn from(health: crate::geoip_updater::MaxmindHealth) -> Self {
+        use crate::geoip_updater::MaxmindHealth;
+        match health {
+            MaxmindHealth::NotApplicable => Self::NotApplicable,
+            MaxmindHealth::Pending => Self::Pending,
+            MaxmindHealth::Accepted => Self::Accepted,
+            MaxmindHealth::AuthRejected => Self::AuthRejected,
+        }
+    }
+}
+
 /// Outcome of the one authenticated probe `POST /admin/geoip/maxmind` runs
-/// against `MaxMind` right after writing the file (T-162) — the acute
-/// user-safety signal (Три Б) that hand-editing `geoip_maxmind.toml` never
-/// gave. Detecting credentials that break *after* being accepted is T-163.
+/// against `MaxMind` right after storing the credentials (T-162) — the acute
+/// user-safety signal (Три Б) at the moment of entry. Credentials that break
+/// *after* being accepted are caught by [`MaxmindRefreshHealth`] (T-163).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum MaxmindCredentialCheck {
@@ -1561,7 +1595,9 @@ mod tests {
 
 #[cfg(test)]
 mod maxmind_dto_tests {
-    use super::{DatabaseSource, MaxmindCredentialCheck, MaxmindCredentialsView};
+    use super::{
+        DatabaseSource, MaxmindCredentialCheck, MaxmindCredentialsView, MaxmindRefreshHealth,
+    };
 
     fn json_of<T: serde::Serialize>(value: &T) -> String {
         match serde_json::to_string(value) {
@@ -1604,6 +1640,7 @@ mod maxmind_dto_tests {
             configured: true,
             account_id: Some("acct-123".to_string()),
             check: MaxmindCredentialCheck::Verified,
+            refresh_health: MaxmindRefreshHealth::Accepted,
             persisted: true,
         };
         let json = json_of(&view);
@@ -1620,5 +1657,40 @@ mod maxmind_dto_tests {
             "\"UNVERIFIED\""
         );
         assert_eq!(json_of(&MaxmindCredentialCheck::Skipped), "\"SKIPPED\"");
+    }
+
+    #[test]
+    fn maxmind_refresh_health_wire_strings_are_screaming_snake_case() {
+        assert_eq!(
+            json_of(&MaxmindRefreshHealth::NotApplicable),
+            "\"NOT_APPLICABLE\""
+        );
+        assert_eq!(json_of(&MaxmindRefreshHealth::Pending), "\"PENDING\"");
+        assert_eq!(json_of(&MaxmindRefreshHealth::Accepted), "\"ACCEPTED\"");
+        assert_eq!(
+            json_of(&MaxmindRefreshHealth::AuthRejected),
+            "\"AUTH_REJECTED\""
+        );
+    }
+
+    #[test]
+    fn maxmind_health_maps_onto_the_wire_enum_variant_for_variant() {
+        use crate::geoip_updater::MaxmindHealth;
+        assert_eq!(
+            MaxmindRefreshHealth::from(MaxmindHealth::NotApplicable),
+            MaxmindRefreshHealth::NotApplicable
+        );
+        assert_eq!(
+            MaxmindRefreshHealth::from(MaxmindHealth::Pending),
+            MaxmindRefreshHealth::Pending
+        );
+        assert_eq!(
+            MaxmindRefreshHealth::from(MaxmindHealth::Accepted),
+            MaxmindRefreshHealth::Accepted
+        );
+        assert_eq!(
+            MaxmindRefreshHealth::from(MaxmindHealth::AuthRejected),
+            MaxmindRefreshHealth::AuthRejected
+        );
     }
 }

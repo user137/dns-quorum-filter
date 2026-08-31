@@ -36,10 +36,10 @@
 //! "manual, not CI-gated" precedent as `upstream.rs`'s live-Quad9 test) —
 //! and fold that confirmation back into this doc comment.
 //!
-//! **`MaxMind GeoLite2` advanced mode (T-80).** When the operator drops a
-//! complete `geoip_maxmind.toml` in the app-data dir
-//! ([`crate::geoip_credentials`]), [`GeoipSource::Maxmind`] replaces DB-IP
-//! Lite: a single download of `MaxMind`'s modern permalink,
+//! **`MaxMind GeoLite2` advanced mode (T-80).** When the operator has stored
+//! `MaxMind` credentials ([`crate::geoip_credentials`], in the OS credential
+//! store since T-163), [`GeoipSource::Maxmind`] replaces DB-IP Lite: a single
+//! download of `MaxMind`'s modern permalink,
 //! `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`,
 //! authenticated with an HTTP `Authorization: Basic` header (account id :
 //! license key), never a URL query parameter. **Verified this session** (not
@@ -114,6 +114,30 @@ pub enum GeoipSource {
     DbIpLite,
     /// `MaxMind GeoLite2` Country — twice-weekly, operator-supplied credentials.
     Maxmind(MaxmindCredentials),
+}
+
+/// Whether the stored `MaxMind` credentials are still being accepted at the
+/// scheduled background refresh (T-163) — the signal the save-time probe
+/// (`MaxmindCredentialCheck`) can't give, since a key can be revoked or a plan
+/// downgraded *after* it was accepted. Held on [`crate::dispatch::AppState`],
+/// written by [`run_geoip_updater`] after each refresh, surfaced on the
+/// `/admin/ui` `#geoip-maxmind` card.
+///
+/// A transient refresh error (network, timeout) deliberately writes **nothing**
+/// — it must not downgrade a known-good verdict to a scary one; only a real
+/// `401`/`403` moves the state to [`MaxmindHealth::AuthRejected`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaxmindHealth {
+    /// The source is DB-IP Lite — no `MaxMind` credentials in play.
+    NotApplicable,
+    /// `MaxMind` is the source but no background refresh has completed yet
+    /// (just configured, or just after startup).
+    Pending,
+    /// The most recent background refresh authenticated successfully.
+    Accepted,
+    /// The most recent background refresh got `401`/`403` from `MaxMind` — the
+    /// stored key is being rejected; the operator must re-enter it.
+    AuthRejected,
 }
 
 /// How often to check for a new `GeoIP` database release — both sources
@@ -235,11 +259,18 @@ pub async fn run_geoip_updater(
     let wake = state.geoip_refresh_wake_handle();
     loop {
         let source = state.geoip_source_snapshot();
-        match refresh_once(&client, &target_path, &state, &source).await {
+        let result = refresh_once(&client, &target_path, &state, &source).await;
+        match &result {
             Ok(()) => tracing::info!("GeoIP database refreshed"),
             Err(err) => tracing::warn!(
                 "GeoIP database refresh failed, keeping the last-known-good database: {err}"
             ),
+        }
+        // T-163: fold this cycle's outcome into the MaxMind health signal.
+        // Only a real `401`/`403` moves it to `AuthRejected`; a transient
+        // error writes nothing (`None`) so a known verdict isn't clobbered.
+        if let Some(health) = health_after_refresh(source.as_ref(), &result) {
+            state.update_maxmind_health(health);
         }
         tokio::select! {
             () = tokio::time::sleep(GEOIP_CHECK_INTERVAL) => {}
@@ -247,6 +278,25 @@ pub async fn run_geoip_updater(
                 tracing::info!("GeoIP refresh woken by a source change");
             }
         }
+    }
+}
+
+/// The [`MaxmindHealth`] transition for one completed refresh cycle (T-163) —
+/// pure, so the "a transient error must not clobber a known verdict" rule is
+/// testable without an `AppState` (same pure/impure split as
+/// `cert::migration_action`). `None` means "leave the current health
+/// untouched".
+fn health_after_refresh(
+    source: &GeoipSource,
+    result: &Result<(), GeoipUpdateError>,
+) -> Option<MaxmindHealth> {
+    match (source, result) {
+        (GeoipSource::DbIpLite, _) => Some(MaxmindHealth::NotApplicable),
+        (GeoipSource::Maxmind(_), Ok(())) => Some(MaxmindHealth::Accepted),
+        (GeoipSource::Maxmind(_), Err(GeoipUpdateError::MaxmindAuthRejected)) => {
+            Some(MaxmindHealth::AuthRejected)
+        }
+        (GeoipSource::Maxmind(_), Err(_)) => None,
     }
 }
 
@@ -647,6 +697,54 @@ fn persist_atomically(target_path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn maxmind_source() -> GeoipSource {
+        GeoipSource::Maxmind(MaxmindCredentials {
+            account_id: "acct".to_string(),
+            license_key: crate::geoip_credentials::LicenseKey::new("k".to_string()),
+        })
+    }
+
+    #[test]
+    fn health_after_refresh_marks_a_maxmind_401_as_auth_rejected() {
+        assert_eq!(
+            health_after_refresh(
+                &maxmind_source(),
+                &Err(GeoipUpdateError::MaxmindAuthRejected)
+            ),
+            Some(MaxmindHealth::AuthRejected)
+        );
+    }
+
+    #[test]
+    fn health_after_refresh_marks_a_maxmind_success_as_accepted() {
+        assert_eq!(
+            health_after_refresh(&maxmind_source(), &Ok(())),
+            Some(MaxmindHealth::Accepted)
+        );
+    }
+
+    #[test]
+    fn health_after_refresh_leaves_a_transient_maxmind_error_untouched() {
+        // A network blip must not downgrade a known-good verdict to a scary
+        // one — that's the whole point of the `None` arm.
+        assert_eq!(
+            health_after_refresh(&maxmind_source(), &Err(GeoipUpdateError::Timeout)),
+            None
+        );
+    }
+
+    #[test]
+    fn health_after_refresh_is_not_applicable_for_db_ip_lite_regardless_of_outcome() {
+        assert_eq!(
+            health_after_refresh(&GeoipSource::DbIpLite, &Ok(())),
+            Some(MaxmindHealth::NotApplicable)
+        );
+        assert_eq!(
+            health_after_refresh(&GeoipSource::DbIpLite, &Err(GeoipUpdateError::Timeout)),
+            Some(MaxmindHealth::NotApplicable)
+        );
+    }
 
     #[test]
     fn checksum_matches_is_case_and_whitespace_insensitive() {
