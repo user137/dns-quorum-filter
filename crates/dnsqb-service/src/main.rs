@@ -109,9 +109,14 @@ async fn main() {
     // §3.5) - bundled with `geoip_database` into one `GeoipInit` (see that
     // type's own doc comment for why `AppState::new` splits it into two
     // independently-swapped fields rather than taking it as a single value).
+    // T-163: the GeoIP source (DB-IP Lite / MaxMind) now lives on `AppState`
+    // so it can be swapped at runtime — resolved here, once, and handed to the
+    // constructor via `GeoipInit`. `run_geoip_updater` re-reads it from the
+    // shared state each cycle rather than taking it as a spawn argument.
     let geoip = GeoipInit {
         database: geoip_database,
         blocked_countries: resolver_config.geoip.blocked_countries.clone(),
+        source: load_geoip_source(app_data.as_deref()),
     };
 
     // Cache TTL/capacity config is now live-editable (T-153) - built from
@@ -142,15 +147,9 @@ async fn main() {
     // the same construction `ReqwestDohClient` itself uses for its own public
     // upstream queries (Quad9/AdGuard/Cloudflare).
     if let Some(path) = geoip_path {
-        let geoip_source = load_geoip_source(app_data.as_deref());
         match reqwest::Client::builder().build() {
             Ok(geoip_client) => {
-                tokio::spawn(run_geoip_updater(
-                    geoip_client,
-                    path,
-                    Arc::clone(&state),
-                    geoip_source,
-                ));
+                tokio::spawn(run_geoip_updater(geoip_client, path, Arc::clone(&state)));
             }
             Err(err) => {
                 tracing::error!("failed to build the GeoIP update HTTP client: {err}");

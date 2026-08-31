@@ -97,11 +97,14 @@ use crate::geoip_download::{
 use crate::upstream::ReqwestDohClient;
 
 /// Which upstream a [`run_geoip_updater`] instance pulls its database from
-/// (T-80). Chosen once at startup by `main.rs` from
+/// (T-80). Seeded at startup by `main.rs` from
 /// [`crate::geoip_credentials::load`] — DB-IP Lite (SPEC.md §3.5's
-/// registration-free default) unless the operator dropped a complete
-/// `geoip_maxmind.toml` in the app-data dir, in which case `MaxMind GeoLite2`
-/// (twice-weekly updates, the operator's own key).
+/// registration-free default) unless the operator has stored `MaxMind`
+/// credentials, in which case `MaxMind GeoLite2` (twice-weekly updates, the
+/// operator's own key). Since T-163 it lives on
+/// [`crate::dispatch::AppState`] and `run_geoip_updater` re-snapshots it every
+/// cycle, so a `/admin/geoip/maxmind[/clear]` or `/admin/reset` change is
+/// picked up with no restart.
 ///
 /// `Debug` is derived but safe to log: the key inside [`MaxmindCredentials`]
 /// is a [`crate::geoip_credentials::LicenseKey`], whose own `Debug` redacts.
@@ -223,16 +226,27 @@ pub async fn run_geoip_updater(
     client: reqwest::Client,
     target_path: PathBuf,
     state: Arc<AppState<ReqwestDohClient>>,
-    source: GeoipSource,
 ) {
+    // T-163: the source is no longer a spawn-time argument — it lives on
+    // `AppState`, re-snapshotted every cycle, so a runtime credentials change
+    // (`/admin/geoip/maxmind[/clear]`, `/admin/reset`) is picked up with no
+    // restart. Those routes also `notify_one` this handle, so the change acts
+    // within seconds instead of at the next 24h check.
+    let wake = state.geoip_refresh_wake_handle();
     loop {
+        let source = state.geoip_source_snapshot();
         match refresh_once(&client, &target_path, &state, &source).await {
             Ok(()) => tracing::info!("GeoIP database refreshed"),
             Err(err) => tracing::warn!(
                 "GeoIP database refresh failed, keeping the last-known-good database: {err}"
             ),
         }
-        tokio::time::sleep(GEOIP_CHECK_INTERVAL).await;
+        tokio::select! {
+            () = tokio::time::sleep(GEOIP_CHECK_INTERVAL) => {}
+            () = wake.notified() => {
+                tracing::info!("GeoIP refresh woken by a source change");
+            }
+        }
     }
 }
 

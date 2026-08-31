@@ -34,7 +34,7 @@ use crate::cache::{Cache, CacheConfig, CacheConfigError};
 use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
-use crate::geoip_updater::{check_maxmind_credentials, GeoipUpdateError};
+use crate::geoip_updater::{check_maxmind_credentials, GeoipSource, GeoipUpdateError};
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
@@ -60,7 +60,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 
 /// The largest a DNS wire message is allowed to be, GET or POST alike — the
 /// classic DNS-over-TCP 2-byte length prefix this project doesn't use still
@@ -361,6 +361,11 @@ pub struct GeoipInit {
     pub database: GeoipState,
     /// The initially-configured blocked-country list.
     pub blocked_countries: Vec<String>,
+    /// The initial database source (T-163) — DB-IP Lite, or `MaxMind` if the
+    /// operator has stored credentials. `AppState::new` puts this behind its
+    /// own `RwLock<Arc<_>>` so `run_geoip_updater` reads a fresh snapshot each
+    /// cycle rather than holding the value it was spawned with.
+    pub source: GeoipSource,
 }
 
 /// The two on-disk config files' paths, always resolved together from one
@@ -533,6 +538,21 @@ pub struct AppState<C: DohClient + Sync> {
     /// above. Same `RwLock<Arc<_>>` snapshot-read shape as every other
     /// per-query state here.
     geoip_countries: RwLock<Arc<Vec<String>>>,
+    /// T-163 — which upstream `geoip_updater::run_geoip_updater` pulls from
+    /// (DB-IP Lite or `MaxMind`). Swapped by `apply_admin_reset` and the
+    /// `/admin/geoip/maxmind[/clear]` routes; the updater reads a fresh
+    /// `Arc::clone` snapshot at the top of every cycle, so a credentials
+    /// change takes effect with no `dnsqb-service` restart. Same
+    /// `RwLock<Arc<_>>` shape as `geoip`; never held across `.await`.
+    geoip_source: RwLock<Arc<GeoipSource>>,
+    /// T-163 — wakes `run_geoip_updater` out of its inter-cycle sleep the
+    /// moment `geoip_source` changes, so a new/cleared key triggers a fresh
+    /// download within seconds instead of up to `GEOIP_CHECK_INTERVAL` later.
+    /// `Notify::notify_one` before the updater parks on `notified()` is
+    /// remembered (one permit), so a change *during* an in-flight refresh
+    /// still wakes the next park; several rapid changes coalesce to one extra
+    /// refresh.
+    geoip_refresh_wake: Arc<Notify>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -640,6 +660,8 @@ impl<C: DohClient + Sync> AppState<C> {
             cache: RwLock::new(Arc::new(cache)),
             geoip: RwLock::new(Arc::new(geoip.database)),
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
+            geoip_source: RwLock::new(Arc::new(geoip.source)),
+            geoip_refresh_wake: Arc::new(Notify::new()),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
@@ -669,6 +691,34 @@ impl<C: DohClient + Sync> AppState<C> {
     /// (the loaded database) — see that field's own doc comment.
     pub(crate) fn update_geoip_countries(&self, blocked_countries: Vec<String>) {
         *self.geoip_countries.write() = Arc::new(blocked_countries);
+    }
+
+    /// A snapshot of the current `GeoIP` database source (T-163) —
+    /// `run_geoip_updater` calls this at the top of every cycle so a
+    /// runtime credentials change is picked up without a restart.
+    pub(crate) fn geoip_source_snapshot(&self) -> Arc<GeoipSource> {
+        Arc::clone(&self.geoip_source.read())
+    }
+
+    /// Swaps in a new `GeoIP` database source (T-163) — the single writer
+    /// `apply_admin_reset` and the `/admin/geoip/maxmind[/clear]` routes
+    /// share. Callers pair this with [`Self::wake_geoip_refresh`] so the
+    /// background updater acts on the change immediately.
+    pub(crate) fn update_geoip_source(&self, source: GeoipSource) {
+        *self.geoip_source.write() = Arc::new(source);
+    }
+
+    /// Wakes `run_geoip_updater` out of its inter-cycle sleep (T-163). Safe
+    /// to call with no updater running (e.g. no app-data dir) — the permit is
+    /// simply never consumed.
+    pub(crate) fn wake_geoip_refresh(&self) {
+        self.geoip_refresh_wake.notify_one();
+    }
+
+    /// The wake handle `run_geoip_updater` parks on (T-163) — taken once
+    /// before its loop.
+    pub(crate) fn geoip_refresh_wake_handle(&self) -> Arc<Notify> {
+        Arc::clone(&self.geoip_refresh_wake)
     }
 
     /// Swaps in a new configured voter list (T-72/T-73) — the single writer
@@ -949,6 +999,22 @@ fn apply_admin_reset<C: DohClient + Sync>(
         .paths
         .as_ref()
         .ok_or(AdminResetError::NoAppData)?;
+    // T-163: re-read the MaxMind credentials from the OS credential store
+    // *before* taking the persist locks — it's a synchronous Credential
+    // Manager round-trip, and the GeoIP source isn't part of the
+    // `resolver_config.toml` cross-field-read invariant those locks protect,
+    // so ordering here is free. Applied (with a wake) after the file reloads
+    // below.
+    let geoip_source = match geoip_credentials::load(&paths.app_data_dir()) {
+        Ok(Some(creds)) => GeoipSource::Maxmind(creds),
+        Ok(None) => GeoipSource::DbIpLite,
+        Err(err) => {
+            tracing::warn!(
+                "MaxMind credentials reload failed on reset ({err}), keeping the current GeoIP source"
+            );
+            state.geoip_source_snapshot().as_ref().clone()
+        }
+    };
     let _persist_guard = state.persist_lock.lock();
     let _overrides_persist_guard = state.overrides_persist_lock.lock();
     let config = ResolverConfig::load(&paths.config).map_err(AdminResetError::Config)?;
@@ -1012,6 +1078,11 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // effect at the next process restart, not on the very next reset (the
     // same completeness gap `overrides`/`cache` above already close).
     state.update_geoip_countries(config.geoip.blocked_countries);
+    // T-163: apply the credentials re-read from the top of this function and
+    // wake the background updater so a source change takes effect now, not at
+    // the next 24h check or a restart.
+    state.update_geoip_source(geoip_source);
+    state.wake_geoip_refresh();
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -1546,8 +1617,9 @@ fn credential_check(result: &Result<(), GeoipUpdateError>) -> MaxmindCredentialC
 ///   authenticated probe against `MaxMind` and reports the outcome in
 ///   [`MaxmindCredentialsView::check`]. A blank field is `400`; a failed store
 ///   write is `persisted: false` in the body (the recurring "surface a
-///   failed save" rule), never a `5xx`. The new credentials take effect only
-///   at the next `dnsqb-service` restart — runtime pickup is T-163.
+///   failed save" rule), never a `5xx`. On success the new credentials become
+///   the live `GeoIP` source and the background updater is woken — no
+///   `dnsqb-service` restart needed (T-163).
 async fn serve_admin_geoip_maxmind<C, B>(
     req: Request<B>,
     state: &AppState<C>,
@@ -1604,6 +1676,20 @@ where
             })
         }
         Ok(()) => {
+            // T-163: the stored credentials are now the live GeoIP source.
+            // Read them back (also a store round-trip check) and wake the
+            // updater so the new key is used within seconds, no restart. A
+            // read-back miss here is not fatal — it just leaves the previous
+            // source until the next reset/restart.
+            match geoip_credentials::load(&paths.app_data_dir()) {
+                Ok(Some(creds)) => {
+                    state.update_geoip_source(GeoipSource::Maxmind(creds));
+                    state.wake_geoip_refresh();
+                }
+                other => tracing::warn!(
+                    "MaxMind credentials saved but not readable back for runtime pickup: {other:?}"
+                ),
+            }
             // A one-off, operator-initiated outbound call — not the
             // status-poll hot path the "don't rebuild a TLS client 30x/min"
             // concern (T-149) was about. Talks to the public
@@ -1626,8 +1712,8 @@ where
 }
 
 /// `POST /admin/geoip/maxmind/clear` (T-162) — same gate; deletes the stored
-/// credentials, reverting to the default DB-IP Lite source at the next
-/// `dnsqb-service` restart. A missing entry is not an error.
+/// credentials, reverting to the default DB-IP Lite source and waking the
+/// background updater immediately (T-163). A missing entry is not an error.
 async fn serve_admin_geoip_maxmind_clear<C, B>(
     req: Request<B>,
     state: &AppState<C>,
@@ -1658,6 +1744,9 @@ where
         },
         None => false,
     };
+    // T-163: back to DB-IP Lite as the live source, effective now.
+    state.update_geoip_source(GeoipSource::DbIpLite);
+    state.wake_geoip_refresh();
     json_response(&MaxmindCredentialsView {
         configured: false,
         account_id: None,
@@ -2254,9 +2343,9 @@ where
 mod tests {
     use super::{
         admin_status, content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
-        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipState,
-        LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeInit, DEFAULT_LOG_LIMIT,
-        DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipSource,
+        GeoipState, LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeInit,
+        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
@@ -2853,6 +2942,7 @@ mod tests {
             GeoipInit {
                 database: GeoipState::default(),
                 blocked_countries: Vec::new(),
+                source: GeoipSource::DbIpLite,
             },
             QueryLog::default(),
             persist,
@@ -2881,6 +2971,7 @@ mod tests {
             GeoipInit {
                 database,
                 blocked_countries: Vec::new(),
+                source: GeoipSource::DbIpLite,
             },
             QueryLog::default(),
             PersistTarget {
@@ -3816,6 +3907,7 @@ mod tests {
                 // Starts empty - the reset below is what must populate it
                 // from the fixture file's own [geoip] table.
                 blocked_countries: Vec::new(),
+                source: GeoipSource::DbIpLite,
             },
             QueryLog::default(),
             PersistTarget {
@@ -4081,6 +4173,7 @@ mod tests {
             GeoipInit {
                 database: GeoipState::default(),
                 blocked_countries: Vec::new(),
+                source: GeoipSource::DbIpLite,
             },
             QueryLog::default(),
             PersistTarget {
@@ -5008,6 +5101,128 @@ mod tests {
             other => panic!("the stored credentials must be gone after /clear, got {other:?}"),
         }
         assert!(!maxmind_view_via_get(state).await.configured);
+    }
+
+    #[test]
+    fn update_geoip_source_is_visible_on_the_next_snapshot() {
+        let state = state_with(no_op_client());
+        assert!(matches!(
+            *state.geoip_source_snapshot(),
+            GeoipSource::DbIpLite
+        ));
+        state.update_geoip_source(GeoipSource::Maxmind(
+            crate::geoip_credentials::MaxmindCredentials {
+                account_id: "acct".to_string(),
+                license_key: crate::geoip_credentials::LicenseKey::new("k".to_string()),
+            },
+        ));
+        assert!(matches!(
+            *state.geoip_source_snapshot(),
+            GeoipSource::Maxmind(_)
+        ));
+    }
+
+    // The T-163 wake channel's load-bearing property: a source change made
+    // *before* `run_geoip_updater` parks (e.g. during an in-flight refresh)
+    // must still wake the next park — a lost wake means the operator waits up
+    // to `GEOIP_CHECK_INTERVAL` (24h) with no signal, the exact bug T-163
+    // exists to kill. `Notify::notify_one` keeps one permit, so the park
+    // resolves immediately rather than sleeping out the interval. Same
+    // paused-time "assert elapsed stays near zero" technique as T-30's
+    // cancellation tests.
+    #[tokio::test(start_paused = true)]
+    async fn a_wake_before_the_updater_parks_resolves_the_next_park_immediately() {
+        let state = state_with(no_op_client());
+        let wake = state.geoip_refresh_wake_handle();
+        state.wake_geoip_refresh(); // change happened before the park below
+
+        let start = tokio::time::Instant::now();
+        tokio::select! {
+            () = tokio::time::sleep(crate::geoip_updater::GEOIP_CHECK_INTERVAL) => {
+                panic!("a pending wake permit must not wait out the 24h check interval");
+            }
+            () = wake.notified() => {}
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "the park must resolve on the remembered wake permit, not the interval"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn with_no_wake_the_updater_parks_for_the_whole_check_interval() {
+        let state = state_with(no_op_client());
+        let wake = state.geoip_refresh_wake_handle();
+
+        let start = tokio::time::Instant::now();
+        tokio::select! {
+            () = tokio::time::sleep(crate::geoip_updater::GEOIP_CHECK_INTERVAL) => {}
+            () = wake.notified() => panic!("nothing signalled the wake"),
+        }
+        assert_eq!(start.elapsed(), crate::geoip_updater::GEOIP_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn geoip_source_snapshot_debug_never_contains_the_license_key() {
+        let state = state_with(no_op_client());
+        state.update_geoip_source(GeoipSource::Maxmind(
+            crate::geoip_credentials::MaxmindCredentials {
+                account_id: "acct".to_string(),
+                license_key: crate::geoip_credentials::LicenseKey::new(
+                    "super-secret-license-key-value".to_string(),
+                ),
+            },
+        ));
+        let debug = format!("{:?}", state.geoip_source_snapshot());
+        assert!(!debug.contains("super-secret-license-key-value"));
+        assert!(!debug.contains("license-key-value"));
+        assert!(
+            debug.contains("acct"),
+            "the non-secret field is fine to show"
+        );
+    }
+
+    #[tokio::test]
+    async fn admin_reset_picks_up_a_credentials_change_and_wakes_the_updater() {
+        let (dir, state) = maxmind_state_with_tempdir();
+        // Seed a valid config so `/admin/reset` has something to reload.
+        if let Err(err) = std::fs::write(
+            dir.path().join("resolver_config.toml"),
+            concat!(
+                "port = 8443\ntimeout_mode = \"fail_open\"\ntimeout_ms = 3000\n\n",
+                "[[providers]]\nid = \"quad9\"\nenabled = true\n"
+            ),
+        ) {
+            panic!("must be able to write the config fixture: {err}");
+        }
+        if let Err(err) = std::fs::write(dir.path().join("overrides.toml"), "") {
+            panic!("must be able to write the overrides fixture: {err}");
+        }
+        if let Err(err) = crate::geoip_credentials::save(dir.path(), "acct-42", "the-key") {
+            panic!("seeding credentials must succeed: {err}");
+        }
+        assert!(matches!(
+            *state.geoip_source_snapshot(),
+            GeoipSource::DbIpLite
+        ));
+
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/reset")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            matches!(*state.geoip_source_snapshot(), GeoipSource::Maxmind(_)),
+            "reset must re-read the stored MaxMind credentials into the live source"
+        );
     }
 
     #[tokio::test]

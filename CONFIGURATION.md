@@ -277,6 +277,10 @@ SERVICES.md), тепер у звичайному браузері: сторін�
 > (`geoip_credentials::migrate_legacy_credentials_file`: розбір → запис → занулення й видалення
 > файлу), після чого файла більше немає.
 
+> **Набирає чинності одразу** (T-163) — `POST /admin/geoip/maxmind[/clear]` і `POST /admin/reset`
+> оновлюють джерело в `AppState` і будять фоновий апдейтер (`tokio::sync::Notify`), тож нове
+> завантаження стартує за секунди, без перезапуску `dnsqb-service`.
+
 * * *
 
 ## `overrides.toml`
