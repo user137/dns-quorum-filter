@@ -162,7 +162,8 @@ pub use dispatch::{
 };
 pub use geoip::{GeoipError, GeoipReader};
 pub use geoip_credentials::{
-    load as load_maxmind_credentials, CredentialsError, LicenseKey, MaxmindCredentials,
+    load as load_maxmind_credentials, migrate_legacy_credentials_file, CredentialsError,
+    LicenseKey, MaxmindCredentials,
 };
 pub use geoip_updater::{run_geoip_updater, GeoipSource, GeoipUpdateError, GEOIP_CHECK_INTERVAL};
 pub use listener::{bind_listener, BindError};

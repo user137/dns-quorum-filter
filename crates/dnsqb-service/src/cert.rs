@@ -14,9 +14,12 @@
 //! `key.pem` is copied once into the store by [`migrate_legacy_key_into_store`]
 //! and then erased by [`discard_legacy_key_file`] — but only after the stored
 //! key has been proven to load against `cert.pem`, so a mismatched plaintext
-//! key is never destroyed before it's known redundant. The ACL helpers below
-//! ([`write_user_restricted_file`] and friends) stay — `geoip_maxmind.toml`
-//! (T-162) still relies on them.
+//! key is never destroyed before it's known redundant. Secret-file scrubbing
+//! ([`key_store::overwrite_with_zeros`] / [`key_store::erase_and_remove`]) now
+//! lives with the secret-store module. The `icacls`-based ACL helpers that
+//! guarded the old plaintext files went out with the last of those files when
+//! T-163 moved the `MaxMind` credentials into the OS store too — nothing this
+//! crate writes to disk is secret any more.
 //!
 //! **Leaf, never a CA** (SPEC.md §2's largest stated attack-surface
 //! decision): a compromised private key for this cert can only spoof
@@ -44,12 +47,9 @@
 //! generation-relative window would become worth it, since each rotation
 //! calls this function fresh.
 
-use std::env;
-use std::ffi::OsStr;
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use rcgen::{CertificateParams, CertifiedKey, DistinguishedName, DnType, IsCa, KeyPair};
 use rustls::pki_types::pem::PemObject;
@@ -84,19 +84,6 @@ pub enum CertError {
     /// Failed to create the app-data directory or write the cert/key files.
     #[error("failed to write certificate files: {0}")]
     Io(#[source] io::Error),
-    /// `%SystemRoot%` is not set — can't locate `icacls.exe` by absolute path.
-    #[error("%SystemRoot% environment variable is not set")]
-    MissingSystemRoot,
-    /// `%USERNAME%` is not set — can't name the ACL grant target.
-    #[error("%USERNAME% environment variable is not set")]
-    MissingUserIdentity,
-    /// Failed to spawn `icacls.exe` to restrict the private-key file's ACL.
-    #[error("failed to spawn icacls to restrict the private key file: {0}")]
-    IcaclsSpawn(#[source] io::Error),
-    /// `icacls.exe` ran but reported failure restricting the private-key
-    /// file's ACL.
-    #[error("icacls failed to restrict the private key file (exit code {0:?})")]
-    IcaclsFailed(Option<i32>),
     /// The OS credential store rejected storing or reading the private key.
     #[error("private key secure storage failed: {0}")]
     KeyStore(#[from] key_store::KeyStoreError),
@@ -182,7 +169,7 @@ pub fn write_cert_and_key_to_app_data(
     fs::write(&cert_path, cert.pem()).map_err(CertError::Io)?;
 
     let key_der = Zeroizing::new(signing_key.serialize_der());
-    key_store::store_private_key(&key_store::entry_name_for_dir(&dir), &key_der)?;
+    key_store::store_secret(&key_store::tls_key_entry(&dir), &key_der)?;
     signing_key.zeroize();
 
     Ok(CertFiles { cert_path })
@@ -202,9 +189,9 @@ pub fn write_cert_and_key_to_app_data(
 /// [`CertError::LegacyKeyDecode`] if `key.pem` exists but doesn't parse (left
 /// in place); [`CertError::Io`] if reading the file fails.
 pub(crate) fn migrate_legacy_key_into_store(dir: &Path) -> Result<MigrationOutcome, CertError> {
-    let entry = key_store::entry_name_for_dir(dir);
+    let entry = key_store::tls_key_entry(dir);
     let legacy = dir.join("key.pem");
-    let store_has_key = key_store::load_private_key(&entry)?.is_some();
+    let store_has_key = key_store::load_secret(&entry)?.is_some();
 
     match migration_action(store_has_key, legacy.exists()) {
         MigrationAction::Nothing => {
@@ -226,7 +213,7 @@ pub(crate) fn migrate_legacy_key_into_store(dir: &Path) -> Result<MigrationOutco
             let Ok(PrivateKeyDer::Pkcs8(key_der)) = PrivateKeyDer::from_pem_slice(&pem) else {
                 return Err(CertError::LegacyKeyDecode);
             };
-            key_store::store_private_key(&entry, key_der.secret_pkcs8_der())?;
+            key_store::store_secret(&entry, key_der.secret_pkcs8_der())?;
             tracing::info!("copied the TLS private key from key.pem into the OS credential store");
             Ok(MigrationOutcome::Migrated)
         }
@@ -242,7 +229,7 @@ pub(crate) fn discard_legacy_key_file(dir: &Path) {
     if !legacy.exists() {
         return;
     }
-    match erase_and_remove(&legacy) {
+    match key_store::erase_and_remove(&legacy) {
         Ok(()) => tracing::info!("removed the now-redundant plaintext key.pem"),
         // Not fatal: the key is already in the store and in use. Surface it so
         // an operator can delete the file by hand.
@@ -282,167 +269,6 @@ pub(crate) fn migration_action(store_has_key: bool, legacy_pem_present: bool) ->
     } else {
         MigrationAction::Nothing
     }
-}
-
-/// Truncate `path` in place and overwrite it with zeros, flushing to disk
-/// (`sync_all`) before returning. Truncate-in-place keeps the file's existing
-/// user-only ACL (confirmed empirically for [`write_user_restricted_file`]'s
-/// create-restrict-write ordering). Bounded at 64 KiB — a `key.pem` is ~240
-/// bytes.
-///
-/// **Best-effort scrub, not a guarantee** (same honesty as the `zeroize`
-/// vetting row): it defeats a naive undelete that scrapes freed clusters, but
-/// not VSS shadow copies, SSD wear-levelling / TRIM remapping, or a filesystem
-/// that had already journalled the original bytes elsewhere.
-fn overwrite_with_zeros(path: &Path) -> Result<(), CertError> {
-    let len = fs::metadata(path)
-        .map(|meta| usize::try_from(meta.len().min(64 * 1024)).unwrap_or(0))
-        .map_err(CertError::Io)?;
-    let mut file = File::create(path).map_err(CertError::Io)?;
-    file.write_all(&vec![0u8; len]).map_err(CertError::Io)?;
-    file.sync_all().map_err(CertError::Io)
-}
-
-/// [`overwrite_with_zeros`] then delete. A bare unlink leaves the key bytes
-/// readable on disk.
-fn erase_and_remove(path: &Path) -> Result<(), CertError> {
-    // A failed overwrite is not fatal — the removal below is what takes the key
-    // off disk regardless; still surface it so a wrong ACL / read-only flag is
-    // visible rather than silently swallowed.
-    if let Err(err) = overwrite_with_zeros(path) {
-        tracing::warn!("could not zero {path:?} before removal: {err}");
-    }
-    fs::remove_file(path).map_err(CertError::Io)
-}
-
-/// Write `contents` to `path` behind an ACL restricted to Full Control for
-/// the current user only — creating the file empty, restricting it, *then*
-/// writing, so the bytes never sit on disk under the parent directory's
-/// inherited (wider) ACL even briefly. Used for `geoip_maxmind.toml` (T-162,
-/// [`crate::geoip_credentials::save`]) — a plaintext secret on disk as
-/// explicit MVP tech debt (`SECURITY.md`).
-pub(crate) fn write_user_restricted_file(path: &Path, contents: &[u8]) -> Result<(), CertError> {
-    // The handle itself is unused — this call exists only to make `path`
-    // exist as an empty file for `restrict_to_current_user` to ACL, before
-    // any secret bytes are written to it.
-    File::create(path).map_err(CertError::Io)?;
-    restrict_to_current_user(path)?;
-    fs::write(path, contents).map_err(CertError::Io)
-}
-
-/// Absolute path to `icacls.exe` (`%SystemRoot%\System32\icacls.exe`), never
-/// a bare `PATH` lookup, per this project's standing convention for spawned
-/// system processes.
-fn icacls_path() -> Result<PathBuf, CertError> {
-    let system_root = env::var_os("SystemRoot").ok_or(CertError::MissingSystemRoot)?;
-    Ok(Path::new(&system_root).join("System32").join("icacls.exe"))
-}
-
-/// Restrict `path`'s ACL to Full Control for the current user only, via
-/// `icacls.exe` — not the Windows ACL `WinAPI` directly, which is `unsafe`
-/// FFI and this crate is `#![forbid(unsafe_code)]`. The grant target is the
-/// bare `%USERNAME%` — confirmed empirically (not assumed) that `icacls`
-/// resolves an unqualified account name against the local machine first, so
-/// no `%USERDOMAIN%` lookup (and no second failure mode for it) is needed.
-///
-/// **Two phases, not one.** `/inheritance:r /grant:r <user>:F` alone is not
-/// sufficient: `/inheritance:r` only removes *inherited* ACEs, and
-/// `/grant:r` only replaces the *same principal's own* prior explicit grant
-/// — it does not touch other principals' pre-existing explicit grants. This
-/// was assumed sufficient on the strength of a local empirical probe (where
-/// the temp file's only pre-existing ACEs happened to be inherited), but CI
-/// caught the gap: on the GitHub-hosted Windows runner image, a freshly
-/// created file already carries explicit (non-inherited) `SYSTEM`/
-/// `Administrators`/local-admin grants, which phase one alone left in place
-/// alongside the intended user. Phase two reads the ACL back and explicitly
-/// `/remove:g`s every principal that isn't the target user, so the result is
-/// self-correcting against whatever a given Windows image's default DACL for
-/// new files happens to be, rather than hardcoding a denylist of expected
-/// group names.
-fn restrict_to_current_user(path: &Path) -> Result<(), CertError> {
-    let icacls = icacls_path()?;
-    let user = env::var("USERNAME").map_err(|_| CertError::MissingUserIdentity)?;
-    let grant = format!("{user}:F");
-
-    let status = Command::new(&icacls)
-        .args([
-            path.as_os_str(),
-            OsStr::new("/inheritance:r"),
-            OsStr::new("/grant:r"),
-            OsStr::new(&grant),
-        ])
-        .status()
-        .map_err(CertError::IcaclsSpawn)?;
-    if !status.success() {
-        return Err(CertError::IcaclsFailed(status.code()));
-    }
-
-    let extra_principals = other_principals(&icacls, path, &user)?;
-    if extra_principals.is_empty() {
-        return Ok(());
-    }
-
-    let status = Command::new(&icacls)
-        .arg(path)
-        .arg("/remove:g")
-        .args(&extra_principals)
-        .status()
-        .map_err(CertError::IcaclsSpawn)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(CertError::IcaclsFailed(status.code()))
-    }
-}
-
-/// Read `path`'s current ACL via `icacls <path>` (no modify flags) and
-/// return every granted principal name other than `keep`. Parses the same
-/// output shape as the restriction step itself: a first line of
-/// `"<path> <principal>:(perms)"`, zero or more indented continuation lines
-/// of `"<principal>:(perms)"`, a blank line, then a `"Successfully
-/// processed..."` summary.
-fn other_principals(icacls: &Path, path: &Path, keep: &str) -> Result<Vec<String>, CertError> {
-    let output = Command::new(icacls)
-        .arg(path)
-        .output()
-        .map_err(CertError::IcaclsSpawn)?;
-    if !output.status.success() {
-        return Err(CertError::IcaclsFailed(output.status.code()));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let path_prefix = path.display().to_string();
-
-    let mut extra = Vec::new();
-    for (index, line) in stdout.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("Successfully processed") {
-            continue;
-        }
-        let entry = if index == 0 {
-            line.strip_prefix(path_prefix.as_str())
-                .unwrap_or(line)
-                .trim()
-        } else {
-            trimmed
-        };
-        let Some((principal, _perms)) = entry.split_once(':') else {
-            continue;
-        };
-        // `icacls` prints the granted principal qualified with a
-        // machine/domain prefix (e.g. `DESKTOP-PA\Pa`), while `keep` is the
-        // bare `%USERNAME%` value used to grant it — an exact-equality
-        // check here would treat our own just-granted principal as "extra"
-        // and strip it, defeating the whole restriction (caught by this
-        // module's own tests failing when first written this way).
-        let is_kept_user = principal
-            .rsplit('\\')
-            .next()
-            .is_some_and(|unqualified| unqualified.eq_ignore_ascii_case(keep));
-        if !is_kept_user {
-            extra.push(principal.to_string());
-        }
-    }
-    Ok(extra)
 }
 
 #[cfg(test)]
@@ -601,169 +427,11 @@ mod tests {
     }
 
     #[test]
-    fn write_user_restricted_file_creates_a_file_restricted_to_the_current_user_only() {
-        let dir = match tempfile::tempdir() {
-            Ok(dir) => dir,
-            Err(err) => panic!("must be able to create a temp dir: {err}"),
-        };
-        let path = dir.path().join("secret.toml");
-
-        if let Err(err) = super::write_user_restricted_file(&path, b"placeholder-secret-bytes") {
-            panic!("write_user_restricted_file must succeed: {err}");
-        }
-
-        match std::fs::read(&path) {
-            Ok(contents) => assert_eq!(contents, b"placeholder-secret-bytes"),
-            Err(err) => panic!("written file must be readable back: {err}"),
-        }
-
-        // Real `icacls` read-back, not a trust-the-call-succeeded assertion —
-        // same standard the SAN/`IsCa` tests hold `rcgen` to.
-        let output = match std::process::Command::new("icacls").arg(&path).output() {
-            Ok(output) => output,
-            Err(err) => panic!("icacls must be runnable to verify the ACL: {err}"),
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        let username = match std::env::var("USERNAME") {
-            Ok(name) => name,
-            Err(err) => panic!("USERNAME must be set on Windows: {err}"),
-        };
-
-        // Structural check, not a substring denylist: a denylist of group
-        // names (`"SYSTEM"`, `"Everyone"`, ...) can't distinguish "no
-        // residual grant" from "the string just doesn't happen to appear",
-        // and would false-fail on a machine whose hostname/account name
-        // happens to contain one of those words. `icacls`'s own output shape
-        // (confirmed empirically against a real restricted file) is: one ACE
-        // line per grant, a blank line, then a "Successfully processed..."
-        // summary — so counting non-blank, non-summary lines is a direct
-        // proof of "exactly one grant," which a substring check is not.
-        let ace_lines: Vec<&str> = stdout
-            .lines()
-            .filter(|line| !line.trim().is_empty() && !line.contains("Successfully processed"))
-            .collect();
-        assert_eq!(
-            ace_lines.len(),
-            1,
-            "expected exactly one ACE after restriction, got: {stdout}"
-        );
-        assert!(
-            ace_lines[0].contains(&format!("{username}:(F)")),
-            "expected the sole ACE to grant the current user Full Control, got: {stdout}"
-        );
-    }
-
-    #[test]
     fn migration_action_moves_only_when_store_empty_and_legacy_present() {
         use super::{migration_action, MigrationAction};
         assert_eq!(migration_action(false, true), MigrationAction::Migrate);
         assert_eq!(migration_action(false, false), MigrationAction::Nothing);
         assert_eq!(migration_action(true, true), MigrationAction::Nothing);
         assert_eq!(migration_action(true, false), MigrationAction::Nothing);
-    }
-
-    #[test]
-    fn overwrite_with_zeros_replaces_every_byte_with_zero() {
-        let dir = match tempfile::tempdir() {
-            Ok(dir) => dir,
-            Err(err) => panic!("must be able to create a temp dir: {err}"),
-        };
-        let path = dir.path().join("key.pem");
-        let fixture = b"-----BEGIN PRIVATE KEY-----\nsensitive-key-material\n";
-        if let Err(err) = std::fs::write(&path, fixture) {
-            panic!("must be able to write the fixture: {err}");
-        }
-        if let Err(err) = super::overwrite_with_zeros(&path) {
-            panic!("overwrite_with_zeros must succeed: {err}");
-        }
-        match std::fs::read(&path) {
-            Ok(bytes) => {
-                assert_eq!(bytes.len(), fixture.len(), "length must be preserved");
-                assert!(
-                    bytes.iter().all(|&b| b == 0),
-                    "every byte must be zero, got {bytes:?}"
-                );
-            }
-            Err(err) => panic!("file must still be readable right after the overwrite: {err}"),
-        }
-    }
-
-    #[test]
-    fn erase_and_remove_deletes_the_file() {
-        let dir = match tempfile::tempdir() {
-            Ok(dir) => dir,
-            Err(err) => panic!("must be able to create a temp dir: {err}"),
-        };
-        let path = dir.path().join("key.pem");
-        if let Err(err) = std::fs::write(&path, b"-----BEGIN PRIVATE KEY-----\nsecret\n") {
-            panic!("must be able to write the fixture: {err}");
-        }
-        if let Err(err) = super::erase_and_remove(&path) {
-            panic!("erase_and_remove must succeed: {err}");
-        }
-        assert!(!path.exists(), "file must be gone after erase_and_remove");
-    }
-
-    #[test]
-    fn restrict_to_current_user_strips_pre_existing_explicit_grants_to_other_principals() {
-        // Reproduces what CI caught and a local dev-machine probe didn't:
-        // on some Windows images a freshly created file already carries
-        // explicit (non-inherited) SYSTEM/Administrators grants, which
-        // `/inheritance:r` (only strips *inherited* ACEs) plus a bare
-        // `/grant:r` (only replaces the *same* principal's own prior grant)
-        // leaves untouched. Simulate that starting condition explicitly
-        // rather than relying on it happening to occur on this machine.
-        let dir = match tempfile::tempdir() {
-            Ok(dir) => dir,
-            Err(err) => panic!("must be able to create a temp dir: {err}"),
-        };
-        let key_path = dir.path().join("key.pem");
-        if let Err(err) = std::fs::File::create(&key_path) {
-            panic!("must be able to create the file: {err}");
-        }
-
-        let icacls = match super::icacls_path() {
-            Ok(path) => path,
-            Err(err) => panic!("must be able to locate icacls.exe: {err}"),
-        };
-        for principal in ["SYSTEM", "Administrators"] {
-            let status = std::process::Command::new(&icacls)
-                .arg(&key_path)
-                .arg("/grant")
-                .arg(format!("{principal}:F"))
-                .status();
-            match status {
-                Ok(status) if status.success() => {}
-                other => panic!("setup: granting {principal} must succeed, got: {other:?}"),
-            }
-        }
-
-        if let Err(err) = super::restrict_to_current_user(&key_path) {
-            panic!("restrict_to_current_user must succeed: {err}");
-        }
-
-        let output = match std::process::Command::new(&icacls).arg(&key_path).output() {
-            Ok(output) => output,
-            Err(err) => panic!("icacls must be runnable to verify the ACL: {err}"),
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let username = match std::env::var("USERNAME") {
-            Ok(name) => name,
-            Err(err) => panic!("USERNAME must be set on Windows: {err}"),
-        };
-        let ace_lines: Vec<&str> = stdout
-            .lines()
-            .filter(|line| !line.trim().is_empty() && !line.contains("Successfully processed"))
-            .collect();
-        assert_eq!(
-            ace_lines.len(),
-            1,
-            "expected the pre-existing SYSTEM/Administrators grants to be stripped, got: {stdout}"
-        );
-        assert!(
-            ace_lines[0].contains(&format!("{username}:(F)")),
-            "expected the sole remaining ACE to grant the current user, got: {stdout}"
-        );
     }
 }

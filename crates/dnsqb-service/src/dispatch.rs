@@ -378,14 +378,24 @@ pub struct PersistPaths {
 }
 
 impl PersistPaths {
-    /// `geoip_maxmind.toml`'s path (T-162) — derived from `config`'s parent
-    /// rather than stored as a third field: all three live in the one
-    /// `app_data_dir()` directory (the invariant this struct's own doc
-    /// comment already relies on), so a `with_file_name` is exact and avoids
-    /// threading a new field through every `PersistPaths` construction site.
+    /// The app-data directory the config files live in — `resolver_config.toml`'s
+    /// parent. Used to derive the `keyring` entry for the `MaxMind` credentials
+    /// (T-163, [`crate::key_store::maxmind_credentials_entry`]) and to locate a
+    /// leftover pre-T-163 `geoip_maxmind.toml` for one-time migration. Derived
+    /// rather than stored as a third field: all config artefacts live in the one
+    /// `app_data_dir()` directory (the invariant this struct's own doc comment
+    /// already relies on), so this avoids threading a new field through every
+    /// `PersistPaths` construction site.
     #[must_use]
-    pub fn geoip_maxmind(&self) -> PathBuf {
-        self.config.with_file_name("geoip_maxmind.toml")
+    pub fn app_data_dir(&self) -> PathBuf {
+        // `config` is always `<app-data dir>/resolver_config.toml` — built that
+        // way in `main.rs` and in every test `PersistPaths` — so `parent()` is
+        // always `Some`. The fallback keeps the full path (not `"."`) so a
+        // hypothetical parentless `config` still yields an install-unique
+        // keyring entry rather than one shared across every install.
+        self.config
+            .parent()
+            .map_or_else(|| self.config.clone(), std::path::Path::to_path_buf)
     }
 }
 
@@ -1501,7 +1511,7 @@ fn maxmind_view<C: DohClient + Sync>(
         .paths
         .as_ref()
         .and_then(|paths| {
-            geoip_credentials::load(&paths.geoip_maxmind())
+            geoip_credentials::load(&paths.app_data_dir())
                 .ok()
                 .flatten()
         })
@@ -1531,10 +1541,10 @@ fn credential_check(result: &Result<(), GeoipUpdateError>) -> MaxmindCredentialC
 ///
 /// - `GET`: read-only, no CSRF gate — the current [`MaxmindCredentialsView`]
 ///   (never the license key).
-/// - `POST`: same CSRF gate and body-size cap as `/admin/geoip/add`. Writes
-///   `geoip_maxmind.toml` **first**, then runs one authenticated probe
-///   against `MaxMind` and reports the outcome in
-///   [`MaxmindCredentialsView::check`]. A blank field is `400`; a failed disk
+/// - `POST`: same CSRF gate and body-size cap as `/admin/geoip/add`. Stores
+///   the credentials in the OS credential store **first**, then runs one
+///   authenticated probe against `MaxMind` and reports the outcome in
+///   [`MaxmindCredentialsView::check`]. A blank field is `400`; a failed store
 ///   write is `persisted: false` in the body (the recurring "surface a
 ///   failed save" rule), never a `5xx`. The new credentials take effect only
 ///   at the next `dnsqb-service` restart — runtime pickup is T-163.
@@ -1579,7 +1589,7 @@ where
     };
 
     match geoip_credentials::save(
-        &paths.geoip_maxmind(),
+        &paths.app_data_dir(),
         &request.account_id,
         &request.license_key,
     ) {
@@ -1615,9 +1625,9 @@ where
     }
 }
 
-/// `POST /admin/geoip/maxmind/clear` (T-162) — same gate; removes
-/// `geoip_maxmind.toml`, reverting to the default DB-IP Lite source at the
-/// next `dnsqb-service` restart. A missing file is not an error.
+/// `POST /admin/geoip/maxmind/clear` (T-162) — same gate; deletes the stored
+/// credentials, reverting to the default DB-IP Lite source at the next
+/// `dnsqb-service` restart. A missing entry is not an error.
 async fn serve_admin_geoip_maxmind_clear<C, B>(
     req: Request<B>,
     state: &AppState<C>,
@@ -1639,10 +1649,10 @@ where
         return status_response(StatusCode::BAD_REQUEST);
     }
     let persisted = match state.persist.paths.as_ref() {
-        Some(paths) => match geoip_credentials::clear(&paths.geoip_maxmind()) {
+        Some(paths) => match geoip_credentials::clear(&paths.app_data_dir()) {
             Ok(()) => true,
             Err(err) => {
-                tracing::warn!("failed to remove MaxMind credentials file: {err}");
+                tracing::warn!("failed to remove stored MaxMind credentials: {err}");
                 false
             }
         },
@@ -4829,7 +4839,33 @@ mod tests {
         );
     }
 
-    fn maxmind_state_with_tempdir() -> (tempfile::TempDir, Arc<AppState<MockClient>>) {
+    /// A scratch app-data dir plus a `Drop` that deletes the `MaxMind`
+    /// credentials keyring entry derived from it — so these tests, which now
+    /// hit the real OS credential store (T-163), never leak an entry into the
+    /// dev machine's or CI runner's Credential Manager. Also holds
+    /// [`crate::key_store::STORE_TEST_GUARD`] so credential-store tests across
+    /// the whole crate run serially (the Windows backend races under
+    /// concurrent access even on distinct entries).
+    struct MaxmindTestDir {
+        dir: tempfile::TempDir,
+        _guard: parking_lot::MutexGuard<'static, ()>,
+    }
+
+    impl MaxmindTestDir {
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for MaxmindTestDir {
+        fn drop(&mut self) {
+            let entry = crate::key_store::maxmind_credentials_entry(self.dir.path());
+            let _ = crate::key_store::delete_secret(&entry);
+        }
+    }
+
+    fn maxmind_state_with_tempdir() -> (MaxmindTestDir, Arc<AppState<MockClient>>) {
+        let guard = crate::key_store::STORE_TEST_GUARD.lock();
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -4843,7 +4879,7 @@ mod tests {
                 }),
             },
         );
-        (dir, state)
+        (MaxmindTestDir { dir, _guard: guard }, state)
     }
 
     fn admin_maxmind_get_request() -> Request<Full<Bytes>> {
@@ -4906,11 +4942,9 @@ mod tests {
     #[tokio::test]
     async fn maxmind_get_echoes_the_account_id_after_a_save_and_never_the_key() {
         let (dir, state) = maxmind_state_with_tempdir();
-        if let Err(err) = crate::geoip_credentials::save(
-            &dir.path().join("geoip_maxmind.toml"),
-            "acct-987",
-            "a-very-secret-license-key",
-        ) {
+        if let Err(err) =
+            crate::geoip_credentials::save(dir.path(), "acct-987", "a-very-secret-license-key")
+        {
             panic!("save fixture must succeed: {err}");
         }
         let view = maxmind_view_via_get(Arc::clone(&state)).await;
@@ -4942,11 +4976,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn maxmind_clear_removes_the_file_and_reports_not_configured() {
+    async fn maxmind_clear_removes_the_credentials_and_reports_not_configured() {
         let (dir, state) = maxmind_state_with_tempdir();
-        if let Err(err) =
-            crate::geoip_credentials::save(&dir.path().join("geoip_maxmind.toml"), "acct", "key")
-        {
+        if let Err(err) = crate::geoip_credentials::save(dir.path(), "acct", "key") {
             panic!("save fixture must succeed: {err}");
         }
         let Ok(clear_req) = Request::builder()
@@ -4969,12 +5001,12 @@ mod tests {
         assert!(!view.configured);
         assert!(
             view.persisted,
-            "removing an existing file must report persisted"
+            "removing existing credentials must report persisted"
         );
-        assert!(
-            !dir.path().join("geoip_maxmind.toml").exists(),
-            "the credentials file must be gone after /clear"
-        );
+        match crate::geoip_credentials::load(dir.path()) {
+            Ok(None) => {}
+            other => panic!("the stored credentials must be gone after /clear, got {other:?}"),
+        }
         assert!(!maxmind_view_via_get(state).await.configured);
     }
 

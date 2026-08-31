@@ -183,10 +183,12 @@ live WebSearch) — не доказ, що цей конкретний leaf ко�
     ніколи не знищується першим; поточний довірений сертифікат зберігається.
     `unsafe` Win32-FFI лежить у
     `windows-native-keyring-store`, тож крейт-широкий `#![forbid(unsafe_code)]`
-    `dnsqb-service` не порушено. Дворазова `icacls`-ACL-послідовність
-    (`cert::restrict_to_current_user`, T-50) лишається — нею користується
-    `geoip_maxmind.toml` (T-162). macOS Keychain / Linux Secret Service `keyring`
-    абстрагує, але тут не перевірено (немає доступу до цих платформ) — **T-71**.
+    `dnsqb-service` не порушено. Дворазова `icacls`-ACL-послідовність (T-50)
+    прибрана в T-163 разом з останнім plaintext-секретом на диску — MaxMind-
+    креденшели теж переїхали в secret store (`key_store::maxmind_credentials_entry`),
+    тепер `dnsqb-service` не пише на диск жодного секрету. macOS Keychain / Linux
+    Secret Service `keyring` абстрагує, але тут не перевірено (немає доступу до
+    цих платформ) — **T-71**.
     Вибір `keyring` замість точкового `unsafe` DPAPI-виклику — рішення
     користувача (план T-67), саме заради збереження forbid-інваріанта й
     forward-fit під T-71.

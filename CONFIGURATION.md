@@ -14,8 +14,9 @@
 ```
 %LOCALAPPDATA%\dns-quorum-filter\resolver_config.toml
 %LOCALAPPDATA%\dns-quorum-filter\overrides.toml
-%LOCALAPPDATA%\dns-quorum-filter\geoip_maxmind.toml   (опційний, T-80 — див. нижче)
 ```
+
+(Опційні MaxMind GeoLite2-креденшели — не файл: OS secret store, див. нижче.)
 
 (`paths::app_data_dir` в коді — `crates/dnsqb-service/src/paths.rs`.)
 
@@ -242,52 +243,39 @@ SERVICES.md), тепер у звичайному браузері: сторін�
 
 * * *
 
-## `geoip_maxmind.toml` — опційний advanced-режим MaxMind GeoLite2 (SPEC.md §3.5, T-80/T-162)
+## MaxMind GeoLite2 — опційний advanced-режим (SPEC.md §3.5, T-80/T-162/T-163)
 
 За замовчуванням GeoIP-база — DB-IP Lite Country (без реєстрації, щомісячне оновлення,
 `geoip_updater.rs`). Хто має власний **MaxMind**-акаунт і хоче частіші оновлення (GeoLite2 —
 двічі на тиждень), задає креденшели в `/admin/ui` (картка «Джерело GeoIP: MaxMind GeoLite2» —
-`POST /admin/geoip/maxmind`; кнопка «Очистити» = `POST /admin/geoip/maxmind/clear`, T-162) або,
-як і раніше, редагує цей файл вручну:
-
-```
-%LOCALAPPDATA%\dns-quorum-filter\geoip_maxmind.toml
-```
-
-```toml
-account_id  = "123456"
-license_key = "ВАШ_MAXMIND_LICENSE_KEY"
-```
+`POST /admin/geoip/maxmind`; кнопка «Очистити» = `POST /admin/geoip/maxmind/clear`).
 
 | Поле | Тип | Обовʼязкове | Опис |
 |---|---|---|---|
 | `account_id` | рядок | так | MaxMind Account ID (той самий, що в `GeoIP.conf` `geoipupdate`; HTTP Basic-username при завантаженні). |
 | `license_key` | рядок | так | MaxMind License Key (HTTP Basic-password). |
 
-- **Файл відсутній** → DB-IP Lite (дефолт, незмінна поведінка).
-- **Файл є, обидва поля непорожні** → MaxMind GeoLite2-Country: одне завантаження модерного
+- **Креденшели не задано** → DB-IP Lite (дефолт, незмінна поведінка).
+- **Задано, обидва поля непорожні** → MaxMind GeoLite2-Country: одне завантаження модерного
   permalink `https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=tar.gz`
   з `Authorization: Basic` (ключ ніколи не в URL), опортуністична перевірка `.tar.gz.sha256`-
   сайдкара, розпаковка `.mmdb`-члена з `.tar.gz` (обмежена за розміром), та сама атомарна
   підміна файлу `geoip.mmdb`, що й для DB-IP.
-- **Файл є, але зламаний / завеликий (>8 KiB) / порожнє поле** → у лог пишеться (без ключа!)
-  попередження, і сервіс **відкочується на DB-IP Lite**, а не відмовляється стартувати.
+- **Збережений блоб пошкоджено / порожнє поле** → у лог пишеться (без ключа!) попередження, і
+  сервіс **відкочується на DB-IP Lite**, а не відмовляється стартувати.
 
-> **Ключ зберігається у відкритому вигляді** — свідомий MVP-компроміс (SECURITY.md). T-162
-> обмежує ACL файлу поточним користувачем через `cert::write_user_restricted_file` (той самий
-> дворазовий `icacls`-примітив, що ним раніше захищався й `key.pem` до переходу на Credential
-> Manager у T-67) як interim-мітигацію; platform secure storage (DPAPI) для цього файлу —
-> відкладено на **T-163**. `POST /admin/geoip/maxmind` після запису
-> робить одну автентифіковану пробу проти MaxMind і повертає `check`
-> (`VERIFIED`/`REJECTED`/`UNVERIFIED`) — оператор одразу бачить, чи прийнято ключ.
-> Це окремий файл, а не таблиця в `resolver_config.toml` — інакше невʼязаний `POST /admin/config`
-> міг би його мовчки перезаписати, повторюючи відомий клас багів проєкту; тому й лише один
-> маршрут-писар, без спільного `persist_lock`.
+> **Зберігаються в OS secret store** (Windows Credential Manager через `keyring`, той самий
+> примітив `key_store.rs`, що й для TLS-ключа — запис `maxmind-credentials:<sha1(теки)[..8]>`),
+> не у файлі на диску (T-163). Це не таблиця в `resolver_config.toml` — інакше невʼязаний
+> `POST /admin/config` міг би мовчки перезаписати креденшели, повторюючи відомий клас багів
+> проєкту; тому й лише один маршрут-писар. `POST /admin/geoip/maxmind` після запису робить одну
+> автентифіковану пробу проти MaxMind і повертає `check` (`VERIFIED`/`REJECTED`/`UNVERIFIED`) —
+> оператор одразу бачить, чи прийнято ключ.
 
-> Зміна цього файлу (як через маршрут, так і вручну) набирає чинності лише при **перезапуску
-> процесу** — на відміну від `resolver_config.toml`/`overrides.toml`, `POST /admin/reset` його не
-> перечитує, і фоновий апдейтер тримає те джерело, з яким його заспавнили. Runtime-підхоплення —
-> **T-163**.
+> **Міграція.** Плейнтекст `%LOCALAPPDATA%\dns-quorum-filter\geoip_maxmind.toml` з інсталяцій до
+> T-163 одноразово переноситься в secret store при старті
+> (`geoip_credentials::migrate_legacy_credentials_file`: розбір → запис → занулення й видалення
+> файлу), після чого файла більше немає.
 
 * * *
 

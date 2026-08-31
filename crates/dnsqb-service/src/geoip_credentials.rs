@@ -1,44 +1,46 @@
-//! T-80: optional `MaxMind GeoLite2` credentials, read from a dedicated
-//! `geoip_maxmind.toml` in the app-data directory — deliberately **not** a
-//! table inside `resolver_config.toml`.
+//! Optional `MaxMind GeoLite2` download credentials (T-80), held in platform
+//! secure storage (T-163, [`crate::key_store`]) — the Windows Credential
+//! Manager entry [`crate::key_store::maxmind_credentials_entry`], keyed on the
+//! app-data directory.
 //!
-//! **Why a separate file.** `config::ResolverConfig::save()` has several
-//! callers (`POST /admin/config`, `POST /admin/reset`, the `/admin/geoip/*`
-//! add/remove routes) that each re-serialize the *whole* file and must
-//! read-and-echo every unrelated field first — the recurring cross-field-read
-//! bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77). Putting a
-//! secret in that file would make "silently wipe the operator's `MaxMind`
-//! credentials on an unrelated cache-config save" the next instance. A
-//! dedicated file has no such writer other than [`save`] (T-162's
-//! `POST /admin/geoip/maxmind`); before T-162 it was hand-edited only.
-//! It also keeps `config.rs`'s decision to log the full `toml::de::Error`
-//! line snippet sound (justified there by "`resolver_config.toml` never
-//! contains a domain name" — a license key would break that), and it mirrors
-//! `MaxMind`'s own `GeoIP.conf` convention.
+//! **Why not a table in `resolver_config.toml`.** `config::ResolverConfig::save()`
+//! has several callers (`POST /admin/config`, `POST /admin/reset`, the
+//! `/admin/geoip/*` add/remove routes) that each re-serialize the *whole* file
+//! and must read-and-echo every unrelated field first — the recurring
+//! cross-field-read bug class in this project (T-57 / T-139 / T-149 / T-47 /
+//! T-77). A dedicated secret-store entry with a single writer ([`save`] /
+//! [`clear`]) has no such hazard, and it keeps `config.rs`'s decision to log the
+//! full `toml::de::Error` line snippet sound (justified there by
+//! "`resolver_config.toml` never contains a domain name" — a license key would
+//! break that).
 //!
-//! **Plaintext on disk is explicit MVP tech debt**, the same posture as the
-//! TLS private key (`SECURITY.md`: "plaintext PEM … explicit MVP tech debt").
-//! [`save`] restricts the file's ACL to the current user (via
-//! [`crate::cert::write_user_restricted_file`], identical to the private
-//! key) as the interim mitigation; platform secure storage (DPAPI) is
-//! deferred to T-163, not silently the intended end state.
+//! **Pre-T-163 installs kept the credentials in a plaintext `geoip_maxmind.toml`**
+//! (ACL-restricted to the user as interim MVP tech debt). [`migrate_legacy_credentials_file`]
+//! copies such a file into the OS store once at startup and then erases it —
+//! delete-after-store is safe here (unlike the TLS key's deferred delete): a
+//! `store_secret` `Ok` *is* the confirmation, and a credential the operator can
+//! re-type from the `MaxMind` portal is not an irreplaceable cryptographic
+//! identity.
 
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
-/// Upper bound on `geoip_maxmind.toml`'s on-disk size, checked before the
-/// file is read into memory (SPEC.md §8.1: bound the allocation, don't
-/// measure a length after the fact) — two short string fields, so 8 KiB is
-/// already generous even for a heavily hand-commented file.
+use crate::key_store;
+
+/// Upper bound on a leftover `geoip_maxmind.toml`'s on-disk size, checked
+/// before the file is read into memory during migration (SPEC.md §8.1: bound
+/// the allocation, don't measure a length after the fact) — two short string
+/// fields, so 8 KiB is already generous even for a heavily hand-commented file.
 pub(crate) const MAX_CREDENTIALS_FILE_SIZE: u64 = 8 * 1024;
 
 /// A `MaxMind` license key. Newtype with a **hand-written redacting `Debug`**
-/// and no `Display` — so any type that derives `Debug` and holds one
-/// (`MaxmindCredentials`, `geoip_updater::GeoipSource`) can't leak the key
+/// and no `Display` / `Serialize` — so any type that derives `Debug` and holds
+/// one (`MaxmindCredentials`, `geoip_updater::GeoipSource`) can't leak the key
 /// through `tracing::warn!(?value)` / `format!("{value:?}")`, the same
 /// accidental-`Debug`-leak path `overrides::InvalidEntry`'s own redacting
 /// `Debug` guards against.
@@ -47,9 +49,9 @@ pub(crate) const MAX_CREDENTIALS_FILE_SIZE: u64 = 8 * 1024;
 pub struct LicenseKey(String);
 
 impl LicenseKey {
-    /// Wraps a raw key. Test-only for now — the `#[ignore]`d live tests build
-    /// credentials from environment variables; the first non-test caller
-    /// (an admin route holding the plaintext) arrives with T-162.
+    /// Wraps a raw key. Test-only — the `#[ignore]`d live tests build
+    /// credentials from environment variables; production credentials arrive
+    /// as `&str` through [`save`] and are never wrapped outside this module.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn new(key: String) -> Self {
@@ -89,60 +91,189 @@ pub struct MaxmindCredentials {
     pub license_key: LicenseKey,
 }
 
-/// Errors loading `geoip_maxmind.toml`. Payload-free by design — see the
-/// module doc comment for why this file's parse error, unlike
-/// `config::ConfigError::Toml`, must not carry a `toml::de::Error` snippet.
+/// Errors loading, storing, or migrating `MaxMind` credentials. The parse
+/// variant is payload-free by design — see the module doc for why a license
+/// key must not reach a log line the way `config::ConfigError::Toml`'s snippet
+/// legitimately can.
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialsError {
-    /// Failed to read the file (anything other than "file does not exist",
-    /// which is `Ok(None)` — see [`load`]).
-    #[error("failed to read MaxMind credentials file: {0}")]
+    /// Failed to read or erase a leftover `geoip_maxmind.toml` during
+    /// migration (anything other than "file does not exist").
+    #[error("failed to read the legacy MaxMind credentials file: {0}")]
     Io(#[source] io::Error),
-    /// The file isn't valid TOML in the expected `account_id` +
-    /// `license_key` shape, or a field is present but blank.
-    #[error("MaxMind credentials file is malformed or has a blank field")]
+    /// The stored blob, or a leftover `geoip_maxmind.toml`, isn't in the
+    /// expected `account_id` + `license_key` shape, or a field is blank.
+    #[error("MaxMind credentials are malformed or have a blank field")]
     Malformed,
-    /// The file exceeds [`MAX_CREDENTIALS_FILE_SIZE`] — rejected before being
-    /// read into memory.
-    #[error("MaxMind credentials file exceeds the {MAX_CREDENTIALS_FILE_SIZE}-byte size limit")]
+    /// A leftover `geoip_maxmind.toml` exceeds [`MAX_CREDENTIALS_FILE_SIZE`] —
+    /// rejected before being read into memory.
+    #[error("the legacy MaxMind credentials file exceeds the {MAX_CREDENTIALS_FILE_SIZE}-byte size limit")]
     TooLarge,
-    /// Failed to create, ACL-restrict, or write the credentials file
-    /// ([`save`], T-162). Wraps [`crate::cert::CertError`], whose own
-    /// `Display` is coarse (icacls exit codes, env-var names, an app-data
-    /// path) and carries no secret — unlike this file's *contents*, which is
-    /// why the parse/read errors above stay payload-free.
-    #[error("failed to write MaxMind credentials file: {0}")]
-    Write(#[source] crate::cert::CertError),
+    /// The OS credential store rejected storing, reading, or deleting the
+    /// credentials. [`key_store::KeyStoreError`]'s payload describes *store
+    /// access* failures and carries no secret.
+    #[error("MaxMind credentials secure storage failed: {0}")]
+    KeyStore(#[from] key_store::KeyStoreError),
 }
 
-/// Loads `MaxMind` credentials from `path`.
+/// Loads `MaxMind` credentials for the install rooted at `app_data_dir` from
+/// the OS credential store.
 ///
-/// - Missing file → `Ok(None)`: the ordinary state for the default DB-IP Lite
-///   mode, not an error (same "no file yet" tolerance as
-///   `overrides::OverrideLists::load` / `config::ResolverConfig::load`).
+/// - No entry → `Ok(None)`: the ordinary state for the default DB-IP Lite mode.
 /// - Present and complete (both fields non-blank) → `Ok(Some(_))`: `MaxMind`
 ///   advanced mode.
-/// - Present but malformed, oversized, or with a blank field → `Err`: a
-///   hand-edited file the operator needs to fix. `main.rs` logs the
-///   (payload-free) error and falls back to DB-IP Lite rather than refusing
-///   to start.
-///
-/// This does blocking file I/O — call at startup, not from a hot path.
+/// - Present but a malformed blob or a blank field → `Err`: should not happen
+///   for a store [`save`] wrote, but a corrupted entry is surfaced rather than
+///   silently treated as "not configured".
 ///
 /// # Errors
 ///
-/// [`CredentialsError::Io`] for a read failure other than "not found",
-/// [`CredentialsError::TooLarge`] past [`MAX_CREDENTIALS_FILE_SIZE`], or
-/// [`CredentialsError::Malformed`] for bad TOML / a blank field.
-pub fn load(path: &Path) -> Result<Option<MaxmindCredentials>, CredentialsError> {
-    let mut handle = match File::open(path) {
-        Ok(handle) => handle,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(CredentialsError::Io(err)),
+/// [`CredentialsError::KeyStore`] for a store failure, or
+/// [`CredentialsError::Malformed`] for a bad blob / a blank field.
+pub fn load(app_data_dir: &Path) -> Result<Option<MaxmindCredentials>, CredentialsError> {
+    let entry = key_store::maxmind_credentials_entry(app_data_dir);
+    let Some(bytes) = key_store::load_secret(&entry)? else {
+        return Ok(None);
     };
-    // Bounded read, not metadata-then-read - same reasoning as
-    // `config::ResolverConfig::load`: the size check has to be enforced by
-    // the call that actually allocates.
+    let stored: StoredCredentials =
+        serde_json::from_slice(&bytes).map_err(|_| CredentialsError::Malformed)?;
+    if stored.account_id.trim().is_empty() || stored.license_key.is_blank() {
+        return Err(CredentialsError::Malformed);
+    }
+    Ok(Some(MaxmindCredentials {
+        account_id: stored.account_id,
+        license_key: stored.license_key,
+    }))
+}
+
+/// Stores `account_id` + `license_key` for the install rooted at
+/// `app_data_dir` as a single JSON blob in the OS credential store (T-163) —
+/// the single writer, `POST /admin/geoip/maxmind`. Overwrites any existing
+/// entry wholesale; there is no read-modify-write, so no lock is needed
+/// against a concurrent operator POST (correctly last-writer-wins).
+///
+/// # Errors
+///
+/// [`CredentialsError::Malformed`] if either field is blank (the same rule
+/// [`load`] enforces on read), or [`CredentialsError::KeyStore`] if the store
+/// rejects the write.
+pub(crate) fn save(
+    app_data_dir: &Path,
+    account_id: &str,
+    license_key: &str,
+) -> Result<(), CredentialsError> {
+    if account_id.trim().is_empty() || license_key.trim().is_empty() {
+        return Err(CredentialsError::Malformed);
+    }
+    let blob = Zeroizing::new(
+        serde_json::to_vec(&StoredCredentialsOut {
+            account_id,
+            license_key,
+        })
+        .map_err(|_| CredentialsError::Malformed)?,
+    );
+    let entry = key_store::maxmind_credentials_entry(app_data_dir);
+    key_store::store_secret(&entry, &blob)?;
+    Ok(())
+}
+
+/// The JSON blob [`save`] writes — a throwaway `Serialize` mirror over borrowed
+/// `&str`s. [`LicenseKey`] itself is deliberately **not** `Serialize` (so it
+/// can never leak through a response DTO); writing the plaintext into its own
+/// OS-store entry is the one legitimate exposure, the same conscious call
+/// `expose_secret` makes for the auth header.
+#[derive(Serialize)]
+struct StoredCredentialsOut<'a> {
+    account_id: &'a str,
+    license_key: &'a str,
+}
+
+/// Removes the stored `MaxMind` credentials for the install rooted at
+/// `app_data_dir` (T-163) — the operator switching back to the default DB-IP
+/// Lite source. A missing entry is `Ok(())`, the same "not an error" tolerance
+/// [`load`] applies.
+///
+/// # Errors
+///
+/// [`CredentialsError::KeyStore`] if the store rejects the delete.
+pub(crate) fn clear(app_data_dir: &Path) -> Result<(), CredentialsError> {
+    let entry = key_store::maxmind_credentials_entry(app_data_dir);
+    key_store::delete_secret(&entry)?;
+    Ok(())
+}
+
+/// What [`migrate_legacy_credentials_file`] did — for logging/tests; no caller
+/// branches on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationOutcome {
+    /// No leftover `geoip_maxmind.toml`, nothing to change.
+    NothingToMigrate,
+    /// A leftover `geoip_maxmind.toml` was copied into the store and erased.
+    Migrated,
+    /// The store already held credentials; a stale `geoip_maxmind.toml` was
+    /// present and has been erased (the store's copy wins).
+    StalePlaintextPresent,
+}
+
+/// Copies a pre-T-163 plaintext `geoip_maxmind.toml` in `app_data_dir` into the
+/// OS credential store, exactly once, then erases the file.
+///
+/// - Store already has credentials + a stale file present ⇒ `warn!` naming
+///   which copy wins, erase the file, `Ok(StalePlaintextPresent)`.
+/// - Store empty + a valid file present ⇒ store it, erase the file,
+///   `Ok(Migrated)`.
+/// - No file ⇒ `Ok(NothingToMigrate)`.
+///
+/// Unlike the TLS key's `cert::discard_legacy_key_file`, the file is erased in
+/// the same step it's stored: a `store_secret` `Ok` confirms the copy, and a
+/// re-typeable credential is not an irreplaceable identity.
+///
+/// # Errors
+///
+/// [`CredentialsError::Io`] if reading or erasing the file fails,
+/// [`CredentialsError::TooLarge`] past [`MAX_CREDENTIALS_FILE_SIZE`],
+/// [`CredentialsError::Malformed`] for bad TOML / a blank field, or
+/// [`CredentialsError::KeyStore`] if the store rejects a read or write.
+pub fn migrate_legacy_credentials_file(
+    app_data_dir: &Path,
+) -> Result<MigrationOutcome, CredentialsError> {
+    let legacy = app_data_dir.join("geoip_maxmind.toml");
+    if !legacy.exists() {
+        return Ok(MigrationOutcome::NothingToMigrate);
+    }
+
+    let entry = key_store::maxmind_credentials_entry(app_data_dir);
+    if key_store::load_secret(&entry)?.is_some() {
+        tracing::warn!(
+            "a plaintext geoip_maxmind.toml was found; the credentials already in the OS \
+             credential store are kept and the file removed"
+        );
+        key_store::erase_and_remove(&legacy).map_err(CredentialsError::Io)?;
+        return Ok(MigrationOutcome::StalePlaintextPresent);
+    }
+
+    let raw = read_legacy_bounded(&legacy)?;
+    let (account_id, license_key) = parse_legacy_toml(&raw).ok_or(CredentialsError::Malformed)?;
+    let blob = Zeroizing::new(
+        serde_json::to_vec(&StoredCredentialsOut {
+            account_id: &account_id,
+            license_key: &license_key,
+        })
+        .map_err(|_| CredentialsError::Malformed)?,
+    );
+    key_store::store_secret(&entry, &blob)?;
+    key_store::erase_and_remove(&legacy).map_err(CredentialsError::Io)?;
+    tracing::info!(
+        "migrated MaxMind credentials from geoip_maxmind.toml into the OS credential store"
+    );
+    Ok(MigrationOutcome::Migrated)
+}
+
+/// Bounded read of a leftover `geoip_maxmind.toml` — same reasoning as
+/// `config::ResolverConfig::load`: the size check has to be enforced by the
+/// call that actually allocates.
+fn read_legacy_bounded(path: &Path) -> Result<String, CredentialsError> {
+    let mut handle = File::open(path).map_err(CredentialsError::Io)?;
     let mut raw = String::new();
     let read = handle
         .by_ref()
@@ -152,177 +283,111 @@ pub fn load(path: &Path) -> Result<Option<MaxmindCredentials>, CredentialsError>
     if u64::try_from(read).unwrap_or(u64::MAX) > MAX_CREDENTIALS_FILE_SIZE {
         return Err(CredentialsError::TooLarge);
     }
-    let file: CredentialsFile = toml::from_str(&raw).map_err(|_| CredentialsError::Malformed)?;
-    if file.account_id.trim().is_empty() || file.license_key.is_blank() {
-        return Err(CredentialsError::Malformed);
+    Ok(raw)
+}
+
+/// Parses a pre-T-163 two-key TOML file. `None` on bad TOML, an unknown key,
+/// or a blank field — the caller maps that to [`CredentialsError::Malformed`].
+fn parse_legacy_toml(raw: &str) -> Option<(String, String)> {
+    let file: LegacyCredentialsFile = toml::from_str(raw).ok()?;
+    if file.account_id.trim().is_empty() || file.license_key.trim().is_empty() {
+        return None;
     }
-    Ok(Some(MaxmindCredentials {
-        account_id: file.account_id,
-        license_key: file.license_key,
-    }))
+    Some((file.account_id, file.license_key))
 }
 
-/// Writes `account_id` + `license_key` to `path` as a two-key TOML file,
-/// behind an ACL restricted to the current user (T-162). The single writer
-/// of `geoip_maxmind.toml` — `POST /admin/geoip/maxmind` — replacing the
-/// former hand-edit-only workflow.
-///
-/// Overwrites any existing file wholesale; there is no read-modify-write, so
-/// no lock is needed against a concurrent writer (there is exactly one route,
-/// and a second concurrent operator POST is correctly last-writer-wins).
-///
-/// **Still plaintext on disk** — the same MVP tech-debt posture as the TLS
-/// `key.pem` (`SECURITY.md`); DPAPI is T-163. The restricted ACL (via
-/// [`crate::cert::write_user_restricted_file`], identical to how the private
-/// key is handled) is the interim mitigation.
-///
-/// # Errors
-///
-/// [`CredentialsError::Malformed`] if either field is blank (the same rule
-/// [`load`] enforces on read), or [`CredentialsError::Write`] if creating,
-/// ACL-restricting, or writing the file fails.
-pub(crate) fn save(
-    path: &Path,
-    account_id: &str,
-    license_key: &str,
-) -> Result<(), CredentialsError> {
-    if account_id.trim().is_empty() || license_key.trim().is_empty() {
-        return Err(CredentialsError::Malformed);
-    }
-    let body = toml::to_string(&CredentialsFileOut {
-        account_id,
-        license_key,
-    })
-    .map_err(|_| CredentialsError::Malformed)?;
-    crate::cert::write_user_restricted_file(path, body.as_bytes()).map_err(CredentialsError::Write)
-}
-
-/// The on-disk shape [`save`] serializes — a throwaway `Serialize` mirror of
-/// [`CredentialsFile`] over borrowed `&str`s. `LicenseKey` itself is
-/// deliberately **not** `Serialize` (so it can never leak through a response
-/// DTO); writing the plaintext to its own ACL-restricted file is the one
-/// legitimate exposure, the same conscious call `expose_secret` makes for
-/// the auth header.
-#[derive(Serialize)]
-struct CredentialsFileOut<'a> {
-    account_id: &'a str,
-    license_key: &'a str,
-}
-
-/// Removes `geoip_maxmind.toml` (T-162) — the operator switching back to the
-/// default DB-IP Lite source. A missing file is `Ok(())`, the same "not an
-/// error" tolerance [`load`] applies on read.
-///
-/// # Errors
-///
-/// [`CredentialsError::Io`] if the file exists but can't be removed.
-pub(crate) fn clear(path: &Path) -> Result<(), CredentialsError> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(CredentialsError::Io(err)),
-    }
-}
-
-/// On-disk shape — a flat two-key TOML file. `deny_unknown_fields` rejects a
-/// typo'd key loudly; a missing key is a `serde` error mapped to
-/// [`CredentialsError::Malformed`] (both fields are mandatory, no
-/// `#[serde(default)]`).
+/// Pre-T-163 on-disk shape — a flat two-key TOML file. `deny_unknown_fields`
+/// rejects a typo'd key; a missing key is a `serde` error. Read only by
+/// [`migrate_legacy_credentials_file`].
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CredentialsFile {
+struct LegacyCredentialsFile {
+    account_id: String,
+    license_key: String,
+}
+
+/// The stored JSON blob's shape on read. `deny_unknown_fields` so a
+/// future-versioned blob fails loudly rather than silently dropping a field.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredCredentials {
     account_id: String,
     license_key: LicenseKey,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        clear, load, migrate_legacy_credentials_file, save, CredentialsError, MigrationOutcome,
+        MAX_CREDENTIALS_FILE_SIZE,
+    };
+    use crate::key_store;
+    use std::path::{Path, PathBuf};
 
-    fn write(dir: &tempfile::TempDir, body: &str) -> std::path::PathBuf {
-        let path = dir.path().join("geoip_maxmind.toml");
-        if let Err(err) = std::fs::write(&path, body) {
-            panic!("must be able to write the fixture: {err}");
-        }
-        path
+    /// A scratch app-data dir whose derived `maxmind-credentials` entry is
+    /// deleted on drop, so the real per-install entry is never touched and
+    /// parallel tests don't collide. The dir path is unique per run. Also
+    /// holds [`key_store::STORE_TEST_GUARD`] for its lifetime, so
+    /// credential-store tests across the whole crate run serially (the Windows
+    /// backend races under concurrent access even on distinct entries).
+    struct ScratchDir {
+        _tmp: tempfile::TempDir,
+        _guard: parking_lot::MutexGuard<'static, ()>,
+        path: PathBuf,
     }
 
-    fn tmp() -> tempfile::TempDir {
-        let Ok(dir) = tempfile::tempdir() else {
-            panic!("must be able to create a temp dir");
-        };
-        dir
-    }
-
-    #[test]
-    fn load_of_a_missing_file_is_ok_none() {
-        let dir = tmp();
-        let missing = dir.path().join("does-not-exist.toml");
-        match load(&missing) {
-            Ok(None) => {}
-            other => panic!("expected Ok(None) for a missing file, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn load_of_a_complete_file_parses_both_fields() {
-        let dir = tmp();
-        let path = write(
-            &dir,
-            "account_id = \"123456\"\nlicense_key = \"abcdEFGH_the_key\"\n",
-        );
-        match load(&path) {
-            Ok(Some(creds)) => {
-                assert_eq!(creds.account_id, "123456");
-                assert_eq!(creds.license_key.expose_secret(), "abcdEFGH_the_key");
+    impl ScratchDir {
+        fn new() -> Self {
+            let guard = key_store::STORE_TEST_GUARD.lock();
+            let Ok(tmp) = tempfile::tempdir() else {
+                panic!("must be able to create a temp dir");
+            };
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            // A sub-directory unique per run: the entry name is derived from
+            // the path, so two concurrent tests must not share one.
+            let path = tmp
+                .path()
+                .join(format!("install-{nanos}-{:?}", std::thread::current().id()));
+            if let Err(err) = std::fs::create_dir_all(&path) {
+                panic!("must be able to create the scratch install dir: {err}");
             }
-            other => panic!("expected Ok(Some(_)), got {other:?}"),
+            Self {
+                _tmp: tmp,
+                _guard: guard,
+                path,
+            }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let entry = key_store::maxmind_credentials_entry(&self.path);
+            let _ = key_store::delete_secret(&entry);
         }
     }
 
     #[test]
-    fn load_rejects_a_file_missing_the_license_key() {
-        let dir = tmp();
-        let path = write(&dir, "account_id = \"123456\"\n");
-        assert!(matches!(load(&path), Err(CredentialsError::Malformed)));
-    }
-
-    #[test]
-    fn load_rejects_a_blank_field() {
-        let dir = tmp();
-        let path = write(&dir, "account_id = \"123456\"\nlicense_key = \"   \"\n");
-        assert!(matches!(load(&path), Err(CredentialsError::Malformed)));
-    }
-
-    #[test]
-    fn load_rejects_an_unknown_key() {
-        let dir = tmp();
-        let path = write(
-            &dir,
-            "account_id = \"1\"\nlicense_key = \"k\"\naccountid = \"typo\"\n",
-        );
-        assert!(matches!(load(&path), Err(CredentialsError::Malformed)));
-    }
-
-    #[test]
-    fn load_rejects_a_file_one_byte_over_the_size_limit() {
-        let dir = tmp();
-        let oversized = format!(
-            "account_id = \"1\"\nlicense_key = \"k\"\n# {}\n",
-            "x".repeat(usize::try_from(MAX_CREDENTIALS_FILE_SIZE).unwrap_or(usize::MAX))
-        );
-        let path = write(&dir, &oversized);
-        assert!(matches!(load(&path), Err(CredentialsError::TooLarge)));
+    fn load_of_an_unconfigured_install_is_ok_none() {
+        let dir = ScratchDir::new();
+        match load(dir.path()) {
+            Ok(None) => {}
+            other => panic!("expected Ok(None) for an unconfigured install, got {other:?}"),
+        }
     }
 
     #[test]
     fn save_then_load_roundtrips_both_fields() {
-        let dir = tmp();
-        let path = dir.path().join("geoip_maxmind.toml");
-        if let Err(err) = save(&path, "acct-123", "the-license-key") {
+        let dir = ScratchDir::new();
+        if let Err(err) = save(dir.path(), "acct-123", "the-license-key") {
             panic!("save must succeed: {err}");
         }
-        match load(&path) {
+        match load(dir.path()) {
             Ok(Some(creds)) => {
                 assert_eq!(creds.account_id, "acct-123");
                 assert_eq!(creds.license_key.expose_secret(), "the-license-key");
@@ -332,69 +397,135 @@ mod tests {
     }
 
     #[test]
-    fn save_rejects_a_blank_field() {
-        let dir = tmp();
-        let path = dir.path().join("geoip_maxmind.toml");
+    fn save_rejects_a_blank_field_and_stores_nothing() {
+        let dir = ScratchDir::new();
         assert!(matches!(
-            save(&path, "acct", "   "),
+            save(dir.path(), "acct", "   "),
             Err(CredentialsError::Malformed)
         ));
         assert!(
-            !path.exists(),
-            "a rejected save must not have created the file"
+            matches!(load(dir.path()), Ok(None)),
+            "a rejected save must not have stored anything"
         );
     }
 
     #[test]
-    fn clear_removes_the_file_and_is_ok_when_already_absent() {
-        let dir = tmp();
-        let path = dir.path().join("geoip_maxmind.toml");
-        if let Err(err) = save(&path, "acct", "key") {
+    fn clear_removes_the_entry_and_is_ok_when_already_absent() {
+        let dir = ScratchDir::new();
+        if let Err(err) = save(dir.path(), "acct", "key") {
             panic!("save must succeed: {err}");
         }
-        if let Err(err) = clear(&path) {
+        if let Err(err) = clear(dir.path()) {
             panic!("clear must succeed: {err}");
         }
-        assert!(!path.exists());
-        if let Err(err) = clear(&path) {
-            panic!("clear of an already-absent file must be Ok: {err}");
+        assert!(matches!(load(dir.path()), Ok(None)));
+        if let Err(err) = clear(dir.path()) {
+            panic!("clear of an already-absent entry must be Ok: {err}");
         }
     }
 
-    // The ACL restriction itself is `cert::write_user_restricted_file`, fully
-    // covered by `cert.rs`'s own two ACL tests; this asserts `save` actually
-    // routes through it (exactly one ACE, current user), the same structural
-    // `icacls` line-count check `cert.rs` uses rather than a substring
-    // denylist.
     #[test]
-    fn save_produces_a_file_restricted_to_the_current_user() {
-        let dir = tmp();
-        let path = dir.path().join("geoip_maxmind.toml");
-        if let Err(err) = save(&path, "acct", "key") {
-            panic!("save must succeed: {err}");
+    fn a_corrupt_stored_blob_is_malformed_not_silently_unconfigured() {
+        let dir = ScratchDir::new();
+        let entry = key_store::maxmind_credentials_entry(dir.path());
+        if let Err(err) = key_store::store_secret(&entry, b"{not valid json") {
+            panic!("storing the corrupt fixture must succeed: {err}");
         }
-        let output = match std::process::Command::new("icacls").arg(&path).output() {
-            Ok(output) => output,
-            Err(err) => panic!("icacls must be runnable to verify the ACL: {err}"),
-        };
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let ace_lines: Vec<&str> = stdout
-            .lines()
-            .filter(|line| !line.trim().is_empty() && !line.contains("Successfully processed"))
-            .collect();
-        assert_eq!(
-            ace_lines.len(),
-            1,
-            "expected exactly one ACE after save, got: {stdout}"
+        assert!(matches!(load(dir.path()), Err(CredentialsError::Malformed)));
+    }
+
+    fn write_legacy(dir: &Path, body: &str) {
+        if let Err(err) = std::fs::write(dir.join("geoip_maxmind.toml"), body) {
+            panic!("must be able to write the legacy fixture: {err}");
+        }
+    }
+
+    #[test]
+    fn migration_of_no_file_is_nothing_to_migrate() {
+        let dir = ScratchDir::new();
+        match migrate_legacy_credentials_file(dir.path()) {
+            Ok(MigrationOutcome::NothingToMigrate) => {}
+            other => panic!("expected NothingToMigrate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn migration_moves_a_legacy_file_into_the_store_and_erases_it() {
+        let dir = ScratchDir::new();
+        write_legacy(
+            dir.path(),
+            "account_id = \"123456\"\nlicense_key = \"abcdEFGH_the_key\"\n",
         );
-        let username = match std::env::var("USERNAME") {
-            Ok(name) => name,
-            Err(err) => panic!("USERNAME must be set on Windows: {err}"),
-        };
+        match migrate_legacy_credentials_file(dir.path()) {
+            Ok(MigrationOutcome::Migrated) => {}
+            other => panic!("expected Migrated, got {other:?}"),
+        }
         assert!(
-            ace_lines[0].contains(&format!("{username}:(F)")),
-            "expected the sole ACE to grant the current user Full Control, got: {stdout}"
+            !dir.path().join("geoip_maxmind.toml").exists(),
+            "the legacy file must be gone after migration"
         );
+        match load(dir.path()) {
+            Ok(Some(creds)) => {
+                assert_eq!(creds.account_id, "123456");
+                assert_eq!(creds.license_key.expose_secret(), "abcdEFGH_the_key");
+            }
+            other => panic!("credentials must be readable from the store, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn migration_erases_a_stale_file_when_the_store_already_has_credentials() {
+        let dir = ScratchDir::new();
+        if let Err(err) = save(dir.path(), "store-acct", "store-key") {
+            panic!("seeding the store must succeed: {err}");
+        }
+        write_legacy(
+            dir.path(),
+            "account_id = \"file-acct\"\nlicense_key = \"file-key\"\n",
+        );
+        match migrate_legacy_credentials_file(dir.path()) {
+            Ok(MigrationOutcome::StalePlaintextPresent) => {}
+            other => panic!("expected StalePlaintextPresent, got {other:?}"),
+        }
+        assert!(!dir.path().join("geoip_maxmind.toml").exists());
+        match load(dir.path()) {
+            Ok(Some(creds)) => {
+                assert_eq!(creds.account_id, "store-acct", "the store's copy must win");
+                assert_eq!(creds.license_key.expose_secret(), "store-key");
+            }
+            other => panic!("the store's credentials must be intact, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn migration_rejects_an_oversized_legacy_file_and_leaves_it_in_place() {
+        let dir = ScratchDir::new();
+        let oversized = format!(
+            "account_id = \"1\"\nlicense_key = \"k\"\n# {}\n",
+            "x".repeat(usize::try_from(MAX_CREDENTIALS_FILE_SIZE).unwrap_or(usize::MAX))
+        );
+        write_legacy(dir.path(), &oversized);
+        assert!(matches!(
+            migrate_legacy_credentials_file(dir.path()),
+            Err(CredentialsError::TooLarge)
+        ));
+        assert!(
+            dir.path().join("geoip_maxmind.toml").exists(),
+            "an oversized file must be left for the operator to inspect"
+        );
+    }
+
+    #[test]
+    fn migration_rejects_a_blank_field_in_the_legacy_file() {
+        let dir = ScratchDir::new();
+        write_legacy(
+            dir.path(),
+            "account_id = \"123456\"\nlicense_key = \"   \"\n",
+        );
+        assert!(matches!(
+            migrate_legacy_credentials_file(dir.path()),
+            Err(CredentialsError::Malformed)
+        ));
     }
 
     // The regression this guards: a derived `Debug` on `LicenseKey` (or any
@@ -404,16 +535,14 @@ mod tests {
     #[test]
     fn debug_output_never_contains_the_key_text() {
         let secret = "super-secret-license-key-value";
-        let creds = MaxmindCredentials {
+        let creds = super::MaxmindCredentials {
             account_id: "acct".to_string(),
-            license_key: LicenseKey::new(secret.to_string()),
+            license_key: super::LicenseKey::new(secret.to_string()),
         };
         let key_debug = format!("{:?}", creds.license_key);
         let struct_debug = format!("{creds:?}");
         assert!(!key_debug.contains(secret));
         assert!(!struct_debug.contains(secret));
-        // A shared substring long enough to prove it isn't just a formatting
-        // coincidence.
         assert!(!struct_debug.contains("license-key-value"));
         assert!(
             struct_debug.contains("acct"),

@@ -4,8 +4,8 @@
 //! `rundll32.exe url.dll,FileProtocolHandler` is the well-known Win32 idiom
 //! for "open this URL in whatever the user's default browser is" — spawned
 //! by an absolute path resolved from `%SystemRoot%`, never a bare PATH
-//! lookup, the same discipline `cert.rs`'s `icacls.exe` invocation already
-//! established (CLAUDE.md: "any spawned system process uses an absolute
+//! lookup, the same discipline `trust_store.rs`'s `certutil.exe` invocation
+//! already established (CLAUDE.md: "any spawned system process uses an absolute
 //! path, never PATH lookup" — PATH is attacker-influenceable input, not a
 //! trusted constant). One well-known idiom doesn't justify a new dependency
 //! (`open`/`opener`).

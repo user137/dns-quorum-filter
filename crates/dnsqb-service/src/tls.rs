@@ -129,8 +129,8 @@ pub(crate) fn load_server_config_from_dir(dir: &Path) -> Result<ServerConfig, Tl
         source,
     })?;
 
-    let key_bytes = key_store::load_private_key(&key_store::entry_name_for_dir(dir))?
-        .ok_or(TlsError::NoStoredKey)?;
+    let key_bytes =
+        key_store::load_secret(&key_store::tls_key_entry(dir))?.ok_or(TlsError::NoStoredKey)?;
     // The store always holds PKCS#8 DER: `write_cert_and_key_to_app_data` writes
     // `rcgen`'s `serialize_der()` output, and `migrate_legacy_key_into_store`
     // only accepts a PKCS#8 `key.pem` — so tagging the bytes directly is sound,
@@ -222,7 +222,7 @@ pub fn load_or_generate_server_config() -> Result<ServerConfig, TlsError> {
     }
 
     let existing_files_present = dir.join("cert.pem").exists()
-        && key_store::load_private_key(&key_store::entry_name_for_dir(&dir))
+        && key_store::load_secret(&key_store::tls_key_entry(&dir))
             .is_ok_and(|stored| stored.is_some());
     let load_result = load_server_config_from_dir(&dir);
 
@@ -266,22 +266,32 @@ mod tests {
 
     /// Stores a key under a temp dir's derived entry for the duration of a
     /// test and deletes it on drop, so the real per-install entry is never
-    /// touched and parallel tests don't collide.
-    struct StoredKeyGuard(String);
+    /// touched and parallel tests don't collide. Also holds
+    /// [`key_store::STORE_TEST_GUARD`] so credential-store tests across the
+    /// whole crate run serially (the Windows backend races under concurrent
+    /// access even on distinct entries).
+    struct StoredKeyGuard {
+        entry: String,
+        _guard: parking_lot::MutexGuard<'static, ()>,
+    }
 
     impl StoredKeyGuard {
         fn store(dir: &Path, der: &[u8]) -> Self {
-            let entry = key_store::entry_name_for_dir(dir);
-            if let Err(err) = key_store::store_private_key(&entry, der) {
+            let guard = key_store::STORE_TEST_GUARD.lock();
+            let entry = key_store::tls_key_entry(dir);
+            if let Err(err) = key_store::store_secret(&entry, der) {
                 panic!("storing the test key must succeed: {err}");
             }
-            Self(entry)
+            Self {
+                entry,
+                _guard: guard,
+            }
         }
     }
 
     impl Drop for StoredKeyGuard {
         fn drop(&mut self) {
-            let _ = key_store::delete_private_key(&self.0);
+            let _ = key_store::delete_secret(&self.entry);
         }
     }
 
@@ -389,6 +399,10 @@ mod tests {
 
     #[test]
     fn load_server_config_from_dir_fails_when_cert_pem_present_but_no_stored_key() {
+        // No `StoredKeyGuard` here (the entry is deliberately never set), so
+        // take the credential-store serialization lock directly — this test
+        // still reads the store and must not race a concurrent one.
+        let _store_guard = key_store::STORE_TEST_GUARD.lock();
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
@@ -400,7 +414,6 @@ mod tests {
         if let Err(err) = std::fs::write(dir.path().join("cert.pem"), certified_key.cert.pem()) {
             panic!("must be able to write cert.pem: {err}");
         }
-        // No StoredKeyGuard — the temp dir's derived entry has never been set.
         assert!(matches!(
             load_server_config_from_dir(dir.path()),
             Err(TlsError::NoStoredKey)

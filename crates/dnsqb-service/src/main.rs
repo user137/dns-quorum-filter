@@ -12,9 +12,10 @@
 
 use dnsqb_service::{
     app_data_dir, bind_listener, load_maxmind_credentials, load_or_generate_server_config,
-    run_geoip_updater, serve, AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader,
-    GeoipSource, GeoipState, InvalidEntry, OverrideLists, OverridesState, PersistPaths,
-    PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig, RuntimeInit, TimeoutConfig,
+    migrate_legacy_credentials_file, run_geoip_updater, serve, AppState, BindError, Cache,
+    CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, InvalidEntry, OverrideLists,
+    OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
+    RuntimeInit, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -193,30 +194,38 @@ fn load_geoip_state(path: Option<&Path>) -> GeoipState {
     }
 }
 
-/// Decides which upstream the `GeoIP` database updater pulls from (T-80).
+/// Decides which upstream the `GeoIP` database updater pulls from (T-80/T-163).
 /// DB-IP Lite (SPEC.md §3.5's registration-free default) unless the operator
-/// dropped a complete `geoip_maxmind.toml` in the app-data dir. A missing
-/// app-data dir, an absent file, or a *malformed* file all fall back to
-/// DB-IP Lite — a broken credentials file is logged (payload-free) and
-/// non-fatal, same posture as [`load_overrides`]/[`load_geoip_state`]. The
-/// log line never contains the credentials.
+/// stored `MaxMind` credentials (via `POST /admin/geoip/maxmind`, held in the
+/// OS credential store since T-163). A missing app-data dir, no stored
+/// credentials, or a *malformed* stored blob all fall back to DB-IP Lite — a
+/// broken entry is logged (payload-free) and non-fatal, same posture as
+/// [`load_overrides`]/[`load_geoip_state`]. The log line never contains the
+/// credentials.
+///
+/// Runs the one-time pre-T-163 `geoip_maxmind.toml` → credential-store
+/// migration first; a migration failure is logged and non-fatal (the load
+/// below then simply finds no stored credentials).
 fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
     let Some(dir) = app_data else {
         return GeoipSource::DbIpLite;
     };
-    match load_maxmind_credentials(&dir.join("geoip_maxmind.toml")) {
+    if let Err(err) = migrate_legacy_credentials_file(dir) {
+        tracing::warn!("MaxMind credentials migration failed ({err}), using stored/none");
+    }
+    match load_maxmind_credentials(dir) {
         Ok(Some(creds)) => {
             tracing::info!(
-                "GeoIP source: MaxMind GeoLite2 (credentials loaded from geoip_maxmind.toml)"
+                "GeoIP source: MaxMind GeoLite2 (credentials from the OS credential store)"
             );
             GeoipSource::Maxmind(creds)
         }
         Ok(None) => {
-            tracing::info!("GeoIP source: DB-IP Lite (default; no geoip_maxmind.toml present)");
+            tracing::info!("GeoIP source: DB-IP Lite (default; no MaxMind credentials stored)");
             GeoipSource::DbIpLite
         }
         Err(err) => {
-            tracing::warn!("ignoring geoip_maxmind.toml ({err}), using DB-IP Lite");
+            tracing::warn!("ignoring stored MaxMind credentials ({err}), using DB-IP Lite");
             GeoipSource::DbIpLite
         }
     }
