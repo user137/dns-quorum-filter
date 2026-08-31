@@ -181,6 +181,10 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   legacy-sibling *presence* check warns (T-144 / T-145 / T-148).
 - **A new `LogEntry` / DTO field is `None`/absent except for its one owning `decision_source`** —
   `voters` (Quorum only), `geoip_country` (Geoip only).
+- **Migration/cutover code that removes the source defers the delete until the destination is
+  proven usable** — `cert::discard_legacy_key_file` erases `key.pem` only on `tls` load-success,
+  not right after the copy-into-store (T-67 closing-review: a mismatched plaintext key must
+  survive as a recovery path).
 
 ### Runtime dependencies
 
@@ -286,7 +290,14 @@ reasoning (search by section number rather than re-deriving a decision from scra
 - Windows: the bundled `curl.exe` (Schannel libcurl) has no `--http2` — use PowerShell's
   `Invoke-WebRequest -HttpVersion 2.0` for HTTP/2 (relevant here: `dns.quad9.net` requires it).
 - The PowerShell tool's working directory doesn't reliably persist between separate tool calls in
-  this environment — `cd` inside the same command string, don't rely on a prior call's `cd`.
+  this environment — `cd` inside the same command string, don't rely on a prior call's `cd`. Its
+  static guard also misfires on `/flag:value` args or `X:`-shaped substrings in a command that
+  also runs `Remove-Item` ("Remove-Item on system path … is blocked") — split the delete out.
+- **Verifying an OS-secret-store entry (`keyring`, T-67 / T-163):** use a scratch `cargo` bin
+  calling `keyring` directly (re-derive `key_store::entry_name_for_dir` = sha1 of the lowercased,
+  trailing-separator-stripped app-data dir) — `pwsh` can't load WinRT `PasswordVault` and the
+  backend is Win32 `Cred*` anyway. `windows-latest` CI has a working session Credential Manager,
+  so these round-trip tests run un-`#[ignore]`d (unlike T-50's `icacls` DACLs).
 - Adding any `rustls`-backed dependency tends to surface new `cargo deny` license entries (seen:
   `ISC` for `aws-lc-rs`/`rustls-webpki`, `CDLA-Permissive-2.0` for `webpki-root-certs`) — expect
   and vet each one in `deny.toml`, don't reflexively widen the allowlist.
