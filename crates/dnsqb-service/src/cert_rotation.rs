@@ -23,14 +23,15 @@
 //! - generate fails → nothing changed.
 //! - clear fails → nothing changed; the existing certificate is still trusted.
 //! - persist fails → the old `CurrentUser\Root` entry is gone and `cert.pem`
-//!   holds a new certificate, but `key.pem` was truncated and not rewritten
-//!   ([`cert::write_cert_and_key_to_app_data`] creates the key file empty before
-//!   restricting its ACL, then writes the bytes). The pair is unusable; the next
-//!   `dnsqb-service` start regenerates both files
-//!   (`tls`'s `CertOrigin::Replaced` path), after which the tray's install
-//!   action trusts that regenerated certificate.
-//! - install fails → a fresh, valid `cert.pem`/`key.pem` pair is on disk but not
-//!   trusted; the tray's install action fixes it.
+//!   holds a new certificate, but the OS credential store still holds the
+//!   *previous* private key (or [`cert::write_cert_and_key_to_app_data`]'s
+//!   store write half-completed).
+//!   `cert.pem` and the stored key are a mismatched pair; the next
+//!   `dnsqb-service` start regenerates both (`tls`'s `CertOrigin::Replaced`
+//!   path), after which the tray's install action trusts that regenerated
+//!   certificate.
+//! - install fails → a fresh, valid `cert.pem` + stored-key pair exists but is
+//!   not trusted; the tray's install action fixes it.
 //!
 //! Because generation needs no input and persistence creates both files,
 //! rotation works even where `dnsqb-service` has never run and no `cert.pem`
@@ -92,21 +93,22 @@ pub enum RotationError {
          (nothing changed; the existing certificate is still trusted): {0}"
     )]
     TrustStoreClear(#[source] TrustStoreError),
-    /// Step 3 — writing the new `cert.pem`/`key.pem` failed. The old
+    /// Step 3 — writing the new `cert.pem` / storing the new key failed. The old
     /// `CurrentUser\Root` entries are already gone and `cert.pem` holds a new
-    /// certificate, but `key.pem` is empty — a mismatched pair, unusable until
-    /// the next `dnsqb-service` start regenerates both files.
+    /// certificate, but the stored key is still the previous one (or the store
+    /// write half-completed) — a mismatched pair, unusable until the next
+    /// `dnsqb-service` start regenerates both.
     #[error(
         "failed to persist the new certificate \
-         (old trust-store entries already removed; cert.pem/key.pem is now a \
-         mismatched pair until dnsqb-service regenerates it on next start): {0}"
+         (old trust-store entries already removed; cert.pem and the stored key are \
+         now a mismatched pair until dnsqb-service regenerates them on next start): {0}"
     )]
     Persist(#[source] CertError),
     /// Step 4 — installing the new certificate into `CurrentUser\Root` failed.
-    /// A fresh, valid `cert.pem`/`key.pem` pair is on disk but not trusted.
+    /// A fresh, valid `cert.pem` + stored-key pair exists but is not trusted.
     #[error(
         "failed to install the new certificate \
-         (a valid cert.pem/key.pem pair was written but is not trusted): {0}"
+         (a valid cert.pem and stored key were written but are not trusted): {0}"
     )]
     Install(#[source] TrustStoreError),
 }
@@ -165,7 +167,6 @@ mod tests {
     fn fake_cert_files() -> CertFiles {
         CertFiles {
             cert_path: PathBuf::from("test-only/cert.pem"),
-            key_path: PathBuf::from("test-only/key.pem"),
         }
     }
 

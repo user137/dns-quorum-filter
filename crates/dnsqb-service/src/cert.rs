@@ -2,22 +2,18 @@
 //! persistence (T-50) for the local `DoH` listener. This module deliberately
 //! does not: install the cert into an OS trust store (`trust_store.rs`,
 //! T-49 — a confirm-gated `dnsqb-tray` action, not a manual `certutil`
-//! recipe, as of T-49), rotate an existing cert (T-69), decide whether to
+//! recipe, as of T-49), rotate an existing cert (T-69), or decide whether to
 //! load a previously-persisted cert instead of regenerating one (a future
-//! `main.rs` listener-wiring decision), or store the private key in a
-//! platform secure-storage API (T-67, Фаза 2 — DPAPI/Keychain/Secret
-//! Service). Same "backend primitive ready, wiring later" pattern as every
-//! prior module in this crate.
+//! `main.rs` listener-wiring decision). Same "backend primitive ready, wiring
+//! later" pattern as every prior module in this crate.
 //!
-//! **Private key storage is SPEC.md §2's explicitly named MVP fallback, not
-//! its intended end state:** "якщо на MVP-етапі \[secure storage\] складно —
-//! файл із правами `600` у app data, але це технічний борг, зафіксований
-//! явно." [`write_cert_and_key_to_app_data`] writes a plaintext PEM file, but
-//! restricts the private-key file's ACL to the current user only via
-//! `icacls.exe` — the Windows equivalent of Unix `600` — rather than leaving
-//! it at whatever the parent app-data directory's inherited ACL happens to
-//! be. T-67 (Фаза 2) is the tracked resolution of this tech debt, not a
-//! silent permanent default.
+//! **The private key goes to platform secure storage, not a file next to the
+//! config (SPEC.md §2, T-67).** [`write_cert_and_key_to_app_data`] writes only
+//! the public `cert.pem` to disk; the key is handed to [`key_store`] (Windows
+//! Credential Manager via `keyring`). A pre-T-67 install's ACL-locked plaintext
+//! `key.pem` is picked up once by [`migrate_legacy_key_file`], moved into the
+//! store, and erased. The ACL helpers below ([`write_user_restricted_file`] and
+//! friends) stay — `geoip_maxmind.toml` (T-162) still relies on them.
 //!
 //! **Leaf, never a CA** (SPEC.md §2's largest stated attack-surface
 //! decision): a compromised private key for this cert can only spoof
@@ -53,8 +49,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use rcgen::{CertificateParams, CertifiedKey, DistinguishedName, DnType, IsCa, KeyPair};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::PrivateKeyDer;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::key_store;
 use crate::paths;
 
 /// Subject `CommonName` this project's leaf certificate always carries —
@@ -95,6 +94,15 @@ pub enum CertError {
     /// file's ACL.
     #[error("icacls failed to restrict the private key file (exit code {0:?})")]
     IcaclsFailed(Option<i32>),
+    /// The OS credential store rejected storing or reading the private key.
+    #[error("private key secure storage failed: {0}")]
+    KeyStore(#[from] key_store::KeyStoreError),
+    /// A pre-T-67 `key.pem` was found but its contents don't decode as a PEM
+    /// private key. Payload-free: the file holds key material, so its decode
+    /// error is not something to surface verbatim. The caller falls back to
+    /// regenerating a fresh cert/key pair.
+    #[error("existing key.pem could not be decoded as a private key")]
+    LegacyKeyDecode,
 }
 
 /// Generate the local `DoH` listener's self-signed leaf certificate
@@ -126,38 +134,36 @@ pub fn generate_self_signed_cert() -> Result<CertifiedKey<KeyPair>, CertError> {
     Ok(CertifiedKey { cert, signing_key })
 }
 
-/// Paths of the cert/key files written by [`write_cert_and_key_to_app_data`].
+/// Path of the certificate file written by [`write_cert_and_key_to_app_data`].
+/// The private key is not a file — see [`key_store`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CertFiles {
     /// Path to the PEM-encoded certificate (public — no restricted ACL).
     pub cert_path: PathBuf,
-    /// Path to the PEM-encoded private key (ACL-restricted to this user).
-    pub key_path: PathBuf,
 }
 
-/// Write a generated cert/key to `%LOCALAPPDATA%\dns-quorum-filter\` as
-/// `cert.pem`/`key.pem` (SPEC.md §2's MVP fallback — see this module's own
-/// documentation for the full DPAPI-vs-plaintext-file reasoning; DPAPI itself
-/// is T-67, Фаза 2). Takes `certified_key` **by value**: this function is
-/// where the key's storage/zeroize lifecycle starts and ends. After the key
-/// bytes are written, this makes a best-effort attempt to clear the
-/// in-memory copies — `signing_key.zeroize()` (rcgen's `zeroize` feature,
-/// which wipes only the `KeyPair`'s internal DER bytes) and dropping the PEM
-/// text via [`Zeroizing`] — but this is in-memory hygiene, not a guarantee:
-/// by the time these calls run, the bytes have already been handed to the OS
-/// write path (page cache, possibly swap).
+/// Write the public `cert.pem` to `%LOCALAPPDATA%\dns-quorum-filter\` and hand
+/// the private key to platform secure storage ([`key_store`]; Windows
+/// Credential Manager via `keyring`) under the entry derived from that
+/// directory (SPEC.md §2, T-67). Takes `certified_key` **by value**: this
+/// function is where the key's storage/zeroize lifecycle starts and ends.
+/// After the key bytes are handed off it clears the in-memory copies —
+/// `signing_key.zeroize()` (rcgen's `zeroize` feature, which wipes only the
+/// `KeyPair`'s internal DER bytes) and dropping the serialized DER via
+/// [`Zeroizing`] — best-effort in-memory hygiene, not a guarantee.
 ///
-/// **Unconditionally overwrites** any existing `cert.pem`/`key.pem` on every
-/// call. Deciding whether to load an existing cert instead of regenerating
-/// one (so a user's manual trust-store install at T-49 isn't silently
-/// invalidated on every service restart) is the future listener-wiring
-/// caller's job, not this function's.
+/// **Unconditionally overwrites** any existing `cert.pem` and stored key on
+/// every call. Deciding whether to load an existing cert instead of
+/// regenerating one (so a user's manual trust-store install at T-49 isn't
+/// silently invalidated on every service restart) is the listener-wiring
+/// caller's job ([`crate::tls::load_or_generate_server_config`]), not this
+/// function's.
 ///
 /// # Errors
 ///
 /// Returns [`CertError`] if the app-data directory can't be resolved or
-/// created, if writing either file fails, or if restricting the private-key
-/// file's ACL to the current user fails.
+/// created, if writing `cert.pem` fails, or if the OS credential store rejects
+/// storing the key.
 pub fn write_cert_and_key_to_app_data(
     certified_key: CertifiedKey<KeyPair>,
 ) -> Result<CertFiles, CertError> {
@@ -172,32 +178,115 @@ pub fn write_cert_and_key_to_app_data(
     let cert_path = dir.join("cert.pem");
     fs::write(&cert_path, cert.pem()).map_err(CertError::Io)?;
 
-    let key_path = dir.join("key.pem");
-    let key_pem = Zeroizing::new(signing_key.serialize_pem());
-    write_key_file(&key_path, key_pem.as_bytes())?;
+    let key_der = Zeroizing::new(signing_key.serialize_der());
+    key_store::store_private_key(&key_store::entry_name_for_dir(&dir), &key_der)?;
     signing_key.zeroize();
 
-    Ok(CertFiles {
-        cert_path,
-        key_path,
-    })
+    Ok(CertFiles { cert_path })
 }
 
-/// Create `path` empty, restrict its ACL to the current user, then write
-/// `contents` — in that order, never write-then-restrict. Writing first would
-/// leave a window where the private key sits on disk under the parent
-/// directory's inherited ACL rather than the restricted one.
-fn write_key_file(path: &Path, contents: &[u8]) -> Result<(), CertError> {
-    write_user_restricted_file(path, contents)
+/// Pick up a pre-T-67 plaintext `key.pem` in `dir` exactly once: if the OS
+/// credential store has no key yet but the file exists, decode it, store the
+/// key, and erase the file. If the store already holds a key, a stale `key.pem`
+/// is erased without being read. See [`migration_action`] for the decision and
+/// [`erase_and_remove`] for why a bare unlink is not enough.
+///
+/// # Errors
+///
+/// [`CertError::KeyStore`] if the credential store rejects a read or write;
+/// [`CertError::LegacyKeyDecode`] if `key.pem` exists but doesn't parse (the
+/// file is **left in place** for inspection); [`CertError::Io`] if reading or
+/// removing the file fails.
+pub(crate) fn migrate_legacy_key_file(dir: &Path) -> Result<MigrationOutcome, CertError> {
+    let entry = key_store::entry_name_for_dir(dir);
+    let legacy = dir.join("key.pem");
+    let store_has_key = key_store::load_private_key(&entry)?.is_some();
+
+    match migration_action(store_has_key, legacy.exists()) {
+        MigrationAction::Nothing => {
+            if store_has_key && legacy.exists() {
+                tracing::warn!(
+                    "a plaintext key.pem is present but the OS credential store already holds the \
+                     private key; erasing the stale plaintext copy"
+                );
+                erase_and_remove(&legacy)?;
+                return Ok(MigrationOutcome::StalePlaintextRemoved);
+            }
+            Ok(MigrationOutcome::NothingToMigrate)
+        }
+        MigrationAction::Migrate => {
+            let pem = Zeroizing::new(fs::read(&legacy).map_err(CertError::Io)?);
+            // This project's own `key.pem` was always PKCS#8
+            // (`rcgen::KeyPair::serialize_pem` → `-----BEGIN PRIVATE KEY-----`).
+            // Any other encoding was not written by us — reject rather than
+            // guess; the caller then regenerates a fresh pair.
+            let Ok(PrivateKeyDer::Pkcs8(key_der)) = PrivateKeyDer::from_pem_slice(&pem) else {
+                return Err(CertError::LegacyKeyDecode);
+            };
+            key_store::store_private_key(&entry, key_der.secret_pkcs8_der())?;
+            erase_and_remove(&legacy)?;
+            tracing::info!(
+                "migrated the TLS private key from key.pem into the OS credential store"
+            );
+            Ok(MigrationOutcome::Migrated)
+        }
+    }
+}
+
+/// Whether [`migrate_legacy_key_file`] has anything to move. Pure, so the
+/// decision is testable without an OS credential store (same pure/impure split
+/// as `tls::cert_origin`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MigrationAction {
+    /// Store already has the key, or there is no legacy file — nothing to move.
+    Nothing,
+    /// Store is empty and a legacy `key.pem` exists — move it in.
+    Migrate,
+}
+
+/// What [`migrate_legacy_key_file`] actually did — for logging/tests; no caller
+/// branches on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MigrationOutcome {
+    /// No legacy file, and nothing to change.
+    NothingToMigrate,
+    /// A legacy `key.pem` was moved into the store and erased.
+    Migrated,
+    /// The store already held the key; a stale `key.pem` was erased unread.
+    StalePlaintextRemoved,
+}
+
+/// `Migrate` iff the store has no key yet but a legacy plaintext `key.pem`
+/// exists.
+pub(crate) fn migration_action(store_has_key: bool, legacy_pem_present: bool) -> MigrationAction {
+    if !store_has_key && legacy_pem_present {
+        MigrationAction::Migrate
+    } else {
+        MigrationAction::Nothing
+    }
+}
+
+/// Overwrite `path` with zeros (bounded at 64 KiB — a `key.pem` is ~240 bytes),
+/// then delete it. A bare unlink leaves the key bytes readable on disk,
+/// defeating the point of T-67; a truncate-in-place write keeps the file's
+/// existing user-only ACL (confirmed empirically for
+/// [`write_user_restricted_file`]'s create-restrict-write ordering).
+fn erase_and_remove(path: &Path) -> Result<(), CertError> {
+    if let Ok(meta) = fs::metadata(path) {
+        let len = usize::try_from(meta.len().min(64 * 1024)).unwrap_or(0);
+        // A failed overwrite is not fatal — the removal below is what actually
+        // takes the key off disk; proceed to it regardless.
+        let _ = fs::write(path, vec![0u8; len]);
+    }
+    fs::remove_file(path).map_err(CertError::Io)
 }
 
 /// Write `contents` to `path` behind an ACL restricted to Full Control for
 /// the current user only — creating the file empty, restricting it, *then*
 /// writing, so the bytes never sit on disk under the parent directory's
-/// inherited (wider) ACL even briefly. Reused for the private key
-/// (`write_key_file`) and for `geoip_maxmind.toml` (T-162,
-/// [`crate::geoip_credentials::save`]) — both plaintext secrets on disk as
-/// explicit MVP tech debt (`SECURITY.md`), so both get the same restriction.
+/// inherited (wider) ACL even briefly. Used for `geoip_maxmind.toml` (T-162,
+/// [`crate::geoip_credentials::save`]) — a plaintext secret on disk as
+/// explicit MVP tech debt (`SECURITY.md`).
 pub(crate) fn write_user_restricted_file(path: &Path, contents: &[u8]) -> Result<(), CertError> {
     // The handle itself is unused — this call exists only to make `path`
     // exist as an empty file for `restrict_to_current_user` to ACL, before
@@ -478,25 +567,25 @@ mod tests {
     }
 
     #[test]
-    fn write_key_file_creates_a_file_restricted_to_the_current_user_only() {
+    fn write_user_restricted_file_creates_a_file_restricted_to_the_current_user_only() {
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
         };
-        let key_path = dir.path().join("key.pem");
+        let path = dir.path().join("secret.toml");
 
-        if let Err(err) = super::write_key_file(&key_path, b"placeholder-key-bytes") {
-            panic!("write_key_file must succeed: {err}");
+        if let Err(err) = super::write_user_restricted_file(&path, b"placeholder-secret-bytes") {
+            panic!("write_user_restricted_file must succeed: {err}");
         }
 
-        match std::fs::read(&key_path) {
-            Ok(contents) => assert_eq!(contents, b"placeholder-key-bytes"),
-            Err(err) => panic!("written key file must be readable back: {err}"),
+        match std::fs::read(&path) {
+            Ok(contents) => assert_eq!(contents, b"placeholder-secret-bytes"),
+            Err(err) => panic!("written file must be readable back: {err}"),
         }
 
         // Real `icacls` read-back, not a trust-the-call-succeeded assertion —
         // same standard the SAN/`IsCa` tests hold `rcgen` to.
-        let output = match std::process::Command::new("icacls").arg(&key_path).output() {
+        let output = match std::process::Command::new("icacls").arg(&path).output() {
             Ok(output) => output,
             Err(err) => panic!("icacls must be runnable to verify the ACL: {err}"),
         };
@@ -529,6 +618,31 @@ mod tests {
             ace_lines[0].contains(&format!("{username}:(F)")),
             "expected the sole ACE to grant the current user Full Control, got: {stdout}"
         );
+    }
+
+    #[test]
+    fn migration_action_moves_only_when_store_empty_and_legacy_present() {
+        use super::{migration_action, MigrationAction};
+        assert_eq!(migration_action(false, true), MigrationAction::Migrate);
+        assert_eq!(migration_action(false, false), MigrationAction::Nothing);
+        assert_eq!(migration_action(true, true), MigrationAction::Nothing);
+        assert_eq!(migration_action(true, false), MigrationAction::Nothing);
+    }
+
+    #[test]
+    fn erase_and_remove_zeroes_then_deletes() {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("must be able to create a temp dir: {err}"),
+        };
+        let path = dir.path().join("key.pem");
+        if let Err(err) = std::fs::write(&path, b"-----BEGIN PRIVATE KEY-----\nsecret\n") {
+            panic!("must be able to write the fixture: {err}");
+        }
+        if let Err(err) = super::erase_and_remove(&path) {
+            panic!("erase_and_remove must succeed: {err}");
+        }
+        assert!(!path.exists(), "file must be gone after erase_and_remove");
     }
 
     #[test]

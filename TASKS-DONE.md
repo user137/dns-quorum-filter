@@ -1756,6 +1756,120 @@
   `cert_rotation`-рядок у таблиці модулів, опис трею), SERVICES.md (`### Меню` — лічильник і три
   пункти сертифіката), TASKS.md.
 
+- [x] T-67 — Приватний ключ TLS-сертифіката у platform secure storage замість plaintext-файлу
+  (SPEC.md §2) — один коміт, plan-mode + AskUserQuestion + advisor до і після.
+
+  **Рішення користувача (AskUserQuestion), не агента.** Задача чіпає крейт-широкий
+  `#![forbid(unsafe_code)]` (DPAPI = сирий Win32 FFI), тож вибір механізму — за користувачем.
+  Обрано **крейт `keyring`** (safe wrapper над OS secret store: Windows Credential Manager зараз,
+  macOS Keychain / Linux Secret Service під T-71) замість точкового `unsafe` DPAPI-виклику —
+  `unsafe` FFI лишається повністю в `windows-native-keyring-store`, forbid-інваріант цілий.
+  Legacy `key.pem` — **одноразова міграція** (не hard cutover): декод → запис у сховище →
+  занулити-й-видалити файл, поточний довірений сертифікат зберігається.
+
+  **Крок 0 — емпірична проба `keyring` перед написанням модуля** (та сама дисципліна, що
+  `Name::to_ascii`, `rcgen` SAN, `toml::de::Error` sentinel — throwaway `cargo run`, не читання
+  доків). WebFetch під час планування не зміг відтворити приклади коду `keyring`, тож чотири
+  факти лишались припущеннями. Проба (scratch-проєкт, ~40 рядків) зафіксувала: (а) `keyring::
+  Entry::new` з фічею `v1` працює **без** `set_default_store`; (б) бінарні секрети — `set_secret`/
+  `get_secret` (не `set_password`), видалення — `delete_credential`; (в) відсутній запис →
+  `Err(keyring::Error::NoEntry)` і на `get_secret`, і на `delete_credential` (**не** ідемпотентно
+  за замовчуванням — мапиться вручну в `Ok(None)`/`Ok(())`); (г) весь новий tree —
+  `MIT OR Apache-2.0` / `Unlicense OR MIT`, `deny`/`audit` без нових записів.
+
+  **Новий модуль `crates/dnsqb-service/src/key_store.rs`** — єдина межа крейта до OS secret
+  store, єдине місце, де згадується `keyring`. `KEY_STORE_SERVICE = "dns-quorum-filter"`;
+  `store_private_key(entry, der)` / `load_private_key(entry) -> Option<Zeroizing<Vec<u8>>>` /
+  `delete_private_key(entry)` (`#[cfg(test)]` поки — перший не-тестовий виклик буде задача
+  деінсталятора, той самий staging, що `LicenseKey::new`); `KeyStoreError` обгортає
+  `#[from] keyring::Error` **з payload'ом** — `Display` цього типу описує збій доступу до сховища,
+  ніколи не несе домен (на відміну від `reqwest::Error`, CLAUDE.md gotcha), тож payload корисний
+  для діагностики; doc-comment явно забороняє "гармонізувати" це в payload-free варіант за
+  аналогією з `InvalidReason`.
+
+  **Ім'я запису прив'язане до app-data-теки, не константа** (advisor pre-gate catch). Запис
+  Credential Manager — per-Windows-user, machine-global, **не** під `%LOCALAPPDATA%`. Без
+  прив'язки scratch-`dnsqb-service.exe` (стандартна техніка верифікації цього проєкту) читав би
+  й перезаписував реальний ключ dev-машини, а два екземпляри билися б за один запис.
+  `entry_name_for_dir(dir) = "doh-tls-private-key:" + hex(sha1(dir)[..8])` — кожна інсталяція
+  (реальна чи scratch) має свій стабільний запис без bookkeeping оператора.
+
+  **`cert.rs`:** `write_cert_and_key_to_app_data` — сигнатура без змін (резолвить `dir` через
+  `paths::app_data_dir()`, звідти й `entry_name_for_dir`, тож замикання `persist` у
+  `cert_rotation` не чіпається), пише лише `cert.pem`, ключ → `key_store::store_private_key`.
+  `CertFiles` втрачає поле `key_path` (жоден споживач — звірено workspace-wide `rg`). Видалено
+  `write_key_file` + його тести; `write_user_restricted_file`/`restrict_to_current_user`/
+  `other_principals`/`icacls_path` **лишаються** — `geoip_maxmind.toml` (T-162) ними користується.
+  Нове: `migration_action(store_has_key, legacy_present) -> {Nothing,Migrate}` (чисте, тестоване
+  без сховища) + `migrate_legacy_key_file(dir)` (impure): store має ключ → `AlreadyInStore` (+
+  видалити застарілий `key.pem` з `warn!` — живий plaintext-ключ, який ми не писали); інакше
+  `key.pem` є → декод (**лише** `PrivateKeyDer::Pkcs8` — наш `serialize_pem` завжди PKCS#8,
+  інакше `LegacyKeyDecode` і регенерація) → запис → `erase_and_remove`. **`erase_and_remove`**
+  (advisor catch) = `fs::write(path, zeros)` (обмежено 64 KiB) **потім** `remove_file`, не голий
+  unlink — інакше байти ключа лишаються на диску, проти самого рядка SPEC, що задача закриває
+  (truncate-in-place зберігає ACL — емпірично підтверджено для `write_user_restricted_file`).
+
+  **`tls.rs`:** `load_server_config_from_dir(dir)` читає `cert.pem` з `dir` + ключ із
+  `key_store::load_private_key(entry_name_for_dir(dir))`; `None` → `TlsError::NoStoredKey` (як
+  відсутній файл сьогодні — caller регенерує). Байти зі сховища завжди PKCS#8 DER, тегуються
+  напряму `PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(...))`, без PEM-round-trip.
+  `load_or_generate_server_config` новий порядок: (1) `migrate_legacy_key_file` (збій → `warn!`,
+  не фатально); (2) `existing_present` = `cert.pem` є **і** сховище має ключ; (3) load/regen.
+  `cert_origin` — логіка без змін; `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}` семантика
+  ціла (`Replaced` = `cert.pem` є, ключа нема/не розшифровується → гучний `warn!`).
+
+  **`cert_rotation.rs`:** без структурних змін (`rotate_with` — ті самі 4 замикання; `set_secret`
+  перезаписує, крок "clear" ключа не чіпає). Оновлено module-doc partial-failure-аналіз і
+  `RotationError::Persist` — "`key.pem` обрізано" → "сховище тримає попередній ключ (або
+  `set_secret` не дозавершив) — mismatched pair до наступного старту".
+
+  **Залежність.** `keyring = { default-features = false, features = ["v1"] }` — `v1` обов'язкова
+  (`compile_error!` без `v1`/`cli`). `v1` тягне й Unix/Apple store-крейти (`zbus-secret-service-
+  keyring-store`, ...) — target-gated, тільки в `Cargo.lock`, ніколи не компілюються й не
+  оцінюються `cargo deny` для windows-msvc (той самий кейс, що видалені `tauri`-рядки; deny.toml
+  `[graph] targets` уже це покриває). `cargo deny check` — advisories/bans/licenses/sources ok,
+  без нових SPDX. `cargo audit` — exit 0, 12 пре-існуючих allowed-warnings (gtk/glib/proc-macro-
+  error/chacha20, усі транзитивні через tray/hickory, не з цієї задачі). `windows-sys 0.61.2`
+  перевикористано (вже в tree через tokio→mio). Vetting-рядок додано в SECURITY.md.
+
+  **Тести.** Чисті (без Credential Manager): `migration_action` truth-table;
+  `erase_and_remove` занулює-й-видаляє; `cert_origin` (без змін, зелені);
+  `write_user_restricted_file` ACE-count (перейменовано з `write_key_file`-тесту, той самий
+  структурний доказ "рівно один ACE"); `server_config` matching/mismatched pair.
+  Round-trip проти **справжнього** Credential Manager (не `#[ignore]`d — на цьому боксі й на
+  `windows-latest` сесійний Credential Manager є; RAII-`Drop` guard з унікальним ім'ям запису
+  видаляє після себе, реальний per-install-запис не чіпається): `store` → `load` повертає ті
+  самі байти → `ServerConfig`; `set_secret` перезаписує; невідомий запис → `Ok(None)`;
+  `delete` ідемпотентний; `load_server_config_from_dir` з `cert.pem` + збереженим ключем;
+  `cert.pem` є, ключа нема → `NoStoredKey`; зіпсований `cert.pem` → `Pem`. Клас
+  local-green/CI-red (T-50 `icacls` DACL на `windows-latest`) можливий і тут — якщо round-trip
+  флакне на CI, `#[ignore]` з нотаткою (чисті тести + ручна верифікація все одно покривають);
+  CI-прогін після пушу обов'язковий.
+
+  **Ручна верифікація** (Chrome-автоматизація й далі недоступна — PowerShell HTTPS round-trip
+  проти справжнього `dnsqb-service.exe` у scratch `%LOCALAPPDATA%`, порт 8443,
+  `-SkipCertificateCheck`; scratch-тека → власний запис, реальний ключ dev-машини не чіпався):
+  (1) перший старт — `cert.pem` є, `key.pem` **нема**, `/admin/status` 200 (TLS піднявся = ключ
+  збережено й прочитано); (2) рестарт — `cert.pem` sha1 не змінився (`CertOrigin::Loaded`), 200;
+  (3) міграція — видалено запис, покладено pre-T-67 `cert.pem`+`key.pem` (rcgen-згенеровану
+  пару), старт → `key.pem` зник, `cert.pem` sha1 **не змінився** (той самий сертифікат), запис
+  present (138 байт), 200; (4) undecryptable fallback — видалено запис, `cert.pem` лишено,
+  старт → `cert.pem` sha1 **змінився** (регенеровано), новий ключ збережено, 200. `tracing`
+  stderr у всіх прогонах порожній (сабскрайбер, схоже, не пише в stderr у цьому конфізі) —
+  поведінкові докази (стан файлів, sha1, HTTP 200) покривають кожен шлях незалежно.
+
+  Ground-truth ритуал діаграм: `diagrams/` не малюють приховування приватного ключа / потік
+  персистенції cert/key (grep по `key.pem`/`private key`/`Credential` — лише MaxMind-креденшели
+  DTO, не пов'язане) — жодної діаграми не зачеплено.
+
+  Повний локальний гейт зелений: 425 lib + 5 tray (+11 нових тестів, 4+0 ignored),
+  conformance 18/2, clippy `-D warnings` / fmt / rustdoc `-D warnings` / doctest / `cargo deny
+  check` / `cargo audit` чисті. Docs: SPEC.md §2 (dated T-67 sub-bullet), SECURITY.md
+  (перший bullet переписано + `keyring` vetting-рядок), CLAUDE.md (таблиця модулів —
+  `key_store`, `cert`/`tls` рядки; runtime-deps; два нових gotcha — `keyring` `v1`/`NoEntry`/
+  target-gated-lock, `secret_pkcs8_der` не `secret_der`), SERVICES.md, CONFIGURATION.md
+  (`key.pem`-згадка в geoip-секції знята), TASKS.md.
+
 - [x] T-162 (частина) — MaxMind GeoLite2-режим: адмін-маршрут + картка на `/admin/ui` +
   показ активного джерела бази (SPEC.md §3.5) — один коміт, plan-mode + advisor до і після.
 

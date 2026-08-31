@@ -202,10 +202,17 @@ runtime-підхоплення джерела, виявлення "зламал�
 `https`-URL, 3 евристики `BlockSignature`, маршрути `GET /admin/providers` +
 `POST /admin/providers/{add,remove,set-enabled}`, картка `#providers-body` на `/admin/ui`,
 `AdminConfigUpdate` втрачає `providers`, `AdminStatusResponse.providers` → `active_providers`;
-SSRF-валідація (літеральний хост), `url` як пряма залежність. Далі — T-67 (приватний ключ у
-DPAPI). ECS-провайдер → **T-164**.
+SSRF-валідація (літеральний хост), `url` як пряма залежність. ECS-провайдер → **T-164**.
 
-- [ ] T-67 — Інсталятор генерує leaf-сертифікат, приватний ключ у platform secure storage (DPAPI / Keychain / Secret Service) (2)
+**T-67 done** (2026-08-31, plan-mode + AskUserQuestion + advisor обидва боки, 1 коміт) —
+приватний ключ TLS-сертифіката тепер у Windows Credential Manager через крейт `keyring`
+(`key_store.rs`), на диску лишається лише публічний `cert.pem`. Рішення користувача: `keyring`
+(safe wrapper, `#![forbid(unsafe_code)]` цілий), не точковий `unsafe` DPAPI-виклик; одноразова
+міграція старого plaintext `key.pem` у сховище (декод → запис → занулити-й-видалити). Ім'я
+запису прив'язане до app-data-теки, тож scratch-екземпляр не чіпає реальний ключ.
+`windows-native-keyring-store` несе `unsafe` FFI; `keyring`-фіча `v1` обов'язкова, Unix/Apple
+store-крейти target-gated (тільки в `Cargo.lock`, `deny`/`audit` чисті). Повний запис —
+TASKS-DONE.md. macOS Keychain / Linux Secret Service `keyring` абстрагує, але не перевірено — **T-71**.
 - [ ] T-68 — **Windows-половина (install) звужена — готово, T-49 (TASKS-DONE.md, 2026-08-29),
   пуллено в Ф1.** Лишається: macOS-половина (Keychain, `security add-trusted-cert`).
 - [ ] T-70 — **Windows-половина звужена — `trust_store::uninstall()` (T-49) уже є примітивом,
@@ -217,9 +224,9 @@ DPAPI). ECS-провайдер → **T-164**.
   ECS Subnet-опцією + шлях у quorum, що чіпляє її лише для цього preset (RFC 7871). (3.4)
 - [ ] T-83 — CI: розширити build matrix на другу платформу (Windows + macOS; Linux — можлива третя ціль, див. T-71) (Фазований план, Фаза 2)
 - [ ] T-163 — Залишок T-162 (частина 1+3-save-time+5 доставлена в T-162, TASKS-DONE.md 2026-08-31):
-  (1) **DPAPI** для `geoip_maxmind.toml` замість plaintext — той самий T-67-прецедент про
-  крейт-широкий `#![forbid(unsafe_code)]` vs сирий Win32 FFI, власний plan+advisor+AskUserQuestion
-  цикл (спільний примітив із T-67); (2) `POST /admin/reset` має перечитувати `geoip_maxmind.toml`
+  (1) винести `geoip_maxmind.toml` із plaintext у secure storage — найпростіше тим самим
+  `keyring`-примітивом, що T-67 уже завів (`key_store.rs`), а не сирим Win32 DPAPI FFI; власний
+  plan+advisor цикл; (2) `POST /admin/reset` має перечитувати `geoip_maxmind.toml`
   **+** фоновий `run_geoip_updater` має читати `GeoipSource` зі спільного стану `AppState`, щоб
   зміна креденшелів діяла без перезапуску процесу (зараз апдейтер тримає `GeoipSource`, з яким
   його заспавнили); (3) **ongoing** виявлення: показувати в UI, що раніше прийняті креденшели

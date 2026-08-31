@@ -130,6 +130,7 @@ mod geoip;
 mod geoip_credentials;
 mod geoip_download;
 mod geoip_updater;
+mod key_store;
 mod listener;
 mod overrides;
 mod paths;

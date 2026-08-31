@@ -36,8 +36,8 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource`, `LogFilter` search, `clear` |
 | `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables; per-field validation, loud errors |
-| `cert` / `paths` / `trust_store` / `cert_rotation` | self-signed leaf cert generation (T-48), disk persistence with restricted key ACL (T-50), `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
-| `tls` | `load_or_generate_server_config` → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_file` moves a pre-T-67 plaintext `key.pem` into the store once (decode → store → zero-and-unlink), keeping the trusted cert; restricted-ACL `icacls` helpers (T-50) kept for `geoip_maxmind.toml`; `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient`; embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
@@ -201,6 +201,10 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   — every call site grepped for domain-name leaks before the first real subscriber was wired).
 - `url` — custom DoH provider URL parsing + literal-host SSRF classification (T-72). Already in the
   tree transitively via `reqwest`/`hickory-proto`; promoted to a direct dep, no new licence entry.
+- `keyring` (`default-features = false`, `features = ["v1"]`) — TLS private key in the OS secret
+  store (T-67, `key_store.rs`). `v1` is required (compile error without it); it also lists the
+  Unix/Apple store crates target-gated — lockfile-only for windows-msvc, no `deny.toml` change.
+  `unsafe` FFI is contained in `windows-native-keyring-store`, `#![forbid(unsafe_code)]` intact.
 - `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot`;
   depends on `dnsqb-service` as a library for `AdminClient`.
 - Dev-only: `tempfile` (`overrides` load tests), `x509-parser` (`cert` DER assertions), `proptest`
@@ -613,6 +617,22 @@ reasoning (search by section number rather than re-deriving a decision from scra
   extra is exposed" test can't be made stronger by tightening an assertion, ask whether the property
   even has an external observation point before writing the test — if it doesn't, the fix is making
   the property into data, not writing a cleverer probe.**
+- **`keyring` 4.x (T-67):** the crate refuses to compile without the `v1` or `cli` feature
+  (`compile_error!`), so `default-features = false` still needs `features = ["v1"]`. `v1` bundles
+  the Apple/Windows/Linux store crates; the non-Windows ones are `cfg`-gated and land in
+  `Cargo.lock` only (never compiled or `cargo deny`-evaluated for the windows-msvc graph target —
+  same shape as the old `tauri` rows). The all-in-one `keyring::Entry` works with **no**
+  `set_default_store` call. Binary secrets go through `set_secret`/`get_secret` (not
+  `set_password`); delete is `delete_credential`; a missing entry is `Err(keyring::Error::NoEntry)`
+  on both `get_secret` and `delete_credential` (map it to `Ok(None)`/`Ok(())` yourself — delete is
+  **not** idempotent by default). All four facts confirmed by a throwaway `cargo run` probe before
+  writing `key_store.rs`, per this project's verify-empirically discipline.
+- **`rustls::pki_types::PrivateKeyDer::Pkcs8(k)` — the byte accessor is `k.secret_pkcs8_der()`,
+  not `secret_der()`** (which only exists on the outer `PrivateKeyDer` enum). `key_store` stores
+  raw PKCS#8 DER, and `migrate_legacy_key_file` only accepts a `PrivateKeyDer::Pkcs8` match arm
+  from `from_pem_slice` — this project's own `key.pem` was always PKCS#8 (`rcgen`
+  `serialize_pem`), so a non-PKCS#8 legacy file is rejected (`CertError::LegacyKeyDecode`, caller
+  regenerates) rather than guessed at.
 
 ## Documentation map — who owns what
 

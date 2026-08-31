@@ -1,19 +1,20 @@
-//! `rustls::ServerConfig` construction from the persisted cert/key (T-142) —
+//! `rustls::ServerConfig` construction from the persisted certificate (T-142)
+//! and the private key held in platform secure storage (T-67, [`key_store`]) —
 //! the load-vs-regenerate decision `cert::write_cert_and_key_to_app_data`
-//! (T-50) explicitly left for "the future listener-wiring caller." Actual
-//! TCP accept / request dispatch (`hyper`, `DoH` GET/POST parsing → `pipeline::
-//! handle_query`) is a separate, later task — this module only produces the
-//! TLS material a real listener will need.
+//! (T-50) explicitly left for "the future listener-wiring caller"
+//! ([`load_or_generate_server_config`], which also runs the one-time
+//! `key.pem` → credential-store migration). Actual TCP accept / request
+//! dispatch (`hyper`, `DoH` GET/POST parsing → `pipeline::handle_query`) is a
+//! separate task — this module only produces the TLS material a real listener
+//! needs.
 //!
-//! Uses `rustls::pki_types::{CertificateDer, PrivateKeyDer}::from_pem_slice`
-//! (re-exported by `rustls` itself — confirmed via `rustls`'s `lib.rs`,
+//! `cert.pem` is read via `CertificateDer::from_pem_slice` (re-exported by
+//! `rustls` itself — confirmed via `rustls`'s `lib.rs`,
 //! `pub mod pki_types { pub use pki_types::*; }` — gated on `rustls`'s own
 //! `std` feature, which this crate already enables) rather than a separate
-//! `pem` crate dependency: one less place two PEM parsers could disagree,
-//! and `PrivateKeyDer::from_pem_slice` reads the PEM tag itself
-//! (`"PRIVATE KEY"` → Pkcs8, `"RSA PRIVATE KEY"` → Pkcs1, `"EC PRIVATE
-//! KEY"` → Sec1) instead of this module assuming a fixed encoding for
-//! whatever ends up on disk.
+//! `pem` crate dependency. The private key comes back from the store as raw
+//! PKCS#8 DER (see [`load_server_config_from_dir`] for why the encoding is
+//! known, not guessed).
 //!
 //! Builds every `ServerConfig` via `builder_with_provider(aws_lc_rs::
 //! default_provider())`, never the plain `ServerConfig::builder()`. The
@@ -40,6 +41,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::ServerConfig;
 
 use crate::cert::{self, CertError};
+use crate::key_store;
 use crate::paths;
 
 /// Errors producing a [`ServerConfig`] from the local certificate.
@@ -48,7 +50,7 @@ pub enum TlsError {
     /// Generating or persisting a fresh certificate failed.
     #[error("failed to generate or persist certificate: {0}")]
     Cert(#[from] CertError),
-    /// Reading `cert.pem`/`key.pem` back off disk failed.
+    /// Reading `cert.pem` back off disk failed.
     #[error("failed to read {path:?}: {source}")]
     Io {
         /// The file that failed to read.
@@ -57,8 +59,7 @@ pub enum TlsError {
         #[source]
         source: std::io::Error,
     },
-    /// `cert.pem`/`key.pem` did not contain a well-formed PEM block of the
-    /// expected kind.
+    /// `cert.pem` did not contain a well-formed PEM block of the expected kind.
     #[error("{path:?} is not a valid PEM file: {source}")]
     Pem {
         /// The file that failed to parse.
@@ -67,6 +68,14 @@ pub enum TlsError {
         #[source]
         source: rustls::pki_types::pem::Error,
     },
+    /// The OS credential store rejected reading the private key.
+    #[error("failed to read the private key from secure storage: {0}")]
+    KeyStore(#[from] key_store::KeyStoreError),
+    /// `cert.pem` is present but the OS credential store holds no matching
+    /// private key — treated as "no usable certificate", so the caller
+    /// regenerates (`CertOrigin::Replaced`).
+    #[error("cert.pem is present but no private key is stored")]
+    NoStoredKey,
     /// `rustls` rejected the certificate/key pair — e.g. the key's
     /// `SubjectPublicKeyInfo` does not match the certificate's.
     #[error("TLS configuration rejected the certificate/key: {0}")]
@@ -101,15 +110,15 @@ pub(crate) fn server_config_from_certified_key(
     build_server_config(vec![cert_der], key_der)
 }
 
-/// Load `cert.pem`/`key.pem` from `dir` and build a [`ServerConfig`] — pure,
-/// parameterized by directory (mirrors `paths.rs`'s own pure/impure split
-/// for testability) so tests don't need to touch the real app-data
-/// directory. Any missing/unreadable/unparseable file, or a `rustls`
-/// rejection, is `Err` — callers decide what "no usable certificate" means;
-/// this function doesn't guess.
+/// Load `cert.pem` from `dir` and its private key from the OS credential store
+/// ([`key_store`], keyed on `dir`), then build a [`ServerConfig`]. `dir` is a
+/// parameter (mirrors `paths.rs`'s pure/impure split) so tests can point it at
+/// a temp directory — the keyring entry name is derived from it, so a temp
+/// `dir` gets its own store entry too. Any missing/unreadable/unparseable
+/// `cert.pem`, a missing stored key, or a `rustls` rejection is `Err` — callers
+/// decide what "no usable certificate" means; this function doesn't guess.
 pub(crate) fn load_server_config_from_dir(dir: &Path) -> Result<ServerConfig, TlsError> {
     let cert_path = dir.join("cert.pem");
-    let key_path = dir.join("key.pem");
 
     let cert_bytes = std::fs::read(&cert_path).map_err(|source| TlsError::Io {
         path: cert_path.clone(),
@@ -120,14 +129,13 @@ pub(crate) fn load_server_config_from_dir(dir: &Path) -> Result<ServerConfig, Tl
         source,
     })?;
 
-    let key_bytes = std::fs::read(&key_path).map_err(|source| TlsError::Io {
-        path: key_path.clone(),
-        source,
-    })?;
-    let key_der = PrivateKeyDer::from_pem_slice(&key_bytes).map_err(|source| TlsError::Pem {
-        path: key_path,
-        source,
-    })?;
+    let key_bytes = key_store::load_private_key(&key_store::entry_name_for_dir(dir))?
+        .ok_or(TlsError::NoStoredKey)?;
+    // The store always holds PKCS#8 DER: `write_cert_and_key_to_app_data` writes
+    // `rcgen`'s `serialize_der()` output, and `migrate_legacy_key_file` only
+    // accepts a PKCS#8 `key.pem` — so tagging the bytes directly here is sound,
+    // no PEM-header round-trip needed.
+    let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes.to_vec()));
 
     build_server_config(vec![cert_der], key_der)
 }
@@ -159,20 +167,22 @@ fn build_server_config(
 /// replaced) is provable by a test, not just asserted in a doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CertOrigin {
-    /// Loaded from disk — no regeneration needed.
+    /// Loaded — `cert.pem` and the stored key were both present and usable.
     Loaded,
-    /// `cert.pem`/`key.pem` didn't exist yet — first run.
+    /// Neither `cert.pem` nor a stored key existed yet — first run.
     GeneratedFirstRun,
-    /// `cert.pem`/`key.pem` existed but couldn't be used, so they were
-    /// regenerated and overwritten. SPEC.md's user-safety principle: this
-    /// must be visible, not silent — it could mean a user's T-49 manual
+    /// `cert.pem` existed but the pair couldn't be used (the stored key was
+    /// missing, undecryptable, or didn't match), so a fresh pair was generated
+    /// and the old `cert.pem` overwritten. SPEC.md's user-safety principle:
+    /// this must be visible, not silent — it could mean a user's T-49 manual
     /// trust-store install is about to be invalidated.
     Replaced,
 }
 
-/// `load_succeeded` alone decides `Loaded` vs. not: a load can only succeed
-/// if the files existed and parsed, so `existing_files_present` only
-/// distinguishes the two failure origins.
+/// `load_succeeded` alone decides `Loaded` vs. not: a load can only succeed if
+/// `cert.pem` existed and parsed and the store held a key, so
+/// `existing_files_present` (here: `cert.pem` present) only distinguishes the
+/// two failure origins.
 fn cert_origin(existing_files_present: bool, load_succeeded: bool) -> CertOrigin {
     match (existing_files_present, load_succeeded) {
         (_, true) => CertOrigin::Loaded,
@@ -202,7 +212,17 @@ fn cert_origin(existing_files_present: bool, load_succeeded: bool) -> CertOrigin
 /// resulting certificate/key pair.
 pub fn load_or_generate_server_config() -> Result<ServerConfig, TlsError> {
     let dir = paths::app_data_dir().map_err(|_| TlsError::MissingLocalAppData)?;
-    let existing_files_present = dir.join("cert.pem").exists() && dir.join("key.pem").exists();
+
+    // A pre-T-67 install has a plaintext `key.pem`; move it into the OS
+    // credential store once. A failure here is not fatal — fall through and
+    // regenerate if the load below then can't find a usable key.
+    if let Err(err) = cert::migrate_legacy_key_file(&dir) {
+        tracing::warn!("legacy key.pem migration failed, will regenerate if needed: {err}");
+    }
+
+    let existing_files_present = dir.join("cert.pem").exists()
+        && key_store::load_private_key(&key_store::entry_name_for_dir(&dir))
+            .is_ok_and(|stored| stored.is_some());
     let load_result = load_server_config_from_dir(&dir);
 
     match cert_origin(existing_files_present, load_result.is_ok()) {
@@ -233,7 +253,30 @@ mod tests {
         TlsError,
     };
     use crate::cert::generate_self_signed_cert;
+    use crate::key_store;
     use rcgen::CertifiedKey;
+    use std::path::Path;
+
+    /// Stores a key under a temp dir's derived entry for the duration of a
+    /// test and deletes it on drop, so the real per-install entry is never
+    /// touched and parallel tests don't collide.
+    struct StoredKeyGuard(String);
+
+    impl StoredKeyGuard {
+        fn store(dir: &Path, der: &[u8]) -> Self {
+            let entry = key_store::entry_name_for_dir(dir);
+            if let Err(err) = key_store::store_private_key(&entry, der) {
+                panic!("storing the test key must succeed: {err}");
+            }
+            Self(entry)
+        }
+    }
+
+    impl Drop for StoredKeyGuard {
+        fn drop(&mut self) {
+            let _ = key_store::delete_private_key(&self.0);
+        }
+    }
 
     #[test]
     fn cert_origin_is_loaded_whenever_load_succeeds_regardless_of_existing_files() {
@@ -306,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn load_server_config_from_dir_succeeds_against_freshly_written_pem_files() {
+    fn load_server_config_from_dir_succeeds_with_cert_pem_and_a_stored_key() {
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
@@ -315,26 +358,18 @@ mod tests {
             Ok(ck) => ck,
             Err(err) => panic!("generation must succeed: {err}"),
         };
-        // Written directly, bypassing `cert::write_cert_and_key_to_app_data`'s
-        // ACL-restriction step entirely - not needed to prove the *load*
-        // path, and avoids a slow `icacls` call in this test.
         if let Err(err) = std::fs::write(dir.path().join("cert.pem"), certified_key.cert.pem()) {
             panic!("must be able to write cert.pem: {err}");
         }
-        if let Err(err) = std::fs::write(
-            dir.path().join("key.pem"),
-            certified_key.signing_key.serialize_pem(),
-        ) {
-            panic!("must be able to write key.pem: {err}");
-        }
+        let _guard = StoredKeyGuard::store(dir.path(), &certified_key.signing_key.serialize_der());
 
         if let Err(err) = load_server_config_from_dir(dir.path()) {
-            panic!("loading a freshly written matching cert/key must succeed: {err}");
+            panic!("loading cert.pem plus a stored matching key must succeed: {err}");
         }
     }
 
     #[test]
-    fn load_server_config_from_dir_fails_when_no_files_exist() {
+    fn load_server_config_from_dir_fails_when_cert_pem_is_absent() {
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
@@ -346,16 +381,33 @@ mod tests {
     }
 
     #[test]
-    fn load_server_config_from_dir_fails_on_corrupt_pem_content() {
+    fn load_server_config_from_dir_fails_when_cert_pem_present_but_no_stored_key() {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("must be able to create a temp dir: {err}"),
+        };
+        let certified_key = match generate_self_signed_cert() {
+            Ok(ck) => ck,
+            Err(err) => panic!("generation must succeed: {err}"),
+        };
+        if let Err(err) = std::fs::write(dir.path().join("cert.pem"), certified_key.cert.pem()) {
+            panic!("must be able to write cert.pem: {err}");
+        }
+        // No StoredKeyGuard — the temp dir's derived entry has never been set.
+        assert!(matches!(
+            load_server_config_from_dir(dir.path()),
+            Err(TlsError::NoStoredKey)
+        ));
+    }
+
+    #[test]
+    fn load_server_config_from_dir_fails_on_corrupt_cert_pem_content() {
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
         };
         if let Err(err) = std::fs::write(dir.path().join("cert.pem"), b"not a pem file") {
             panic!("must be able to write cert.pem: {err}");
-        }
-        if let Err(err) = std::fs::write(dir.path().join("key.pem"), b"not a pem file") {
-            panic!("must be able to write key.pem: {err}");
         }
         assert!(matches!(
             load_server_config_from_dir(dir.path()),
