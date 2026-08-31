@@ -205,7 +205,10 @@ runtime-підхоплення джерела, виявлення "зламал�
 `https`-URL, 3 евристики `BlockSignature`, маршрути `GET /admin/providers` +
 `POST /admin/providers/{add,remove,set-enabled}`, картка `#providers-body` на `/admin/ui`,
 `AdminConfigUpdate` втрачає `providers`, `AdminStatusResponse.providers` → `active_providers`;
-SSRF-валідація (літеральний хост), `url` як пряма залежність. ECS-провайдер → **T-164**.
+SSRF-валідація (літеральний хост), `url` як пряма залежність. ECS-провайдер (Quad9 9.9.9.11)
+— T-164, **відхилено 2026-08-31** (TASKS-DONE.md): жива проба показала, що `dns11.quad9.net`
+і так пересилає реальну /24 клієнта авторитативним серверам без опції від нас — privacy-ціна
+не варта нішевого preset-у; ECS у проєкті свідомо не емітується.
 
 **T-67 done** (2026-08-31, plan-mode + AskUserQuestion + advisor обидва боки, 1 коміт) —
 приватний ключ TLS-сертифіката тепер у Windows Credential Manager через крейт `keyring`
@@ -224,9 +227,6 @@ TASKS-DONE.md. macOS Keychain / Linux Secret Service `keyring` абстрагу�
   Manager (`key_store::delete_secret` для TLS-запису — виклик додати тут). Залишений ключ у
   secure storage після видалення застосунку — той самий клас бага безпеки, що й залишений
   довірений сертифікат (SECURITY.md). **macOS-половина (Keychain) → Фаза 6.**
-- [ ] T-164 — ECS-enabled upstream preset (Quad9 9.9.9.11, не в таблиці §3.4) — перезаведено з T-73
-  після видалення `todo!()`-заглушки `ecs_option_for_upstream` у T-72/T-73. Потрібен: preset із
-  ECS Subnet-опцією + шлях у quorum, що чіпляє її лише для цього preset (RFC 7871). (3.4)
 
 ## Фаза 3 — Продакшн-hardening
 

@@ -94,8 +94,12 @@ restart; `MaxmindHealth`/`refresh_health` detecting a key that starts failing at
 into a backend commit + a `/admin/ui`-card commit) — `quorum` is no longer hardcoded to two
 providers: runtime `[[providers]]` list, all 10 §3.4 presets + custom-URL entry, 3
 `BlockSignature` heuristics, 4 `/admin/providers/*` routes, `AdminConfigUpdate` loses `providers`,
-`AdminStatusResponse.providers` → `active_providers`. **T-164** re-files the deleted
-`ecs_option_for_upstream` stub (ECS-enabled upstream preset). The second/third-platform work
+`AdminStatusResponse.providers` → `active_providers`. **T-164** (ECS-enabled upstream preset,
+ex-`ecs_option_for_upstream` stub) was **rejected 2026-08-31** — a live probe showed
+`dns11.quad9.net` forwards the client's real /24 to every authoritative server with no option
+from us, and a `127.0.0.1` resolver can't coarsen it; the project deliberately never emits an
+ECS option (RFC 7871 is a non-target, not a gap — SPEC §3.4 "Розглянуті й відхилені провайдери",
+TASKS-DONE.md T-164). The second/third-platform work
 (T-68/T-70 macOS halves, T-71, T-83) is now its own final **`## Фаза 6`** in TASKS.md / SPEC.md
 — a planned target, deferred to last (no macOS access here), with a standing architectural
 invariant that platform code stays behind a liftable seam (see "Current phase boundaries").
