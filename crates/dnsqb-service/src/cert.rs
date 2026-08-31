@@ -11,9 +11,12 @@
 //! config (SPEC.md §2, T-67).** [`write_cert_and_key_to_app_data`] writes only
 //! the public `cert.pem` to disk; the key is handed to [`key_store`] (Windows
 //! Credential Manager via `keyring`). A pre-T-67 install's ACL-locked plaintext
-//! `key.pem` is picked up once by [`migrate_legacy_key_file`], moved into the
-//! store, and erased. The ACL helpers below ([`write_user_restricted_file`] and
-//! friends) stay — `geoip_maxmind.toml` (T-162) still relies on them.
+//! `key.pem` is copied once into the store by [`migrate_legacy_key_into_store`]
+//! and then erased by [`discard_legacy_key_file`] — but only after the stored
+//! key has been proven to load against `cert.pem`, so a mismatched plaintext
+//! key is never destroyed before it's known redundant. The ACL helpers below
+//! ([`write_user_restricted_file`] and friends) stay — `geoip_maxmind.toml`
+//! (T-162) still relies on them.
 //!
 //! **Leaf, never a CA** (SPEC.md §2's largest stated attack-surface
 //! decision): a compromised private key for this cert can only spoof
@@ -44,7 +47,7 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -185,19 +188,20 @@ pub fn write_cert_and_key_to_app_data(
     Ok(CertFiles { cert_path })
 }
 
-/// Pick up a pre-T-67 plaintext `key.pem` in `dir` exactly once: if the OS
-/// credential store has no key yet but the file exists, decode it, store the
-/// key, and erase the file. If the store already holds a key, a stale `key.pem`
-/// is erased without being read. See [`migration_action`] for the decision and
-/// [`erase_and_remove`] for why a bare unlink is not enough.
+/// Pick a pre-T-67 plaintext `key.pem` in `dir` up into the OS credential store,
+/// exactly once: if the store has no key yet but the file exists, decode and
+/// store it. This function **never deletes `key.pem`** — that is
+/// [`discard_legacy_key_file`]'s job, and the caller only runs it once the
+/// stored key has been proven to load against `cert.pem`, so an
+/// unread/mismatched plaintext key is never destroyed before it's known to be
+/// redundant. See [`migration_action`] for the decision.
 ///
 /// # Errors
 ///
 /// [`CertError::KeyStore`] if the credential store rejects a read or write;
-/// [`CertError::LegacyKeyDecode`] if `key.pem` exists but doesn't parse (the
-/// file is **left in place** for inspection); [`CertError::Io`] if reading or
-/// removing the file fails.
-pub(crate) fn migrate_legacy_key_file(dir: &Path) -> Result<MigrationOutcome, CertError> {
+/// [`CertError::LegacyKeyDecode`] if `key.pem` exists but doesn't parse (left
+/// in place); [`CertError::Io`] if reading the file fails.
+pub(crate) fn migrate_legacy_key_into_store(dir: &Path) -> Result<MigrationOutcome, CertError> {
     let entry = key_store::entry_name_for_dir(dir);
     let legacy = dir.join("key.pem");
     let store_has_key = key_store::load_private_key(&entry)?.is_some();
@@ -206,11 +210,10 @@ pub(crate) fn migrate_legacy_key_file(dir: &Path) -> Result<MigrationOutcome, Ce
         MigrationAction::Nothing => {
             if store_has_key && legacy.exists() {
                 tracing::warn!(
-                    "a plaintext key.pem is present but the OS credential store already holds the \
-                     private key; erasing the stale plaintext copy"
+                    "a plaintext key.pem is present but the OS credential store already holds a \
+                     private key; it will be erased once the stored key is confirmed usable"
                 );
-                erase_and_remove(&legacy)?;
-                return Ok(MigrationOutcome::StalePlaintextRemoved);
+                return Ok(MigrationOutcome::StalePlaintextPresent);
             }
             Ok(MigrationOutcome::NothingToMigrate)
         }
@@ -224,36 +227,51 @@ pub(crate) fn migrate_legacy_key_file(dir: &Path) -> Result<MigrationOutcome, Ce
                 return Err(CertError::LegacyKeyDecode);
             };
             key_store::store_private_key(&entry, key_der.secret_pkcs8_der())?;
-            erase_and_remove(&legacy)?;
-            tracing::info!(
-                "migrated the TLS private key from key.pem into the OS credential store"
-            );
+            tracing::info!("copied the TLS private key from key.pem into the OS credential store");
             Ok(MigrationOutcome::Migrated)
         }
     }
 }
 
-/// Whether [`migrate_legacy_key_file`] has anything to move. Pure, so the
+/// Erase and remove `dir`'s `key.pem` if present — best-effort, never fatal.
+/// The caller ([`crate::tls::load_or_generate_server_config`]) runs this **only
+/// after** a `ServerConfig` has been built from `cert.pem` + the stored key, so
+/// the plaintext file is provably redundant by the time it is destroyed.
+pub(crate) fn discard_legacy_key_file(dir: &Path) {
+    let legacy = dir.join("key.pem");
+    if !legacy.exists() {
+        return;
+    }
+    match erase_and_remove(&legacy) {
+        Ok(()) => tracing::info!("removed the now-redundant plaintext key.pem"),
+        // Not fatal: the key is already in the store and in use. Surface it so
+        // an operator can delete the file by hand.
+        Err(err) => tracing::warn!("could not remove the redundant key.pem: {err}"),
+    }
+}
+
+/// Whether [`migrate_legacy_key_into_store`] has a key to copy. Pure, so the
 /// decision is testable without an OS credential store (same pure/impure split
 /// as `tls::cert_origin`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MigrationAction {
-    /// Store already has the key, or there is no legacy file — nothing to move.
+    /// Store already has the key, or there is no legacy file — nothing to copy.
     Nothing,
-    /// Store is empty and a legacy `key.pem` exists — move it in.
+    /// Store is empty and a legacy `key.pem` exists — copy it in.
     Migrate,
 }
 
-/// What [`migrate_legacy_key_file`] actually did — for logging/tests; no caller
+/// What [`migrate_legacy_key_into_store`] did — for logging/tests; no caller
 /// branches on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MigrationOutcome {
     /// No legacy file, and nothing to change.
     NothingToMigrate,
-    /// A legacy `key.pem` was moved into the store and erased.
+    /// A legacy `key.pem` was copied into the store (not yet deleted).
     Migrated,
-    /// The store already held the key; a stale `key.pem` was erased unread.
-    StalePlaintextRemoved,
+    /// The store already held a key; a stale `key.pem` is present, to be
+    /// discarded after the stored key is confirmed usable.
+    StalePlaintextPresent,
 }
 
 /// `Migrate` iff the store has no key yet but a legacy plaintext `key.pem`
@@ -266,17 +284,33 @@ pub(crate) fn migration_action(store_has_key: bool, legacy_pem_present: bool) ->
     }
 }
 
-/// Overwrite `path` with zeros (bounded at 64 KiB — a `key.pem` is ~240 bytes),
-/// then delete it. A bare unlink leaves the key bytes readable on disk,
-/// defeating the point of T-67; a truncate-in-place write keeps the file's
-/// existing user-only ACL (confirmed empirically for
-/// [`write_user_restricted_file`]'s create-restrict-write ordering).
+/// Truncate `path` in place and overwrite it with zeros, flushing to disk
+/// (`sync_all`) before returning. Truncate-in-place keeps the file's existing
+/// user-only ACL (confirmed empirically for [`write_user_restricted_file`]'s
+/// create-restrict-write ordering). Bounded at 64 KiB — a `key.pem` is ~240
+/// bytes.
+///
+/// **Best-effort scrub, not a guarantee** (same honesty as the `zeroize`
+/// vetting row): it defeats a naive undelete that scrapes freed clusters, but
+/// not VSS shadow copies, SSD wear-levelling / TRIM remapping, or a filesystem
+/// that had already journalled the original bytes elsewhere.
+fn overwrite_with_zeros(path: &Path) -> Result<(), CertError> {
+    let len = fs::metadata(path)
+        .map(|meta| usize::try_from(meta.len().min(64 * 1024)).unwrap_or(0))
+        .map_err(CertError::Io)?;
+    let mut file = File::create(path).map_err(CertError::Io)?;
+    file.write_all(&vec![0u8; len]).map_err(CertError::Io)?;
+    file.sync_all().map_err(CertError::Io)
+}
+
+/// [`overwrite_with_zeros`] then delete. A bare unlink leaves the key bytes
+/// readable on disk.
 fn erase_and_remove(path: &Path) -> Result<(), CertError> {
-    if let Ok(meta) = fs::metadata(path) {
-        let len = usize::try_from(meta.len().min(64 * 1024)).unwrap_or(0);
-        // A failed overwrite is not fatal — the removal below is what actually
-        // takes the key off disk; proceed to it regardless.
-        let _ = fs::write(path, vec![0u8; len]);
+    // A failed overwrite is not fatal — the removal below is what takes the key
+    // off disk regardless; still surface it so a wrong ACL / read-only flag is
+    // visible rather than silently swallowed.
+    if let Err(err) = overwrite_with_zeros(path) {
+        tracing::warn!("could not zero {path:?} before removal: {err}");
     }
     fs::remove_file(path).map_err(CertError::Io)
 }
@@ -630,7 +664,33 @@ mod tests {
     }
 
     #[test]
-    fn erase_and_remove_zeroes_then_deletes() {
+    fn overwrite_with_zeros_replaces_every_byte_with_zero() {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("must be able to create a temp dir: {err}"),
+        };
+        let path = dir.path().join("key.pem");
+        let fixture = b"-----BEGIN PRIVATE KEY-----\nsensitive-key-material\n";
+        if let Err(err) = std::fs::write(&path, fixture) {
+            panic!("must be able to write the fixture: {err}");
+        }
+        if let Err(err) = super::overwrite_with_zeros(&path) {
+            panic!("overwrite_with_zeros must succeed: {err}");
+        }
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                assert_eq!(bytes.len(), fixture.len(), "length must be preserved");
+                assert!(
+                    bytes.iter().all(|&b| b == 0),
+                    "every byte must be zero, got {bytes:?}"
+                );
+            }
+            Err(err) => panic!("file must still be readable right after the overwrite: {err}"),
+        }
+    }
+
+    #[test]
+    fn erase_and_remove_deletes_the_file() {
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),

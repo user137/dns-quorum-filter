@@ -51,20 +51,34 @@ pub enum KeyStoreError {
 }
 
 /// The `keyring` "user" component for the install rooted at `app_data_dir` —
-/// `doh-tls-private-key:<first 8 bytes of SHA-1(path), hex>`. See the module
-/// documentation for why this is path-derived rather than constant.
+/// `doh-tls-private-key:<first 8 bytes of SHA-1(normalized path), hex>`. See the
+/// module documentation for why this is path-derived rather than constant.
+///
+/// The path is normalized before hashing — lowercased (Windows paths are
+/// case-insensitive) and trailing separators stripped — so `dnsqb-service` and
+/// `dnsqb-tray` (which runs cert rotation in a **separate process**) derive the
+/// same entry even if one holds `…\Local\dns-quorum-filter` and the other
+/// `…\local\dns-quorum-filter\`. Residual, not covered: an 8.3 short path in one
+/// process vs. the long form in the other would still diverge — both resolve
+/// the directory from the same `%LOCALAPPDATA%` env var via
+/// `paths::app_data_dir`, so this is a theoretical gap, not an observed one.
 pub(crate) fn entry_name_for_dir(app_data_dir: &Path) -> String {
     use std::fmt::Write;
 
-    let hex = Sha1::digest(app_data_dir.to_string_lossy().as_bytes())
-        .iter()
-        .take(8)
-        .fold(String::with_capacity(16), |mut acc, byte| {
+    let normalized = app_data_dir
+        .to_string_lossy()
+        .to_lowercase()
+        .trim_end_matches(['/', '\\'])
+        .to_owned();
+    let hex = Sha1::digest(normalized.as_bytes()).iter().take(8).fold(
+        String::with_capacity(16),
+        |mut acc, byte| {
             // Writing a byte to a `String` via `write!` is infallible; the
             // `fmt::Error` branch is unreachable for this sink.
             let _ = write!(acc, "{byte:02x}");
             acc
-        });
+        },
+    );
     format!("doh-tls-private-key:{hex}")
 }
 
@@ -155,12 +169,16 @@ mod tests {
     }
 
     #[test]
-    fn entry_name_is_stable_and_path_specific() {
+    fn entry_name_is_stable_path_specific_and_normalized() {
         let a = entry_name_for_dir(Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter"));
         let b = entry_name_for_dir(Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter"));
         let c = entry_name_for_dir(Path::new(r"C:\scratch\dns-quorum-filter"));
+        // Trailing separator + case differ but must not change the entry — the
+        // cross-process (service vs. tray) stability guarantee.
+        let d = entry_name_for_dir(Path::new(r"C:\Users\x\AppData\local\dns-quorum-filter\"));
         assert_eq!(a, b, "same path must yield the same entry");
         assert_ne!(a, c, "a different path must yield a different entry");
+        assert_eq!(a, d, "case / trailing separator must be normalized away");
         assert!(a.starts_with("doh-tls-private-key:"));
     }
 

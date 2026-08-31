@@ -36,7 +36,7 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource`, `LogFilter` search, `clear` |
 | `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables; per-field validation, loud errors |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_file` moves a pre-T-67 plaintext `key.pem` into the store once (decode → store → zero-and-unlink), keeping the trusted cert; restricted-ACL `icacls` helpers (T-50) kept for `geoip_maxmind.toml`; `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); restricted-ACL `icacls` helpers (T-50) kept for `geoip_maxmind.toml`; `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
@@ -154,6 +154,12 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   with no in-UI signal. `geoip_maxmind.toml` is also **not** re-read by `POST /admin/reset` (and
   the background updater holds the `GeoipSource` it was spawned with), so a creds change needs a
   process restart. Both, plus DPAPI instead of the ACL-restricted plaintext file, are **T-163**.
+- **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
+  delete_private_key` exists but is `#[cfg(test)]`; nothing un-gates or calls it. A left-behind
+  key in Windows Credential Manager after the app is removed is the same class of security bug as
+  a left-behind trusted cert (SECURITY.md). Un-gating + calling it is folded into **T-70** (the
+  packaged uninstaller). Also T-67's `overwrite_with_zeros` before deleting `key.pem` is a
+  best-effort scrub only — no defence against VSS shadow copies or SSD wear-levelling.
 - **Admin-channel fuzz (T-58, narrowed)** covers `parse_pattern` / `wire_bytes_from_get` /
   `/admin/config` POST body only — other routes and the `/dns-query` POST body are not fuzzed.
 - **The status indicator (T-56, narrowed)** — browser-DoH-usage detection and watchdog state are
@@ -629,7 +635,7 @@ reasoning (search by section number rather than re-deriving a decision from scra
   writing `key_store.rs`, per this project's verify-empirically discipline.
 - **`rustls::pki_types::PrivateKeyDer::Pkcs8(k)` — the byte accessor is `k.secret_pkcs8_der()`,
   not `secret_der()`** (which only exists on the outer `PrivateKeyDer` enum). `key_store` stores
-  raw PKCS#8 DER, and `migrate_legacy_key_file` only accepts a `PrivateKeyDer::Pkcs8` match arm
+  raw PKCS#8 DER, and `migrate_legacy_key_into_store` only accepts a `PrivateKeyDer::Pkcs8` arm
   from `from_pem_slice` — this project's own `key.pem` was always PKCS#8 (`rcgen`
   `serialize_pem`), so a non-PKCS#8 legacy file is rejected (`CertError::LegacyKeyDecode`, caller
   regenerates) rather than guessed at.

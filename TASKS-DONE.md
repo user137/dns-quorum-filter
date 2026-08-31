@@ -1801,22 +1801,26 @@
   `write_key_file` + його тести; `write_user_restricted_file`/`restrict_to_current_user`/
   `other_principals`/`icacls_path` **лишаються** — `geoip_maxmind.toml` (T-162) ними користується.
   Нове: `migration_action(store_has_key, legacy_present) -> {Nothing,Migrate}` (чисте, тестоване
-  без сховища) + `migrate_legacy_key_file(dir)` (impure): store має ключ → `AlreadyInStore` (+
-  видалити застарілий `key.pem` з `warn!` — живий plaintext-ключ, який ми не писали); інакше
-  `key.pem` є → декод (**лише** `PrivateKeyDer::Pkcs8` — наш `serialize_pem` завжди PKCS#8,
-  інакше `LegacyKeyDecode` і регенерація) → запис → `erase_and_remove`. **`erase_and_remove`**
-  (advisor catch) = `fs::write(path, zeros)` (обмежено 64 KiB) **потім** `remove_file`, не голий
-  unlink — інакше байти ключа лишаються на диску, проти самого рядка SPEC, що задача закриває
-  (truncate-in-place зберігає ACL — емпірично підтверджено для `write_user_restricted_file`).
+  без сховища) + `migrate_legacy_key_into_store(dir)` (impure, **не видаляє файл**): `key.pem` є
+  й сховище порожнє → декод (**лише** `PrivateKeyDer::Pkcs8` — наш `serialize_pem` завжди PKCS#8,
+  інакше `LegacyKeyDecode` і регенерація) → запис у сховище; сховище має ключ + `key.pem` є →
+  `warn!`, лишити файл. Окрема `discard_legacy_key_file(dir)` (best-effort, не помилка) видаляє
+  `key.pem` — і `tls` викликає її **лише на успішному load-шляху** (див. closing-review нижче).
+  `overwrite_with_zeros` = `File::create` (truncate, зберігає ACL) → `write_all(zeros)` →
+  `sync_all`; `erase_and_remove` = overwrite + `remove_file`. Голий unlink лишив би байти ключа
+  на диску (проти самого рядка SPEC); overwrite — best-effort scrub, **не** захист від VSS
+  shadow copies / SSD wear-leveling (той самий рівень чесності, що vetting-рядок `zeroize`).
 
   **`tls.rs`:** `load_server_config_from_dir(dir)` читає `cert.pem` з `dir` + ключ із
   `key_store::load_private_key(entry_name_for_dir(dir))`; `None` → `TlsError::NoStoredKey` (як
   відсутній файл сьогодні — caller регенерує). Байти зі сховища завжди PKCS#8 DER, тегуються
   напряму `PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(...))`, без PEM-round-trip.
-  `load_or_generate_server_config` новий порядок: (1) `migrate_legacy_key_file` (збій → `warn!`,
-  не фатально); (2) `existing_present` = `cert.pem` є **і** сховище має ключ; (3) load/regen.
-  `cert_origin` — логіка без змін; `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}` семантика
-  ціла (`Replaced` = `cert.pem` є, ключа нема/не розшифровується → гучний `warn!`).
+  `load_or_generate_server_config` новий порядок: (1) `migrate_legacy_key_into_store` (збій →
+  `warn!`, не фатально); (2) `existing_present` = `cert.pem` є **і** сховище має ключ; (3)
+  load/regen; (4) **на успішному load** — `discard_legacy_key_file` (тепер `key.pem` доказово
+  зайвий); на regen-шляху `key.pem` лишається як recovery-артефакт, наступний успішний старт
+  його прибере. `cert_origin` — логіка без змін; `CertOrigin::{Loaded,GeneratedFirstRun,
+  Replaced}` семантика ціла (`Replaced` = `cert.pem` є, ключа нема/не розшифровується → `warn!`).
 
   **`cert_rotation.rs`:** без структурних змін (`rotate_with` — ті самі 4 замикання; `set_secret`
   перезаписує, крок "clear" ключа не чіпає). Оновлено module-doc partial-failure-аналіз і
@@ -1833,9 +1837,11 @@
   перевикористано (вже в tree через tokio→mio). Vetting-рядок додано в SECURITY.md.
 
   **Тести.** Чисті (без Credential Manager): `migration_action` truth-table;
-  `erase_and_remove` занулює-й-видаляє; `cert_origin` (без змін, зелені);
+  `overwrite_with_zeros` — читає байти назад і доводить, що **всі нулі** (не лише "файл зник");
+  `erase_and_remove` видаляє файл; `cert_origin` (без змін, зелені);
   `write_user_restricted_file` ACE-count (перейменовано з `write_key_file`-тесту, той самий
-  структурний доказ "рівно один ACE"); `server_config` matching/mismatched pair.
+  структурний доказ "рівно один ACE"); `entry_name_for_dir` — case + кінцевий сепаратор
+  нормалізуються (cross-process service↔tray стабільність); `server_config` matching/mismatched.
   Round-trip проти **справжнього** Credential Manager (не `#[ignore]`d — на цьому боксі й на
   `windows-latest` сесійний Credential Manager є; RAII-`Drop` guard з унікальним ім'ям запису
   видаляє після себе, реальний per-install-запис не чіпається): `store` → `load` повертає ті
@@ -1862,13 +1868,36 @@
   персистенції cert/key (grep по `key.pem`/`private key`/`Credential` — лише MaxMind-креденшели
   DTO, не пов'язане) — жодної діаграми не зачеплено.
 
-  Повний локальний гейт зелений: 425 lib + 5 tray (+11 нових тестів, 4+0 ignored),
+  **Closing-review (advisor, 2 коміти: backend → closing-review — той самий узор, що T-72/T-73):**
+  1. `erase_and_remove`-тест доводив лише `!path.exists()` (пройшов би й проти голого unlink) —
+     четвертий екземпляр форми, що CLAUDE.md уже фіксує тричі. Розбито: `overwrite_with_zeros`
+     окрема функція, тест читає байти назад і доводить, що всі нулі; `sync_all` додано; doc
+     пом'якшено до "best-effort scrub, не захист від VSS / SSD wear-leveling".
+  2. **Реальний баг (agent-added, незворотний):** гілка "сховище має ключ + стале `key.pem`"
+     видаляла файл нечитаним **до** того, як `load` звірив збережений ключ проти `cert.pem` —
+     half-failed rotation або backup-restore втратили б єдиний відповідний ключ. Виправлено:
+     `migrate_legacy_key_into_store` файл більше не чіпає; `discard_legacy_key_file` викликається
+     з `load_or_generate_server_config` **лише на успішному load** (ключ доказово зайвий); на
+     regen-шляху `key.pem` лишається як recovery-артефакт.
+  3. Ніщо не видаляє збережений ключ при деінсталяції, а T-70 про це не знало → додано в рядок
+     T-70 (розгейтити `key_store::delete_private_key`, зараз `#[cfg(test)]`) + Known-limitations
+     bullet у CLAUDE.md.
+  4. SECURITY.md `keyring`-рядок плутав `cargo deny` (graph-target) з `cargo audit` (читає весь
+     lock) — переписано як заявлену maintenance-liability; застарілий `zeroize`-рядок (PEM text →
+     DER Vec + нові `key_store` вжитки) оновлено.
+  5. `entry_name_for_dir` хешував сирий рядок шляху — trailing separator / case між процесами
+     (`dnsqb-service` vs `dnsqb-tray`, де крутиться ротація) дали б різні записи, тихий split.
+     Тепер lowercase + strip trailing separators перед sha1; 8.3-shortpath — залишковий,
+     теоретичний (обидва процеси беруть шлях з того самого `%LOCALAPPDATA%`).
+
+  Повний локальний гейт зелений: 426 lib + 5 tray (+13 нових тестів, 4+0 ignored),
   conformance 18/2, clippy `-D warnings` / fmt / rustdoc `-D warnings` / doctest / `cargo deny
   check` / `cargo audit` чисті. Docs: SPEC.md §2 (dated T-67 sub-bullet), SECURITY.md
-  (перший bullet переписано + `keyring` vetting-рядок), CLAUDE.md (таблиця модулів —
-  `key_store`, `cert`/`tls` рядки; runtime-deps; два нових gotcha — `keyring` `v1`/`NoEntry`/
-  target-gated-lock, `secret_pkcs8_der` не `secret_der`), SERVICES.md, CONFIGURATION.md
-  (`key.pem`-згадка в geoip-секції знята), TASKS.md.
+  (перший bullet переписано + `keyring`/`zeroize` vetting-рядки), CLAUDE.md (таблиця модулів —
+  `key_store`, `cert`/`tls` рядки; runtime-deps; Known-limitations bullet; два нових gotcha —
+  `keyring` `v1`/`NoEntry`/target-gated-lock, `secret_pkcs8_der` не `secret_der`), SERVICES.md,
+  CONFIGURATION.md (`key.pem`-згадка в geoip-секції знята), TASKS.md (T-70 отримав обов'язок
+  прибирати ключ зі сховища).
 
 - [x] T-162 (частина) — MaxMind GeoLite2-режим: адмін-маршрут + картка на `/admin/ui` +
   показ активного джерела бази (SPEC.md §3.5) — один коміт, plan-mode + advisor до і після.

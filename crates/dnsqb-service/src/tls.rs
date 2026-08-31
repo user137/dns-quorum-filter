@@ -132,8 +132,8 @@ pub(crate) fn load_server_config_from_dir(dir: &Path) -> Result<ServerConfig, Tl
     let key_bytes = key_store::load_private_key(&key_store::entry_name_for_dir(dir))?
         .ok_or(TlsError::NoStoredKey)?;
     // The store always holds PKCS#8 DER: `write_cert_and_key_to_app_data` writes
-    // `rcgen`'s `serialize_der()` output, and `migrate_legacy_key_file` only
-    // accepts a PKCS#8 `key.pem` — so tagging the bytes directly here is sound,
+    // `rcgen`'s `serialize_der()` output, and `migrate_legacy_key_into_store`
+    // only accepts a PKCS#8 `key.pem` — so tagging the bytes directly is sound,
     // no PEM-header round-trip needed.
     let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_bytes.to_vec()));
 
@@ -213,10 +213,11 @@ fn cert_origin(existing_files_present: bool, load_succeeded: bool) -> CertOrigin
 pub fn load_or_generate_server_config() -> Result<ServerConfig, TlsError> {
     let dir = paths::app_data_dir().map_err(|_| TlsError::MissingLocalAppData)?;
 
-    // A pre-T-67 install has a plaintext `key.pem`; move it into the OS
-    // credential store once. A failure here is not fatal — fall through and
-    // regenerate if the load below then can't find a usable key.
-    if let Err(err) = cert::migrate_legacy_key_file(&dir) {
+    // A pre-T-67 install has a plaintext `key.pem`; copy it into the OS
+    // credential store once (this does not delete the file). A failure here is
+    // not fatal — fall through and regenerate if the load below then can't
+    // find a usable key.
+    if let Err(err) = cert::migrate_legacy_key_into_store(&dir) {
         tracing::warn!("legacy key.pem migration failed, will regenerate if needed: {err}");
     }
 
@@ -237,6 +238,12 @@ pub fn load_or_generate_server_config() -> Result<ServerConfig, TlsError> {
     }
 
     if let Ok(config) = load_result {
+        // The stored key just built a working `ServerConfig` against `cert.pem`,
+        // so any leftover plaintext `key.pem` (freshly migrated, or stale from
+        // an aborted earlier run) is now provably redundant — erase it. On the
+        // regenerate path below, `key.pem` is deliberately left as a recovery
+        // artifact; the next successful start discards it.
+        cert::discard_legacy_key_file(&dir);
         Ok(config)
     } else {
         let certified_key = cert::generate_self_signed_cert()?;
