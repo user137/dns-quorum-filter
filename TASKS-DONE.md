@@ -2261,3 +2261,28 @@ MaxMind-режим (T-162/T-163), рантайм-список провайдер
   публічний префікс цієї машини у жоден файл не потрапив (лише публічний хостнейм `akahelp`);
   (2) формулювання «проєкт ніколи не емітує ECS» пом'якшено до звіреного-читанням факту в усіх
   п'яти файлах — попереднє звучало як забезпечена тестом гарантія, якою воно не є.
+
+## Фаза 3 — Продакшн-hardening (завершені)
+
+Порядок виконання Ф3 — TASKS.md §"Фаза 3" блок "План виконання Ф3". Батч 3.0 (design spike,
+docs-only) не має номера задачі — його запис у CLAUDE.md "Project state" + `diagrams/watchdog-*`
++ SPEC.md §7.1.
+
+- [x] T-101 — (Батч 3.7, винесено вперед) CI: SAST/CodeQL-скан на кожен push/PR (Наскрізні вимоги)
+  — `.github/workflows/codeql.yml`: окремий workflow, `github/codeql-action/{init,analyze}@v4`,
+  `languages: rust` + `build-mode: none` (Rust build-less CodeQL — GA 2025-10; жодного cargo
+  build / toolchain-кроку), `runs-on: windows-latest`. Причина windows, не ubuntu: з
+  `build-mode: none` Rust-екстрактор резолвить `#[cfg(...)]` проти хоста екстракції, тож Linux-ран
+  мовчки пропустив би Windows-only код (`std::os::windows::*`, `tokio::net::windows::named_pipe`
+  у watchdog'і Ф3) — саме той код, заради сканування якого T-101 і витягнули вперед з Батча 3.7.
+  Той самий runner, що всі job'и `ci.yml` (DECISIONS.md 2026-08-25) → окремого DECISIONS-запису
+  не треба. Тригери — голі `push:`/`pull_request:`, як `ci.yml`. Права job'а: `security-events:
+  write`, `actions: read`, `contents: read` (без `packages: read` — приватних реєстрів немає).
+  CodeQL не валить білд на знахідці — алерти йдуть у Security-таб; читати
+  `gh api repos/user137/dns-quorum-filter/code-scanning/alerts` (скоуп `security_events`),
+  тріаж у тому ж проході, той самий бар, що clippy/audit. Docs: SECURITY.md + SPEC.md
+  (CI-рядок «Наскрізні вимоги»), CLAUDE.md (Commands CI-перелік + Project state), TASKS.md
+  (`- [ ] T-101` знято, Батч 3.7 / "Порядок" / progress-рядок оновлено). Opening advisor:
+  зафіксував windows-latest (усунув AskUserQuestion + DECISIONS-запис), урізав скоуп (без
+  `actions`-мови, без `schedule`, без `packages:`), і назвав реальний критерій готовності —
+  не «зелений job», а «підтверджено, що алерти читаються».

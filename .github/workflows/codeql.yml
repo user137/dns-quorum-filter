@@ -1,0 +1,29 @@
+name: CodeQL
+
+on:
+  push:
+  pull_request:
+
+# runs-on: windows-latest, not ubuntu — with build-mode: none the Rust extractor
+# resolves `#[cfg(...)]` against the extraction host, so a Linux run would silently
+# skip the Windows-only code (`std::os::windows::*`, `tokio::net::windows::named_pipe`
+# in the Фаза 3 watchdog). Same reason every ci.yml job is windows-latest
+# (DECISIONS.md 2026-08-25). build-mode: none => no cargo build / toolchain step
+# (Rust build-less CodeQL scanning is GA since 2025-10).
+
+jobs:
+  analyze:
+    runs-on: windows-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: rust
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:rust"

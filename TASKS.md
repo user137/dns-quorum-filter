@@ -316,8 +316,8 @@ Concurrency/Recovery.
   питання п.10. T-99 — registry-запис (Windows); AskUserQuestion на kickoff: чи взагалі в скоупі
   для не-enterprise користувача, чи лише opt-in "advanced" (міняє posture привілеїв). **Якщо
   "не в скоупі" — T-99 закривається без коду** (у TASKS-DONE.md, як T-164).
-- **Батч 3.7 — release-інженерія (T-101, T-100, T-102, T-103)**: T-101 (CodeQL) першим, щоб решта
-  Ф3-коду йшла сканованою; T-100 — reproducible builds (`--locked`, `rust-toolchain.toml`,
+- **Батч 3.7 — release-інженерія (T-100, T-102, T-103; T-101 винесено вперед, зроблено 2026-09-01)**:
+  T-100 — reproducible builds (`--locked`, `rust-toolchain.toml`,
   детермінований codegen + `--remap-path-prefix`, CI-джоба "білд двічі й diff"); T-102 —
   **заблокований, доки користувач не дасть code-signing сертифікат + CI-secret** (поки що лише
   інертний скелет pipeline зі skip-if-no-secret); T-103 — release-pipeline (build+package+sign+
@@ -329,9 +329,9 @@ Concurrency/Recovery.
   `key_store::delete_secret` для TLS-запису (залишений trusted cert / secret-store ключ =
   клас бага SECURITY.md). macOS-половина → Ф6.
 
-**Порядок:** 3.0 → **T-101** → 3.1 → 3.2 → 3.3 (watchdog готовий) → 3.4 → 3.5 → 3.6 →
-**T-100/T-102/T-103** → 3.8 (останній). 3.4 може йти раніше, якщо watchdog-батч застопориться
-(він незалежний).
+**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → 3.1 → 3.2 → 3.3 (watchdog готовий) → 3.4 →
+3.5 → 3.6 → **T-100/T-102/T-103** → 3.8 (останній). 3.4 може йти раніше, якщо watchdog-батч
+застопориться (він незалежний).
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -344,7 +344,13 @@ spawn-kill/registry/disk I/O — тонкі імпурні оболонки); `#
 `diagrams/watchdog-state.md` + `diagrams/watchdog-channels.md` створені; SPEC.md §7.1
 (9 реалізаційних рішень: IPC-транспорт, свій share_mode-lockfile guard, pid-файли,
 wire-формат, spawn-шлях, lib-залежність, файл стану, числа інтервалу/backoff/бюджету, рантайм
-watcher'а) зафіксовано. Наступний — Батч 3.1, T-92 першим.
+watcher'а) зафіксовано.
+
+**T-101 зроблено 2026-09-01** (opening advisor, docs+CI, окремий коміт) — `.github/workflows/
+codeql.yml`: CodeQL SAST, мова `rust`, `build-mode: none` (без cargo build), `windows-latest`
+(видимість `#[cfg(windows)]`-коду watchdog'а), на кожен push/PR. Алерти в Security-табі, не
+валять білд; тріаж у тому ж проході. Винесено вперед з Батча 3.7, щоб код 3.1+ від початку
+сканувався. Наступний — Батч 3.1, T-92 першим.
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -407,7 +413,6 @@ watcher'а) зафіксовано. Наступний — Батч 3.1, T-92 п
 - [ ] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` enterprise policy перед імплементацією (Відкриті питання п.3)
 - [ ] T-99 — (Батч 3.6) Enterprise policy автоматизація (Chrome `DnsOverHttpsTemplates` через registry/plist) (Фазований план, Фаза 3)
 - [ ] T-100 — (Батч 3.7) Reproducible builds / підписані релізні бінарники (Наскрізні вимоги)
-- [ ] T-101 — (Батч 3.7) CI: SAST/CodeQL-скан на кожен push/PR (Наскрізні вимоги)
 - [ ] T-102 — (Батч 3.7) **Виправлено 2026-08-29 (застаріле формулювання)**: CI-автоматизація code-signing
   релізних бінарників per-OS (Windows/macOS) — раніше називало "Tauri-бандлів", застаріло з T-149
   (Tauri-UI видалено, замінено `dnsqb-tray`+веб-UI, DECISIONS.md); підписуються самі бінарники

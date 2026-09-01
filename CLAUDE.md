@@ -10,8 +10,11 @@ is next — a 9-batch execution plan (3.0–3.8) is in TASKS.md §"Фаза 3" (
 2026-09-01). **Батч 3.0 (watchdog design spike) done 2026-09-01**: `diagrams/watchdog-{state,
 channels}.md` + SPEC.md §7.1 (9 реалізаційні рішення — IPC via `tokio` named_pipe, own
 `share_mode(0)` lockfile guard, pid-files, fixed heartbeat frame, spawn from
-`current_exe().parent()`, `watchdog-state.json`, interval/backoff/budget numbers). **Start at
-Батч 3.1, T-92 first.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
+`current_exe().parent()`, `watchdog-state.json`, interval/backoff/budget numbers).
+**T-101 done 2026-09-01** (pulled forward from Батч 3.7): `.github/workflows/codeql.yml` — CodeQL
+SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR; alerts in the Security
+tab, triaged like clippy/audit findings (see the Commands section for the `gh` read command).
+**Start at Батч 3.1, T-92 first.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
 RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -279,6 +282,14 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`).
+
+`.github/workflows/codeql.yml` (T-101) is a separate workflow — CodeQL SAST, language `rust`,
+`build-mode: none` (no cargo build), `runs-on: windows-latest` (cfg visibility for
+`std::os::windows` code). It never fails the build on a finding — alerts land in the repo's
+Security tab. Read them with `gh api repos/user137/dns-quorum-filter/code-scanning/alerts --jq
+'.[] | {rule: .rule.id, sev: .rule.security_severity_level, path: .most_recent_instance.location.path}'`
+(needs the token's `security_events` scope — `gh auth refresh -h github.com -s security_events` if
+it 403s). Triage every finding in the same pass, same bar as a clippy or audit finding.
 
 **Check the actual CI run after every push — local-green is not CI-green**, especially for
 OS-permission/environment-dependent code. `gh run list --branch main --limit 5`; `gh run watch

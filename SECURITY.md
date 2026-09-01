@@ -88,7 +88,9 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
 - Elevated privileges only once, for the one-time trust-store install/uninstall step — the main
   process runs as a normal user, never with standing elevated privileges.
 - CI must run `cargo audit` (known CVEs) and `cargo deny` (license/duplicate checks) as required
-  steps, not optional ones.
+  steps, not optional ones. A CodeQL SAST scan (`.github/workflows/codeql.yml`, language `rust`,
+  `build-mode: none`) runs on every push/PR — its alerts are triaged and fixed in the same pass,
+  not left open because the other gates are green (T-101).
 - Reproducible builds / signed release binaries — the app installs a trusted certificate into the
   system, so binary trust is as security-critical as the certificate itself.
 
