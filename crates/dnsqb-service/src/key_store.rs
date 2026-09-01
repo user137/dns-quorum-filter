@@ -276,7 +276,8 @@ mod tests {
         }
         match load_secret(entry.name()) {
             Ok(Some(got)) => assert_eq!(got.as_slice(), payload),
-            other => panic!("load must return the stored bytes, got {other:?}"),
+            Ok(None) => panic!("load must return the stored bytes, got Ok(None)"),
+            Err(err) => panic!("load must return the stored bytes, got Err({err})"),
         }
     }
 
@@ -291,7 +292,8 @@ mod tests {
         }
         match load_secret(entry.name()) {
             Ok(Some(got)) => assert_eq!(got.as_slice(), b"second-value"),
-            other => panic!("load must return the overwritten bytes, got {other:?}"),
+            Ok(None) => panic!("load must return the overwritten bytes, got Ok(None)"),
+            Err(err) => panic!("load must return the overwritten bytes, got Err({err})"),
         }
     }
 
@@ -300,7 +302,11 @@ mod tests {
         let entry = ScratchEntry::new("absent");
         match load_secret(entry.name()) {
             Ok(None) => {}
-            other => panic!("a missing entry must be Ok(None), got {other:?}"),
+            Ok(Some(got)) => panic!(
+                "a missing entry must be Ok(None), got Ok(Some(_)) ({} bytes)",
+                got.len()
+            ),
+            Err(err) => panic!("a missing entry must be Ok(None), got Err({err})"),
         }
     }
 
@@ -318,7 +324,11 @@ mod tests {
         }
         match load_secret(entry.name()) {
             Ok(None) => {}
-            other => panic!("entry must be gone after delete, got {other:?}"),
+            Ok(Some(got)) => panic!(
+                "entry must be gone after delete, got Ok(Some(_)) ({} bytes)",
+                got.len()
+            ),
+            Err(err) => panic!("entry must be gone after delete, got Err({err})"),
         }
     }
 

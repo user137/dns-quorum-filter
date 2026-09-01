@@ -361,7 +361,10 @@ mod tests {
         };
         match server_config_from_certified_key(&mismatched) {
             Err(TlsError::Rustls(_)) => {}
-            other => panic!("mismatched cert/key must be rejected by rustls, got: {other:?}"),
+            Ok(_) => panic!("mismatched cert/key must be rejected by rustls, got: Ok(_)"),
+            Err(err) => {
+                panic!("mismatched cert/key must be rejected by rustls, got a different Err: {err}")
+            }
         }
     }
 

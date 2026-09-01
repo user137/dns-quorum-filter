@@ -377,7 +377,8 @@ mod tests {
         let dir = ScratchDir::new();
         match load(dir.path()) {
             Ok(None) => {}
-            other => panic!("expected Ok(None) for an unconfigured install, got {other:?}"),
+            Ok(Some(_)) => panic!("expected Ok(None) for an unconfigured install, got Ok(Some(_))"),
+            Err(err) => panic!("expected Ok(None) for an unconfigured install, got Err({err})"),
         }
     }
 
@@ -392,7 +393,8 @@ mod tests {
                 assert_eq!(creds.account_id, "acct-123");
                 assert_eq!(creds.license_key.expose_secret(), "the-license-key");
             }
-            other => panic!("expected Ok(Some(_)) after save, got {other:?}"),
+            Ok(None) => panic!("expected Ok(Some(_)) after save, got Ok(None)"),
+            Err(err) => panic!("expected Ok(Some(_)) after save, got Err({err})"),
         }
     }
 
@@ -445,7 +447,8 @@ mod tests {
         let dir = ScratchDir::new();
         match migrate_legacy_credentials_file(dir.path()) {
             Ok(MigrationOutcome::NothingToMigrate) => {}
-            other => panic!("expected NothingToMigrate, got {other:?}"),
+            Ok(outcome) => panic!("expected NothingToMigrate, got Ok({outcome:?})"),
+            Err(err) => panic!("expected NothingToMigrate, got Err({err})"),
         }
     }
 
@@ -458,7 +461,8 @@ mod tests {
         );
         match migrate_legacy_credentials_file(dir.path()) {
             Ok(MigrationOutcome::Migrated) => {}
-            other => panic!("expected Migrated, got {other:?}"),
+            Ok(outcome) => panic!("expected Migrated, got Ok({outcome:?})"),
+            Err(err) => panic!("expected Migrated, got Err({err})"),
         }
         assert!(
             !dir.path().join("geoip_maxmind.toml").exists(),
@@ -469,7 +473,8 @@ mod tests {
                 assert_eq!(creds.account_id, "123456");
                 assert_eq!(creds.license_key.expose_secret(), "abcdEFGH_the_key");
             }
-            other => panic!("credentials must be readable from the store, got {other:?}"),
+            Ok(None) => panic!("credentials must be readable from the store, got Ok(None)"),
+            Err(err) => panic!("credentials must be readable from the store, got Err({err})"),
         }
     }
 
@@ -485,7 +490,8 @@ mod tests {
         );
         match migrate_legacy_credentials_file(dir.path()) {
             Ok(MigrationOutcome::StalePlaintextPresent) => {}
-            other => panic!("expected StalePlaintextPresent, got {other:?}"),
+            Ok(outcome) => panic!("expected StalePlaintextPresent, got Ok({outcome:?})"),
+            Err(err) => panic!("expected StalePlaintextPresent, got Err({err})"),
         }
         assert!(!dir.path().join("geoip_maxmind.toml").exists());
         match load(dir.path()) {
@@ -493,7 +499,8 @@ mod tests {
                 assert_eq!(creds.account_id, "store-acct", "the store's copy must win");
                 assert_eq!(creds.license_key.expose_secret(), "store-key");
             }
-            other => panic!("the store's credentials must be intact, got {other:?}"),
+            Ok(None) => panic!("the store's credentials must be intact, got Ok(None)"),
+            Err(err) => panic!("the store's credentials must be intact, got Err({err})"),
         }
     }
 

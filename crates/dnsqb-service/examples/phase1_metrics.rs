@@ -13,7 +13,9 @@
 //! running locally — this is a plain HTTP client, it does not manage the
 //! service's lifecycle, same as every manual smoke test in this project's
 //! history. Run with `cargo run --example phase1_metrics [port]` (default
-//! 8443).
+//! 8443). The latency client pins TLS to `app_data_dir()/cert.pem`, so the
+//! service must be running against the **default** app-data directory — not a
+//! scratch `LOCALAPPDATA` override (T-165: no `danger_accept_invalid_certs`).
 //!
 //! **Malicious-domain source**: the live abuse.ch URLhaus recent-URLs CSV
 //! feed (`https://urlhaus.abuse.ch/downloads/csv_recent/`, no Auth-Key
@@ -63,8 +65,8 @@
 //! threat feed, churns constantly, no reason to keep it here).
 
 use dnsqb_service::{
-    builtin_preset, decode_wire_message, doh_get_url, encode_wire_message, is_blocked,
-    BlockSignature, DohClient, ReqwestDohClient, BASELINE_DOH_URL,
+    app_data_dir, builtin_preset, decode_wire_message, doh_get_url, encode_wire_message,
+    is_blocked, BlockSignature, DohClient, ReqwestDohClient, BASELINE_DOH_URL,
 };
 use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -109,8 +111,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     report_detection_rate(&results);
 
+    // Pinned to this instance's own self-signed leaf, same construction as
+    // `admin::AdminClient::new` — never `danger_accept_invalid_certs` (CLAUDE.md,
+    // SPEC.md §7.1 #10). Assumes the manually-started service in this example's
+    // precondition used the default app-data dir, not a scratch `LOCALAPPDATA`.
+    let cert_pem = std::fs::read(app_data_dir()?.join("cert.pem"))?;
+    let cert = reqwest::Certificate::from_pem(&cert_pem)?;
     let local_client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
+        .add_root_certificate(cert)
         .build()?;
     let local_base = format!("https://127.0.0.1:{port}/dns-query");
     let mut cache_miss = Vec::new();

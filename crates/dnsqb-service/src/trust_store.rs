@@ -513,7 +513,11 @@ mod tests {
             Err(super::TrustStoreError::LocalThumbprint { path }) => {
                 assert_eq!(path, missing_path);
             }
-            other => panic!("expected LocalThumbprint, got: {other:?}"),
+            Ok(_) => panic!(
+                "expected LocalThumbprint, but the thumbprint call unexpectedly succeeded \
+                 on a missing file"
+            ),
+            Err(err) => panic!("expected LocalThumbprint, got a different Err: {err}"),
         }
     }
 

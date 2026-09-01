@@ -5208,7 +5208,10 @@ mod tests {
         );
         match crate::geoip_credentials::load(dir.path()) {
             Ok(None) => {}
-            other => panic!("the stored credentials must be gone after /clear, got {other:?}"),
+            Ok(Some(_)) => {
+                panic!("the stored credentials must be gone after /clear, got Ok(Some(_))")
+            }
+            Err(err) => panic!("the stored credentials must be gone after /clear, got Err({err})"),
         }
         assert!(!maxmind_view_via_get(state).await.configured);
     }
