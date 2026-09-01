@@ -9,13 +9,17 @@
 //!    across providers beats a single provider" hypothesis this whole
 //!    project rests on.
 //!
-//! **Precondition**: `cargo run --bin dnsqb-service` must already be
-//! running locally — this is a plain HTTP client, it does not manage the
-//! service's lifecycle, same as every manual smoke test in this project's
-//! history. Run with `cargo run --example phase1_metrics [port]` (default
-//! 8443). The latency client pins TLS to `app_data_dir()/cert.pem`, so the
-//! service must be running against the **default** app-data directory — not a
-//! scratch `LOCALAPPDATA` override (T-165: no `danger_accept_invalid_certs`).
+//! **Preconditions** (run with `cargo run --example phase1_metrics [port]`,
+//! default port 8443 — a plain HTTP client, it does not manage the service's
+//! lifecycle):
+//! - Measurement 2 (detection rate) needs no local service — it talks to the
+//!   public upstreams directly, and its results print before measurement 1
+//!   runs.
+//! - Measurement 1 (latency) needs `cargo run --bin dnsqb-service` already
+//!   running against the **default** app-data directory (not a scratch
+//!   `LOCALAPPDATA` override): the client pins TLS to `app_data_dir()/cert.pem`
+//!   the way `admin::AdminClient` does (T-165 — no `danger_accept_invalid_certs`).
+//!   A missing `cert.pem` fails this half only, after measurement 2 has printed.
 //!
 //! **Malicious-domain source**: the live abuse.ch URLhaus recent-URLs CSV
 //! feed (`https://urlhaus.abuse.ch/downloads/csv_recent/`, no Auth-Key
