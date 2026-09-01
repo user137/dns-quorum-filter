@@ -767,3 +767,13 @@ T-92 першим.
   повністю сумісні з T-75's "останній відомий-добрий стан ніколи не стирається на невдалому
   рефреші" гарантією — жодного ризику для Три-Б user safety тут немає, це суто про час старту,
   не про коректність фільтрації.
+- [ ] T-166 — **Оновити pinned versions GitHub Actions у обох workflow'ах** (виникло 2026-09-01
+  під час T-101 — CodeQL-ран показав annotation-warning: `actions/checkout@v4` таргетить
+  deprecated Node.js 20, GitHub форсить його на Node 24). Не помилка, не валить білд — soft
+  warning, зникне сам коли runner прибере Node 20. Треба підняти:
+  - `.github/workflows/ci.yml` — `actions/checkout@v4` ×6, `actions/upload-artifact@v4` ×1
+    (перевірити чи не той самий Node-20-warning) → `@v5`/актуальні.
+  - `.github/workflows/codeql.yml` — `actions/checkout@v4` → `@v5` (CodeQL-стартер GitHub'а
+    тепер на `actions/checkout@v7`; `github/codeql-action/{init,analyze}@v4` уже актуальні).
+  - `taiki-e/install-action@cargo-*` — окремий екосистемний pin, перевірити чи є свій warning.
+  Одноразовий CI-only коміт, без plan/advisor; зробити разом з іншим CI-тюнінгом якщо трапиться.
