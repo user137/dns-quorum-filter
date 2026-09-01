@@ -288,8 +288,18 @@ conformance step and `coverage` (both `continue-on-error: true`).
 `std::os::windows` code). It never fails the build on a finding — alerts land in the repo's
 Security tab. Read them with `gh api repos/user137/dns-quorum-filter/code-scanning/alerts --jq
 '.[] | {rule: .rule.id, sev: .rule.security_severity_level, path: .most_recent_instance.location.path}'`
-(needs the token's `security_events` scope — `gh auth refresh -h github.com -s security_events` if
-it 403s). Triage every finding in the same pass, same bar as a clippy or audit finding.
+— the `repo` scope already on the `gh` token covers code-scanning read+write on this public repo,
+no `gh auth refresh` needed (verified 2026-09-01). Triage every finding in the same pass, same bar
+as a clippy or audit finding.
+
+First scan (`3703fe3`, 2026-09-01) surfaced 17 pre-existing findings, none introduced by T-101:
+16× `rust/cleartext-logging`, every one a `panic!`/`assert!` with `{x:?}` on a secret-typed
+`Result`/thumbprint inside a `#[cfg(test)]` block — test-fixture data, no production log path
+(recurs on any new secret-adjacent test, e.g. Батч 3.1 `key_store` work). 1× real:
+`examples/phase1_metrics.rs` uses `reqwest ... danger_accept_invalid_certs(true)` — an existing
+violation of the project's own "never `danger_accept_invalid_certs`, pin to `cert.pem` via
+`AdminClient`" rule (SPEC §7.1 #10), client-wide not per-host though scoped to a `127.0.0.1` base
+URL. Clearing these is deferred, not part of T-101.
 
 **Check the actual CI run after every push — local-green is not CI-green**, especially for
 OS-permission/environment-dependent code. `gh run list --branch main --limit 5`; `gh run watch
