@@ -302,10 +302,7 @@ mod tests {
         let entry = ScratchEntry::new("absent");
         match load_secret(entry.name()) {
             Ok(None) => {}
-            Ok(Some(got)) => panic!(
-                "a missing entry must be Ok(None), got Ok(Some(_)) ({} bytes)",
-                got.len()
-            ),
+            Ok(Some(_)) => panic!("a missing entry must be Ok(None), got Ok(Some(_))"),
             Err(err) => panic!("a missing entry must be Ok(None), got Err({err})"),
         }
     }
@@ -324,10 +321,7 @@ mod tests {
         }
         match load_secret(entry.name()) {
             Ok(None) => {}
-            Ok(Some(got)) => panic!(
-                "entry must be gone after delete, got Ok(Some(_)) ({} bytes)",
-                got.len()
-            ),
+            Ok(Some(_)) => panic!("entry must be gone after delete, got Ok(Some(_))"),
             Err(err) => panic!("entry must be gone after delete, got Err({err})"),
         }
     }
