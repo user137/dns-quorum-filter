@@ -14,9 +14,9 @@ T-86, T-87, T-88, T-93, T-94; `diagrams/watchdog-state.md` (автомат, як
 
 | # | Канал | Транспорт | Напрями | Що перевіряє |
 |---|-------|-----------|---------|--------------|
-| 1 | IPC heartbeat | Windows: named pipe (`tokio::net::windows::named_pipe`, §7.1 #1); Unix Ф6: domain socket | обидва | ping/pong, найшвидший; слабке місце — осиротілий сокет/pipe після нештатного виходу |
+| 1 | IPC heartbeat | Windows: named pipe (`tokio::net::windows::named_pipe`, §7.1 #1); **сервер = `dnsqb-service`, клієнт = `dnsqb-watcher`**, один дуплексний pipe, ping/pong обох напрямів на ньому. Unix Ф6: domain socket | обидва | ping/pong, найшвидший; слабке місце «осиротілий сокет» з §7 — **Unix-only** (pipe Windows — kernel-об'єкт без ФС-артефакту, §7.1 #1) |
 | 2 | Shared heartbeat-файл | періодичний `mtime`-touch файлу в app-data; **лише `mtime`**, staleness = `now − mtime > поріг` (§7.1 #4) | обидва | не залежить від сокет-дескрипторів; найпростіший, переживає збій IPC-стеку |
-| 3 | HTTP `GET /health` | ендпоінт на вже відкритому DoH-порту (`127.0.0.1:<port>/health`) — **не новий слухач** | **лише watcher → service** | глибша за «процес існує»: DoH-слухач приймає, `AppState` читається, локально-термінальний pipeline-шлях повертає. **Жодного upstream DoH-виклику** (§7.1 #4 / план Батч 3.1) |
+| 3 | HTTP `GET /health` | ендпоінт на вже відкритому DoH-порту (`127.0.0.1:<port>/health`) — **не новий слухач**. Довіра до self-signed cert — через `AdminClient` (читає `cert.pem`, ніколи `danger_accept_invalid_certs`), перебудова на (пере)конекті через T-69-ротацію (§7.1 #10) | **лише watcher → service** | глибша за «процес існує»: DoH-слухач приймає, `AppState` читається, локально-термінальний pipeline-шлях повертає. **Жодного upstream DoH-виклику** (§7.1 #4 / #10) |
 
 ## Потік: сирий сигнал → вердикт каналу → голос → автомат
 
