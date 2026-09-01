@@ -2286,3 +2286,31 @@ docs-only) не має номера задачі — його запис у CLAU
   зафіксував windows-latest (усунув AskUserQuestion + DECISIONS-запис), урізав скоуп (без
   `actions`-мови, без `schedule`, без `packages:`), і назвав реальний критерій готовності —
   не «зелений job», а «підтверджено, що алерти читаються».
+
+- [x] T-165 — Розібратися з 17 знахідками першого CodeQL-скану (усі pre-existing, не від T-101;
+  6 фаз зеленого CI їх ніколи не показали — це і є аргумент за винесення T-101 вперед). Відступ
+  на прохання користувача, 3 коміти (`cbacaf1`/`2c30ef2` + doc-коміт), opening+closing advisor,
+  емпірична звірка через реальний CodeQL-ран щоразу.
+  - **`rust/disabled-certificate-check` (`examples/phase1_metrics.rs`)** — реальний фікс, не FP:
+    прибрано `reqwest ... danger_accept_invalid_certs(true)` для локального `/dns-query`-клієнта
+    вимірювання латентності, замінено на пінінг `app_data_dir()/cert.pem` тією ж конструкцією, що
+    `admin::AdminClient::new` (`Certificate::from_pem` + `add_root_certificate`). Порушувало власне
+    правило проєкту «ніколи `danger_accept_invalid_certs`» (SPEC §7.1 #10). Doc-хедер example'а
+    оновлено: тепер вимагає сервіс на **дефолтній** app-data теці, не scratch `LOCALAPPDATA`
+    (closing-advisor catch — стара версія працювала з будь-яким, нова звузила precondition).
+  - **14 із 16 `rust/cleartext-logging`** — закрито реструктуризацією. Усі були `#[cfg(test)]`
+    catch-all `other => panic!("{other:?}")` одразу після arm'а, що вже деструктурував єдиний
+    secret-несучий варіант; CodeQL тегує весь `Result` як секретний по **імені функції**
+    (`load_secret`/`store_secret`/`local_cert_thumbprint`), не по реальному потоку даних. Заміна:
+    явні `Ok(None)`/`Ok(Some(_))`/`Err(err)` arms, форматується лише coarse thiserror `{err}`
+    Display, ніколи значення. Проміжна спроба лишити `got.len()` у діагностиці теж падала (CodeQL
+    веде taint і крізь `Zeroizing::len()`) — binding прибрано зовсім.
+  - **2 останні (`trust_store.rs` 497/501)** — dismiss через API (`state=dismissed`,
+    `dismissed_reason="used in tests"`, коментар). `assert_eq!`/`assert!` друкують `{thumbprint:?}`
+    — SHA-1-hex **публічного** self-signed сертифіката (`certutil -dump` по `cert.pem`, приватного
+    ключа там нема). Не секрет; евристика чіпляється лише за назву `local_cert_thumbprint`.
+    Реструктуризація тут = code-churn заради обходу евристики з втратою діагностики; dismiss —
+    чесніша класифікація. Вибір користувача з 3 варіантів (dismiss / реструктуризувати / лишити).
+  - **Підсумок: 17 open → 0 open** (17 fixed CodeQL-ом, 2 dismissed). Токен `gh` має `repo` scope
+    → code-scanning read+write на публічному репо без `gh auth refresh`. **Гоча в CLAUDE.md**
+    (`rust/cleartext-logging` taint по імені функції; рекурує на secret-суміжних тестах Батча 3.1).

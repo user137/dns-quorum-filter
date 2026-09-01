@@ -350,7 +350,17 @@ watcher'а) зафіксовано.
 codeql.yml`: CodeQL SAST, мова `rust`, `build-mode: none` (без cargo build), `windows-latest`
 (видимість `#[cfg(windows)]`-коду watchdog'а), на кожен push/PR. Алерти в Security-табі, не
 валять білд; тріаж у тому ж проході. Винесено вперед з Батча 3.7, щоб код 3.1+ від початку
-сканувався. Наступний — Батч 3.1, T-92 першим.
+сканувався.
+
+**T-165 зроблено 2026-09-01** (відступ на прохання користувача; opening+closing advisor, 3 коміти)
+— розбір 17 знахідок першого CodeQL-скану, усі pre-existing. `disabled-certificate-check`
+(`examples/phase1_metrics.rs`) виправлено реально — пінінг `app_data_dir()/cert.pem` як в
+`AdminClient::new`, більше нема `danger_accept_invalid_certs`. 14 із 16 `cleartext-logging`
+закрито реструктуризацією тестових catch-all (`other => panic!("{other:?}")` → явні
+`Ok(None)`/`Ok(Some(_))`/`Err(err)` arms, форматується лише coarse `{err}` Display). 2 останні
+(`trust_store.rs` 497/501 — `assert` друкує SHA-1 публічного сертифіката) dismiss'нуто через
+API (`used in tests`, коментар про несекретність). **0 open alertів.** Наступний — Батч 3.1,
+T-92 першим.
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -511,17 +521,6 @@ codeql.yml`: CodeQL SAST, мова `rust`, `build-mode: none` (без cargo buil
 - [ ] T-136 — Merge публічних блок-листів (EasyList тощо) — окрема фіча поза quorum-логікою (Явно поза межами MVP)
 - [ ] T-140 — UI: топ відвідуваних сайтів — рейтинг доменів у поточному log-вікні за кількістю входжень; не плутати з 5.1.1 (без персистенції/частоти-регулярності); некритична (8, 6)
 - [ ] T-146 — (Батч 3.5, Ф3) Опційне ввімкнення персистентного query-логу лише прапорцем у конфіг-файлі (без UI-тумблера) — той самий часовий/кількісний вікно-ліміт, що й live in-memory ring buffer, не безмежний файл; звірити з T-96 (6, Відкриті питання п.5)
-- [ ] T-165 — Розібратися з 17 CodeQL-алертами першого скану (коміт `3703fe3`, усі pre-existing, не
-  від T-101). **16× `rust/cleartext-logging`** — усі в `#[cfg(test)]`: `panic!`/`assert!` з `{x:?}`
-  на secret-typed `Result`/thumbprint, фікстурні дані, жодного продакшн-лог-шляху; рекурує на
-  кожному новому secret-суміжному тесті (напр. `key_store`-робота Батча 3.1) → зважити
-  CodeQL-конфіг-фільтр (виключити test-модулі для цього правила) проти 16 разових dismiss'ів у
-  Security-табі. **1× `rust/disabled-certificate-check`** — `examples/phase1_metrics.rs`:
-  `reqwest ... danger_accept_invalid_certs(true)`, порушення власного правила проєкту («ніколи
-  `danger_accept_invalid_certs`, пінити `cert.pem` через `AdminClient`», SPEC §7.1 #10); client-wide,
-  хоч і на `127.0.0.1`-base-URL. Фікс = провести example через `AdminClient` або задокументований
-  dismiss. `gh` токен має `repo` scope → read+write code-scanning на публічному репо, `gh auth
-  refresh` не потрібен (Наскрізні вимоги, T-101)
 - [ ] T-157 — **Аналіз** (не імплементація) можливості переходу на системний DNS усього ПК через
   локальну адресу `127.0.0.53`, а не лише браузерний DoH-канал. `127.0.0.53` — конвенція
   systemd-resolved (Linux stub-listener), не Windows-конвенція; перш ніж будь-що планувати —

@@ -292,14 +292,12 @@ Security tab. Read them with `gh api repos/user137/dns-quorum-filter/code-scanni
 no `gh auth refresh` needed (verified 2026-09-01). Triage every finding in the same pass, same bar
 as a clippy or audit finding.
 
-First scan (`3703fe3`, 2026-09-01) surfaced 17 pre-existing findings, none introduced by T-101:
-16× `rust/cleartext-logging`, every one a `panic!`/`assert!` with `{x:?}` on a secret-typed
-`Result`/thumbprint inside a `#[cfg(test)]` block — test-fixture data, no production log path
-(recurs on any new secret-adjacent test, e.g. Батч 3.1 `key_store` work). 1× real:
-`examples/phase1_metrics.rs` uses `reqwest ... danger_accept_invalid_certs(true)` — an existing
-violation of the project's own "never `danger_accept_invalid_certs`, pin to `cert.pem` via
-`AdminClient`" rule (SPEC §7.1 #10), client-wide not per-host though scoped to a `127.0.0.1` base
-URL. Clearing these is deferred, not part of T-101.
+First scan (`3703fe3`, 2026-09-01) surfaced 17 pre-existing findings, none introduced by T-101;
+all resolved in **T-165** (`0` open now): the one real one (`examples/phase1_metrics.rs`
+`danger_accept_invalid_certs(true)`) fixed by pinning `cert.pem`; 14× `rust/cleartext-logging`
+fixed by restructuring `#[cfg(test)]` catch-all `other => panic!("{other:?}")` arms; 2×
+(`trust_store.rs` 497/501, an assert printing a public cert thumbprint) dismissed via API as
+`used in tests`.
 
 **Check the actual CI run after every push — local-green is not CI-green**, especially for
 OS-permission/environment-dependent code. `gh run list --branch main --limit 5`; `gh run watch
@@ -709,6 +707,19 @@ reasoning (search by section number rather than re-deriving a decision from scra
   from `from_pem_slice` — this project's own `key.pem` was always PKCS#8 (`rcgen`
   `serialize_pem`), so a non-PKCS#8 legacy file is rejected (`CertError::LegacyKeyDecode`, caller
   regenerates) rather than guessed at.
+- **CodeQL `rust/cleartext-logging` (T-101/T-165) taints a value by the *name* of the function
+  that produced it, not by a real dataflow to a real sink.** Any `format!`/`panic!`/`assert!`
+  interpolating a value returned from `load_secret` / `store_secret` / `local_cert_thumbprint`
+  (and anything whose body calls those) fires — even a `#[cfg(test)]` catch-all `other =>
+  panic!("{other:?}")` that sits *after* the arm which already destructured the only
+  secret-carrying variant, and even `{}` on `Zeroizing::len()` (taint follows the projection).
+  The fix that actually clears it: exhaustive arms (`Ok(None)` / `Ok(Some(_))` / `Err(err)`),
+  formatting only the coarse thiserror `{err}` Display, never binding the value. A genuinely
+  non-secret value that still trips the name heuristic (a *public* cert's SHA-1 thumbprint) is a
+  real false positive — dismiss via `gh api -X PATCH .../code-scanning/alerts/<n> -f
+  state=dismissed -f dismissed_reason="used in tests"`, don't churn code to dodge it. Expect this
+  on every new secret-adjacent test (Батч 3.1 `key_store`/pipe work) — write the exhaustive match
+  from the start.
 
 ## Documentation map — who owns what
 
