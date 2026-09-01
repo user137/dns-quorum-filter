@@ -376,6 +376,21 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 `upstream::ProviderSpec` → `ProviderView` — свідома проєкція (додає `is_builtin`), не reuse.
 `EnabledProviders` — видалено з коду.
 
+## `AdminStatusResponse.watchdog: WatchdogStatusView` — специфіковано, ще не в діаграмі (SPEC.md §7.1 #7, Ф3 Батч 3.3 / T-95)
+
+Ф3 Батч 3.0 (design spike, `diagrams/watchdog-{state,channels}.md`) зафіксував у SPEC.md §7.1
+рішення #7: `GET /admin/status` отримає поле `watchdog: WatchdogStatusView`, яке
+`dnsqb-service` читає з файлу `<app-data>/watchdog-state.json` (єдиний письменник —
+`dnsqb-watcher`). Форма (за §7.1 #7): `state` (enum `Healthy`/`ChannelDegraded`/`SuspectDead`/
+`VerifyingPid`/`Restarting`/`BackoffWait`/`GaveUp`), `target`, `restart_attempts_in_window`,
+`window_started_at`, `last_transition_at`, `last_error: Option<String>`.
+
+**Навмисно ще не в class-діаграмі вище й не в SOURCES:** тип не існує в коді (`dnsqb-watcher` —
+`todo!()` заглушка), реалізація відкладена на Батч 3.3. Малювати його як реальний DTO зараз
+порушило б ground-truth правило в інший бік. Цей запис — форвард-вказівник, щоб Батч 3.3 додав
+клас і оновив SOURCES (`§7`, `§7.1`) тоді, коли поле справді з'явиться. Крос-посилання:
+`watchdog-state.md` «Крос-посилання на UI».
+
 ## `OverrideDomainView`/`OverrideListsResponse` — реальна реалізація, відмінна від чернеткового `OverrideEntry` (T-47)
 
 `OverrideEntry` (вище) — внутрішній backend-тип (`overrides.rs`), не сама DTO-форма на дроті:

@@ -1280,6 +1280,90 @@ guard/PID-механізм, що й вище) і піднімає відсутн
 фейлить DoH і йде у власний fallback — інтернет працює, фільтрація ні. Тому watchdog
 зобов'язаний **повідомити** про проблему в UI, а не тихо намагатись полагодити.
 
+#### 7.1. Реалізаційні рішення (Фаза 3, Батч 3.0 — 2026-09-01)
+
+Проза §7 вище лишає відкритими конкретні механізми й числа («named mutex / файловий лок»,
+«напр. 5 за 10 хв», «експоненційний backoff»). Батч 3.0 (kickoff Фази 3, plan-mode + advisor)
+їх фіксує — щоб кожен наступний watchdog-батч (3.1–3.3) не переоткривав те саме рішення.
+Діаграми `diagrams/watchdog-state.md` і `diagrams/watchdog-channels.md` малюються з цієї
+підсекції як з джерела.
+
+1. **IPC-транспорт (канал 1).** Windows: `tokio::net::windows::named_pipe` — safe, уже в
+   дереві через `tokio`, жодного raw `CreateNamedPipeW` FFI, `#![forbid(unsafe_code)]`
+   лишається цілим (той самий підхід, що `keyring` для secret store, T-67). Ім'я каналу:
+   `\\.\pipe\dns-quorum-filter\heartbeat-<h>`, де `<h>` — перші 8 hex від sha1 нормалізованої
+   (lowercase, без хвостового роздільника) app-data теки — та сама ізоляційна деривація, що в
+   `key_store` entry name, тож scratch-екземпляр у власній app-data теці не колідить з
+   реальним. Unix (Фаза 6): domain socket у app-data з тим самим `<h>`-суфіксом, за
+   `#[cfg(unix)]` seam.
+2. **Single-instance guard (T-92).** Свій advisory lockfile, без нових залежностей і без
+   `unsafe`: `std::fs::OpenOptions` + `std::os::windows::fs::OpenOptionsExt::share_mode(0)`
+   (повністю ексклюзивний хендл) на `<app-data>/<role>.lock`, `role` ∈
+   `service` / `watcher` / `tray`. Хендл тримається відкритим на весь час життя процесу; OS
+   закриває його при завершенні, зокрема при краху → лок звільняється сам, осиротілого стану
+   немає. Per-user app-data тека вже дає per-сесійну ізоляцію, тож namespace-префікс
+   (`Global\` / `Local\`, як у named mutex) не застосовний і підвищені права не потрібні —
+   на відміну від `Global\`-mutex, який вимагав би `SeCreateGlobalPrivilege` і суперечив би
+   вимозі §7 «обидва процеси — під звичайним користувачем». Розглянуті й відхилені крейти:
+   `single-instance` 0.3.3 (не оновлювався ~4 роки, тягне `winapi` 0.3 — старий FFI-стек — і
+   `widestring` 0.4), `fslock` 0.2.1 (теж без підтримки), `named-lock` 0.4.1 (підтримується,
+   але тягне `windows` 0.53 — велику bindings-родину, іншу ніж `windows-sys` у `keyring`).
+   Unix (Фаза 6): `flock(LOCK_EX | LOCK_NB)` на тому ж файлі — та сама форма API за
+   `#[cfg(unix)]` seam.
+3. **PID-файли — джерело PID для перевірки перед рестартом.** Кожен процес при старті (уже
+   тримаючи свій guard з п.2) пише `<app-data>/<role>.pid` з `{ pid, exe_path, started_at }`
+   (serde). `dnsqb-watcher` і ланчер-роль T-150 читають ці файли — без них, коли обидва
+   процеси піднято незалежно при вході користувача в систему (нормальний сценарій за T-150),
+   watcher не має child-handle й **немає звідки взяти PID** для перевірки «чи процес реально
+   мертвий». Перевірка живучості (Батч 3.2, через вет-крейт типу `sysinfo`, не raw FFI) звіряє
+   PID **і** `exe_path` / ім'я процесу проти вмісту pid-файлу — bare-PID перевірка читала б
+   recycled PID як «живий назавжди», і watchdog ніколи не перезапустив би справді мертвий
+   сервіс: тихий вічний збій, гірший за restart loop, якому §7 присвячує весь свій розділ про
+   failure mode.
+4. **Wire-формат heartbeat.**
+   - *Канал 1 (pipe)* — мала фіксована структура, не JSON (watcher свідомо мінімальний — §7).
+     Кадр: `[u16 LE довжина][u8 версія = 1][u8 kind][u64 LE seq][u64 LE unix_millis]`,
+     `kind` ∈ `Ping = 1` / `Pong = 2`. Парсер — чиста функція
+     `parse_frame(&[u8]) -> Result<Frame, FrameError>`, окремо від сокет-I/O (pure/impure
+     розділення — «Наскрізні вимоги»).
+   - *Канал 2 (shared-файл)* — **лише `mtime`**: періодичний write-touch, рішення про staleness
+     — суто `now − mtime > поріг`, крапка (§7: «найпростіший»). Без payload-парсингу на шляху
+     рішення, без atomic-rename — звичайний перезапис. Вміст файлу — фіксований маркер
+     (magic + `role` + `schema_version`), записаний один раз при створенні; якщо при читанні
+     маркер не збігається (чужий / зіпсутий файл зі свіжим `mtime`), канал 2 віддає «нема
+     сигналу» (не «смерть») і лог один раз. Ця розбіжність визначена тут явно, а не лишена на
+     імплементацію.
+5. **Шлях до бінарників для spawn.** `std::env::current_exe()?.parent()` →
+   `dnsqb-service.exe` / `dnsqb-tray.exe` / `dnsqb-watcher.exe` поруч. Ніколи PATH-lookup
+   (PATH — atacker-influenceable input, не константа — «Наскрізні вимоги»). Якщо `current_exe`
+   повертає незвичайний шлях (симлінк, тимчасова тека) — hard error, не мовчазний
+   PATH-fallback.
+6. **Спільний код.** `dnsqb-watcher` додає `dnsqb-service = { path = "../dnsqb-service" }` як
+   lib-залежність (так само, як `dnsqb-tray` для `AdminClient`). Переспільне: `paths`
+   (app-data тека), DTO `/health`, деривація `<h>` з п.1. **Рефактор у Батчі 3.1:** винести
+   sha1-хелпер нормалізованої app-data теки з `key_store` у `paths` як `pub`, щоб і ім'я pipe,
+   і secret-store entry брали одну деривацію, а не дві копії.
+7. **Файл стану watchdog.** `dnsqb-watcher` — **єдиний письменник**
+   `<app-data>/watchdog-state.json` (serde; атомарний replace через temp + rename). Поля:
+   `schema_version`, `state` (enum: `Healthy` / `ChannelDegraded` / `SuspectDead` /
+   `VerifyingPid` / `Restarting` / `BackoffWait` / `GaveUp` — див. `watchdog-state.md`),
+   `target` (`service` / `watcher` — до кого стан), `restart_attempts_in_window`,
+   `window_started_at`, `last_transition_at`, `last_error: Option<String>` (грубий текст, без
+   доменів і без чутливого — «діагностичні логи не містять доменних імен»). `dnsqb-tray`
+   полить цей файл (як уже полить `/admin/status`); `/admin/status` отримує поле
+   `watchdog: WatchdogStatusView`, читаючи той самий файл (Батч 3.3 / T-95). `dnsqb-service` і
+   `dnsqb-tray` — тільки читачі. **Відома залежність T-95:** відкритий ⚠️ GAP у
+   `diagrams/ui-status-indicator.md` (порядок пріоритету умов індикатора, коли кілька
+   виконані одночасно) «потребує підтвердження чи явного запису в DECISIONS.md перед
+   реалізацією T-56/T-95» — Батч 3.3 має його закрити, не переоткрити.
+8. **Інтервал, поріг, backoff, бюджет — числа, яких §7 не дає (дефолти Ф3, не конфігуровані
+   в Ф3).** Інтервал опитування — 5 s, спільний тик для обох напрямів. Поріг — 3 пропущені
+   поспіль **по кожному каналу окремо**, тоді голос. Backoff між спробами рестарту —
+   1 → 2 → 4 → 8 → 16 s (cap 16 s). Бюджет — 5 рестартів у вікні 600 s, далі `GaveUp`.
+   `GaveUp` — **per-target**: `service` і `watcher` мають окремі лічильники, вікна й стани.
+9. **Рантайм `dnsqb-watcher`.** `tokio` current-thread (`rt`, не `rt-multi-thread` — watcher
+   мінімальний), features `rt` / `net` / `time` / `process` / `sync` / `macros`.
+
 ### 8. UI
 
 > **T-149 (DECISIONS.md): Tauri-вікно замінено треєм + вбудованим веб-UI.** Прозова частина

@@ -6,9 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Phase:** Фаза 2 (cert automation, Windows) **formally closed 2026-08-31** (SPEC.md §"Фазований
 план" / TASKS.md §"Фаза 2"). **Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging)
-is next, not started — a 9-batch execution plan (3.0–3.8) is in TASKS.md §"Фаза 3" ("План
-виконання Ф3", 2026-09-01); start at Батч 3.0 (watchdog design spike + diagrams).** Фаза 1
-formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
+is next — a 9-batch execution plan (3.0–3.8) is in TASKS.md §"Фаза 3" ("План виконання Ф3",
+2026-09-01). **Батч 3.0 (watchdog design spike) done 2026-09-01**: `diagrams/watchdog-{state,
+channels}.md` + SPEC.md §7.1 (9 реалізаційні рішення — IPC via `tokio` named_pipe, own
+`share_mode(0)` lockfile guard, pid-files, fixed heartbeat frame, spawn from
+`current_exe().parent()`, `watchdog-state.json`, interval/backoff/budget numbers). **Start at
+Батч 3.1, T-92 first.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
+RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
 
