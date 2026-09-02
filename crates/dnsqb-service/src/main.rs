@@ -24,11 +24,11 @@
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, load_maxmind_credentials,
-    load_or_generate_server_config, migrate_legacy_credentials_file, run_geoip_updater, serve,
-    write_pid_file, AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader, GeoipSource,
-    GeoipState, GuardError, InstanceGuard, InstanceRole, InvalidEntry, OverrideLists,
-    OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
-    RuntimeInit, TimeoutConfig,
+    load_or_generate_server_config, migrate_legacy_credentials_file, run_geoip_updater,
+    run_reachability_prober, serve, write_pid_file, AppState, BindError, Cache, CacheState,
+    GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError, InstanceGuard, InstanceRole,
+    InvalidEntry, OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLog,
+    ReqwestDohClient, ResolverConfig, RuntimeInit, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -195,6 +195,20 @@ async fn main() {
         }
     } else {
         tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
+    }
+
+    // T-152: the network-reachability prober. Its own plain `reqwest::Client`
+    // (public-CA validation, no connection pool shared with the DoH client) —
+    // hitting a few third-party `generate_204`-class markers has nothing to
+    // do with upstream resolution. Deliberately not tied to `/health` or any
+    // watchdog channel (a network outage must not look like a dead service).
+    match reqwest::Client::builder().build() {
+        Ok(probe_client) => {
+            tokio::spawn(run_reachability_prober(probe_client, Arc::clone(&state)));
+        }
+        Err(err) => {
+            tracing::error!("failed to build the reachability probe HTTP client: {err}");
+        }
     }
 
     let port = resolver_config.port;

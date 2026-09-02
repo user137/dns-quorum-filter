@@ -44,6 +44,7 @@ use crate::pipeline::{
     PipelineOutcome, UpstreamContext,
 };
 use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
+use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutConfig;
 use crate::upstream::{
     all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
@@ -495,6 +496,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         timeout: &settings.timeout,
         baseline_url: baseline.current(),
         serve_baseline_fallback: settings.serve_baseline_when_filters_unreachable,
+        reachability: state.reachability_snapshot(),
     };
     let response = match handle_query(
         &query,
@@ -597,6 +599,13 @@ pub struct AppState<C: DohClient + Sync> {
     /// cycle and swaps this `Arc`. Same `RwLock<Arc<_>>` shape as every
     /// other per-query state here.
     baseline: RwLock<Arc<BaselineSelector>>,
+    /// T-152 — whether the machine has any internet connectivity, published
+    /// by `run_reachability_prober` and read once per query
+    /// (`pipeline::handle_query`'s offline fast path). A plain
+    /// `RwLock<NetworkReachability>` — the value is a `Copy` 1-byte enum, so
+    /// the `Arc<_>` wrapper the bigger per-query state uses would be pure
+    /// overhead. Never held across `.await`.
+    reachability: RwLock<NetworkReachability>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -734,6 +743,7 @@ impl<C: DohClient + Sync> AppState<C> {
             geoip_refresh_wake: Arc::new(Notify::new()),
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
+            reachability: RwLock::new(NetworkReachability::default()),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
@@ -800,6 +810,18 @@ impl<C: DohClient + Sync> AppState<C> {
     /// on a source change.
     pub(crate) fn update_maxmind_health(&self, health: MaxmindHealth) {
         *self.maxmind_health.write() = Arc::new(health);
+    }
+
+    /// Publishes the latest network-reachability verdict (T-152) — the sole
+    /// writer is `run_reachability_prober`.
+    pub(crate) fn update_reachability(&self, reachability: NetworkReachability) {
+        *self.reachability.write() = reachability;
+    }
+
+    /// The current network-reachability verdict (T-152) — read once per
+    /// query by `resolve_doh_request`, never held across `.await`.
+    pub(crate) fn reachability_snapshot(&self) -> NetworkReachability {
+        *self.reachability.read()
     }
 
     /// Wakes `run_geoip_updater` out of its inter-cycle sleep (T-163). Safe

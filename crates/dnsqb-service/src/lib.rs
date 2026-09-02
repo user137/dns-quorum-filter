@@ -138,6 +138,7 @@ mod paths;
 mod pipeline;
 mod query_log;
 mod quorum;
+mod reachability;
 mod timeout;
 mod tls;
 mod trust_store;
@@ -187,6 +188,10 @@ pub use pipeline::{
 pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
 pub use quorum::{
     is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict, VoterRecord, VoterVerdict,
+};
+pub use reachability::{
+    next_probe_delay, run_reachability_prober, verdict_from_probe_results, NetworkReachability,
+    MARKERS,
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
