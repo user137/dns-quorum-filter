@@ -1,7 +1,10 @@
-//! `dnsqb-watcher` liveness primitives (SPEC.md §7 / §7.1). Батч 3.1 builds
-//! these as tested library pieces; the running loops that drive them land in
-//! Батч 3.3 (`main.rs` wiring) and the decision core (voting / backoff /
-//! restart budget / PID verification) in Батч 3.2.
+//! `dnsqb-watcher` liveness primitives + decision core (SPEC.md §7 / §7.1).
+//! Батч 3.1 built the primitives (`instance`, `frame`, `channel`, `pipe`,
+//! `heartbeat_file`); Батч 3.2 added the decision core — `vote`, `backoff`,
+//! `budget`, `pid_check`, `spawn`, `state`, and the pure `transition` that
+//! composes them into the `diagrams/watchdog-state.md` automaton. The running
+//! loops that tick this on both binaries land in Батч 3.3 (`main.rs` wiring +
+//! `dnsqb-watcher`'s entry point).
 
 pub mod backoff;
 pub mod budget;
@@ -14,4 +17,5 @@ pub mod pid_check;
 pub mod pipe;
 pub mod spawn;
 pub mod state;
+pub mod transition;
 pub mod vote;
