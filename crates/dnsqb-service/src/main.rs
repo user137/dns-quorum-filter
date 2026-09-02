@@ -31,6 +31,21 @@ use tokio_rustls::TlsAcceptor;
 async fn main() {
     tracing_subscriber::fmt::init();
 
+    // Resolved once (a pure env read), used for the guard, resolver config and
+    // override lists below (T-144) - a missing app-data directory
+    // (`%LOCALAPPDATA%` unset) isn't fatal for any of them: they fall back to
+    // defaults/empty with a warning.
+    let app_data = app_data_dir().ok();
+
+    // T-92: take the single-instance lock *before* `load_or_generate_server_config`
+    // (SPEC.md §7.1 #2) - on a first run two concurrently-started services would
+    // otherwise both reach `GeneratedFirstRun`, each writing `cert.pem` and each
+    // `store_secret`-ing its key into the same app-data-derived entry, leaving a
+    // `cert.pem` on disk that doesn't match the key the surviving process serves
+    // (the mismatch class T-67's discard ordering exists to avoid). Held for the
+    // whole process lifetime; the OS frees the handle on exit.
+    let _instance_guard = acquire_service_guard(app_data.as_deref());
+
     let server_config = match load_or_generate_server_config() {
         Ok(config) => config,
         Err(err) => {
@@ -39,16 +54,6 @@ async fn main() {
         }
     };
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
-
-    // Resolved once, used for both the resolver config and override lists
-    // below (T-144) - a missing app-data directory (`%LOCALAPPDATA%` unset)
-    // isn't fatal for either, same tolerance `load_overrides` already had
-    // before this slice: both fall back to defaults/empty with a warning.
-    let app_data = app_data_dir().ok();
-
-    // T-92: hold the single-instance lock for the whole process lifetime; the
-    // OS frees the handle on exit (see `acquire_service_guard`).
-    let _instance_guard = acquire_service_guard(app_data.as_deref());
 
     let resolver_config = load_resolver_config(app_data.as_deref());
 

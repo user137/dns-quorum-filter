@@ -88,15 +88,20 @@ const ERROR_SHARING_VIOLATION: i32 = 32;
 
 /// Acquire the single-instance lock for `role` under `app_data_dir`.
 ///
+/// The guard is often the first thing to touch the app-data directory (it runs
+/// before cert/config load — SPEC.md §7.1 #2), so it creates the directory if
+/// it doesn't exist.
+///
 /// # Errors
 ///
 /// [`GuardError::AlreadyRunning`] if another same-role process holds it,
-/// [`GuardError::Io`] for any other open failure, and — on a non-Windows
-/// target — [`GuardError::UnsupportedPlatform`].
+/// [`GuardError::Io`] for a directory-creation or other open failure, and — on
+/// a non-Windows target — [`GuardError::UnsupportedPlatform`].
 #[cfg(windows)]
 pub fn acquire(app_data_dir: &Path, role: Role) -> Result<InstanceGuard, GuardError> {
     use std::os::windows::fs::OpenOptionsExt;
 
+    std::fs::create_dir_all(app_data_dir).map_err(GuardError::Io)?;
     let path = app_data_dir.join(format!("{}.lock", role.as_str()));
     let file = OpenOptions::new()
         .create(true)
@@ -177,14 +182,17 @@ mod tests {
         }
     }
 
-    // Happy path.
+    // Happy path — including creating the app-data directory when it's absent
+    // (the guard runs before anything else touches it, SPEC.md §7.1 #2).
     #[test]
-    fn acquire_creates_the_lockfile_and_yields_a_guard() {
+    fn acquire_creates_the_directory_and_the_lockfile() {
         let dir = temp_dir();
-        let guard = match acquire(dir.path(), Role::Service) {
+        let app_data = dir.path().join("not-yet-created");
+        let guard = match acquire(&app_data, Role::Service) {
             Ok(guard) => guard,
             Err(err) => panic!("first acquire must succeed: {err}"),
         };
+        assert!(app_data.is_dir(), "the app-data directory must be created");
         assert!(guard.path().exists(), "the .lock file must exist");
         assert_eq!(
             guard.path().file_name().and_then(|n| n.to_str()),
@@ -220,14 +228,18 @@ mod tests {
         }
     }
 
-    // Error path: a lockfile path whose parent directory does not exist.
+    // Error path: the app-data path exists but is a file, so it can't be
+    // created as a directory — an `Io` error, not `AlreadyRunning`.
     #[test]
-    fn acquire_in_a_missing_directory_is_an_io_error_not_already_running() {
+    fn acquire_where_the_app_data_path_is_a_file_is_an_io_error() {
         let dir = temp_dir();
-        let missing = dir.path().join("does-not-exist");
-        match acquire(&missing, Role::Service) {
+        let not_a_dir = dir.path().join("i-am-a-file");
+        if let Err(err) = std::fs::write(&not_a_dir, b"x") {
+            panic!("fixture write must succeed: {err}");
+        }
+        match acquire(&not_a_dir, Role::Service) {
             Err(GuardError::Io(_)) => {}
-            Ok(_) => panic!("acquire in a missing directory must fail"),
+            Ok(_) => panic!("acquire under a file path must fail"),
             Err(other) => panic!("expected Io, got {other}"),
         }
     }
