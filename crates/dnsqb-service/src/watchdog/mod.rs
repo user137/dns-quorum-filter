@@ -4,6 +4,7 @@
 //! restart budget / PID verification) in Батч 3.2.
 
 pub mod backoff;
+pub mod budget;
 pub mod channel;
 pub mod frame;
 pub mod heartbeat_file;

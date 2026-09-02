@@ -191,6 +191,7 @@ pub use upstream::{
     ReqwestDohClient, UpstreamError, BASELINE_DOH_URL, DEFAULT_PROVIDER_IDS,
 };
 pub use watchdog::backoff::{next_backoff, BACKOFF_CAP, BACKOFF_STEPS};
+pub use watchdog::budget::{BudgetVerdict, RestartBudget, MAX_RESTARTS_PER_WINDOW, RESTART_WINDOW};
 pub use watchdog::channel::{channel_status, ChannelStatus, MISS_THRESHOLD};
 pub use watchdog::frame::{
     encode as encode_heartbeat_frame, parse as parse_heartbeat_frame, Frame, FrameError, FrameKind,
