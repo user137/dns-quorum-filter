@@ -207,6 +207,7 @@ mod tests {
             active_providers,
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,
+            serve_baseline_when_filters_unreachable: false,
             port: 8443,
             stats,
             watchdog: None,

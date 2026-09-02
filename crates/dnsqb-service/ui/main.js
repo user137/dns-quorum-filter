@@ -29,22 +29,37 @@ async function getStatus() {
   return response.json();
 }
 
-/// Sends an `AdminConfigUpdate`. Since T-72/T-73 that DTO carries only
-/// `timeout_mode` (the voter list moved to its own `/admin/providers/*`
-/// routes), so `applyConfig` is only ever called with `{ timeout_mode }` -
-/// the pre-fetch of the current status is gone with the `providers` field
-/// it used to carry forward.
-async function applyConfig(overrides) {
+/// Sends a full `AdminConfigUpdate`. The DTO is a full replace (no partial
+/// patch), so every field it carries -- `timeout_mode` and, since T-155,
+/// `serve_baseline_when_filters_unreachable` -- must be present. Both config
+/// controls live in the same card and are read straight off the DOM here.
+async function applyCurrentConfig() {
+  const selectedMode = document.querySelector(
+    'input[name="timeout-mode"]:checked',
+  );
+  const baselineFallback = document.getElementById("baseline-fallback-toggle");
+  const body = {
+    timeout_mode: selectedMode ? selectedMode.value : "fail_open",
+    serve_baseline_when_filters_unreachable: baselineFallback
+      ? baselineFallback.checked
+      : false,
+  };
   const response = await fetch("/admin/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(overrides),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
 }
+
+// T-155 / T-47: a config change that live-applies but fails to persist to
+// resolver_config.toml must stay visible, not be wiped by the next 2s status
+// poll (whose `persisted` is always true). Latched here, cleared on the next
+// successful apply.
+let configPersistFailed = false;
 
 // T-139: percentage is derived here, not stored server-side - `total`/`blocked`
 // are already the source of truth (`admin::compute_stats`), a third persisted
@@ -75,9 +90,14 @@ function render(status) {
   setPill(true, "Сервіс доступний");
   // The voter (provider) list moved to its own #providers-body card
   // (T-72/T-73) - it is no longer part of the 2s status poll's DOM.
+  const configWarning =
+    configPersistFailed || status.persisted === false
+      ? `<div class="notice warn">Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.</div>`
+      : "";
   appBody.innerHTML = `
     <div class="card">
       <h3>Режим таймауту</h3>
+      ${configWarning}
       <div class="radio-group">
         ${["fail_open", "fail_closed", "degraded"]
           .map(
@@ -89,6 +109,10 @@ function render(status) {
           )
           .join("")}
       </div>
+      <label class="radio-opt baseline-fallback-opt">
+        <input type="checkbox" id="baseline-fallback-toggle" ${status.serve_baseline_when_filters_unreachable ? "checked" : ""} />
+        <span>Консультувати baseline-резолвер, коли жоден фільтр не відповів (незалежно від режиму таймауту; типово вимкнено — тоді запит просто не фільтрується у цьому вузькому випадку)</span>
+      </label>
     </div>
     <div class="card">
       <h3>Статистика (у поточному вікні логу)</h3>
@@ -115,7 +139,11 @@ function render(status) {
 
   document
     .querySelectorAll('input[name="timeout-mode"]')
-    .forEach((el) => el.addEventListener("change", onTimeoutModeChanged));
+    .forEach((el) => el.addEventListener("change", onConfigChanged));
+  const baselineFallback = document.getElementById("baseline-fallback-toggle");
+  if (baselineFallback) {
+    baselineFallback.addEventListener("change", onConfigChanged);
+  }
 }
 
 function renderError(err) {
@@ -127,9 +155,11 @@ function renderError(err) {
   appBody.appendChild(panel);
 }
 
-async function onTimeoutModeChanged(event) {
+async function onConfigChanged() {
   try {
-    render(await applyConfig({ timeout_mode: event.target.value }));
+    const status = await applyCurrentConfig();
+    configPersistFailed = status.persisted === false;
+    render(status);
   } catch (err) {
     renderError(err);
   }

@@ -86,6 +86,10 @@ pub struct AdminStatusResponse {
     /// [`crate::ResolverConfig`] can still be reconstructed for
     /// [`crate::ResolverConfig::save`].
     pub timeout_ms: u32,
+    /// T-155 — whether an unfiltered baseline answer may be served when every
+    /// enabled voter fails. Editable via `POST /admin/config`; mirrored here
+    /// so the `/admin/ui` checkbox reflects the live value.
+    pub serve_baseline_when_filters_unreachable: bool,
     /// The local `DoH` listener's port — read-only here (changing it needs a
     /// re-bind, out of scope for a live-apply admin call).
     pub port: u16,
@@ -193,17 +197,20 @@ pub struct AdminStats {
     pub in_flight: u64,
 }
 
-/// `POST /admin/config`'s body — always a full replace of both fields, never
+/// `POST /admin/config`'s body — always a full replace of every field, never
 /// a partial patch. Keeps parsing trivial and matches how the UI actually
-/// uses it: the dashboard always has both controls' current values on hand
+/// uses it: the dashboard always has every control's current value on hand
 /// and sends them together, so there's no scenario needing
-/// `Option<Option<T>>`-style patch semantics for this slice's two controls.
+/// `Option<Option<T>>`-style patch semantics for this slice's controls.
 /// Since T-72/T-73 the provider list is edited through `/admin/providers/*`,
-/// not here — this body carries only the timeout mode.
+/// not here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminConfigUpdate {
     /// The desired timeout mode.
     pub timeout_mode: TimeoutMode,
+    /// T-155 — see
+    /// [`crate::ResolverConfig::serve_baseline_when_filters_unreachable`].
+    pub serve_baseline_when_filters_unreachable: bool,
 }
 
 /// One enabled voter in [`AdminStatusResponse::active_providers`] (T-72/T-73).
@@ -1540,6 +1547,11 @@ mod tests {
         assert_eq!(
             json_of(&DecisionSourceView::from(DecisionSource::Geoip)),
             "\"GEOIP\""
+        );
+        // T-155: BaselineFallback is producible — same From conversion.
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::BaselineFallback)),
+            "\"BASELINE_FALLBACK\""
         );
         // The two remaining later-phase variants aren't producible from the
         // internal 5-variant DecisionSource (see DecisionSourceView::from's

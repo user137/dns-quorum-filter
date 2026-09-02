@@ -923,6 +923,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         active_providers: ProviderStatusView::active_from(&state.providers.read()),
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
+        serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
         port: state.persist.port,
         stats: live_stats(state, &entries),
         watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
@@ -980,6 +981,8 @@ fn apply_admin_config<C: DohClient + Sync>(
     let settings = {
         let mut guard = state.runtime.write();
         guard.timeout.mode = update.timeout_mode;
+        guard.serve_baseline_when_filters_unreachable =
+            update.serve_baseline_when_filters_unreachable;
         *guard
     };
     let cache_config = state.cache.read().config;
@@ -998,9 +1001,9 @@ fn apply_admin_config<C: DohClient + Sync>(
                 providers,
                 cache: cache_config,
                 geoip: GeoipConfig { blocked_countries },
-                // Cross-field read (T-155): edited by its own future route,
-                // not this one — carry the live value so a timeout toggle
-                // doesn't reset it on save.
+                // T-155: `settings` already reflects `update`'s value (set
+                // in the write guard above), so this persists the new toggle
+                // alongside the timeout mode in one write.
                 serve_baseline_when_filters_unreachable: settings
                     .serve_baseline_when_filters_unreachable,
             };
@@ -1018,6 +1021,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         active_providers: ProviderStatusView::active_from(&state.providers.read()),
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
+        serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
         port: state.persist.port,
         stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
         watchdog,
@@ -3605,6 +3609,7 @@ mod tests {
     async fn serve_admin_config_rejects_a_missing_content_type_even_with_a_valid_json_body() {
         let update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+            serve_baseline_when_filters_unreachable: false,
         };
         let Ok(json) = serde_json::to_vec(&update) else {
             panic!("fixture body must serialize");
@@ -3627,6 +3632,7 @@ mod tests {
     async fn serve_admin_config_rejects_a_non_json_content_type_even_with_a_valid_json_body() {
         let update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+            serve_baseline_when_filters_unreachable: false,
         };
         let Ok(json) = serde_json::to_vec(&update) else {
             panic!("fixture body must serialize");
@@ -3665,6 +3671,7 @@ mod tests {
 
         let update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+            serve_baseline_when_filters_unreachable: false,
         };
         let config_response = match serve(admin_config_request(update), Arc::clone(&state)).await {
             Ok(response) => response,
@@ -3734,6 +3741,7 @@ mod tests {
 
         let update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+            serve_baseline_when_filters_unreachable: false,
         };
         let response = match serve(admin_config_request(update), state).await {
             Ok(response) => response,
@@ -3753,6 +3761,52 @@ mod tests {
         assert_eq!(loaded.timeout_mode, update.timeout_mode);
         // T-72/T-73 cross-field read: a timeout-only change must still write
         // the live provider list, not blank `[[providers]]`.
+        assert_eq!(loaded.providers, ProviderEntry::default_active_set());
+    }
+
+    // T-155: the new toggle round-trips through POST /admin/config -> the
+    // echoed status, the live runtime, and resolver_config.toml, and a
+    // change to it doesn't blank the timeout mode or provider list.
+    #[tokio::test]
+    async fn serve_admin_config_round_trips_the_baseline_fallback_toggle() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+
+        let update = AdminConfigUpdate {
+            timeout_mode: crate::timeout::TimeoutMode::Degraded,
+            serve_baseline_when_filters_unreachable: true,
+        };
+        let response = match serve(admin_config_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert!(status.serve_baseline_when_filters_unreachable);
+        assert_eq!(status.timeout_mode, crate::timeout::TimeoutMode::Degraded);
+        assert!(status.persisted);
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert!(loaded.serve_baseline_when_filters_unreachable);
+        assert_eq!(loaded.timeout_mode, crate::timeout::TimeoutMode::Degraded);
         assert_eq!(loaded.providers, ProviderEntry::default_active_set());
     }
 
@@ -3784,6 +3838,7 @@ mod tests {
 
         let update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+            serve_baseline_when_filters_unreachable: false,
         };
         let response = match serve(admin_config_request(update), state).await {
             Ok(response) => response,
@@ -3839,12 +3894,15 @@ mod tests {
         let updates = [
             AdminConfigUpdate {
                 timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+                serve_baseline_when_filters_unreachable: false,
             },
             AdminConfigUpdate {
                 timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+                serve_baseline_when_filters_unreachable: false,
             },
             AdminConfigUpdate {
                 timeout_mode: crate::timeout::TimeoutMode::Degraded,
+                serve_baseline_when_filters_unreachable: false,
             },
         ];
 
@@ -3885,6 +3943,7 @@ mod tests {
         let state = state_with(no_op_client());
         let update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailOpen,
+            serve_baseline_when_filters_unreachable: false,
         };
         let response = match serve(admin_config_request(update), state).await {
             Ok(response) => response,
@@ -5034,6 +5093,7 @@ mod tests {
 
         let config_update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+            serve_baseline_when_filters_unreachable: false,
         };
         let cache_update = non_default_cache_config_update();
 
@@ -5853,6 +5913,7 @@ mod tests {
         );
         let providers_update = AdminConfigUpdate {
             timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+            serve_baseline_when_filters_unreachable: false,
         };
         let response = match serve(admin_config_request(providers_update), Arc::clone(&state)).await
         {

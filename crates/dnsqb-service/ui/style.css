@@ -96,6 +96,7 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
 .radio-opt { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 12.8px; }
 .radio-opt input { margin-top: 0.2rem; accent-color: var(--accent); }
+.baseline-fallback-opt { margin-top: 0.75rem; }
 
 .stat { font-size: 24px; font-weight: 700; }
 .stat-row { display: flex; flex-wrap: wrap; gap: 1.5rem; }
