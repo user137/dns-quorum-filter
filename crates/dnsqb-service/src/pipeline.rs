@@ -45,7 +45,7 @@ use crate::overrides::{self, ListKind, OverrideLists};
 use crate::query_log::{Decision, DecisionSource};
 use crate::quorum::{requires_quorum, resolve, QuorumVerdict, VoterRecord};
 use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
-use crate::upstream::{DohClient, ProviderEntry, BASELINE_DOH_URL};
+use crate::upstream::{DohClient, ProviderEntry};
 use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, SOA};
@@ -65,6 +65,21 @@ pub struct CacheContext<'a> {
     pub cache: &'a Cache,
     /// The config it was built from.
     pub config: &'a CacheConfig,
+}
+
+/// Per-query upstream-resolution inputs, bundled into one `handle_query`
+/// parameter for the same `clippy::too_many_arguments` reason as
+/// [`CacheContext`] (T-154 added `baseline_url` as what would have been an
+/// eighth argument). `timeout` was previously its own parameter.
+pub struct UpstreamContext<'a> {
+    /// Timeout mode + per-query duration (SPEC.md §3.3).
+    pub timeout: &'a TimeoutConfig,
+    /// The baseline (non-filtering) resolver URL to use for this query,
+    /// already chosen by the caller from `baseline_selector::BaselineSelector`
+    /// (T-154) — `baseline_selector::BASELINE_CHAIN[0]` for the unchanged
+    /// default. Goes into the same fan-out as the voters, so it has to be
+    /// fixed before `quorum::resolve` starts.
+    pub baseline_url: &'a str,
 }
 
 /// SPEC.md §3.5's live `GeoIP` filter inputs for one query (T-76) — bundled
@@ -171,13 +186,14 @@ fn decision_from_response(message: &Message) -> Decision {
 async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
     client: &C,
     query: &Message,
-    timeout_config: &TimeoutConfig,
+    upstream: &UpstreamContext<'_>,
     domain: String,
     qtype: RecordType,
     decision_source: DecisionSource,
     geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
-    let message = resolve_via_baseline(client, query, timeout_config).await;
+    let message =
+        resolve_via_baseline(client, query, upstream.timeout, upstream.baseline_url).await;
     let resolved_ip_country =
         geoip::resolved_ip_country(geoip.reader, &extract_ips(&message.answers));
     let meta = QueryLogMeta {
@@ -302,9 +318,11 @@ pub async fn handle_query<C: DohClient + Sync>(
     overrides: &OverrideLists,
     voters: &[ProviderEntry],
     cache: &CacheContext<'_>,
-    timeout_config: &TimeoutConfig,
+    upstream: &UpstreamContext<'_>,
     geoip: &GeoipFilter<'_>,
 ) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let timeout_config = upstream.timeout;
+    let baseline_url = upstream.baseline_url;
     let Some(question) = query.queries.first() else {
         return (PipelineOutcome::ProxyToSingleUpstream, None);
     };
@@ -334,7 +352,7 @@ pub async fn handle_query<C: DohClient + Sync>(
             return baseline_passthrough_with_meta(
                 client,
                 query,
-                timeout_config,
+                upstream,
                 log_domain.clone(),
                 qtype,
                 DecisionSource::Allowlist,
@@ -381,7 +399,7 @@ pub async fn handle_query<C: DohClient + Sync>(
         return baseline_passthrough_with_meta(
             client,
             query,
-            timeout_config,
+            upstream,
             log_domain.clone(),
             qtype,
             DecisionSource::Quorum,
@@ -422,7 +440,7 @@ pub async fn handle_query<C: DohClient + Sync>(
         }
     }
 
-    let outcome = resolve(client, query, timeout_config, voters).await;
+    let outcome = resolve(client, query, timeout_config, voters, baseline_url).await;
     match outcome.verdict {
         QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
@@ -534,8 +552,9 @@ async fn resolve_via_baseline<C: DohClient + Sync>(
     client: &C,
     query: &Message,
     timeout_config: &TimeoutConfig,
+    baseline_url: &str,
 ) -> Message {
-    match query_with_timeout(client, BASELINE_DOH_URL, query, timeout_config.duration).await {
+    match query_with_timeout(client, baseline_url, query, timeout_config.duration).await {
         VoterOutcome::Responded(response) => crate::wire::forward_response(query, &response),
         // Три Б (user safety): an honest failure, not a silent block-shaped
         // `0.0.0.0` on a domain the user just allowlisted, or on ordinary
@@ -554,8 +573,9 @@ pub async fn proxy_to_single_upstream<C: DohClient + Sync>(
     client: &C,
     query: &Message,
     timeout_config: &TimeoutConfig,
+    baseline_url: &str,
 ) -> Message {
-    resolve_via_baseline(client, query, timeout_config).await
+    resolve_via_baseline(client, query, timeout_config, baseline_url).await
 }
 
 /// [`handle_allow`]'s result — distinguishes a real answer (forwarded or
@@ -779,7 +799,10 @@ fn duration_to_ttl_secs(duration: Duration) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_query, invalidate_changed, CacheContext, GeoipFilter, PipelineOutcome};
+    use super::{
+        handle_query, invalidate_changed, CacheContext, GeoipFilter, PipelineOutcome,
+        UpstreamContext,
+    };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::geoip::GeoipReader;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
@@ -790,6 +813,7 @@ mod tests {
 
     const QUAD9_URL: &str = "https://dns.quad9.net/dns-query";
     const ADGUARD_URL: &str = "https://dns.adguard-dns.com/dns-query";
+    const BASELINE_URL: &str = crate::baseline_selector::BASELINE_CHAIN[0];
 
     /// Both Phase-1 voters enabled — the common `handle_query` voter set (the
     /// old `EnabledProviders::default()`).
@@ -1005,7 +1029,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1053,7 +1080,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1085,7 +1115,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1133,7 +1166,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1161,7 +1197,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1198,7 +1237,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1249,7 +1291,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1292,7 +1337,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1318,7 +1366,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1354,7 +1405,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1385,7 +1439,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1421,7 +1478,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1448,7 +1508,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1486,7 +1549,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1519,7 +1585,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &config,
+            &UpstreamContext {
+                timeout: &config,
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1561,7 +1630,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1742,7 +1814,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1775,7 +1850,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1814,7 +1892,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1858,7 +1939,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &config,
+            &UpstreamContext {
+                timeout: &config,
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1894,7 +1978,8 @@ mod tests {
         };
         let query = query_for("example.com.", RecordType::TXT);
 
-        let response = super::proxy_to_single_upstream(&client, &query, &timeout_config()).await;
+        let response =
+            super::proxy_to_single_upstream(&client, &query, &timeout_config(), BASELINE_URL).await;
 
         assert_eq!(response.metadata.response_code, ResponseCode::NoError);
         assert_eq!(client.calls.load(Ordering::SeqCst), 1);
@@ -1940,7 +2025,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -1982,7 +2070,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2025,7 +2116,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2065,7 +2159,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2102,7 +2199,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2153,7 +2253,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2175,7 +2278,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2209,7 +2315,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2249,7 +2358,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2288,7 +2400,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2328,7 +2443,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2368,7 +2486,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2393,7 +2514,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: None,
                 blocked_countries: &[],
@@ -2432,7 +2556,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &[],
@@ -2484,7 +2611,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &["SE".to_string()],
@@ -2550,7 +2680,10 @@ mod tests {
             &overrides,
             &default_voters(),
             &cache_context,
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &["SE".to_string()],
@@ -2592,7 +2725,10 @@ mod tests {
             &overrides,
             &default_voters(),
             &cache_context,
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &[],
@@ -2654,7 +2790,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &["SE".to_string()],
@@ -2711,7 +2850,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &["SE".to_string()],
@@ -2764,7 +2906,10 @@ mod tests {
                 cache: &cache,
                 config: &cache_config(),
             },
-            &timeout_config(),
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+            },
             &GeoipFilter {
                 reader: Some(&reader),
                 blocked_countries: &["SE".to_string()],

@@ -121,6 +121,7 @@
 
 mod admin;
 mod admin_ui;
+mod baseline_selector;
 mod cache;
 mod cert;
 mod cert_rotation;
@@ -150,6 +151,10 @@ pub use admin::{
     MaxmindCredentialsView, MaxmindRefreshHealth, ProviderAddRequest, ProviderRemoveRequest,
     ProviderSetEnabledRequest, ProviderStatusView, ProviderView, ProvidersResponse,
     WatchdogStatusView,
+};
+pub use baseline_selector::{
+    BaselineEvent, BaselineHealth, BaselineSelector, BASELINE_CHAIN, RETRY_PRIMARY_AFTER,
+    SWITCH_THRESHOLD,
 };
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError,

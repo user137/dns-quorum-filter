@@ -10,7 +10,7 @@
 //! per-provider `match`.
 
 use crate::timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
-use crate::upstream::{BlockSignature, DohClient, ProviderEntry, UpstreamError, BASELINE_DOH_URL};
+use crate::upstream::{BlockSignature, DohClient, ProviderEntry, UpstreamError};
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use hickory_proto::op::{Message, ResponseCode};
@@ -367,6 +367,29 @@ pub struct QuorumOutcome {
     /// [`VoterVerdict::Disabled`] means that provider was administratively
     /// turned off, not queried at all this round.
     pub voters: Vec<VoterRecord>,
+    /// Every *enabled* voter failed to give an answer this round (timeout or
+    /// error — never `Responded`), so `verdict` rests entirely on the
+    /// baseline / timeout-mode policy, not on any filter (T-155). `false`
+    /// when at least one enabled voter answered, and `false` when there are
+    /// no enabled voters at all (that is the caller's own pass-through
+    /// branch, `pipeline::handle_query`, not this case). Computed from the
+    /// raw [`VoterOutcome`]s before they are projected to [`VoterRecord`]s —
+    /// `VoterRecord::verdict` alone is lossy (`Canceled` folds several
+    /// causes together). Mirrors how `incomplete` is derived in `combine`,
+    /// but is a stricter question: `incomplete` fires on a single
+    /// unresponsive voter, this needs *all* of them. Can be `true`
+    /// alongside a `Block` verdict — under `fail_closed` an unresponsive
+    /// voter *is* a block (`unresponsive_signal`), so the early-return path
+    /// can reach `Block` with no voter having answered.
+    pub filters_unreachable: bool,
+    /// The baseline resolver's own usable answer this round ([`is_usable_answer`]
+    /// — `NoError`/`NXDomain`, not `SERVFAIL`), independent of `verdict`.
+    /// `None` on timeout, transport error, `SERVFAIL`, or
+    /// [`QuorumVerdict::NotApplicable`]. Two consumers: T-154's
+    /// `baseline_selector` reads presence as `BaselineHealth`, and a T-155
+    /// `filters_unreachable` caller under `toggle ON` serves this message
+    /// directly even when `verdict` came back `Block` (fail-closed).
+    pub baseline_answer: Option<Message>,
 }
 
 /// A `Responded` voter's message actually represents a resolved DNS answer
@@ -592,11 +615,18 @@ fn tagged_query<'a, C: DohClient + Sync>(
 ///
 /// Never returns an error: an unresponsive or failing voter is interpreted
 /// per `config.mode` rather than propagated (SPEC.md §3.3) — see `combine`.
+///
+/// `baseline_url` is resolved by the caller *before* the fan-out (T-154 —
+/// `baseline_selector::BaselineSelector::current`), not hardcoded here: it
+/// goes into the same `FuturesUnordered` as the voters, so the choice has to
+/// be made up front. Pass `baseline_selector::BASELINE_CHAIN[0]` for the
+/// unchanged default.
 pub async fn resolve<C: DohClient + Sync>(
     client: &C,
     query: &Message,
     config: &TimeoutConfig,
     voters: &[ProviderEntry],
+    baseline_url: &str,
 ) -> QuorumOutcome {
     let applies = query
         .queries
@@ -607,6 +637,8 @@ pub async fn resolve<C: DohClient + Sync>(
             verdict: QuorumVerdict::NotApplicable,
             answer: None,
             voters: Vec::new(),
+            filters_unreachable: false,
+            baseline_answer: None,
         };
     }
 
@@ -625,7 +657,7 @@ pub async fn resolve<C: DohClient + Sync>(
     futures.push(tagged_query(
         Slot::Baseline,
         client,
-        BASELINE_DOH_URL,
+        baseline_url,
         query,
         config.duration,
     ));
@@ -677,11 +709,48 @@ pub async fn resolve<C: DohClient + Sync>(
                 verdict: QuorumVerdict::Block,
                 answer: None,
                 voters: voter_records(voters, &outcomes, baseline.as_ref(), config.mode),
+                filters_unreachable: all_enabled_voters_unreachable(voters, &outcomes),
+                baseline_answer: baseline_usable_answer(baseline.as_ref()),
             };
         }
     }
 
     finalize_outcome(voters, outcomes, baseline, config)
+}
+
+/// `true` when there is at least one enabled voter and *none* of them
+/// produced a [`VoterOutcome::Responded`] this round — the T-155
+/// "both filters unreachable" condition. Works on either the pre-projection
+/// `outcomes` (unsettled enabled voter = `None`) or the coerced one
+/// (unsettled = `Some(TimedOut)`): neither is `Responded`, so both read the
+/// same. An all-disabled slice returns `false` — that is the caller's own
+/// pass-through branch, not this one.
+fn all_enabled_voters_unreachable(
+    voters: &[ProviderEntry],
+    outcomes: &[Option<VoterOutcome>],
+) -> bool {
+    let mut any_enabled = false;
+    for (entry, outcome) in voters.iter().zip(outcomes) {
+        if !entry.enabled {
+            continue;
+        }
+        any_enabled = true;
+        if matches!(outcome, Some(VoterOutcome::Responded(_))) {
+            return false;
+        }
+    }
+    any_enabled
+}
+
+/// The baseline slot's own usable answer ([`is_usable_answer`]), cloned —
+/// `None` for a missing/timed-out/errored slot or a `SERVFAIL` response.
+fn baseline_usable_answer(baseline: Option<&VoterOutcome>) -> Option<Message> {
+    match baseline {
+        Some(VoterOutcome::Responded(message)) if is_usable_answer(message) => {
+            Some(message.clone())
+        }
+        _ => None,
+    }
 }
 
 /// Builds the final [`QuorumOutcome`] once `resolve`'s loop has run to
@@ -721,6 +790,8 @@ fn finalize_outcome(
         verdict,
         answer,
         voters: voter_records,
+        filters_unreachable: all_enabled_voters_unreachable(voters, &outcomes),
+        baseline_answer: baseline_usable_answer(Some(&baseline)),
     }
 }
 
@@ -734,6 +805,7 @@ mod tests {
 
     const QUAD9_URL: &str = "https://dns.quad9.net/dns-query";
     const ADGUARD_URL: &str = "https://dns.adguard-dns.com/dns-query";
+    const BASELINE_URL: &str = crate::baseline_selector::BASELINE_CHAIN[0];
 
     /// One built-in-preset voter entry with the given `enabled` flag.
     fn preset_entry(id: &str, enabled: bool) -> ProviderEntry {
@@ -1107,6 +1179,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1124,6 +1197,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -1141,6 +1215,7 @@ mod tests {
             &query_of_type(RecordType::AAAA),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -1158,6 +1233,7 @@ mod tests {
             &query_of_type(RecordType::HTTPS),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::NotApplicable));
@@ -1191,6 +1267,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -1219,6 +1296,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -1247,6 +1325,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(
@@ -1271,6 +1350,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1288,9 +1368,92 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
+    }
+
+    // T-154/T-155: `filters_unreachable` — true only when *every* enabled
+    // voter failed to answer, computed from the raw `VoterOutcome`s.
+
+    #[tokio::test(start_paused = true)]
+    async fn filters_unreachable_is_true_when_every_voter_times_out_but_baseline_answers() {
+        let client = MockDohClient {
+            quad9: MockResponse::Pending,
+            adguard: MockResponse::Pending,
+            baseline: MockResponse::Instant(allow_message()),
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            &default_voters(),
+            BASELINE_URL,
+        )
+        .await;
+        assert!(outcome.filters_unreachable);
+        assert!(
+            outcome.baseline_answer.is_some(),
+            "baseline gave a usable answer"
+        );
+        assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn filters_unreachable_is_false_when_one_voter_still_answers() {
+        let client = MockDohClient {
+            quad9: MockResponse::Instant(allow_message()),
+            adguard: MockResponse::Pending,
+            baseline: MockResponse::Instant(allow_message()),
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailOpen,
+            duration: Duration::from_millis(5),
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            &default_voters(),
+            BASELINE_URL,
+        )
+        .await;
+        assert!(!outcome.filters_unreachable);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn filters_unreachable_can_coexist_with_a_fail_closed_early_block() {
+        // Every voter unresponsive under fail-closed: `unresponsive_signal`
+        // makes the first timeout an early-return Block — the flag still
+        // reports that no filter actually answered.
+        let client = MockDohClient {
+            quad9: MockResponse::Pending,
+            adguard: MockResponse::Pending,
+            baseline: MockResponse::Instant(allow_message()),
+        };
+        let config = TimeoutConfig {
+            mode: TimeoutMode::FailClosed,
+            duration: Duration::from_millis(5),
+        };
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            &default_voters(),
+            BASELINE_URL,
+        )
+        .await;
+        assert!(matches!(outcome.verdict, QuorumVerdict::Block));
+        assert!(outcome.filters_unreachable);
+        assert!(
+            outcome.baseline_answer.is_some(),
+            "baseline answer is carried even on the early-block path"
+        );
     }
 
     struct SlowAdGuardClient;
@@ -1341,6 +1504,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Block));
@@ -1371,6 +1535,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1400,6 +1565,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1426,6 +1592,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1453,6 +1620,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &config,
             &default_voters(),
+            BASELINE_URL,
         )
         .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
@@ -1503,6 +1671,7 @@ mod tests {
             &query_of_type(RecordType::A),
             &TimeoutConfig::default(),
             &enabled,
+            BASELINE_URL,
         )
         .await;
         // AdGuard's own null-IP signature still blocks - disabling Quad9
@@ -1535,7 +1704,14 @@ mod tests {
             mode: TimeoutMode::FailClosed,
             duration: Duration::from_secs(2),
         };
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config, &enabled).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            &enabled,
+            BASELINE_URL,
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
     }
 
@@ -1556,7 +1732,14 @@ mod tests {
             mode: TimeoutMode::FailOpen,
             duration: Duration::from_millis(5),
         };
-        let outcome = resolve(&client, &query_of_type(RecordType::A), &config, &enabled).await;
+        let outcome = resolve(
+            &client,
+            &query_of_type(RecordType::A),
+            &config,
+            &enabled,
+            BASELINE_URL,
+        )
+        .await;
         assert!(matches!(outcome.verdict, QuorumVerdict::Allow));
         assert!(outcome.answer.is_none());
     }

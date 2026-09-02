@@ -30,6 +30,7 @@ use crate::admin::{
     WatchdogStatusView,
 };
 use crate::admin_ui;
+use crate::baseline_selector::BaselineSelector;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheKey};
 use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
@@ -40,7 +41,7 @@ use crate::geoip_updater::{
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
-    PipelineOutcome,
+    PipelineOutcome, UpstreamContext,
 };
 use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
 use crate::timeout::TimeoutConfig;
@@ -471,6 +472,10 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // Same snapshot discipline (T-72/T-73) — `Arc::clone` under the lock,
     // never held across the `.await`.
     let providers = Arc::clone(&state.providers.read());
+    // T-154(b): one `Arc::clone` snapshot, same discipline as the others —
+    // the reachability prober is the sole writer, this path only reads which
+    // baseline URL is currently active.
+    let baseline = Arc::clone(&state.baseline.read());
     let cache_context = CacheContext {
         cache: &cache_state.cache,
         config: &cache_state.config,
@@ -479,13 +484,17 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         reader: geoip_state.reader.as_deref(),
         blocked_countries: &geoip_countries,
     };
+    let upstream_context = UpstreamContext {
+        timeout: &settings.timeout,
+        baseline_url: baseline.current(),
+    };
     let response = match handle_query(
         &query,
         &state.client,
         &overrides_state.lists,
         &providers,
         &cache_context,
-        &settings.timeout,
+        &upstream_context,
         &geoip_filter,
     )
     .await
@@ -516,7 +525,8 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         // decision_source values describe a proxy pass-through (T-147, named
         // gap, not silently dropped).
         (PipelineOutcome::ProxyToSingleUpstream, _) => {
-            proxy_to_single_upstream(&state.client, &query, &settings.timeout).await
+            proxy_to_single_upstream(&state.client, &query, &settings.timeout, baseline.current())
+                .await
         }
     };
     encode_wire_message(&response)
@@ -571,6 +581,14 @@ pub struct AppState<C: DohClient + Sync> {
     /// and reset by `update_geoip_source` when the source changes; surfaced on
     /// the `/admin/ui` `#geoip-maxmind` card via `MaxmindCredentialsView`.
     maxmind_health: RwLock<Arc<MaxmindHealth>>,
+    /// T-154(b) — which baseline (non-filtering) resolver URL to use, plus
+    /// its failover/recovery state. Read once per query as an `Arc::clone`
+    /// snapshot (`pipeline::UpstreamContext::baseline_url`), never held
+    /// across `.await`; the *writer* is the reachability prober task
+    /// (`run_reachability_prober`), which health-checks the active URL each
+    /// cycle and swaps this `Arc`. Same `RwLock<Arc<_>>` shape as every
+    /// other per-query state here.
+    baseline: RwLock<Arc<BaselineSelector>>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -705,6 +723,7 @@ impl<C: DohClient + Sync> AppState<C> {
             geoip_source: RwLock::new(Arc::new(geoip.source)),
             geoip_refresh_wake: Arc::new(Notify::new()),
             maxmind_health: RwLock::new(Arc::new(initial_health)),
+            baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             query_log,
             persist,
             in_flight: AtomicU64::new(0),
