@@ -9,6 +9,7 @@ pub mod channel;
 pub mod frame;
 pub mod heartbeat_file;
 pub mod instance;
+pub mod pid_check;
 #[cfg(windows)]
 pub mod pipe;
 pub mod vote;
