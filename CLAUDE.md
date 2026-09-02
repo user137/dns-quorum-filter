@@ -18,10 +18,18 @@ decision core (`vote`, `backoff`, `budget`, `pid_check`, `spawn`, `state`, `tran
 assembly — `watchdog::loop_driver` (pure per-direction tick automaton, loop-level T-93/T-94),
 `watchdog::launcher` (T-150 `plan_launch`), the three `dnsqb-service` heartbeat tasks +
 `service→watcher` loop, `dnsqb-watcher`'s real `main` (idempotent launcher + `watcher→service`
-loop, sole writer of `watchdog-state.json`), and T-95 (`/admin/status.watchdog` + tray). Per-batch
-narrative → TASKS-DONE.md. **Start at Батч 3.4 (T-155 / T-154 / T-152)** — network state; own
-plan-mode + advisor + AskUserQuestion. Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace,
-CI, RFC-conformance table T-1–T-19) done.
+loop, sole writer of `watchdog-state.json`), and T-95 (`/admin/status.watchdog` + tray).
+**Батч 3.4 done 2026-09-03** (T-154/T-155/T-152, 8 commits, plan+advisor): T-154(a)
+`connect_timeout` on `ReqwestDohClient` (probe-proven: `reqwest` 0.13 skips a blackholed first
+resolved address without it) + T-154(b) `baseline_selector` (sticky Cloudflare→Quad9→Google
+failover with auto-return, driven by the reachability prober's per-cycle `DoH` health check);
+T-155 `DecisionSource::BaselineFallback` + `serve_baseline_when_filters_unreachable` toggle
+(default OFF — DECISIONS.md 2026-09-03: OFF = today's behaviour, better-labelled, zero regress);
+T-152 `reachability` module (3 independent `generate_204` markers, Offline only if all fail) +
+offline fast path in `handle_query` (instant SERVFAIL, no fan-out/cache) + status-indicator
+condition #3. Per-batch narrative → TASKS-DONE.md. **Start at Батч 3.5 (T-96 / T-97 / T-146)** —
+encrypted persistence; own plan-mode + advisor. Фаза 1 formally closed 2026-08-29; Крок 0 (Rust
+workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
 
@@ -55,15 +63,17 @@ Modules under `crates/dnsqb-service/src/`:
 
 | Module | Responsibility |
 |---|---|
-| `pipeline` | `handle_query` request flow; `invalidate_changed` (cache eviction on override-list reload) |
-| `quorum` | OR-logic `resolve(&[ProviderEntry])` over a runtime voter list (T-72/T-73); `evaluate(BlockSignature)` (3 heuristics: `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`); early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict` |
+| `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability }` — T-154/T-155/T-152 bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read (instant SERVFAIL, no fan-out/cache, mode-independent). `outcome.filters_unreachable` (T-155) → `filters_unreachable_outcome` → `DecisionSource::BaselineFallback` (toggle on = baseline answer mode-invariant; off = mode's own verdict, relabelled), never cached |
+| `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature)` (3 heuristics: `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`); early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
+| `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
+| `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (Offline iff all fail), `next_probe_delay` (idle 30s / recheck 3s); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per Online cycle). Not wired into `/health` or watchdog channels |
 | `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear` |
 | `overrides` | allowlist/blocklist `load`/`save`/`decision`/`conflicts`; suffix-wildcard match; `InvalidEntry` (domain-redacting) |
-| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive) |
+| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
-| `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource`, `LogFilter` search, `clear` |
-| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables; per-field validation, loud errors |
+| `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear` |
+| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`); per-field validation, loud errors |
 | `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
@@ -81,7 +91,8 @@ never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset
 and updates the live `GeoipSource` + wakes the updater; `refresh_health` on the view flags a key
 that started failing later), `GET /admin/providers`
 + `POST /admin/providers/{add,remove,set-enabled}` (T-72/T-73; provider list edited here, **not**
-`/admin/config` — which now carries only `timeout_mode`), `/admin/log[/clear]`;
+`/admin/config` — which carries `timeout_mode` + `serve_baseline_when_filters_unreachable` (T-155)),
+`/admin/log[/clear]`;
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
 **not** an admin route: `GET /health` (T-86, watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
@@ -103,9 +114,11 @@ is unaffected). Also takes the `Tray` single-instance guard + writes `tray.pid` 
 quietly). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tooltip states:
 `Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
 `status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —
-DECISIONS.md 2026-09-02) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
-suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM` log entries —
-T-56, narrowed).
+DECISIONS.md 2026-09-02) / `Offline` (T-152 — `from_response` returns it before `NoActiveProvider`
+when `AdminStatusResponse.network == OFFLINE`; ranked below the watchdog states, above 0-voters —
+DECISIONS.md 2026-09-03) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
+suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK`
+log entries — T-56, narrowed; T-155 added `BASELINE_FALLBACK`).
 
 `dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main` since Батч 3.3.
 `#[tokio::main(flavor = "current_thread")]` (§7.1 #9 — flavor, not features, keeps it
@@ -170,6 +183,18 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
+- **`fail_closed` timeout-Block is still cached** for `block_verdict_ttl` — a network outage
+  poisons the cache with blocks that outlive it. T-152's offline fast path does **not** write the
+  cache; a retrofit of the pre-existing `fail_closed` branch is a separate task (Батч 3.4 scoped
+  it out).
+- **`ProxyToSingleUpstream` (non-A/AAAA: HTTPS/SVCB/MX/TXT) has no offline fast path** — it falls
+  through to its own per-query timeout while offline, not the instant SERVFAIL A/AAAA gets (T-152).
+- **A `BASELINE_FALLBACK` ALLOW is not GeoIP-filtered** (T-155) — filtering already failed that
+  round; `resolved_ip_country` (T-161) is still annotated. `BASELINE_FALLBACK` is also the one
+  `DecisionSource` whose `LogEntry.voters` is deliberately non-empty (it carries the per-voter
+  timeout record).
+- **reachability markers / `BASELINE_CHAIN` / failover thresholds are not configurable** (T-152/
+  T-154) — Ф3 defaults, §7.1 #8-style.
 - **`should_serve_stale` (`lib.rs`) is an unconsumed predicate** — RFC 8767 stale-if-error is not
   wired into the live pipeline. Before wiring it, re-check `quorum::combine`'s `incomplete` flag
   against `is_usable_answer` (see the gotchas entry): `incomplete` currently won't fire on a
@@ -238,8 +263,9 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   won't survive a restart is the recurring user-safety bug (T-57 / T-139 / T-149 / T-47 / T-77).
 - **Hard TOML cutovers, no dual-format shim** — an old key/file becomes a loud parse error; only a
   legacy-sibling *presence* check warns (T-144 / T-145 / T-148).
-- **A new `LogEntry` / DTO field is `None`/absent except for its one owning `decision_source`** —
-  `voters` (Quorum only), `geoip_country` (Geoip only).
+- **A new `LogEntry` / DTO field is `None`/absent except for its owning `decision_source`(s)** —
+  `voters` (`Quorum` **and** `BaselineFallback` — T-155: the latter *is* the per-voter timeout
+  record), `geoip_country` (`Geoip` only).
 - **Migration/cutover code that removes the source defers the delete only when the source is
   irreplaceable** — `cert::discard_legacy_key_file` erases `key.pem` only on `tls` load-success
   (T-67 closing-review: a mismatched plaintext key must survive as a recovery path), but

@@ -2625,3 +2625,80 @@ nice-to-have, а exit-criterion батча (TASKS.md); (8) TDD-split — `loop_d
 про service-side канал 1; `ui-dto-model.md` — клас `WatchdogStatusView` + поле, секція 379
 переписана, SOURCES +§7/§7.1/T-95. `watchdog-state.md` / `watchdog-channels.md` автомат/канали
 без змін логіки — Батч 3.3 виконує намальоване.
+
+### Батч 3.4 — мережевий стан (зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 8 комітів)
+
+T-154 / T-155 / T-152 — поведінка резолвера, коли мережа/апстріми зовсім не відповідають (на
+відміну від 3.3, яка про *один* таймаут). **Kickoff-проба** (scratch `reqwest`-приклад,
+`resolve_to_addrs(host, &[bad, good])`, 2 прогони): `reqwest` 0.13 переходить до 2-ї resolved-
+адреси хостнейма при **швидкій** відмові 1-ї (ECONNREFUSED → failover ~2 s), але **НЕ** при
+blackhole 1-ї (пакети дропаються — весь request budget з'їдається) — доки не виставлено
+`connect_timeout < ` per-query таймаут (500 ms → failover ~330–430 ms). Проба записана як CLAUDE.md
+gotcha. **Opening advisor** — 2 блокери + 2 менші правки, усі враховані до відповідних комітів:
+(1) first-draft T-155-матриця мала OFF залежну від режиму й ON mode-invariant — навпаки від сенсу
+перемикача; давала регрес `OFF+fail_open+обидва мертві+baseline відповів → SERVFAIL` (ламала кожну
+вкладку під час Quad9+AdGuard блипу + ВП№10). Design A: OFF = сьогоднішня поведінка, лише краще
+позначено, zero регрес; (2) прапорець `filters_unreachable` народжується в `finalize_outcome` з
+сирих `VoterOutcome`, не з лоссі `VoterRecord`; (3) офлайн `DecisionSource` = `Quorum`+порожні
+voters (форма 0-voters), не новий варіант; (4) `proxy_to_single_upstream` — 1 зовнішній викликач,
+зміну сигнатури тримати контейнованою. **Sequencing:** `connect_timeout` → `quorum.rs`-хірургія →
+T-155-гілка поверх стабільного `QuorumOutcome` → T-152.
+
+- [x] T-154(a) — `connect_timeout` на `ReqwestDohClient` (`850d650`) — `UPSTREAM_CONNECT_TIMEOUT`
+  = 500 ms, provable `< TimeoutConfig::default().duration` (інваріантний тест).
+- [x] T-154(b) — `baseline_selector` + `baseline_url` як параметр (`50b27cc`, `e6f105a`).
+  `BASELINE_CHAIN` = [Cloudflare Unfiltered / Quad9 Unsecured / Google] (§3.4); чистий
+  `BaselineSelector` — switch після `SWITCH_THRESHOLD`=3 поспіль повних відмов, авто-повернення на
+  primary через `RETRY_PRIMARY_AFTER`=300 s з гістерезисом, насичення провабельне з лінії.
+  `quorum::resolve` +`baseline_url: &str`; `QuorumOutcome` +`filters_unreachable`/`baseline_answer`.
+  Новий бандл `pipeline::UpstreamContext` замість голого `timeout_config`-параметра.
+  **Ведення** (`e6f105a`): `run_reachability_prober` раз на `Online`-цикл робить 1 реальний
+  `DoH`-запит (sentinel `example.com A`, RD=1) через прод-клієнт до `current()` (і `[0]` коли
+  `should_retry_primary`), фолдить `BaselineHealth` у selector. `/admin/status.baseline_endpoint`
+  (`BaselineEndpointView`).
+- [x] T-155 — `DecisionSource::BaselineFallback` + `serve_baseline_when_filters_unreachable`
+  (`4e60473` backend, `227ecd1` UI). `outcome.filters_unreachable` → завжди `BASELINE_FALLBACK`
+  (несе per-voter timeout-записи); перемикач дефолт `false` (DECISIONS.md 2026-09-03) — OFF =
+  режим вирішує як сьогодні, лише мітка; ON = baseline-відповідь незалежно від режиму (1 прямий
+  запит якщо early-return лишив нерозв'язаною). baseline мертвий → `SERVFAIL`. `degraded_counts`
+  рахує й `BASELINE_FALLBACK`. Поле в `resolver_config.toml` + `AdminConfigUpdate` +
+  `AdminStatusResponse` + галочка на `/admin/ui` з latched `persisted:false`.
+- [x] T-152 — `reachability`-модуль + офлайн-швидкий-шлях + індикатор умова #3 (`700e52f`,
+  `57f7668`). `MARKERS` = 3 незалежні `generate_204`-класу (Google/Cloudflare/Apple); `Offline`
+  лише коли **всі** впали; idle 30 s / recheck 3 s. **НЕ** в `/health` / watchdog-каналах.
+  Офлайн → миттєвий `SERVFAIL` (без fan-out/кешу, ігнор режиму, ніколи `0.0.0.0`); override-
+  списки працюють офлайн. `AdminStatusResponse.network: NetworkStatusView`; `TrayStatus::Offline`
+  у `from_response` перед `NoActiveProvider`, watchdog вище. DECISIONS.md 2026-09-03: офлайн =
+  умова #3, між watchdog і «0 voters».
+
+**Задокументовані межі:**
+- Наявний клас: `fail_closed`-таймаут-Block **кешується** на `block_verdict_ttl` — обрив мережі
+  сьогодні отруює кеш блоками, що переживають збій. Новий офлайн-швидкий-шлях кеш **не** пише;
+  ретрофіт наявної гілки — окрема задача.
+- `ProxyToSingleUpstream` (не-A/AAAA) — офлайн-швидкого-шляху не має, падає через власний timeout.
+- `BASELINE_FALLBACK` Allow — `GeoIP`-фільтрація свідомо **не** накладена (фільтрація вже впала);
+  `resolved_ip_country` (T-161) усе одно рахується.
+- `BASELINE_FALLBACK` `LogEntry` несе `voters` — навмисний відступ від «voters лише для Quorum».
+- reachability-маркери / `BASELINE_CHAIN` / пороги failover — дефолти Ф3, не конфігуровані.
+- `probe_baseline_health` / проб-таск — тонкі I/O-оболонки, untested by design; чиста логіка
+  покрита `baseline_selector` / `reachability` тестами.
+
+**Ручний end-to-end** (scratch `%LOCALAPPDATA%`, `dnsqb-service` наживо, 2026-09-03):
+- `GET /admin/status` — нові поля серіалізуються: `serve_baseline_when_filters_unreachable:false`,
+  `network:"ONLINE"`, `baseline_endpoint:"PRIMARY"`. `POST /admin/config` з обома полями →
+  echo + `persisted:true`; `resolver_config.toml` на диску має нове поле **і** `[[providers]]`
+  цілим (cross-field-read).
+- Звичайний `example.com A` → `rcode=0 ancount=2`, лог `QUORUM`/`ALLOWED`, 2-й запит `CACHE`
+  (проброс `baseline_url` / `UpstreamContext` не зламав нормальний резолвінг).
+- **T-155 матриця** (обидва провайдери → blackhole `192.0.2.x`, `/admin/reset`): OFF+`fail_open`
+  → `ALLOWED` `BASELINE_FALLBACK`, voters=`[ERROR, ERROR]`, ~0.6 s (connect_timeout спрацював —
+  без нього був би ~1.5 s); OFF+`fail_closed` → `BLOCKED` (`0.0.0.0`) `BASELINE_FALLBACK`;
+  ON+`fail_closed` → `ALLOWED` `BASELINE_FALLBACK` (mode-invariant). Усі три як у Design A.
+- T-152 офлайн-перехід (усі 3 маркери недоступні → `network:"OFFLINE"` → миттєвий SERVFAIL) —
+  покрито unit/integration тестами; повний network-isolation smoke — у контрольованому середовищі
+  (потребує firewall/hosts-правки з правами адміна), не на dev-боксі.
+
+**Звірка діаграм:** `ui-status-indicator.md` — нова умова #3 (таблиця + flowchart перенумеровані,
+Check2→Check3(мережа)→Check4(voters)→Check5(degraded)), SOURCES +§3.7/T-152/DECISIONS.md
+2026-09-03; `ui-dto-model.md` — класи `NetworkStatusView`/`BaselineEndpointView` + нові поля
+`AdminStatusResponse`/`AdminConfigUpdate`. `watchdog-*.md` — без змін (reachability не канал §7).
