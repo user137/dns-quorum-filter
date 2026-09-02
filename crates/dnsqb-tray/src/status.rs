@@ -6,16 +6,11 @@
 //! [`StatusHandle::current`], a cheap lock-guarded read of whatever this
 //! background thread last wrote.
 
-use dnsqb_service::{AdminClient, AdminStatusResponse, WatchdogState};
+use dnsqb_service::{AdminClient, AdminStatusResponse, WatchdogState, WATCHDOG_STATE_STALE_AFTER};
 use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-
-/// `watchdog-state.json` is stale — the watcher has stopped rewriting it — once
-/// its `mtime` is older than three watchdog intervals (SPEC.md §7.1 #8: 5 s
-/// each). Matches `dispatch::WATCHDOG_STATE_STALE_AFTER`.
-const WATCHDOG_STATE_STALE_AFTER: Duration = Duration::from_secs(15);
 
 /// Honestly distinguished states (T-149's own "Три Б" precedent — same
 /// discipline as `dnsqb-ui`'s former `bothOff` banner and T-66's cold/warm

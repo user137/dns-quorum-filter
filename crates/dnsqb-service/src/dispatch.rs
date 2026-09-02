@@ -47,7 +47,7 @@ use crate::timeout::TimeoutConfig;
 use crate::upstream::{
     all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
 };
-use crate::watchdog::state::WatchdogState;
+use crate::watchdog::state::{WatchdogState, WATCHDOG_STATE_STALE_AFTER};
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -853,12 +853,6 @@ fn timeout_ms(duration: Duration) -> u32 {
     u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
 }
 
-/// `watchdog-state.json` counts as stale — the watcher has stopped rewriting
-/// it, so "watchdog not running" — once its `mtime` is older than three
-/// watchdog intervals (SPEC.md §7.1 #8: 5 s each). `dnsqb-watcher` rewrites the
-/// file every tick specifically so this freshness check works.
-const WATCHDOG_STATE_STALE_AFTER: Duration = Duration::from_secs(15);
-
 /// Reads `watchdog-state.json` (written by `dnsqb-watcher`, SPEC.md §7.1 #7)
 /// and projects it to the UI-relevant [`WatchdogStatusView`] for
 /// [`AdminStatusResponse::watchdog`]. `None` when the file is absent,
@@ -943,6 +937,10 @@ fn apply_admin_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: AdminConfigUpdate,
 ) -> AdminStatusResponse {
+    // Read the watchdog file *before* taking `persist_lock` — it is a blocking
+    // `fs::metadata` + `fs::read` with nothing to do with the config write, and
+    // `persist_lock` is the one lock that orders every concurrent admin write.
+    let watchdog = read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now());
     let _persist_guard = state.persist_lock.lock();
     // Captured inside the write guard's own scope, not re-read via a second
     // lock acquisition afterward — advisor-caught: re-reading opened a
@@ -988,7 +986,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
         stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
-        watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
+        watchdog,
         persisted,
     }
 }

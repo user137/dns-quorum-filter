@@ -214,6 +214,7 @@ pub use watchdog::spawn::{resolve_sibling_path, spawn_sibling, SpawnError};
 pub use watchdog::state::{
     read as read_watchdog_state, write as write_watchdog_state, WatchdogErrorLabel, WatchdogState,
     WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
+    WATCHDOG_STATE_STALE_AFTER,
 };
 pub use watchdog::transition::{transition, TransitionInput};
 pub use watchdog::vote::{vote_service_checks_watcher, vote_watcher_checks_service, Liveness};

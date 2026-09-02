@@ -48,7 +48,9 @@ end to end through the Фаза 1 pipeline (allowlist → blocklist → cache �
 GeoIP filtering (SPEC.md §3.5 / §5.3 step 8). The intermediate SPEC.md §5.3 steps — ccTLD block,
 rating filter, voter scope — are later phases, not built. Since Батч 3.3, `main.rs` also starts
 three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe server, `service.hb` touch, the
-in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists).
+in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists, so that
+direction's `GaveUp` is **not durable** — the restart budget resets on every service restart, a
+symmetric un-fixable-without-§7.1-#7-violation counterpart to the watcher→service `restored` path).
 Modules under `crates/dnsqb-service/src/`:
 
 | Module | Responsibility |

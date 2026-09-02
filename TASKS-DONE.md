@@ -2583,8 +2583,14 @@ nice-to-have, а exit-criterion батча (TASKS.md); (8) TDD-split — `loop_d
 
 Задокументовані межі / інтерпретації (не дефекти):
 - **Напрям `service → watcher` не персиститься** у `watchdog-state.json` (§7.1 #7 — `dnsqb-watcher`
-  єдиний письменник); `WatchdogTarget::Watcher` лишається незаписаним варіантом. `service→watcher`
-  `GaveUp` сигналиться лише `tracing::error!`.
+  єдиний письменник); `WatchdogTarget::Watcher` лишається незаписаним варіантом. Наслідок гостріший
+  за просто «не видно»: **`GaveUp` для цього напряму не довговічний — circuit breaker скидається
+  на кожен перезапуск сервіса**. Сервіс рестартить watcher'а 5 разів → `GaveUp` (лише
+  `tracing::error!`) → сам сервіс перезапускають → свіжий `LoopDriver::new(ServiceToWatcher)`,
+  бюджет нуль → ще 5 рестартів. §7's «не продовжувати цикл» дотримано лише в межах одного часу
+  життя процесу сервіса. Це та сама діра, що `da0f595` закрив для напряму watcher→service
+  (`LoopDriver::restored`), симетрична на боці сервіса й нерозв'язна без порушення §7.1 #7.
+  Прийнято як межа Батча 3.3.
 - **§7.1 #9's «rt, не rt-multi-thread» не дотримано на рівні features** — `dnsqb-watcher` тягне
   `dnsqb-service` як lib, feature-unification вносить `rt-multi-thread`. `#[tokio::main(flavor =
   "current_thread")]` — те, що реально тримає однопотоковість.

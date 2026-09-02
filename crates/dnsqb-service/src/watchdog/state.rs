@@ -5,9 +5,16 @@
 
 use std::io;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
+
+/// How old `watchdog-state.json`'s mtime may be before a reader treats it as
+/// "the watchdog is not running" and shows nothing rather than a stale state
+/// (Три Б — never a fabricated `Healthy`). The watcher rewrites the file every
+/// tick (`WATCHDOG_INTERVAL` = 5 s), so 3 missed rewrites is the threshold.
+/// One definition, shared by every reader (`/admin/status`, the tray).
+pub const WATCHDOG_STATE_STALE_AFTER: Duration = Duration::from_secs(15);
 
 /// The watchdog automaton's state for one direction
 /// (`diagrams/watchdog-state.md`).

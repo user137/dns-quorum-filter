@@ -107,8 +107,11 @@ pub struct LoopDriver {
     restart_attempt: u32,
     backoff_deadline: Option<SystemTime>,
     /// Set when `Effect::Spawn` has been emitted for the current `Restarting`
-    /// episode; cleared on leaving `Restarting`. Guards a double spawn if
-    /// `Restarting` is ever ticked more than once.
+    /// episode; cleared on leaving `Restarting`. Belt-and-braces: no current
+    /// path ticks `Restarting` twice — [`transition`] always leaves it in one
+    /// step given the `Some(budget)` the driver always supplies there — so this
+    /// latch never actually fires today. It exists so a future `transition`
+    /// change that could dwell in `Restarting` cannot silently double-spawn.
     spawn_issued: bool,
     last_transition_at: Option<SystemTime>,
     last_error: Option<WatchdogErrorLabel>,
