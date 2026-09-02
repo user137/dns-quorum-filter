@@ -80,6 +80,11 @@ pub struct UpstreamContext<'a> {
     /// default. Goes into the same fan-out as the voters, so it has to be
     /// fixed before `quorum::resolve` starts.
     pub baseline_url: &'a str,
+    /// T-155 — `config::ResolverConfig::serve_baseline_when_filters_unreachable`.
+    /// `true`: when every enabled voter failed, serve the baseline answer
+    /// regardless of timeout mode. `false` (default): the timeout mode's
+    /// own verdict stands, only the log label changes to `BASELINE_FALLBACK`.
+    pub serve_baseline_fallback: bool,
 }
 
 /// SPEC.md §3.5's live `GeoIP` filter inputs for one query (T-76) — bundled
@@ -441,6 +446,16 @@ pub async fn handle_query<C: DohClient + Sync>(
     }
 
     let outcome = resolve(client, query, timeout_config, voters, baseline_url).await;
+    if outcome.filters_unreachable {
+        // T-155: every enabled voter failed to answer. The verdict rests on
+        // the baseline / the timeout mode, not on any filter — log it as
+        // such, and (toggle on) serve the baseline answer regardless of
+        // mode. Not cached: an Allow here isn't a real quorum verdict.
+        return filters_unreachable_outcome(
+            client, query, upstream, outcome, log_domain, qtype, geoip,
+        )
+        .await;
+    }
     match outcome.verdict {
         QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
@@ -529,6 +544,87 @@ async fn quorum_allow_response_with_meta(
         decision_source,
         voters,
         geoip_country,
+        resolved_ip_country,
+    };
+    (PipelineOutcome::Response(message), Some(meta))
+}
+
+/// `handle_query`'s T-155 branch: quorum ran, but `outcome.filters_unreachable`
+/// — no enabled voter answered. Design (SPEC.md §3.7):
+///
+/// - **toggle on** + baseline answered → serve the baseline answer,
+///   mode-invariant (even under `fail_closed`).
+/// - **toggle off** → whatever `resolve` already decided under the timeout
+///   mode stands (`fail_open`/`degraded` → the baseline `Allow`;
+///   `fail_closed` → `Block`) — the *only* change is the log label.
+/// - baseline also dead (either toggle) → an honest `SERVFAIL`.
+///
+/// Always `DecisionSource::BaselineFallback` (a marker for *why* the row
+/// looks the way it does, not gated by the toggle) and carries `voters` —
+/// the per-voter timeout record is the point of the distinct row. Never
+/// writes the cache: an `Allow` here isn't a real quorum verdict, and a
+/// cached one would outlive the outage. `GeoIP` *filtering* is deliberately
+/// not layered on top (filtering already failed this round — a stated
+/// narrowing, TASKS-DONE.md); the informational `resolved_ip_country`
+/// annotation (T-161) is still computed.
+///
+/// Under `fail_closed` the early-return Block path can leave
+/// `outcome.baseline_answer` empty even though the baseline is reachable
+/// (it just hadn't settled when the first errored voter tripped the early
+/// return). With the toggle on, this issues one direct baseline query to
+/// get that answer rather than degrading to `SERVFAIL`.
+async fn filters_unreachable_outcome<C: DohClient + Sync>(
+    client: &C,
+    query: &Message,
+    upstream: &UpstreamContext<'_>,
+    outcome: crate::quorum::QuorumOutcome,
+    log_domain: String,
+    qtype: RecordType,
+    geoip: &GeoipFilter<'_>,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let voters = outcome.voters;
+    let serve_baseline_fallback = upstream.serve_baseline_fallback;
+    let (message, decision) = if serve_baseline_fallback {
+        // Toggle on — serve the baseline answer, mode-invariant.
+        let answer = match outcome.baseline_answer {
+            Some(answer) => crate::wire::forward_response(query, &answer),
+            None => {
+                resolve_via_baseline(client, query, upstream.timeout, upstream.baseline_url).await
+            }
+        };
+        let decision = decision_from_response(&answer);
+        (answer, decision)
+    } else {
+        match outcome.verdict {
+            // fail_open / degraded: `resolve` already picked the baseline
+            // `Allow` (or `None` if the baseline is down too).
+            QuorumVerdict::Allow => match outcome.answer {
+                Some(answer) => {
+                    let forwarded = crate::wire::forward_response(query, &answer);
+                    let decision = decision_from_response(&forwarded);
+                    (forwarded, decision)
+                }
+                None => (build_servfail_response(query), Decision::Failed),
+            },
+            // fail_closed: the mode's block stands, relabelled. TTL 0 — not
+            // cached here, and the client shouldn't cache a degraded-mode
+            // block either.
+            QuorumVerdict::Block => (build_block_response(query, 0), Decision::Blocked),
+            // Unreachable — `filters_unreachable` is never set for a
+            // `NotApplicable` outcome (see `quorum::resolve`) — but named
+            // for exhaustiveness rather than a wildcard.
+            QuorumVerdict::NotApplicable => (build_servfail_response(query), Decision::Failed),
+        }
+    };
+    let resolved_ip_country =
+        geoip::resolved_ip_country(geoip.reader, &extract_ips(&message.answers));
+    let meta = QueryLogMeta {
+        domain: log_domain,
+        qtype,
+        decision,
+        decision_source: DecisionSource::BaselineFallback,
+        voters,
+        geoip_country: None,
         resolved_ip_country,
     };
     (PipelineOutcome::Response(message), Some(meta))
@@ -1032,6 +1128,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1083,6 +1180,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1118,6 +1216,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1169,6 +1268,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1200,6 +1300,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1240,6 +1341,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1294,6 +1396,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1340,6 +1443,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1369,6 +1473,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1408,6 +1513,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1442,6 +1548,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1481,6 +1588,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1511,6 +1619,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1552,6 +1661,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1588,6 +1698,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &config,
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1633,6 +1744,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1817,6 +1929,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1853,6 +1966,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1895,6 +2009,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1942,6 +2057,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &config,
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2028,6 +2144,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2073,6 +2190,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2119,6 +2237,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2162,6 +2281,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2202,6 +2322,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2256,6 +2377,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2281,6 +2403,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2318,6 +2441,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2361,6 +2485,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2403,6 +2528,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2446,6 +2572,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2489,6 +2616,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2517,6 +2645,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2559,6 +2688,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2614,6 +2744,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2683,6 +2814,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2728,6 +2860,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2793,6 +2926,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2853,6 +2987,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2909,6 +3044,7 @@ mod tests {
             &UpstreamContext {
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2929,5 +3065,180 @@ mod tests {
         // T-161: same "annotation, not filtering" property as the
         // every-provider-disabled test above.
         assert_eq!(meta.resolved_ip_country, Some("SE".to_string()));
+    }
+
+    // ---- T-155: every enabled voter unreachable ----
+
+    /// Runs `handle_query` with both filtering voters returning an error and
+    /// the given baseline response / mode / toggle. Returns the logged
+    /// `(decision, decision_source)`.
+    async fn run_filters_unreachable(
+        mode: TimeoutMode,
+        toggle: bool,
+        baseline: MockResponse,
+    ) -> (Decision, DecisionSource) {
+        let client = MockClient {
+            quad9: MockResponse::Error,
+            adguard: MockResponse::Error,
+            baseline,
+            calls: AtomicU32::new(0),
+        };
+        let cache = Cache::new(&cache_config());
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &OverrideLists::empty(),
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &TimeoutConfig {
+                    mode,
+                    duration: timeout_config().duration,
+                },
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: toggle,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("the filters-unreachable path always logs a row");
+        };
+        (meta.decision, meta.decision_source)
+    }
+
+    #[tokio::test]
+    async fn toggle_on_serves_a_baseline_allow_under_every_timeout_mode() {
+        for mode in [
+            TimeoutMode::FailOpen,
+            TimeoutMode::FailClosed,
+            TimeoutMode::Degraded,
+        ] {
+            let got = run_filters_unreachable(
+                mode,
+                true,
+                MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            )
+            .await;
+            assert_eq!(
+                got,
+                (Decision::Allowed, DecisionSource::BaselineFallback),
+                "toggle on is mode-invariant, got {got:?} for {mode:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn toggle_off_follows_the_timeout_mode_but_relabels_the_row() {
+        let allow = || MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1)));
+        assert_eq!(
+            run_filters_unreachable(TimeoutMode::FailOpen, false, allow()).await,
+            (Decision::Allowed, DecisionSource::BaselineFallback),
+        );
+        assert_eq!(
+            run_filters_unreachable(TimeoutMode::Degraded, false, allow()).await,
+            (Decision::Allowed, DecisionSource::BaselineFallback),
+        );
+        assert_eq!(
+            run_filters_unreachable(TimeoutMode::FailClosed, false, allow()).await,
+            (Decision::Blocked, DecisionSource::BaselineFallback),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_dead_baseline_too_is_an_honest_servfail_whatever_the_toggle() {
+        for toggle in [true, false] {
+            let got =
+                run_filters_unreachable(TimeoutMode::FailOpen, toggle, MockResponse::Error).await;
+            assert_eq!(
+                got,
+                (Decision::Failed, DecisionSource::BaselineFallback),
+                "toggle={toggle}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn one_voter_still_answering_stays_a_plain_quorum_row() {
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            adguard: MockResponse::Error,
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            calls: AtomicU32::new(0),
+        };
+        let cache = Cache::new(&cache_config());
+        let (_outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &OverrideLists::empty(),
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let Some(meta) = meta else {
+            panic!("expected a logged row");
+        };
+        assert_eq!(
+            meta.decision_source,
+            DecisionSource::Quorum,
+            "one live voter means filtering actually happened; toggle must not override"
+        );
+    }
+
+    #[tokio::test]
+    async fn baseline_fallback_allow_is_never_cached() {
+        let client = MockClient {
+            quad9: MockResponse::Error,
+            adguard: MockResponse::Error,
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            calls: AtomicU32::new(0),
+        };
+        let cache = Cache::new(&cache_config());
+        let _ = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &OverrideLists::empty(),
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let key = match CacheKey::new("example.com.", RecordType::A) {
+            Ok(key) => key,
+            Err(err) => panic!("valid cache key: {err:?}"),
+        };
+        assert!(
+            cache.get(&key).await.is_none(),
+            "a BASELINE_FALLBACK verdict must not populate the cache"
+        );
     }
 }

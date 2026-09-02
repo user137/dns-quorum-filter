@@ -248,6 +248,10 @@ fn content_type_is_json(content_type: Option<&str>) -> bool {
 pub struct RuntimeSettings {
     /// Current timeout mode/duration.
     pub timeout: TimeoutConfig,
+    /// T-155 — serve the unfiltered baseline answer when *every* enabled
+    /// voter failed to respond (`false` = the timeout mode decides, only
+    /// the log label changes).
+    pub serve_baseline_when_filters_unreachable: bool,
 }
 
 /// The admin-mutable resolver settings handed to [`AppState::new`] (T-72/T-73)
@@ -260,6 +264,8 @@ pub struct RuntimeSettings {
 pub struct RuntimeInit {
     /// Current timeout mode/duration.
     pub timeout: TimeoutConfig,
+    /// T-155 — see [`RuntimeSettings::serve_baseline_when_filters_unreachable`].
+    pub serve_baseline_when_filters_unreachable: bool,
     /// The configured voter list, in order.
     pub providers: Vec<ProviderEntry>,
 }
@@ -268,6 +274,7 @@ impl Default for RuntimeInit {
     fn default() -> Self {
         Self {
             timeout: TimeoutConfig::default(),
+            serve_baseline_when_filters_unreachable: false,
             providers: ProviderEntry::default_active_set(),
         }
     }
@@ -487,6 +494,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     let upstream_context = UpstreamContext {
         timeout: &settings.timeout,
         baseline_url: baseline.current(),
+        serve_baseline_fallback: settings.serve_baseline_when_filters_unreachable,
     };
     let response = match handle_query(
         &query,
@@ -715,6 +723,8 @@ impl<C: DohClient + Sync> AppState<C> {
             overrides: RwLock::new(Arc::new(overrides)),
             runtime: RwLock::new(RuntimeSettings {
                 timeout: runtime.timeout,
+                serve_baseline_when_filters_unreachable: runtime
+                    .serve_baseline_when_filters_unreachable,
             }),
             providers: RwLock::new(Arc::new(runtime.providers)),
             cache: RwLock::new(Arc::new(cache)),
@@ -988,6 +998,11 @@ fn apply_admin_config<C: DohClient + Sync>(
                 providers,
                 cache: cache_config,
                 geoip: GeoipConfig { blocked_countries },
+                // Cross-field read (T-155): edited by its own future route,
+                // not this one — carry the live value so a timeout toggle
+                // doesn't reset it on save.
+                serve_baseline_when_filters_unreachable: settings
+                    .serve_baseline_when_filters_unreachable,
             };
             match config.save(&paths.config) {
                 Ok(()) => true,
@@ -1213,6 +1228,7 @@ fn apply_admin_reset<C: DohClient + Sync>(
             mode: config.timeout_mode,
             duration: Duration::from_millis(config.timeout_ms.into()),
         },
+        serve_baseline_when_filters_unreachable: config.serve_baseline_when_filters_unreachable,
     };
     // T-72/T-73: reset reloads the `[[providers]]` list too — without this a
     // hand-edited provider list would only take effect at the next process
@@ -1490,6 +1506,8 @@ fn apply_cache_config<C: DohClient + Sync>(
                 port: state.persist.port,
                 timeout_mode: runtime.timeout.mode,
                 timeout_ms: timeout_ms(runtime.timeout.duration),
+                serve_baseline_when_filters_unreachable: runtime
+                    .serve_baseline_when_filters_unreachable,
                 providers,
                 cache: new_config,
                 geoip: GeoipConfig { blocked_countries },
@@ -1629,6 +1647,8 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 port: state.persist.port,
                 timeout_mode: runtime.timeout.mode,
                 timeout_ms: timeout_ms(runtime.timeout.duration),
+                serve_baseline_when_filters_unreachable: runtime
+                    .serve_baseline_when_filters_unreachable,
                 providers,
                 cache: cache_config,
                 geoip: GeoipConfig {
@@ -1996,6 +2016,8 @@ where
                 port: state.persist.port,
                 timeout_mode: runtime.timeout.mode,
                 timeout_ms: timeout_ms(runtime.timeout.duration),
+                serve_baseline_when_filters_unreachable: runtime
+                    .serve_baseline_when_filters_unreachable,
                 providers: after.clone(),
                 cache: cache_config,
                 geoip: GeoipConfig { blocked_countries },
@@ -3028,7 +3050,11 @@ mod tests {
 
         let entries = state.query_log.snapshot(std::time::SystemTime::now());
         assert_eq!(entries.len(), 1, "exactly one query must have been logged");
-        assert_eq!(entries[0].decision_source, DecisionSource::Quorum);
+        // T-155: *both* filtering voters time out here, so this is the
+        // `BASELINE_FALLBACK` row (served via baseline under the default
+        // `fail_open` toggle-off behaviour) — `degraded_counts` counts it
+        // like a `QUORUM` row since it carries the same voter timeout data.
+        assert_eq!(entries[0].decision_source, DecisionSource::BaselineFallback);
         // Assert the actual recorded mechanism first, not just the derived
         // stat below (advisor review: a `degraded_events > 0`-only
         // assertion could pass for the wrong reason - this crate's own

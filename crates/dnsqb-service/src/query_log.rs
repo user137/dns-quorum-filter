@@ -9,9 +9,10 @@
 //!
 //! This module's [`LogEntry`] is the **internal backend record**, narrower
 //! than the Tauri IPC DTO of the same name (`diagrams/ui-dto-model.md`,
-//! `UI-SPEC.md`): `decision_source` here has five of the seven values Phase 1
-//! can actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`/`GEOIP`,
-//! `GEOIP` added at T-76), and there is still no `voter_scope` field at all —
+//! `UI-SPEC.md`): `decision_source` here has six of the values Phase 1
+//! can actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`/`GEOIP`/
+//! `BASELINE_FALLBACK`, `GEOIP` added at T-76, `BASELINE_FALLBACK` at
+//! T-155), and there is still no `voter_scope` field at all —
 //! TASKS.md's own T-43 text defers it to T-109 (Фаза 4). `geoip_country` (the
 //! ISO code a `GEOIP` entry actually matched, distinct from *whether* one
 //! matched) joined at T-79, the task right after `GEOIP` itself became
@@ -64,10 +65,11 @@ pub enum Decision {
     Failed,
 }
 
-/// SPEC.md §6 `decision_source` column — five of the seven values the DTO
+/// SPEC.md §6 `decision_source` column — six of the seven values the DTO
 /// (`admin::DecisionSourceView`) declares are producible so far
 /// (`CCTLD_BLOCK`/`RATING_FILTER` are still later-phase pipeline steps that
-/// don't exist yet). `Geoip` joined at T-76 — see this module's doc comment.
+/// don't exist yet). `Geoip` joined at T-76, `BaselineFallback` at T-155 —
+/// see this module's doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecisionSource {
     /// Matched an allowlist entry.
@@ -83,6 +85,15 @@ pub enum DecisionSource {
     /// country. `voters` is always empty here (see this module's own doc
     /// comment): `GeoIP` isn't a quorum vote, it applies *after* one.
     Geoip,
+    /// Quorum was consulted but **every** enabled voter failed to answer
+    /// (timeout/error), so the verdict rests on the baseline resolver / the
+    /// timeout-mode policy, not on any filter (T-155). Emitted whether or
+    /// not the `serve_baseline_when_filters_unreachable` toggle is on — it's
+    /// a marker for *why* the decision looks the way it does, not gated by
+    /// the toggle. Unlike every other variant, `voters` here is **not**
+    /// empty: it carries the timeout/error record of each voter, which is
+    /// the whole point of distinguishing this from a plain `Quorum` row.
+    BaselineFallback,
 }
 
 /// One query-log record (SPEC.md §6's field table minus the two fields this
@@ -109,8 +120,10 @@ pub struct LogEntry {
     pub decision: Decision,
     /// Which pipeline step produced `decision`.
     pub decision_source: DecisionSource,
-    /// Per-provider results — empty when `decision_source` isn't `Quorum`
-    /// (an allowlist/blocklist/cache decision never consulted a voter).
+    /// Per-provider results — populated for `Quorum` and `BaselineFallback`
+    /// (T-155: the latter *is* the per-voter timeout record), empty for
+    /// every other source (an allowlist/blocklist/cache/geoip decision never
+    /// consulted a voter, or the result of one).
     pub voters: Vec<VoterRecord>,
     /// The ISO country code that triggered a `GeoIP` block (T-79) — `Some`
     /// only when `decision_source` is `Geoip`, `None` for every other

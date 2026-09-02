@@ -714,14 +714,14 @@ impl From<Decision> for DecisionView {
     }
 }
 
-/// SPEC.md §6/§8 `decision_source` column, DTO form (T-54) — all seven
+/// SPEC.md §6/§8 `decision_source` column, DTO form (T-54) — all the
 /// values `UI-SPEC.md` §1's "carry every field from day one" principle
-/// requires, though only five (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/
-/// `GeoIp`, the last added at T-76) are producible before their own
-/// later-phase pipeline step exists (see [`DecisionSourceView::from`] below
-/// — a total match over the internal five-variant [`DecisionSource`], so the
-/// other two can never actually be constructed by this conversion, only
-/// declared for the wire format).
+/// requires, though only six (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/
+/// `GeoIp`/`BaselineFallback`, the last two added at T-76 / T-155) are
+/// producible before their own later-phase pipeline step exists (see
+/// [`DecisionSourceView::from`] below — a total match over the internal
+/// [`DecisionSource`], so `CcTldBlock`/`RatingFilter` can never actually be
+/// constructed by this conversion, only declared for the wire format).
 ///
 /// `CcTldBlock`/`GeoIp` need an explicit `#[serde(rename)]` — automatic
 /// `SCREAMING_SNAKE_CASE` conversion would produce `CC_TLD_BLOCK`/`GEO_IP`,
@@ -740,6 +740,7 @@ pub enum DecisionSourceView {
     Quorum,
     #[serde(rename = "GEOIP")]
     GeoIp,
+    BaselineFallback,
 }
 
 impl From<DecisionSource> for DecisionSourceView {
@@ -750,6 +751,7 @@ impl From<DecisionSource> for DecisionSourceView {
             DecisionSource::Cache => Self::Cache,
             DecisionSource::Quorum => Self::Quorum,
             DecisionSource::Geoip => Self::GeoIp,
+            DecisionSource::BaselineFallback => Self::BaselineFallback,
         }
     }
 }
@@ -923,11 +925,13 @@ pub struct LogQueryResponse {
 const DEGRADED_LOOKBACK: usize = 20;
 
 /// Counts how many of the most recent [`DEGRADED_LOOKBACK`] *quorum-decided*
-/// entries (only [`DecisionSource::Quorum`] entries carry voters at all —
-/// T-147; an allowlist/blocklist/cache entry's `voters` is always empty and
-/// would just dilute the window, so those are filtered out *before* taking
-/// the last N, not counted toward N) had at least one voter
-/// [`VoterVerdict::Timeout`]/[`VoterVerdict::Error`].
+/// entries (only [`DecisionSource::Quorum`] and [`DecisionSource::BaselineFallback`]
+/// entries carry voters at all — T-147/T-155; an allowlist/blocklist/cache
+/// entry's `voters` is always empty and would just dilute the window, so
+/// those are filtered out *before* taking the last N, not counted toward N)
+/// had at least one voter [`VoterVerdict::Timeout`]/[`VoterVerdict::Error`].
+/// A `BaselineFallback` row is *every* voter timing out, so it always
+/// counts as a degraded event.
 ///
 /// Returns `(window, events)` — `window` is how many quorum-decided entries
 /// were actually available (can be less than [`DEGRADED_LOOKBACK`] on a
@@ -946,7 +950,12 @@ fn degraded_counts(entries: &[LogEntry]) -> (u64, u64) {
     for entry in entries
         .iter()
         .rev()
-        .filter(|entry| entry.decision_source == DecisionSource::Quorum)
+        .filter(|entry| {
+            matches!(
+                entry.decision_source,
+                DecisionSource::Quorum | DecisionSource::BaselineFallback
+            )
+        })
         .take(DEGRADED_LOOKBACK)
     {
         window += 1;

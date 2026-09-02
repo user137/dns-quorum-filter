@@ -198,6 +198,15 @@ pub struct ResolverConfig {
     pub cache: CacheConfig,
     /// `GeoIP` blocked-country list (T-76, SPEC.md §3.5).
     pub geoip: GeoipConfig,
+    /// T-155 — when **every** enabled filtering voter fails to answer, may
+    /// the unfiltered baseline resolver's answer be served? `false` (default)
+    /// keeps today's behaviour: the timeout mode decides
+    /// (`fail_open`/`degraded` still allow via baseline, `fail_closed`
+    /// blocks), the only change being that the row logs as `BASELINE_FALLBACK`
+    /// instead of hiding inside `QUORUM`. `true` serves the baseline answer
+    /// regardless of mode. Independent of `timeout_mode`, which is about
+    /// interpreting *one* unresponsive voter, not all of them.
+    pub serve_baseline_when_filters_unreachable: bool,
 }
 
 impl Default for ResolverConfig {
@@ -210,6 +219,7 @@ impl Default for ResolverConfig {
             providers: ProviderEntry::default_active_set(),
             cache: CacheConfig::default(),
             geoip: GeoipConfig::default(),
+            serve_baseline_when_filters_unreachable: false,
         }
     }
 }
@@ -297,6 +307,7 @@ impl ResolverConfig {
             providers: resolve_providers(&file.providers)?,
             cache,
             geoip: GeoipConfig { blocked_countries },
+            serve_baseline_when_filters_unreachable: file.serve_baseline_when_filters_unreachable,
         })
     }
 
@@ -324,6 +335,7 @@ impl ResolverConfig {
             port: self.port,
             timeout_mode: self.timeout_mode,
             timeout_ms: self.timeout_ms,
+            serve_baseline_when_filters_unreachable: self.serve_baseline_when_filters_unreachable,
             providers: self.providers.iter().map(ProviderFileEntry::from).collect(),
             cache: CacheConfigFile {
                 clamp_min_secs: cache_secs.clamp_min_secs,
@@ -422,6 +434,8 @@ struct ResolverConfigFile {
     port: u16,
     timeout_mode: TimeoutMode,
     timeout_ms: u32,
+    /// T-155 — see [`ResolverConfig::serve_baseline_when_filters_unreachable`].
+    serve_baseline_when_filters_unreachable: bool,
     providers: Vec<ProviderFileEntry>,
     cache: CacheConfigFile,
     geoip: GeoipConfigFile,
@@ -485,6 +499,8 @@ impl Default for ResolverConfigFile {
             port: defaults.port,
             timeout_mode: defaults.timeout_mode,
             timeout_ms: defaults.timeout_ms,
+            serve_baseline_when_filters_unreachable: defaults
+                .serve_baseline_when_filters_unreachable,
             providers: defaults
                 .providers
                 .iter()
@@ -603,6 +619,7 @@ mod tests {
                 providers: vec![preset_entry("quad9", false), preset_entry("adguard", false)],
                 cache: CacheConfig::default(),
                 geoip: GeoipConfig::default(),
+                serve_baseline_when_filters_unreachable: false,
             }
         );
     }
@@ -845,6 +862,7 @@ mod tests {
             geoip: GeoipConfig {
                 blocked_countries: vec!["SE".to_string(), "DE".to_string()],
             },
+            serve_baseline_when_filters_unreachable: true,
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");

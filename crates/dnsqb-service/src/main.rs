@@ -116,6 +116,8 @@ async fn main() {
             mode: resolver_config.timeout_mode,
             duration: Duration::from_millis(resolver_config.timeout_ms.into()),
         },
+        serve_baseline_when_filters_unreachable: resolver_config
+            .serve_baseline_when_filters_unreachable,
     };
     // T-52/T-149: the admin channel persists a config change back to
     // whichever path it was loaded from, and /admin/reset (T-149) reloads
