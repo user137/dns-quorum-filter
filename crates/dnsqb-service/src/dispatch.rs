@@ -27,6 +27,7 @@ use crate::admin::{
     GeoipCountryRequest, HealthGeoip, HealthResponse, LogEntryView, LogQueryResponse,
     MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest,
     OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
+    WatchdogStatusView,
 };
 use crate::admin_ui;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheKey};
@@ -46,6 +47,7 @@ use crate::timeout::TimeoutConfig;
 use crate::upstream::{
     all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
 };
+use crate::watchdog::state::WatchdogState;
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -851,6 +853,42 @@ fn timeout_ms(duration: Duration) -> u32 {
     u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
 }
 
+/// `watchdog-state.json` counts as stale — the watcher has stopped rewriting
+/// it, so "watchdog not running" — once its `mtime` is older than three
+/// watchdog intervals (SPEC.md §7.1 #8: 5 s each). `dnsqb-watcher` rewrites the
+/// file every tick specifically so this freshness check works.
+const WATCHDOG_STATE_STALE_AFTER: Duration = Duration::from_secs(15);
+
+/// Reads `watchdog-state.json` (written by `dnsqb-watcher`, SPEC.md §7.1 #7)
+/// and projects it to the UI-relevant [`WatchdogStatusView`] for
+/// [`AdminStatusResponse::watchdog`]. `None` when the file is absent,
+/// unreadable, stale (`now - mtime > WATCHDOG_STATE_STALE_AFTER`), or in a
+/// state the indicator doesn't surface. `now` is a parameter for testability —
+/// the callers pass `SystemTime::now()`.
+///
+/// A synchronous sub-KB read on the ~2 s-polled status path. Deliberately not
+/// cached: the read is cheap and a cache would add a staleness window of its
+/// own (T-160 filing pattern — a small measured cost, recorded not optimised).
+fn read_watchdog_view(paths: Option<&PersistPaths>, now: SystemTime) -> Option<WatchdogStatusView> {
+    let dir = paths?.app_data_dir();
+    let mtime = std::fs::metadata(dir.join(crate::STATE_FILE_NAME))
+        .and_then(|meta| meta.modified())
+        .ok()?;
+    if crate::is_stale(now, mtime, WATCHDOG_STATE_STALE_AFTER) {
+        return None;
+    }
+    match crate::read_watchdog_state(&dir).ok()?.state {
+        WatchdogState::Restarting | WatchdogState::BackoffWait => {
+            Some(WatchdogStatusView::Restarting)
+        }
+        WatchdogState::GaveUp => Some(WatchdogStatusView::GaveUp),
+        WatchdogState::Healthy
+        | WatchdogState::ChannelDegraded
+        | WatchdogState::SuspectDead
+        | WatchdogState::VerifyingPid => None,
+    }
+}
+
 /// Builds the current [`AdminStatusResponse`] from `state` — shared by
 /// `GET /admin/status` and the response [`apply_admin_config`] echoes back
 /// after a `POST /admin/config`. `persisted` is the caller's to state
@@ -864,6 +902,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
         stats: live_stats(state, &entries),
+        watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
         persisted,
     }
 }
@@ -949,6 +988,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         timeout_ms: timeout_ms(settings.timeout.duration),
         port: state.persist.port,
         stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
+        watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
         persisted,
     }
 }
@@ -2475,16 +2515,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_status, content_type_is_dns_message, parse_log_query, resolve_doh_request, serve,
-        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipSource,
-        GeoipState, LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeInit,
-        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        admin_status, content_type_is_dns_message, parse_log_query, read_watchdog_view,
+        resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
+        GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
+        PersistTarget, RuntimeInit, WatchdogState, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH,
+        MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
         GeoipCountriesResponse, GeoipCountryRequest, LogQueryResponse, MaxmindCredentialCheck,
         MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest,
-        OverrideListsResponse, OverrideRemoveRequest,
+        OverrideListsResponse, OverrideRemoveRequest, WatchdogStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::ResolverConfig;
@@ -2492,6 +2533,8 @@ mod tests {
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
     use crate::upstream::{doh_get_url, DohClient, ProviderEntry, UpstreamError};
+    use crate::watchdog::state::{WatchdogStateFile, WatchdogTarget, STATE_SCHEMA_VERSION};
+    use crate::write_watchdog_state;
     use bytes::Bytes;
     use hickory_proto::op::{Message, Query, ResponseCode};
     use hickory_proto::rr::rdata::A;
@@ -2502,6 +2545,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
 
     fn query_bytes(domain: &str, qtype: RecordType) -> Vec<u8> {
         let Ok(name) = Name::from_str(domain) else {
@@ -3345,6 +3389,118 @@ mod tests {
         assert_eq!(active_ids, vec!["quad9", "adguard"]);
         assert!(status.persisted);
         assert_eq!(status.stats.total, 0);
+        // `state_with` uses `paths: None`, so there is nowhere to read a
+        // watchdog state file from (T-95).
+        assert_eq!(status.watchdog, None);
+    }
+
+    fn watchdog_test_paths(dir: &std::path::Path) -> PersistPaths {
+        PersistPaths {
+            config: dir.join("resolver_config.toml"),
+            overrides: dir.join("overrides.toml"),
+        }
+    }
+
+    fn write_watchdog_fixture(dir: &std::path::Path, state: WatchdogState) {
+        let file = WatchdogStateFile {
+            schema_version: STATE_SCHEMA_VERSION,
+            state,
+            target: WatchdogTarget::Service,
+            restart_attempts_in_window: 0,
+            window_started_at: None,
+            last_transition_at: SystemTime::UNIX_EPOCH,
+            last_error: None,
+        };
+        if let Err(err) = write_watchdog_state(dir, &file) {
+            panic!("write_watchdog_state must succeed: {err}");
+        }
+    }
+
+    // Happy + boundary: the two UI-surfaced states, and BackoffWait folding into
+    // Restarting (T-95).
+    #[test]
+    fn read_watchdog_view_projects_the_ui_relevant_states() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        let paths = watchdog_test_paths(dir.path());
+
+        for state in [WatchdogState::Restarting, WatchdogState::BackoffWait] {
+            write_watchdog_fixture(dir.path(), state);
+            assert_eq!(
+                read_watchdog_view(Some(&paths), SystemTime::now()),
+                Some(WatchdogStatusView::Restarting),
+                "{state:?} -> RESTARTING"
+            );
+        }
+
+        write_watchdog_fixture(dir.path(), WatchdogState::GaveUp);
+        assert_eq!(
+            read_watchdog_view(Some(&paths), SystemTime::now()),
+            Some(WatchdogStatusView::GaveUp)
+        );
+    }
+
+    // The four internal automaton steps are not shown — they map to `None`, not
+    // a fabricated "healthy" reading.
+    #[test]
+    fn read_watchdog_view_hides_the_internal_states() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        let paths = watchdog_test_paths(dir.path());
+        for state in [
+            WatchdogState::Healthy,
+            WatchdogState::ChannelDegraded,
+            WatchdogState::SuspectDead,
+            WatchdogState::VerifyingPid,
+        ] {
+            write_watchdog_fixture(dir.path(), state);
+            assert_eq!(
+                read_watchdog_view(Some(&paths), SystemTime::now()),
+                None,
+                "{state:?} is an internal step"
+            );
+        }
+    }
+
+    // Misuse: a state file the watcher has stopped rewriting (its `mtime` is
+    // old) reads as `None` — "watchdog not running" — never the recorded state.
+    #[test]
+    fn read_watchdog_view_is_none_for_a_stale_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        let paths = watchdog_test_paths(dir.path());
+        write_watchdog_fixture(dir.path(), WatchdogState::Restarting);
+        let long_after = SystemTime::now() + Duration::from_secs(3600);
+        assert_eq!(read_watchdog_view(Some(&paths), long_after), None);
+    }
+
+    // Error: no persist paths, no file, and a corrupt file all yield `None`,
+    // never a panic or a 500.
+    #[test]
+    fn read_watchdog_view_is_none_for_absent_missing_or_corrupt() {
+        assert_eq!(read_watchdog_view(None, SystemTime::now()), None);
+
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        let paths = watchdog_test_paths(dir.path());
+        assert_eq!(
+            read_watchdog_view(Some(&paths), SystemTime::now()),
+            None,
+            "no state file yet"
+        );
+
+        if let Err(err) = std::fs::write(dir.path().join(crate::STATE_FILE_NAME), b"{ not json") {
+            panic!("fixture write must succeed: {err}");
+        }
+        assert_eq!(
+            read_watchdog_view(Some(&paths), SystemTime::now()),
+            None,
+            "a corrupt file must not panic or 500"
+        );
     }
 
     #[tokio::test]

@@ -122,6 +122,7 @@ mod tests {
             timeout_ms: 2000,
             port: 8443,
             stats,
+            watchdog: None,
             persisted: true,
         }
     }

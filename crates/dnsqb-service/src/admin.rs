@@ -91,6 +91,14 @@ pub struct AdminStatusResponse {
     pub port: u16,
     /// Counts from the current query-log window.
     pub stats: AdminStats,
+    /// The watchdog's UI-relevant state (T-95), read live from
+    /// `watchdog-state.json` (`dnsqb-watcher` is its sole writer, SPEC.md
+    /// §7.1 #7). `None` when the file is absent, unreadable, **stale** (the
+    /// watcher isn't rewriting it — so "watchdog not running"), or in a state
+    /// the UI doesn't surface — never a fabricated healthy reading (Три Б).
+    /// A projection, not the raw seven-variant `WatchdogState`: see
+    /// [`WatchdogStatusView`].
+    pub watchdog: Option<WatchdogStatusView>,
     /// Whether the values above were also written to `resolver_config.toml`
     /// on this call. Always `true` for a plain `GET /admin/status` (nothing
     /// changed, so there's nothing to fail to persist). A `POST
@@ -99,6 +107,22 @@ pub struct AdminStatusResponse {
     /// already took effect and must not be reported as failed, but the
     /// caller needs to know it won't survive a restart.
     pub persisted: bool,
+}
+
+/// The UI-relevant projection of the watchdog automaton
+/// (`diagrams/watchdog-state.md`, SPEC.md §7.1 #7). Only the two states a user
+/// acts on; `Healthy` / `ChannelDegraded` / `SuspectDead` / `VerifyingPid` are
+/// sub-second-to-second internal steps the indicator doesn't show, and a
+/// stale/absent state file both map to `None` on
+/// [`AdminStatusResponse::watchdog`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WatchdogStatusView {
+    /// The service is being restarted (`Restarting` / `BackoffWait`).
+    Restarting,
+    /// The restart budget for the window is spent — the service is stopped,
+    /// awaiting manual recovery (`GaveUp`, terminal).
+    GaveUp,
 }
 
 /// `GET /health`'s body (T-86, watchdog channel 3 — SPEC.md §7.1 #4/#10).

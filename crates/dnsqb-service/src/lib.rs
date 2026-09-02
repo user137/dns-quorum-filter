@@ -149,6 +149,7 @@ pub use admin::{
     DatabaseSource, HealthGeoip, HealthResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
     MaxmindCredentialsView, MaxmindRefreshHealth, ProviderAddRequest, ProviderRemoveRequest,
     ProviderSetEnabledRequest, ProviderStatusView, ProviderView, ProvidersResponse,
+    WatchdogStatusView,
 };
 pub use cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError,
