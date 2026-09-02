@@ -13,6 +13,7 @@ pub mod channel;
 pub mod frame;
 pub mod heartbeat_file;
 pub mod instance;
+pub mod launcher;
 pub mod loop_driver;
 pub mod pid_check;
 #[cfg(windows)]

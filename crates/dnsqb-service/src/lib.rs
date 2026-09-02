@@ -204,6 +204,7 @@ pub use watchdog::instance::{
     acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
     PidFile, Role as InstanceRole,
 };
+pub use watchdog::launcher::{plan_launch, LaunchAction};
 pub use watchdog::loop_driver::{ChannelObs, Direction, Effect, LoopDriver, TickOutcome};
 pub use watchdog::pid_check::{verify_pid_alive, PidCheck};
 #[cfg(windows)]
