@@ -401,6 +401,18 @@ reasoning (search by section number rather than re-deriving a decision from scra
   `UpstreamError::Http`'s message text directly in a diagnostic-log context (SPEC.md, Наскрізні
   вимоги: no domain names in service logs) — log a coarse error-kind label instead (`quorum.rs`'s
   `error_kind()`). Caught in self-review while writing T-29's logging, not by any lint.
+- **`reqwest` 0.13 does multi-address connect but with no built-in per-address deadline unless
+  `connect_timeout` is set (T-154).** Kickoff scratch probe (`reqwest::Client::builder()
+  .resolve_to_addrs(host, &[bad, good])` then a real DoH GET, 2 runs): with a **fast-failing**
+  first address (`127.0.0.1:9`, ECONNREFUSED) reqwest advances to the second and succeeds
+  (~2s); with a **blackholed** first address (`192.0.2.1:443`, TEST-NET-1, packets dropped) it
+  hangs on the first until the *outer* request timeout and never tries the second — **no
+  failover** — *unless* `.connect_timeout(500ms)` is set, which restores failover for the
+  blackhole shape too (~330–430ms). Production `ReqwestDohClient::new()` sets no per-query
+  timeout of its own (that's `query_with_timeout`'s external `tokio::time::timeout`, 2s), so
+  before T-154 a blackholed Quad9/Cloudflare primary IP just consumed the whole 2s and the
+  secondary IP was never attempted. `UPSTREAM_CONNECT_TIMEOUT` (`upstream.rs`) now sits at
+  500ms, provably `< TimeoutConfig::default().duration` (invariant test in that module).
 - Boxing differently-shaped `async move { ... }` blocks into one `FuturesUnordered<Pin<Box<dyn
   Future<Output = T> + Send + 'a>>>` (T-30's tagged-future pattern) needs the borrowed generic
   type param itself bound `Sync`, not just `Send` — `&C` across an `.await` inside the box requires

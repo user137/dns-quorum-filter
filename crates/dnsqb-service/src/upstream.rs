@@ -27,6 +27,17 @@ const UPSTREAM_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const UPSTREAM_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const UPSTREAM_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Per-connection-attempt timeout (T-154). Without it, `reqwest`/`hyper`
+/// tries a `DoH` hostname's resolved addresses sequentially but only
+/// advances past one that fails *fast* (RST); a blackholed first address
+/// (packets dropped, no reply) instead holds the whole per-query budget, so
+/// a provider's second IP is never tried on the outage shape that matters
+/// most. Set well below the per-query timeout (`TimeoutConfig::default()`'s
+/// 2s) so a second-address attempt still fits inside one query —
+/// empirically confirmed to restore multi-address failover for the
+/// blackhole shape (`CLAUDE.md` gotcha, kickoff `resolve_to_addrs` probe).
+const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// RFC 8484 §4.1.1 (T-9): `application/dns-message` GET-request URL —
 /// unpadded base64url `dns=` parameter (SPEC.md §1, §3).
 #[must_use]
@@ -374,6 +385,7 @@ impl ReqwestDohClient {
     pub fn new() -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .pool_idle_timeout(UPSTREAM_POOL_IDLE_TIMEOUT)
+            .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
             .http2_keep_alive_interval(UPSTREAM_KEEP_ALIVE_INTERVAL)
             .http2_keep_alive_timeout(UPSTREAM_KEEP_ALIVE_TIMEOUT)
             .http2_keep_alive_while_idle(true)
@@ -526,6 +538,21 @@ mod tests {
         if let Err(err) = ReqwestDohClient::new() {
             panic!("client construction with keep-alive settings must not fail: {err}");
         }
+    }
+
+    // T-154(a): `reqwest`/`hyper` only advances to a DoH hostname's second
+    // resolved address after the first when the first fails *fast* (RST) or
+    // hits `connect_timeout`; a blackholed first address otherwise consumes
+    // the whole per-query budget and the second IP is never tried
+    // (empirically confirmed — see the CLAUDE.md gotcha). So the connect
+    // timeout must sit safely below the per-query timeout, leaving room for
+    // the second-address attempt within one query.
+    #[test]
+    fn connect_timeout_is_shorter_than_the_default_per_query_timeout() {
+        assert!(
+            super::UPSTREAM_CONNECT_TIMEOUT < crate::timeout::TimeoutConfig::default().duration,
+            "connect timeout must leave room for a second-address attempt within one query"
+        );
     }
 
     // Live network check - not run in CI (Відкрите питання п.2, ToS on
