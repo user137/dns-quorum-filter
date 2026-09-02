@@ -40,7 +40,10 @@
 mod browser;
 mod status;
 
-use dnsqb_service::{app_data_dir, AdminClient, AdminClientError, ResolverConfig};
+use dnsqb_service::{
+    acquire_instance_guard, app_data_dir, write_pid_file, AdminClient, AdminClientError,
+    GuardError, InstanceRole, ResolverConfig,
+};
 use dnsqb_service::{ensure_installed, rotate_certificate, uninstall as uninstall_trust_store};
 use status::TrayStatus;
 use std::path::{Path, PathBuf};
@@ -90,6 +93,29 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // SPEC.md §7.1 #2/#3: one tray per app-data directory, and a `tray.pid`
+    // the watcher's launcher reads to decide whether to spawn one (T-150) —
+    // without it, every watcher (re)start would spawn another tray. A second
+    // instance (a double-clicked shortcut, the watcher relaunching) just
+    // exits; that is the idempotent-launcher behaviour, not an error. `tao`'s
+    // event loop never returns, so the guard is released by the OS on exit
+    // (its whole `share_mode(0)` design) rather than by `Drop`.
+    let _guard = match acquire_instance_guard(&app_data, InstanceRole::Tray) {
+        Ok(guard) => guard,
+        Err(GuardError::AlreadyRunning(_)) => {
+            tracing::info!("another dnsqb-tray instance is already running, exiting");
+            return;
+        }
+        Err(err) => {
+            tracing::error!("could not acquire the tray single-instance lock: {err}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(err) = write_pid_file(&app_data, InstanceRole::Tray) {
+        tracing::warn!("could not write the tray pid file: {err}");
+    }
+
     let port = match ResolverConfig::load(&app_data.join("resolver_config.toml")) {
         Ok(config) => config.port,
         Err(err) => {
