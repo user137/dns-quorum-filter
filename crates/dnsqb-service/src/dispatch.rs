@@ -824,6 +824,25 @@ impl<C: DohClient + Sync> AppState<C> {
         *self.reachability.read()
     }
 
+    /// One `Arc::clone` snapshot of the baseline selector (T-154) — the hot
+    /// path reads `current()` off it; the reachability prober both reads and
+    /// (via [`Self::update_baseline`]) writes it.
+    pub(crate) fn baseline_snapshot(&self) -> Arc<BaselineSelector> {
+        Arc::clone(&self.baseline.read())
+    }
+
+    /// Swaps in a baseline selector the reachability prober advanced after a
+    /// failover / recovery (T-154). Sole writer.
+    pub(crate) fn update_baseline(&self, selector: Arc<BaselineSelector>) {
+        *self.baseline.write() = selector;
+    }
+
+    /// The live `DoH` client (T-154) — the reachability prober reuses it for
+    /// its baseline health probe rather than encoding a `DoH` GET by hand.
+    pub(crate) fn doh_client(&self) -> &C {
+        &self.client
+    }
+
     /// Wakes `run_geoip_updater` out of its inter-cycle sleep (T-163). Safe
     /// to call with no updater running (e.g. no app-data dir) — the permit is
     /// simply never consumed.

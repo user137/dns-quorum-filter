@@ -19,12 +19,23 @@
 //! (TASKS.md — `/health` is upstream-free on purpose so a network outage
 //! can't trigger a restart, the exact false positive SPEC.md §7's
 //! multi-channel voting defends against).
+//!
+//! The same task also drives `baseline_selector`'s failover (T-154, §3.7):
+//! while `Online` it health-checks the active baseline URL with one real
+//! `DoH` query through the production client and folds the result into the
+//! selector, switching to an alternate after repeated failure and probing
+//! the primary back once it recovers. Failover is therefore between-query,
+//! at this task's cadence — the hot path only ever reads `current()`.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use hickory_proto::op::{Message, Query, ResponseCode};
+use hickory_proto::rr::{Name, RecordType};
+
+use crate::baseline_selector::{BaselineEvent, BaselineHealth, BASELINE_CHAIN};
 use crate::dispatch::AppState;
-use crate::upstream::ReqwestDohClient;
+use crate::upstream::{DohClient, ReqwestDohClient};
 
 /// Independent always-on connectivity markers (SPEC.md §3.7). Only one has to
 /// answer for the verdict to be `Online`.
@@ -89,6 +100,7 @@ pub async fn run_reachability_prober(
     client: reqwest::Client,
     state: Arc<AppState<ReqwestDohClient>>,
 ) {
+    let sentinel = sentinel_query();
     let mut previous = NetworkReachability::Online;
     loop {
         let current = verdict_from_probe_results(probe_all_markers(&client).await);
@@ -103,10 +115,69 @@ pub async fn run_reachability_prober(
             }
         }
         state.update_reachability(current);
+        // T-154: only meaningful while the network is up — an `Offline`
+        // cycle would just report every chain entry dead and churn the
+        // selector for nothing.
+        if current == NetworkReachability::Online {
+            probe_baseline_health(&state, &sentinel).await;
+        }
         let delay = next_probe_delay(previous, current);
         previous = current;
         tokio::time::sleep(delay).await;
     }
+}
+
+/// One fixed `example.com A` query, built once and reused for every baseline
+/// health probe. `recursion_desired` set explicitly — a strict resolver can
+/// `SERVFAIL` an `RD=0` query for anything not edge-cached (CLAUDE.md gotcha).
+fn sentinel_query() -> Message {
+    let mut message = Message::query();
+    if let Ok(name) = Name::from_ascii("example.com.") {
+        message.add_query(Query::query(name, RecordType::A));
+    }
+    message.metadata.recursion_desired = true;
+    message
+}
+
+/// T-154: check the active baseline URL (and, when due, the primary) with a
+/// real `DoH` query through the production client, and fold the result into
+/// `baseline_selector::BaselineSelector`. Between-query, probe-granularity
+/// failover — the hot path only ever reads `current()`.
+async fn probe_baseline_health(state: &AppState<ReqwestDohClient>, sentinel: &Message) {
+    let selector = state.baseline_snapshot();
+    let now = SystemTime::now();
+    let url = if selector.should_retry_primary(now) {
+        BASELINE_CHAIN[0]
+    } else {
+        selector.current()
+    };
+    let health = match state.doh_client().query(url, sentinel).await {
+        Ok(response) if is_usable_response(&response) => BaselineHealth::Responded,
+        _ => BaselineHealth::Failed,
+    };
+    let mut next = (*selector).clone();
+    match next.record(now, url, health) {
+        Some(BaselineEvent::SwitchedTo { index }) => {
+            tracing::warn!(
+                index,
+                "baseline resolver failed over to an alternate endpoint"
+            );
+        }
+        Some(BaselineEvent::RecoveredToPrimary) => {
+            tracing::info!("baseline resolver recovered — back on the primary endpoint");
+        }
+        None => {}
+    }
+    if next != *selector {
+        state.update_baseline(Arc::new(next));
+    }
+}
+
+fn is_usable_response(message: &Message) -> bool {
+    matches!(
+        message.metadata.response_code,
+        ResponseCode::NoError | ResponseCode::NXDomain
+    )
 }
 
 async fn probe_all_markers(client: &reqwest::Client) -> [bool; MARKERS.len()] {
@@ -174,6 +245,19 @@ mod tests {
     #[test]
     fn default_is_online() {
         assert_eq!(NetworkReachability::default(), NetworkReachability::Online);
+    }
+
+    #[test]
+    fn sentinel_query_is_a_recursion_desired_a_lookup() {
+        let q = super::sentinel_query();
+        assert!(
+            q.metadata.recursion_desired,
+            "RD must be set (CLAUDE.md gotcha)"
+        );
+        let Some(question) = q.queries.first() else {
+            panic!("sentinel must carry a question");
+        };
+        assert_eq!(question.query_type(), super::RecordType::A);
     }
 
     #[test]
