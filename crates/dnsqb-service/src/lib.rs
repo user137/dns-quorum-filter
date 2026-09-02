@@ -141,6 +141,7 @@ mod timeout;
 mod tls;
 mod trust_store;
 mod upstream;
+mod watchdog;
 mod wire;
 
 pub use admin::{
@@ -188,6 +189,10 @@ pub use upstream::{
     all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, validate_provider_url,
     BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec, ProviderUrlError,
     ReqwestDohClient, UpstreamError, BASELINE_DOH_URL, DEFAULT_PROVIDER_IDS,
+};
+pub use watchdog::instance::{
+    acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
+    PidFile, Role as InstanceRole,
 };
 pub use wire::{
     attach_edns, build_block_response, decode_wire_message, encode_wire_message, forward_response,

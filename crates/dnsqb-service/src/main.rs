@@ -11,9 +11,10 @@
 //! manual smoke-test step recorded for T-143 in `TASKS-DONE.md` instead.
 
 use dnsqb_service::{
-    app_data_dir, bind_listener, load_maxmind_credentials, load_or_generate_server_config,
-    migrate_legacy_credentials_file, run_geoip_updater, serve, AppState, BindError, Cache,
-    CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, InvalidEntry, OverrideLists,
+    acquire_instance_guard, app_data_dir, bind_listener, load_maxmind_credentials,
+    load_or_generate_server_config, migrate_legacy_credentials_file, run_geoip_updater, serve,
+    write_pid_file, AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader, GeoipSource,
+    GeoipState, GuardError, InstanceGuard, InstanceRole, InvalidEntry, OverrideLists,
     OverridesState, PersistPaths, PersistTarget, QueryLog, ReqwestDohClient, ResolverConfig,
     RuntimeInit, TimeoutConfig,
 };
@@ -44,6 +45,10 @@ async fn main() {
     // isn't fatal for either, same tolerance `load_overrides` already had
     // before this slice: both fall back to defaults/empty with a warning.
     let app_data = app_data_dir().ok();
+
+    // T-92: hold the single-instance lock for the whole process lifetime; the
+    // OS frees the handle on exit (see `acquire_service_guard`).
+    let _instance_guard = acquire_service_guard(app_data.as_deref());
 
     let resolver_config = load_resolver_config(app_data.as_deref());
 
@@ -163,6 +168,45 @@ async fn main() {
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
 
     serve_until_shutdown(listener, acceptor, state).await;
+}
+
+/// T-92: take the `dnsqb-service` single-instance lock (SPEC.md §7.1 #2) and
+/// write the pid file. A same-role process already holding the lock, or any
+/// other lock-open failure, exits the process rather than racing the first over
+/// the listener port and the config files. A missing app-data directory
+/// (nowhere to place the lockfile) logs a warning and returns `None`, the same
+/// tolerance `load_resolver_config`/`load_overrides` already apply.
+fn acquire_service_guard(app_data: Option<&Path>) -> Option<InstanceGuard> {
+    let Some(dir) = app_data else {
+        tracing::warn!("%LOCALAPPDATA% is unset - starting without a single-instance guard");
+        return None;
+    };
+    match acquire_instance_guard(dir, InstanceRole::Service) {
+        Ok(guard) => {
+            if let Err(err) = write_pid_file(dir, InstanceRole::Service) {
+                tracing::warn!("could not write the pid file: {err}");
+            }
+            Some(guard)
+        }
+        Err(GuardError::AlreadyRunning(role)) => {
+            tracing::error!(
+                "another {role} instance is already running on this app-data directory - \
+                 not starting a second one (SPEC.md §7.1 #2)"
+            );
+            std::process::exit(1);
+        }
+        Err(GuardError::Io(err)) => {
+            tracing::error!("could not acquire the single-instance lock: {err}");
+            std::process::exit(1);
+        }
+        // Unreachable on the only build target (deny.toml `targets` =
+        // windows-msvc); named for exhaustiveness, never `unreachable!()`
+        // (rust.md "Panic-Free Production Code").
+        Err(GuardError::UnsupportedPlatform) => {
+            tracing::error!("single-instance guard is unavailable on this platform");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Loads a `GeoIP` database a previous run already persisted, if any (T-75).
