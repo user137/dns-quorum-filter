@@ -18,19 +18,18 @@
 //! loop, its only consumer is the `dnsqb-tray` crate), and `/admin/ui`/
 //! `/admin/ui/main.js`/`/admin/ui/style.css` (T-149, the embedded web UI —
 //! see `admin_ui.rs`), all added on this same listener rather than a new
-//! one, the same "extend the existing port" pattern already named for the
-//! future `/health` (T-86). `/health` itself is still free to add later
-//! without colliding.
+//! one, the same "extend the existing port" pattern. `/health` (T-86,
+//! watchdog channel 3 — SPEC.md §7.1 #10) is on this listener too.
 
 use crate::admin::{
     compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
     CacheConfigUpdate, CacheConfigView, DatabaseSource, GeoipCountriesResponse,
-    GeoipCountryRequest, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
-    MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest, OverrideDomainView,
-    OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
+    GeoipCountryRequest, HealthGeoip, HealthResponse, LogEntryView, LogQueryResponse,
+    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest,
+    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
 };
 use crate::admin_ui;
-use crate::cache::{Cache, CacheConfig, CacheConfigError};
+use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheKey};
 use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
@@ -51,6 +50,7 @@ use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use bytes::Bytes;
+use hickory_proto::rr::RecordType;
 use hickory_proto::ProtoError;
 use http::{header, Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
@@ -73,6 +73,13 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 65_535;
 
 const DNS_QUERY_PATH: &str = "/dns-query";
 const DNS_MESSAGE_CONTENT_TYPE: &str = "application/dns-message";
+/// Watchdog channel 3 (T-86) — a peer of `/dns-query`, not an `/admin/*`
+/// route.
+const HEALTH_PATH: &str = "/health";
+/// A syntactically valid name that can never resolve (RFC 2606 `.invalid`),
+/// run through the local pipeline prefix by [`serve_health`] to prove that
+/// path executes without a network call.
+const HEALTH_SENTINEL_DOMAIN: &str = "health-probe.dnsqb.invalid";
 
 const ADMIN_STATUS_PATH: &str = "/admin/status";
 const ADMIN_CONFIG_PATH: &str = "/admin/config";
@@ -109,6 +116,7 @@ const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
 /// happens to pass today.
 const ROUTES: &[(&str, &[Method])] = &[
     (DNS_QUERY_PATH, &[Method::GET, Method::POST]),
+    (HEALTH_PATH, &[Method::GET]),
     (ADMIN_STATUS_PATH, &[Method::GET]),
     (ADMIN_CONFIG_PATH, &[Method::POST]),
     (ADMIN_RESET_PATH, &[Method::POST]),
@@ -965,6 +973,41 @@ fn json_response<T: Serialize>(value: &T) -> Response<Full<Bytes>> {
 /// function itself trusts that and doesn't re-check.
 fn serve_admin_status<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
     json_response(&admin_status(state, true))
+}
+
+/// `GET /health` — watchdog channel 3 (T-86, SPEC.md §7.1 #4/#10). Method
+/// allowlisting happens centrally in [`serve`]'s `ROUTES` check. Deeper than
+/// "the process exists" but makes **no** upstream call: it runs the local
+/// pipeline prefix (override lookup + cache lookup) for a sentinel domain —
+/// proving that code path executes and no writer is holding a lock — then
+/// reports the assembled pipeline state. The health signal is the 200 itself;
+/// the body is informational (SPEC.md §3: `0` active providers is legal).
+async fn serve_health<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
+    let overrides_state = Arc::clone(&state.overrides.read());
+    // Discarded — running it is the check, not the answer. Local, no network.
+    let _ = overrides_state.lists.decision(HEALTH_SENTINEL_DOMAIN);
+
+    if let Ok(key) = CacheKey::new(HEALTH_SENTINEL_DOMAIN, RecordType::A) {
+        let cache_state = Arc::clone(&state.cache.read());
+        // `moka::future::Cache::get` — a local map lookup, no network.
+        let _ = cache_state.cache.get(&key).await;
+    }
+
+    let active_providers = state
+        .providers
+        .read()
+        .iter()
+        .filter(|entry| entry.enabled)
+        .count();
+    let geoip = if state.geoip.read().reader.is_some() {
+        HealthGeoip::Loaded
+    } else {
+        HealthGeoip::Absent
+    };
+    json_response(&HealthResponse {
+        active_providers,
+        geoip,
+    })
 }
 
 /// `POST /admin/config` — method allowlisting happens centrally in
@@ -2397,6 +2440,7 @@ where
     }
     Ok(match path {
         DNS_QUERY_PATH => serve_dns_query(req, &state).await,
+        HEALTH_PATH => serve_health(&state).await,
         ADMIN_STATUS_PATH => serve_admin_status(&state),
         ADMIN_CONFIG_PATH => serve_admin_config(req, &state).await,
         ADMIN_RESET_PATH => serve_admin_reset(req, &state).await,
@@ -3097,6 +3141,34 @@ mod tests {
             Err(err) => match err {},
         };
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // T-86: `/health` runs the local pipeline prefix and reports assembled
+    // state; the default provider set (quad9 + adguard) is 2 enabled voters,
+    // and the test state has no GeoIP database.
+    #[tokio::test]
+    async fn serve_health_returns_200_with_pipeline_status() {
+        let req = match Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .body(Full::new(Bytes::new()))
+        {
+            Ok(req) => req,
+            Err(err) => panic!("fixture request must build: {err}"),
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = body_bytes(response).await;
+        let health: crate::admin::HealthResponse = match serde_json::from_slice(&bytes) {
+            Ok(health) => health,
+            Err(err) => panic!("/health body must decode: {err}"),
+        };
+        assert_eq!(health.active_providers, 2);
+        assert_eq!(health.geoip, crate::admin::HealthGeoip::Absent);
     }
 
     #[tokio::test]
@@ -6049,6 +6121,7 @@ mod tests {
     /// `match` arms.
     const EXPECTED_ADMIN_ROUTES: &[(&str, &[Method])] = &[
         ("/dns-query", &[Method::GET, Method::POST]),
+        ("/health", &[Method::GET]),
         ("/admin/status", &[Method::GET]),
         ("/admin/config", &[Method::POST]),
         ("/admin/reset", &[Method::POST]),
@@ -6376,7 +6449,7 @@ mod tests {
             "/dns-query/",
             "/ADMIN/STATUS",
             "/admin/secret",
-            "/health",
+            "/health/",
         ];
         for path in UNLISTED_PATHS {
             let Ok(req) = Request::builder()

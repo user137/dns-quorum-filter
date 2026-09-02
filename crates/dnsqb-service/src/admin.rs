@@ -101,6 +101,30 @@ pub struct AdminStatusResponse {
     pub persisted: bool,
 }
 
+/// `GET /health`'s body (T-86, watchdog channel 3 — SPEC.md §7.1 #4/#10).
+/// The signal of health is the HTTP 200 itself: producing it means the local
+/// pipeline prefix (override + cache lookup) ran to completion with no writer
+/// holding a lock and no upstream call. These fields are informational
+/// context, not a gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HealthResponse {
+    /// How many voters are currently enabled — `0` is a legal pass-through
+    /// state (SPEC.md §3), not an error.
+    pub active_providers: usize,
+    /// Whether a `GeoIP` database is currently loaded.
+    pub geoip: HealthGeoip,
+}
+
+/// Whether [`HealthResponse`] found a loaded `GeoIP` database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HealthGeoip {
+    /// A database is loaded.
+    Loaded,
+    /// No database is loaded (first run, or the file was missing/corrupt).
+    Absent,
+}
+
 /// Counts derived from [`crate::QueryLog::snapshot`] — no new storage, same
 /// principle SPEC.md §8 already names for the later T-139/T-140 UI stats.
 /// **Not** a calendar-day count — the log is a bounded ring buffer
@@ -999,6 +1023,25 @@ impl AdminClient {
         let response = self
             .client
             .get(format!("{}/admin/status", self.base_url))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Polls `GET /health` — watchdog channel 3 (SPEC.md §7.1 #10). Uses the
+    /// same cert-pinned client as every other call here; never
+    /// `danger_accept_invalid_certs`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdminClientError::Request`] if the service isn't reachable,
+    /// answers non-2xx, or the body doesn't decode as [`HealthResponse`].
+    pub async fn health(&self) -> Result<HealthResponse, AdminClientError> {
+        let response = self
+            .client
+            .get(format!("{}/health", self.base_url))
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)
