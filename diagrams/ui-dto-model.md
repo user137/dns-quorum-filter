@@ -1,5 +1,7 @@
 SOURCES: SPEC.md §5, §5.1, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
-T-95 (`AdminStatusResponse.watchdog`); DECISIONS.md 2026-09-02 (порядок пріоритету індикатора).
+T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
+`serve_baseline_when_filters_unreachable`); DECISIONS.md 2026-09-02, 2026-09-03 (порядок
+пріоритету індикатора).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -164,10 +166,13 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 / T-95 реалізовано>>
+        <<T-52 / T-72 / T-95 / T-152 / T-154 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
+        +bool serve_baseline_when_filters_unreachable
+        +NetworkStatusView network
+        +BaselineEndpointView baseline_endpoint
         +u16 port
         +AdminStats stats
         +WatchdogStatusView? watchdog
@@ -176,9 +181,16 @@ classDiagram
     class WatchdogStatusView {
         <<T-95, реалізовано — enum RESTARTING | GAVE_UP>>
     }
+    class NetworkStatusView {
+        <<T-152, реалізовано — enum ONLINE | OFFLINE>>
+    }
+    class BaselineEndpointView {
+        <<T-154, реалізовано — enum PRIMARY | SECONDARY | TERTIARY>>
+    }
     class AdminConfigUpdate {
-        <<T-52 / T-72 — лише timeout>>
+        <<T-52 / T-72 / T-155>>
         +TimeoutMode timeout_mode
+        +bool serve_baseline_when_filters_unreachable
     }
     class AdminStats {
         <<T-52, реалізовано; in_flight — T-149; degraded_* — T-56>>

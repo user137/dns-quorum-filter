@@ -23,11 +23,11 @@
 
 use crate::admin::{
     compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    CacheConfigUpdate, CacheConfigView, DatabaseSource, GeoipCountriesResponse,
-    GeoipCountryRequest, HealthGeoip, HealthResponse, LogEntryView, LogQueryResponse,
-    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest,
-    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
-    WatchdogStatusView,
+    BaselineEndpointView, CacheConfigUpdate, CacheConfigView, DatabaseSource,
+    GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip, HealthResponse, LogEntryView,
+    LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
+    NetworkStatusView, OverrideAddRequest, OverrideDomainView, OverrideListsResponse,
+    OverrideRemoveRequest, ProviderStatusView, WatchdogStatusView,
 };
 use crate::admin_ui;
 use crate::baseline_selector::BaselineSelector;
@@ -946,6 +946,10 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
+        network: NetworkStatusView::from(state.reachability_snapshot()),
+        baseline_endpoint: BaselineEndpointView::from_active_index(
+            state.baseline.read().active_index(),
+        ),
         port: state.persist.port,
         stats: live_stats(state, &entries),
         watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
@@ -1044,6 +1048,10 @@ fn apply_admin_config<C: DohClient + Sync>(
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
+        network: NetworkStatusView::from(state.reachability_snapshot()),
+        baseline_endpoint: BaselineEndpointView::from_active_index(
+            state.baseline.read().active_index(),
+        ),
         port: state.persist.port,
         stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
         watchdog,

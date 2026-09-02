@@ -90,6 +90,15 @@ pub struct AdminStatusResponse {
     /// enabled voter fails. Editable via `POST /admin/config`; mirrored here
     /// so the `/admin/ui` checkbox reflects the live value.
     pub serve_baseline_when_filters_unreachable: bool,
+    /// T-152 — the machine's current internet reachability, published by the
+    /// reachability prober. `OFFLINE` is the status indicator's condition #3
+    /// (DECISIONS.md 2026-09-03: above "0 active providers", below the
+    /// watchdog states).
+    pub network: NetworkStatusView,
+    /// T-154 — which entry of the baseline failover chain is currently
+    /// active. `PRIMARY` unless the primary baseline has been failed over.
+    /// Diagnostic only — not part of the status indicator.
+    pub baseline_endpoint: BaselineEndpointView,
     /// The local `DoH` listener's port — read-only here (changing it needs a
     /// re-bind, out of scope for a live-apply admin call).
     pub port: u16,
@@ -111,6 +120,56 @@ pub struct AdminStatusResponse {
     /// already took effect and must not be reported as failed, but the
     /// caller needs to know it won't survive a restart.
     pub persisted: bool,
+}
+
+/// T-152 DTO form of [`crate::NetworkReachability`] — a genuine projection
+/// with its own `From`, per this file's DTO-audit discipline, not a reuse of
+/// the internal enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NetworkStatusView {
+    /// At least one reachability marker answered.
+    Online,
+    /// Every reachability marker failed — the offline fast path is active.
+    Offline,
+}
+
+impl From<crate::NetworkReachability> for NetworkStatusView {
+    fn from(reachability: crate::NetworkReachability) -> Self {
+        match reachability {
+            crate::NetworkReachability::Online => Self::Online,
+            crate::NetworkReachability::Offline => Self::Offline,
+        }
+    }
+}
+
+/// T-154 DTO form of `baseline_selector`'s active-chain position — a small
+/// closed enum for the `/admin/status` diagnostic view rather than leaking
+/// the raw URL string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum BaselineEndpointView {
+    /// `BASELINE_CHAIN[0]` — the primary baseline resolver.
+    Primary,
+    /// `BASELINE_CHAIN[1]` — the first alternate.
+    Secondary,
+    /// `BASELINE_CHAIN[2]` — the second alternate.
+    Tertiary,
+}
+
+impl BaselineEndpointView {
+    /// Maps a `baseline_selector::BaselineSelector::active_index` (already
+    /// clamped to the chain length) to its view. An out-of-range index —
+    /// impossible from `active_index` — is reported as `Tertiary` (the last
+    /// entry) rather than panicking.
+    #[must_use]
+    pub fn from_active_index(index: usize) -> Self {
+        match index {
+            0 => Self::Primary,
+            1 => Self::Secondary,
+            _ => Self::Tertiary,
+        }
+    }
 }
 
 /// The UI-relevant projection of the watchdog automaton
@@ -1485,8 +1544,8 @@ mod tests {
     // out wrong when actually run.
 
     use super::{
-        DecisionSourceView, DecisionView, LogEntryView, QTypeView, VoterResultView, VoterScopeView,
-        VoterVerdictView,
+        BaselineEndpointView, DecisionSourceView, DecisionView, LogEntryView, NetworkStatusView,
+        QTypeView, VoterResultView, VoterScopeView, VoterVerdictView,
     };
     use crate::quorum::{VoterRecord, VoterVerdict};
 
@@ -1569,6 +1628,43 @@ mod tests {
     fn voter_scope_view_wire_strings_match_spec() {
         assert_eq!(json_of(&VoterScopeView::Full), "\"FULL\"");
         assert_eq!(json_of(&VoterScopeView::SecurityOnly), "\"SECURITY_ONLY\"");
+    }
+
+    #[test]
+    fn network_status_view_wire_strings_and_conversion() {
+        assert_eq!(
+            json_of(&NetworkStatusView::from(crate::NetworkReachability::Online)),
+            "\"ONLINE\""
+        );
+        assert_eq!(
+            json_of(&NetworkStatusView::from(
+                crate::NetworkReachability::Offline
+            )),
+            "\"OFFLINE\""
+        );
+    }
+
+    #[test]
+    fn baseline_endpoint_view_maps_each_chain_position() {
+        assert_eq!(
+            BaselineEndpointView::from_active_index(0),
+            BaselineEndpointView::Primary
+        );
+        assert_eq!(
+            BaselineEndpointView::from_active_index(1),
+            BaselineEndpointView::Secondary
+        );
+        assert_eq!(
+            BaselineEndpointView::from_active_index(2),
+            BaselineEndpointView::Tertiary
+        );
+        // Out of range (impossible from `active_index`) clamps to the last.
+        assert_eq!(
+            BaselineEndpointView::from_active_index(99),
+            BaselineEndpointView::Tertiary
+        );
+        assert_eq!(json_of(&BaselineEndpointView::Primary), "\"PRIMARY\"");
+        assert_eq!(json_of(&BaselineEndpointView::Secondary), "\"SECONDARY\"");
     }
 
     #[test]

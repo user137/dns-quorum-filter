@@ -6,7 +6,9 @@
 //! [`StatusHandle::current`], a cheap lock-guarded read of whatever this
 //! background thread last wrote.
 
-use dnsqb_service::{AdminClient, AdminStatusResponse, WatchdogState, WATCHDOG_STATE_STALE_AFTER};
+use dnsqb_service::{
+    AdminClient, AdminStatusResponse, NetworkStatusView, WatchdogState, WATCHDOG_STATE_STALE_AFTER,
+};
 use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +34,12 @@ pub enum TrayStatus {
     /// The watchdog's restart budget is spent — `dnsqb-service` is stopped,
     /// awaiting manual recovery (T-95, `GaveUp`).
     ServiceGaveUp,
+    /// The machine has no internet connectivity (T-152). Ranked directly
+    /// below the watchdog states and above `NoActiveProvider` — an
+    /// environment failure the user can't fix by toggling providers
+    /// (DECISIONS.md 2026-09-03). `dnsqb-service` is still reachable on the
+    /// admin channel; it's the upstream network that's gone.
+    Offline,
     /// Reachable, but both providers are disabled — unfiltered pass-through,
     /// the same warning state `dnsqb-service`'s embedded web UI already
     /// banners.
@@ -62,6 +70,15 @@ pub enum TrayStatus {
 
 impl TrayStatus {
     fn from_response(response: &AdminStatusResponse) -> Self {
+        // T-152: no internet at all outranks the config-choice state below
+        // (DECISIONS.md 2026-09-03) — showing "you disabled all providers"
+        // when the real problem is a dead network would be misleading, and
+        // the user can't fix it by re-enabling a provider. The watchdog
+        // states still outrank this; they're checked before the admin call
+        // in `spawn`'s poll loop.
+        if response.network == NetworkStatusView::Offline {
+            return Self::Offline;
+        }
         // T-72/T-73: `active_providers` is the enabled voter list; empty =
         // SPEC.md §3/§8.1 pass-through (`NoActiveProvider`).
         if response.active_providers.is_empty() {
@@ -89,6 +106,10 @@ impl TrayStatus {
             }
             Self::ServiceGaveUp => {
                 "dns-quorum-filter: сервіс зупинено \u{2014} перевищено ліміт спроб перезапуску"
+                    .to_string()
+            }
+            Self::Offline => {
+                "dns-quorum-filter: немає підключення до інтернету \u{2014} резолвінг призупинено"
                     .to_string()
             }
             Self::NoActiveProvider { in_flight } => format!(
@@ -208,6 +229,8 @@ mod tests {
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,
             serve_baseline_when_filters_unreachable: false,
+            network: dnsqb_service::NetworkStatusView::Online,
+            baseline_endpoint: dnsqb_service::BaselineEndpointView::Primary,
             port: 8443,
             stats,
             watchdog: None,
@@ -246,6 +269,38 @@ mod tests {
                 degraded_window: 20,
             }
         );
+    }
+
+    #[test]
+    fn offline_network_outranks_no_active_provider() {
+        // Empty provider list *and* offline — offline wins (DECISIONS.md
+        // 2026-09-03: an environment failure above a config choice).
+        let mut resp = response(vec![], stats(0, 0));
+        resp.network = dnsqb_service::NetworkStatusView::Offline;
+        assert_eq!(TrayStatus::from_response(&resp), TrayStatus::Offline);
+    }
+
+    #[test]
+    fn online_network_with_no_providers_is_still_no_active_provider() {
+        let resp = response(vec![], stats(0, 0));
+        assert_eq!(
+            TrayStatus::from_response(&resp),
+            TrayStatus::NoActiveProvider { in_flight: 0 }
+        );
+    }
+
+    #[test]
+    fn offline_network_outranks_filtering() {
+        let mut resp = response(
+            vec![ProviderStatusView {
+                id: "quad9".to_string(),
+                display_name: "Quad9 Filtered".to_string(),
+                category: dnsqb_service::Category::Security,
+            }],
+            stats(20, 0),
+        );
+        resp.network = dnsqb_service::NetworkStatusView::Offline;
+        assert_eq!(TrayStatus::from_response(&resp), TrayStatus::Offline);
     }
 
     #[test]
