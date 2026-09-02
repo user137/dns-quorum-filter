@@ -32,6 +32,19 @@ pub struct RestartBudget {
 }
 
 impl RestartBudget {
+    /// Rebuild a budget from the flat fields persisted in `watchdog-state.json`
+    /// (§7.1 #7): `restart_attempts_in_window` and `window_started_at`. The
+    /// watcher calls this on start so a restart of the watcher itself does not
+    /// silently reset the count — without it, T-91's "не тихий нескінченний
+    /// цикл" reopens.
+    #[must_use]
+    pub fn restored(window_started_at: Option<SystemTime>, attempts_in_window: u32) -> Self {
+        Self {
+            window_started_at,
+            attempts_in_window,
+        }
+    }
+
     /// When the current window opened, or `None` before the first attempt. For
     /// serialising into `watchdog-state.json` (§7.1 #7).
     #[must_use]
@@ -152,6 +165,36 @@ mod tests {
         };
         assert_eq!(budget.register_attempt(earlier), BudgetVerdict::Allowed);
         assert_eq!(budget.attempts_in_window(), 1);
+    }
+
+    // Persistence round trip (advisor closing review): a budget with attempts
+    // spent is written to watchdog-state.json, read back, and reconstructed —
+    // the next attempt in the same window must still be GaveUp, not a fresh
+    // Allowed. Without `restored` the counter would reset on every watcher
+    // lifetime, reopening T-91's "no silent infinite loop".
+    #[test]
+    fn restored_from_persisted_fields_keeps_the_count() {
+        let mut budget = RestartBudget::default();
+        for _ in 0..=MAX_RESTARTS_PER_WINDOW {
+            budget.register_attempt(at(0));
+        }
+        // Simulate the §7.1 #7 flat fields being written and read back.
+        let persisted_window = budget.window_started_at();
+        let persisted_attempts = budget.attempts_in_window();
+
+        let mut reloaded = RestartBudget::restored(persisted_window, persisted_attempts);
+        assert_eq!(reloaded.window_started_at(), persisted_window);
+        assert_eq!(reloaded.attempts_in_window(), persisted_attempts);
+        assert_eq!(reloaded.register_attempt(at(1)), BudgetVerdict::GaveUp);
+    }
+
+    // A budget restored just below the limit still allows the last attempt, then
+    // gives up — proving `restored` carries the exact count, not a clamped one.
+    #[test]
+    fn restored_just_below_the_limit_allows_one_more() {
+        let mut budget = RestartBudget::restored(Some(at(0)), MAX_RESTARTS_PER_WINDOW - 1);
+        assert_eq!(budget.register_attempt(at(1)), BudgetVerdict::Allowed);
+        assert_eq!(budget.register_attempt(at(2)), BudgetVerdict::GaveUp);
     }
 
     // Per-target: two independent budgets do not share a window or a counter.

@@ -164,6 +164,49 @@ mod tests {
         }
     }
 
+    // Cross-module contract (advisor closing review): a spent RestartBudget goes
+    // through the real write/read of watchdog-state.json and is reconstructed
+    // via RestartBudget::restored from the two flat §7.1 #7 fields — the next
+    // attempt in the same window must still be GaveUp, so a watcher restart does
+    // not reset the budget.
+    #[test]
+    fn budget_survives_the_state_file_round_trip() {
+        use crate::watchdog::budget::{BudgetVerdict, RestartBudget, MAX_RESTARTS_PER_WINDOW};
+
+        let window_start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let mut budget = RestartBudget::default();
+        for _ in 0..=MAX_RESTARTS_PER_WINDOW {
+            budget.register_attempt(window_start);
+        }
+
+        let record = WatchdogStateFile {
+            schema_version: STATE_SCHEMA_VERSION,
+            state: WatchdogState::GaveUp,
+            target: WatchdogTarget::Service,
+            restart_attempts_in_window: budget.attempts_in_window(),
+            window_started_at: budget.window_started_at(),
+            last_transition_at: window_start,
+            last_error: Some(WatchdogErrorLabel::BudgetExhausted),
+        };
+
+        let dir = temp_dir();
+        if let Err(err) = write(dir.path(), &record) {
+            panic!("write must succeed: {err}");
+        }
+        let loaded = match read(dir.path()) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("read must succeed: {err}"),
+        };
+
+        let mut reloaded =
+            RestartBudget::restored(loaded.window_started_at, loaded.restart_attempts_in_window);
+        assert_eq!(
+            reloaded.register_attempt(window_start + Duration::from_secs(1)),
+            BudgetVerdict::GaveUp,
+            "a watcher restart must not hand back a fresh budget"
+        );
+    }
+
     // Boundary: `last_error` both absent and present round-trips; every state and
     // target serialises to SCREAMING_SNAKE_CASE.
     #[test]

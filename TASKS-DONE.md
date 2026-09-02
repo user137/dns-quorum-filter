@@ -2421,6 +2421,14 @@ tray-tooltip (T-95). **Opening advisor** дав 7 знахідок (3 blocking),
   стрибка) → `Err` → `MAX` → `> RESTART_WINDOW` → вікно скидається. Помилка в бік «дозволити
   рестарти», не «заклинити в GaveUp назавжди» — та сама don't-do-the-drastic-thing логіка, що
   `is_stale` майбутній-mtime у 3.1. UI-повідомлення про GaveUp — Батч 3.3 / T-95.
+  **Closing-advisor фікс (`b30…`, test-first):** `RestartBudget` мав гетери для персисту, але
+  жодного шляху назад — `dnsqb-watcher` у 3.3, прочитавши `restart_attempts_in_window: 5`, міг
+  би побудувати лише `::default()`, і бюджет скидався б на кожне життя watcher'а (сам watcher
+  теж рестартується — половина дизайну), знову відкриваючи «тихий нескінченний цикл». Додано
+  `RestartBudget::restored(window_started_at, attempts_in_window)` (пласка форма §7.1 #7, без
+  вкладеного serde-бюджета) + два тести: (1) round-trip через getters → `restored` → наступний
+  `register_attempt` = `GaveUp`; (2) через **реальний** `state::write`/`read` `watchdog-state.json`
+  (`budget_survives_the_state_file_round_trip`).
 - [x] T-89 — (Батч 3.2) Перевірка PID перед перезапуском (відсутність heartbeat ≠ мертвий процес)
   (7) — `7cf2582`. `watchdog::pid_check::verify_pid_alive(pid, expected_exe) -> PidCheck::{Alive,
   Gone, IdentityMismatch}`, тонка оболонка над `sysinfo` (`0.39.6`, `default-features = false,
@@ -2475,9 +2483,21 @@ tray-tooltip (T-95). **Opening advisor** дав 7 знахідок (3 blocking),
   any_channel_degraded, pid: Option<PidCheck>, budget: Option<BudgetVerdict>, backoff_elapsed }`
   — кожне поле консультується лише у своєму стані. Один тест на ребро (~13 у 8 `#[test]`).
 
-**Гейти:** `cargo test --workspace --lib --bins` (496 pass, +30 нових), `clippy --all-targets
--D warnings`, `fmt --check`, `doc -D warnings`, `--doc` (0), conformance (18 pass / 2 ignored),
+**Write-only поле, зафіксовано:** `PidFile.started_at` (Батч 3.1) наразі не має споживача —
+`verify_pid_alive` звіряє лише exe-шлях/ім'я, як вимагає §7.1 #3. Якщо Батч 3.3 не читатиме
+`started_at` для сильнішої recycled-PID перевірки (порівняння зі `sysinfo` `Process::start_time()`),
+поле лишається телеметрією; рішення — на плані 3.3.
+
+**Гейти:** `cargo test --workspace --lib --bins` (499 pass, +37 нових — 4 vote / 3 backoff /
+7 budget / 4 pid_check / 5 spawn / 6 state / 8 transition), `clippy --all-targets -D warnings`,
+`fmt --check`, `doc -D warnings`, `--doc` (0), conformance (18 pass / 2 ignored),
 `cargo audit`/`cargo deny check` — усі зелені локально. `main.rs` не зачеплений жодним комітом
 (цей батч нічого нового не запускає). **Ручний smoke не застосовний як окремий крок** —
 функціональна перевірка це самі юніт-тести (`pid_check` проти реальної таблиці процесів на
 `windows-latest` CI, `state` round-trip у tempdir, чисті функції з іменованими тестами).
+
+**Для плану Батча 3.3 (не дефекти тут):** (1) `Restarting` self-loop (`budget: None → Restarting`)
+— цикл 3.3, що спавнить на `new_state == Restarting`, мусить викликати `register_attempt` на
+тому ж тіку, інакше спавнить щотіку; once-only spawn trigger + тест — у плані 3.3. (2)
+`any_channel_degraded` рахується вручну над тими самими 3 `ChannelStatus`, що й `vote_*` —
+малий чистий helper поряд, щоб не було третьої ручної деривації.
