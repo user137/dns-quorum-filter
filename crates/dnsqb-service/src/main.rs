@@ -9,6 +9,18 @@
 //! "hardcoded real resource, untested by design" precedent as
 //! `paths::app_data_dir`/`cert::write_cert_and_key_to_app_data` — see the
 //! manual smoke-test step recorded for T-143 in `TASKS-DONE.md` instead.
+//!
+//! Батч 3.3 adds the service side of the watchdog (SPEC.md §7): the channel-1
+//! heartbeat pipe server, the `service.hb` touch loop (channel 2), and the
+//! `service -> watcher` decision loop, all detached `tokio` tasks
+//! ([`spawn_watchdog_tasks`]). Two interpretations of §7.1 worth naming: (a)
+//! the service sends no channel-1 ping frame of its own — a regularly-arriving
+//! ping from the watcher *is* its channel-1 liveness evidence (§7.1 #1's "both
+//! directions multiplexed"); (b) the `service -> watcher` direction is never
+//! written to `watchdog-state.json` — `dnsqb-watcher` is its sole writer
+//! (§7.1 #7) — so this side acts and logs loudly but does not persist. The
+//! decision logic itself is the pure `watchdog::loop_driver`, unit-tested
+//! there; these task shells stay untested by the precedent above.
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, load_maxmind_credentials,
@@ -26,6 +38,20 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_rustls::TlsAcceptor;
+
+// Batch 3.3 — the watchdog wiring (SPEC.md §7). Windows-only for now, the same
+// `#[cfg(windows)]` seam `watchdog::pipe` already sits behind; the Фаза 6 port
+// lifts both together.
+#[cfg(windows)]
+use dnsqb_service::{
+    is_stale, read_heartbeat_file, read_pid_file, spawn_sibling, touch_heartbeat_file,
+    verify_pid_alive, ChannelObs, Direction, Effect, HeartbeatPipeServer, LoopDriver,
+    WatchdogState,
+};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+use std::time::SystemTime;
 
 #[tokio::main]
 async fn main() {
@@ -172,7 +198,168 @@ async fn main() {
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
 
+    // Batch 3.3: the heartbeat producers (pipe server + `service.hb` touch) and
+    // the `service -> watcher` decision loop. Detached — they run alongside the
+    // accept loop and are dropped on shutdown (the watchdog is a UX mechanism,
+    // not graceful-shutdown-critical). The `watcher -> service` direction lives
+    // in `dnsqb-watcher`; this process is not a writer of `watchdog-state.json`
+    // (SPEC.md §7.1 #7), so the service-side direction acts and logs but never
+    // persists.
+    spawn_watchdog_tasks(app_data.as_deref());
+
     serve_until_shutdown(listener, acceptor, state).await;
+}
+
+/// The shared heartbeat tick for both watchdog directions (SPEC.md §7.1 #8).
+#[cfg(windows)]
+const WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
+
+/// A peer channel counts as silent for one tick once its last signal is older
+/// than two intervals — one missed beat is jitter, two is a real miss. The
+/// `loop_driver`'s own three-consecutive-miss threshold then decides the vote.
+#[cfg(windows)]
+const WATCHDOG_CHANNEL_FRESH: Duration = Duration::from_secs(10);
+
+/// Milliseconds since the Unix epoch, saturating at `u64::MAX` — only ever
+/// compared as a freshness delta, never converted back for display.
+#[cfg(windows)]
+fn watchdog_now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(u64::MAX)
+}
+
+/// Starts the three background watchdog tasks (SPEC.md §7): the channel-1
+/// heartbeat pipe server, this process's own `service.hb` touch loop (channel
+/// 2), and the `service -> watcher` decision loop. A missing app-data directory
+/// disables all three — the same tolerance every other persisted artefact in
+/// this file applies.
+fn spawn_watchdog_tasks(app_data: Option<&Path>) {
+    #[cfg(windows)]
+    {
+        let Some(dir) = app_data.map(Path::to_path_buf) else {
+            tracing::warn!("no app-data directory - watchdog heartbeat disabled");
+            return;
+        };
+        let last_ping_at = Arc::new(AtomicU64::new(watchdog_now_millis()));
+        tokio::spawn(run_heartbeat_pipe_server(
+            dir.clone(),
+            Arc::clone(&last_ping_at),
+        ));
+        tokio::spawn(run_service_heartbeat_touch(dir.clone()));
+        tokio::spawn(run_service_to_watcher_watchdog(dir, last_ping_at));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app_data;
+    }
+}
+
+/// Channel 1 server (SPEC.md §7.1 #1): answers the watcher's ping/pong on the
+/// one duplex pipe and records the arrival time of every ping. The service
+/// sends no ping frame of its own — a regularly-arriving ping *is* the
+/// service's channel-1 evidence that the watcher is alive ("both directions
+/// multiplexed on the one pipe"). After a client disconnects, the next pipe
+/// instance is opened and the loop waits again.
+#[cfg(windows)]
+async fn run_heartbeat_pipe_server(dir: std::path::PathBuf, last_ping_at: Arc<AtomicU64>) {
+    let mut server = match HeartbeatPipeServer::bind(&dir) {
+        Ok(server) => server,
+        Err(err) => {
+            tracing::error!("watchdog: heartbeat pipe server bind failed: {err}");
+            return;
+        }
+    };
+    loop {
+        match server.accept().await {
+            Ok(()) => {
+                while server.respond_once(watchdog_now_millis()).await.is_ok() {
+                    last_ping_at.store(watchdog_now_millis(), Ordering::Relaxed);
+                }
+                tracing::debug!("watchdog: heartbeat pipe client disconnected");
+            }
+            Err(err) => {
+                tracing::warn!("watchdog: heartbeat pipe accept failed: {err}");
+                tokio::time::sleep(WATCHDOG_INTERVAL).await;
+            }
+        }
+        if let Err(err) = server.recreate() {
+            tracing::error!("watchdog: heartbeat pipe recreate failed: {err}");
+            return;
+        }
+    }
+}
+
+/// Channel 2 producer (SPEC.md §7.1 #4): re-touch `service.hb` every interval so
+/// the watcher's file channel stays fresh.
+#[cfg(windows)]
+async fn run_service_heartbeat_touch(dir: std::path::PathBuf) {
+    loop {
+        if let Err(err) = touch_heartbeat_file(&dir, InstanceRole::Service) {
+            tracing::warn!("watchdog: service.hb touch failed: {err}");
+        }
+        tokio::time::sleep(WATCHDOG_INTERVAL).await;
+    }
+}
+
+/// The `service -> watcher` decision loop (SPEC.md §7): a unanimous vote over
+/// channel 1 (age of the last ping received) and channel 2 (`watcher.hb` age);
+/// on a confirmed-dead watcher, respawn it by absolute sibling path
+/// ([`spawn_sibling`], never `PATH`). In-memory only — this direction is never
+/// persisted (§7.1 #7).
+#[cfg(windows)]
+async fn run_service_to_watcher_watchdog(dir: std::path::PathBuf, last_ping_at: Arc<AtomicU64>) {
+    let mut driver = LoopDriver::new(Direction::ServiceToWatcher);
+    let watcher_hb = dir.join(format!("{}.hb", InstanceRole::Watcher.as_str()));
+    loop {
+        tokio::time::sleep(WATCHDOG_INTERVAL).await;
+        let now = SystemTime::now();
+
+        let last_ping = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_millis(last_ping_at.load(Ordering::Relaxed)))
+            .unwrap_or(now);
+        let ipc_signal = !is_stale(now, last_ping, WATCHDOG_CHANNEL_FRESH);
+
+        let file_signal = match read_heartbeat_file(&watcher_hb) {
+            Ok(hb) => hb.marker_ok && !is_stale(now, hb.mtime, WATCHDOG_CHANNEL_FRESH),
+            Err(_) => false,
+        };
+
+        let pid = if driver.state() == WatchdogState::VerifyingPid {
+            read_pid_file(&dir, InstanceRole::Watcher)
+                .ok()
+                .map(|record| verify_pid_alive(record.pid, &record.exe_path))
+        } else {
+            None
+        };
+
+        let obs = ChannelObs {
+            ipc_signal,
+            file_signal,
+            health_signal: None,
+            pid,
+        };
+        for effect in driver.tick(now, &obs).effects {
+            match effect {
+                Effect::Spawn => match spawn_sibling(InstanceRole::Watcher) {
+                    Ok(_child) => tracing::warn!("watchdog: respawned dnsqb-watcher"),
+                    Err(err) => {
+                        tracing::error!("watchdog: failed to respawn dnsqb-watcher: {err}");
+                    }
+                },
+                Effect::LogGaveUp => tracing::error!(
+                    "watchdog: gave up restarting dnsqb-watcher after the retry budget - \
+                     manual recovery needed"
+                ),
+                // VerifyPid: the pid file is re-read next tick, driven by
+                // `driver.state()`. WriteState: never emitted for the
+                // service -> watcher direction (§7.1 #7).
+                Effect::VerifyPid | Effect::WriteState(_) => {}
+            }
+        }
+    }
 }
 
 /// T-92: take the `dnsqb-service` single-instance lock (SPEC.md §7.1 #2) and
