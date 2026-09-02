@@ -207,6 +207,7 @@ pub use watchdog::instance::{
 pub use watchdog::pid_check::{verify_pid_alive, PidCheck};
 #[cfg(windows)]
 pub use watchdog::pipe::{HeartbeatPipeClient, HeartbeatPipeServer};
+pub use watchdog::spawn::{resolve_sibling_path, spawn_sibling, SpawnError};
 pub use watchdog::vote::{vote_service_checks_watcher, vote_watcher_checks_service, Liveness};
 pub use wire::{
     attach_edns, build_block_response, decode_wire_message, encode_wire_message, forward_response,
