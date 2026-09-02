@@ -3,6 +3,7 @@
 //! Батч 3.3 (`main.rs` wiring) and the decision core (voting / backoff /
 //! restart budget / PID verification) in Батч 3.2.
 
+pub mod backoff;
 pub mod channel;
 pub mod frame;
 pub mod heartbeat_file;
