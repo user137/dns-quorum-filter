@@ -190,10 +190,17 @@ pub use upstream::{
     BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec, ProviderUrlError,
     ReqwestDohClient, UpstreamError, BASELINE_DOH_URL, DEFAULT_PROVIDER_IDS,
 };
+pub use watchdog::channel::{channel_status, ChannelStatus, MISS_THRESHOLD};
+pub use watchdog::frame::{
+    encode as encode_heartbeat_frame, parse as parse_heartbeat_frame, Frame, FrameError, FrameKind,
+    FRAME_LEN,
+};
 pub use watchdog::instance::{
     acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
     PidFile, Role as InstanceRole,
 };
+#[cfg(windows)]
+pub use watchdog::pipe::{HeartbeatPipeClient, HeartbeatPipeServer};
 pub use wire::{
     attach_edns, build_block_response, decode_wire_message, encode_wire_message, forward_response,
     EDNS_UDP_PAYLOAD_SIZE,
