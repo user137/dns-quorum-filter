@@ -6,17 +6,22 @@
 //! [`StatusHandle::current`], a cheap lock-guarded read of whatever this
 //! background thread last wrote.
 
-use dnsqb_service::{AdminClient, AdminStatusResponse};
+use dnsqb_service::{AdminClient, AdminStatusResponse, WatchdogState};
 use parking_lot::RwLock;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-/// Three honestly distinguished states (T-149's own "Три Б" precedent —
-/// same discipline as `dnsqb-ui`'s former `bothOff` banner and T-66's
-/// cold/warm relabel): never collapse "the service is unreachable" and "the
-/// service is reachable but unfiltered" into the same tooltip text, and
-/// never show a fake `0` count when the real answer is "unknown."
+/// `watchdog-state.json` is stale — the watcher has stopped rewriting it — once
+/// its `mtime` is older than three watchdog intervals (SPEC.md §7.1 #8: 5 s
+/// each). Matches `dispatch::WATCHDOG_STATE_STALE_AFTER`.
+const WATCHDOG_STATE_STALE_AFTER: Duration = Duration::from_secs(15);
+
+/// Honestly distinguished states (T-149's own "Три Б" precedent — same
+/// discipline as `dnsqb-ui`'s former `bothOff` banner and T-66's cold/warm
+/// relabel): never collapse "the service is unreachable" and "the service is
+/// reachable but unfiltered" into the same tooltip text, and never show a fake
+/// `0` count when the real answer is "unknown."
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayStatus {
     /// `dnsqb-service` isn't running, isn't reachable on the expected port,
@@ -24,6 +29,14 @@ pub enum TrayStatus {
     /// been started) — these are deliberately not distinguished for the
     /// user, both mean "nothing to show right now."
     Unreachable,
+    /// The watchdog is restarting `dnsqb-service` (T-95). Read straight from
+    /// `watchdog-state.json` — the service is unreachable on the admin channel
+    /// while this is true, so this is the only place the status is visible.
+    /// Ranked above `NoActiveProvider` (user's priority decision 2026-09-02).
+    ServiceRestarting,
+    /// The watchdog's restart budget is spent — `dnsqb-service` is stopped,
+    /// awaiting manual recovery (T-95, `GaveUp`).
+    ServiceGaveUp,
     /// Reachable, but both providers are disabled — unfiltered pass-through,
     /// the same warning state `dnsqb-service`'s embedded web UI already
     /// banners.
@@ -76,6 +89,13 @@ impl TrayStatus {
     pub fn tooltip(&self) -> String {
         match self {
             Self::Unreachable => "dns-quorum-filter: сервіс недоступний".to_string(),
+            Self::ServiceRestarting => {
+                "dns-quorum-filter: сервіс перезапускається".to_string()
+            }
+            Self::ServiceGaveUp => {
+                "dns-quorum-filter: сервіс зупинено \u{2014} перевищено ліміт спроб перезапуску"
+                    .to_string()
+            }
             Self::NoActiveProvider { in_flight } => format!(
                 "dns-quorum-filter: фільтрація вимкнена (обидва провайдери вимкнено) \u{2014} {in_flight} запит(ів) зараз"
             ),
@@ -109,8 +129,80 @@ impl TrayStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::TrayStatus;
-    use dnsqb_service::{AdminStats, AdminStatusResponse, ProviderStatusView, TimeoutMode};
+    use super::{watchdog_override, TrayStatus};
+    use dnsqb_service::{
+        write_watchdog_state, AdminStats, AdminStatusResponse, ProviderStatusView, TimeoutMode,
+        WatchdogState, WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
+    };
+    use std::time::SystemTime;
+
+    fn write_watchdog_fixture(dir: &std::path::Path, state: WatchdogState) {
+        let file = WatchdogStateFile {
+            schema_version: STATE_SCHEMA_VERSION,
+            state,
+            target: WatchdogTarget::Service,
+            restart_attempts_in_window: 0,
+            window_started_at: None,
+            last_transition_at: SystemTime::UNIX_EPOCH,
+            last_error: None,
+        };
+        if let Err(err) = write_watchdog_state(dir, &file) {
+            panic!("write_watchdog_state must succeed: {err}");
+        }
+    }
+
+    // T-95: a fresh state file in a restart-related state overrides everything
+    // the admin channel could say (the service is unreachable there anyway).
+    #[test]
+    fn watchdog_override_wins_for_restarting_and_gave_up() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        for state in [WatchdogState::Restarting, WatchdogState::BackoffWait] {
+            write_watchdog_fixture(dir.path(), state);
+            assert_eq!(
+                watchdog_override(dir.path()),
+                Some(TrayStatus::ServiceRestarting),
+                "{state:?}"
+            );
+        }
+        write_watchdog_fixture(dir.path(), WatchdogState::GaveUp);
+        assert_eq!(
+            watchdog_override(dir.path()),
+            Some(TrayStatus::ServiceGaveUp)
+        );
+    }
+
+    // Healthy / internal states / a missing file all fall through (`None`) so
+    // the normal admin-channel logic runs.
+    #[test]
+    fn watchdog_override_is_none_for_healthy_internal_or_absent() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        assert_eq!(watchdog_override(dir.path()), None, "no file");
+        for state in [
+            WatchdogState::Healthy,
+            WatchdogState::ChannelDegraded,
+            WatchdogState::SuspectDead,
+            WatchdogState::VerifyingPid,
+        ] {
+            write_watchdog_fixture(dir.path(), state);
+            assert_eq!(watchdog_override(dir.path()), None, "{state:?}");
+        }
+    }
+
+    // A corrupt file must not panic — fall through.
+    #[test]
+    fn watchdog_override_is_none_for_a_corrupt_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        if let Err(err) = std::fs::write(dir.path().join(STATE_FILE_NAME), b"{ not json") {
+            panic!("fixture write must succeed: {err}");
+        }
+        assert_eq!(watchdog_override(dir.path()), None);
+    }
 
     fn response(
         active_providers: Vec<ProviderStatusView>,
@@ -225,6 +317,32 @@ impl StatusHandle {
     }
 }
 
+/// The watchdog's own view, read straight from `watchdog-state.json`
+/// (`dnsqb-watcher` is its sole writer, SPEC.md §7.1 #7). `None` — fall through
+/// to the admin channel — when the file is absent, unreadable, **stale** (the
+/// watcher stopped rewriting it), or in an internal automaton step the
+/// indicator doesn't show. Mirrors `dispatch::read_watchdog_view`, kept as its
+/// own small copy rather than a shared cross-crate helper (different return
+/// type, ~8 lines).
+fn watchdog_override(app_data_dir: &Path) -> Option<TrayStatus> {
+    let mtime = std::fs::metadata(app_data_dir.join(dnsqb_service::STATE_FILE_NAME))
+        .and_then(|meta| meta.modified())
+        .ok()?;
+    if dnsqb_service::is_stale(SystemTime::now(), mtime, WATCHDOG_STATE_STALE_AFTER) {
+        return None;
+    }
+    match dnsqb_service::read_watchdog_state(app_data_dir).ok()?.state {
+        WatchdogState::Restarting | WatchdogState::BackoffWait => {
+            Some(TrayStatus::ServiceRestarting)
+        }
+        WatchdogState::GaveUp => Some(TrayStatus::ServiceGaveUp),
+        WatchdogState::Healthy
+        | WatchdogState::ChannelDegraded
+        | WatchdogState::SuspectDead
+        | WatchdogState::VerifyingPid => None,
+    }
+}
+
 /// Spawns the background polling thread and returns a handle to read its
 /// latest result. `app_data_dir`/`port` are resolved once by the caller
 /// (`main.rs`, at startup) — this never re-resolves either.
@@ -257,6 +375,17 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
             // rather than cached as permanent.
             let mut client: Option<AdminClient> = None;
             loop {
+                // T-95: the watchdog's own state file wins over anything the
+                // admin channel could say — a restarting or given-up service is
+                // unreachable on that channel by definition, so the still-alive
+                // watcher's `watchdog-state.json` is the only place the status
+                // is visible. Ranked above `NoActiveProvider` (user's priority
+                // decision 2026-09-02: watchdog above 0-voters).
+                if let Some(watchdog_status) = watchdog_override(&app_data_dir) {
+                    *current.write() = watchdog_status;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
                 if client.is_none() {
                     client = AdminClient::new(&app_data_dir, port).ok();
                 }
