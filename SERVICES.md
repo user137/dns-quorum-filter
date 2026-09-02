@@ -116,12 +116,20 @@ upstream-виклику: прогонить локальний префікс к
 sentinel-домену) — доводить, що lookup-код виконується й жоден писар не тримає lock — і повертає
 `{"active_providers": N, "geoip": "LOADED"|"ABSENT"}`. Сам факт HTTP 200 і є сигналом здоров'я;
 тіло інформаційне. Споживач — `dnsqb-watcher` через `AdminClient::health()` (Батч 3.3).
-On-disk артефакти в `%LOCALAPPDATA%\dns-quorum-filter\`, які додав Батч 3.1: `service.lock`
-(0 байт, ексклюзивний хендл), `service.pid` (JSON). Батч 3.2 визначив формат `watchdog-state.json`
+**Батч 3.3 — watchdog-таски.** `dnsqb-service` main запускає (перед accept-циклом, `#[cfg(windows)]`,
+detached) три фонові таски §7: heartbeat pipe-сервер (канал 1 — відповідає на ping'и watcher'а,
+тримає `last_ping_at`), `service.hb` touch кожні 5 s (канал 2), і `service→watcher` decision-цикл
+(unanimous голос по 2 каналах; на підтверджено-мертвому watcher'і → `spawn_sibling(Watcher)`
+абсолютним шляхом; **у памʼяті — файл стану не пише**, §7.1 #7). Дропаються на shutdown (watchdog —
+UX-механізм, не graceful-critical).
+
+On-disk артефакти в `%LOCALAPPDATA%\dns-quorum-filter\`: `service.lock` / `service.pid` (Батч 3.1),
+`service.hb` (Батч 3.3 — фіксований маркер, `mtime` = сигнал каналу 2). `watchdog-state.json`
 (`{schema_version, state, target, restart_attempts_in_window, window_started_at, last_transition_at,
-last_error}`, §7.1 #7) — єдиний письменник `dnsqb-watcher`, атомарний replace (`.tmp` + rename);
-`dnsqb-service`/`dnsqb-tray` — лише читачі. Ні його, ні `service.hb` (канал 2) ще ніхто не пише —
-робочі цикли на обох бінарниках і сам `dnsqb-watcher` main — Батч 3.3.
+last_error}`, §7.1 #7) — **єдиний письменник `dnsqb-watcher`** (переписує **кожен тік** для свіжості
+`mtime` — читач вважає стале, `mtime` > 3 інтервали, за «watchdog не працює», не за записаний стан),
+атомарний replace (`.tmp` + rename); `dnsqb-service` (`GET /admin/status.watchdog`, T-95) і
+`dnsqb-tray` (tooltip, T-95) — лише читачі.
 
 ### Логи
 
@@ -143,8 +151,8 @@ last_error}`, §7.1 #7) — єдиний письменник `dnsqb-watcher`, �
   сертифікат при першому зверненні до `https://127.0.0.1:<port>/`.
 - **Graceful shutdown частково є (T-149)** — лише запитом (`POST /admin/shutdown`, вище).
   OS-сигнали (Ctrl+C, SIGTERM-аналог на Windows) досі не оброблюються — закриття вікна
-  консолі чи вбивство процесу напряму все ще не дренує активні з'єднання. Повний watchdog і
-  сигнал-обробка лишаються за `dnsqb-watcher` (Фаза 3).
+  консолі чи вбивство процесу напряму все ще не дренує активні з'єднання. Watchdog зібраний
+  (Батч 3.3); сигнал-обробка лишається окремою прогалиною.
 - Query log — лише in-memory ring buffer, без збереження на диск (SPEC.md §6; персистентність —
   T-146, заблокований на T-96).
 
@@ -153,13 +161,37 @@ last_error}`, §7.1 #7) — єдиний письменник `dnsqb-watcher`, �
 ## `dnsqb-watcher`
 
 Мінімальний watchdog-процес — mutual heartbeat з `dnsqb-service` через 3 незалежні канали (IPC
-socket, спільний heartbeat-файл, HTTP `/health`), majority/unanimous voting, щоб уникнути
-false-positive рестарту (SPEC.md §7).
+named-pipe, спільний heartbeat-файл, HTTP `/health`), 2-з-3 / unanimous voting, щоб уникнути
+false-positive рестарту (SPEC.md §7). **Реалізовано в Батчі 3.3** (Windows; Unix — Фаза 6).
 
-**Наразі — заглушка** (`todo!()` тіло в `crates/dnsqb-watcher/src/main.rs`), Фаза 3 scope.
-Запуск `cargo run -p dnsqb-watcher` існуючим бінарником зараз одразу впаде на `todo!()`.
-Не мати watcher'а на цій фазі — свідомий вибір (SPEC.md §"Фазований план"): при PoC ручний
-рестарт `dnsqb-service` вважається прийнятним.
+### Запуск
+
+`cargo run -p dnsqb-watcher` (або сам бінарник). У проді — Startup-ярлик/Run-ключ на
+`dnsqb-watcher` (реєстрація — T-156, Батч 3.8). `#[tokio::main(flavor = "current_thread")]` —
+однопотоковий runtime (§7.1 #9).
+
+### Що робить при старті
+
+1. `app_data_dir()` (`%LOCALAPPDATA%\dns-quorum-filter\`) — обовʼязково, інакше `exit(1)` (весь
+   сенс watcher'а вимагає теку).
+2. `Watcher` single-instance guard (`watcher.lock`, `share_mode(0)`) + `watcher.pid`. Другий
+   інстанс → `exit(1)`.
+3. `resolver_config.toml` → порт для `/health` і `AdminClient` (відсутній файл → дефолт-порт +
+   warn, не hard-exit).
+4. **Ідемпотентний ланчер (T-150):** перевіряє `service.pid` / `tray.pid` через `verify_pid_alive`
+   і піднімає відсутнє (`spawn_sibling` абсолютним шляхом, ніколи PATH). Повторний запуск нічого
+   не дублює — перевірка перед кожним спавном. Трей — лише launcher-scope, у heartbeat-циклі не
+   моніториться.
+
+### Робочий цикл (5 s тик)
+
+`watcher→service` напрям через `watchdog::LoopDriver`: канал 1 — IPC ping/pong (reconnect на
+помилці), канал 2 — `touch(watcher.hb)` + читання `service.hb` `mtime`, канал 3 — `GET /health`
+через cert-pinned `AdminClient` (перебудова після рестарту, §7.1 #10). 2-з-3 мовчать → перевірка
+PID → на `Gone`/`IdentityMismatch` → `spawn_sibling(Service)` (експон. backoff 1→2→4→8→16 s,
+бюджет 5/600 s → `GaveUp` з `tracing::error!`, не нескінченний цикл). **Єдиний письменник
+`watchdog-state.json`** — переписує кожен тік. Свіжий (<90 s) файл на старті → `LoopDriver::
+restored` (бюджет не скидається на рестарт watcher'а).
 
 * * *
 
@@ -213,10 +245,13 @@ cargo build -p dnsqb-tray
 
 Окремий OS-потік із власним однопотоковим `tokio`-рантаймом опитує `GET /admin/status` кожні
 2с (`status.rs`) — `tao`'s подієвий цикл володіє головним потоком назавжди й ніколи не віддає
-його `async`-коду, тож опитування не може жити в тому самому потоці. Три чесно розрізнені
+його `async`-коду, тож опитування не може жити в тому самому потоці. Чесно розрізнені
 стани tooltip'а (те саме "Три Б"-чесне відображення, що вже застосовувалось у
 проєкті раніше): `Unreachable` (сервіс не запущено, або `cert.pem` ще не існує — не
-розрізняються для користувача), `NoActiveProvider` (обидва провайдери вимкнено), `Filtering`
+розрізняються для користувача), **`ServiceRestarting` / `ServiceGaveUp`** (T-95 — читаються прямо
+з `watchdog-state.json`, перевіряються **перед** `/admin/status` у циклі поллінгу, бо сервіс під
+час рестарту недосяжний на admin-каналі; ранг вище за `NoActiveProvider` — DECISIONS.md
+2026-09-02), `NoActiveProvider` (обидва провайдери вимкнено), `Filtering`
 (нормальна робота, з живими blocked/total/in_flight числами). **T-56 (2026-08-29)**: `Filtering`
 несе ще два поля, `degraded_events`/`degraded_window` — скільки з останніх 20 записів із
 `decision_source = QUORUM` мали хоча б один голос `Timeout`/`Error`. Це не четвертий стан, а
@@ -235,4 +270,6 @@ cargo build -p dnsqb-tray
   з'ясувати `%LOCALAPPDATA%`) іде лише в `tracing::error!`, невидимий без консолі — той самий
   клас "тиха відмова гірша за видиму"-прогалини, що вже фіксувався в проєкті раніше, названий,
   не виправлений цього разу.
-- Немає автозапуску (T-150, окрема задача).
+- Немає **реєстрації** автозапуску (Run-ключ/ярлик — T-156, Батч 3.8). Сам механізм ланчера —
+  `dnsqb-watcher` піднімає трей на старті — реалізований (T-150, Батч 3.3); трей бере `Tray`
+  guard (`tray.lock`) + пише `tray.pid`, другий інстанс тихо виходить.

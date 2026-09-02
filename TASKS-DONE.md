@@ -2501,3 +2501,121 @@ tray-tooltip (T-95). **Opening advisor** дав 7 знахідок (3 blocking),
 тому ж тіку, інакше спавнить щотіку; once-only spawn trigger + тест — у плані 3.3. (2)
 `any_channel_degraded` рахується вручну над тими самими 3 `ChannelStatus`, що й `vote_*` —
 малий чистий helper поряд, щоб не було третьої ручної деривації.
+
+### Батч 3.3 — збірка watchdog (зроблено 2026-09-02, plan-mode + advisor kickoff і closing, 7 кодових + 1 docs коміт)
+
+Примітиви 3.1 + ядро рішень 3.2 зібрані в працюючий механізм, демонстрований end-to-end. **Opening
+advisor** — 8 знахідок, усі враховані в плані до першого коміту: (1) стале `watchdog-state.json` не
+читати як істину, і **`last_transition_at` НЕ годиться для свіжості** (годинами старий у стабільному
+`Healthy`) — читачі застосовують `is_stale(now, <mtime файлу>, 3×інтервал)`; (2) spawn-once —
+тест стверджує **кількість** `Effect::Spawn` за багатотіковий епізод, не присутність; (3)
+`ensure_sibling_running(Tray)` лише на старті, ніколи в тік-циклі (tray launcher-scope, не
+heartbeat-monitored — інакше «Закрити» в треї не працює); (4) service-side канал 1 = «час від
+останнього отриманого ping'а» (endorsed — §7.1 #1 «обидва напрями мультиплексовані» задоволено по
+суті, без server-initiated кадру); (5) producers перед consumer'ом (інакше перший прогін = watcher
+голосує `Dead` проти peer'а, що ніколи не сигналив, палить бюджет); (6) `tokio` flavor, не
+features, тримає watcher однопотоковим (lib-dep уніфікує `rt-multi-thread`); (7) ручний e2e — не
+nice-to-have, а exit-criterion батча (TASKS.md); (8) TDD-split — `loop_driver` строгий red-green,
+`main.rs` I/O-оболонки untested by design (прецедент `dnsqb-service/src/main.rs`).
+
+- [x] T-150 — (Батч 3.3) `dnsqb-watcher` як ідемпотентний entry point автозапуску — `be22460`-серія
+  (`5d4e554` loop_driver, `85a404d` launcher, `74f2210` service-side, `714381f` watcher main,
+  `da0f595` resume-window, `e1c6a33` tray guard).
+  - **`watchdog::loop_driver`** (`5d4e554`, чистий, строгий red-green) — один напрям як тік-автомат:
+    `LoopDriver { direction, miss_ipc/file/health, state, budget: RestartBudget, restart_attempt,
+    backoff_deadline, spawn_issued }`; `tick(now: SystemTime, &ChannelObs) -> TickOutcome { state,
+    effects: Vec<Effect> }` композить `channel_status`→`vote_*`→`transition`, деривує ефекти
+    (`VerifyPid` / `Spawn` [латч] / `WriteState` [лише `WatcherToService`, **кожен тік**] /
+    `LogGaveUp` [раз]). `Direction` — параметр (не два типи): `WatcherToService` (3 канали, 2-з-3,
+    персиститься) / `ServiceToWatcher` (2, unanimous, in-memory). `restored(direction, &file)` —
+    resume через `RestartBudget::restored`. **Loop-рівневі T-93/T-94 тут** (Батч 3.2 відклав): один
+    канал мовчить → `ChannelDegraded`, нуль `Spawn` за 8 тіків; два мовчать → `SuspectDead`→…→
+    `BackoffWait`, **рівно один** `Spawn`; 40-тіковий storm → `GaveUp` + `LogGaveUp` раз, `Spawn`
+    == 5 (бюджет), далі нуль; `restored` з витраченим бюджетом → перший `Restarting` = `GaveUp`.
+  - **`watchdog::launcher::plan_launch`** (`85a404d`, чистий) — `plan_launch(Option<&PidFile>,
+    Option<PidCheck>) -> LaunchAction::{AlreadyRunning, Spawn}`: `AlreadyRunning` лише за наявний
+    pid-файл **і** `PidCheck::Alive`; усе інше (немає файлу / `Gone` / `IdentityMismatch` / перевірка
+    не відпрацювала) → `Spawn`. Ідемпотентність = ця перевірка **перед** кожним спавном; фінальний
+    бекстоп проти гонки — guard у власному main sibling'а.
+  - **`dnsqb-service` main** (`74f2210`) — 3 detached tokio-таски (`#[cfg(windows)]`, як
+    `watchdog::pipe`), запущені **перед** `serve_until_shutdown`: `run_heartbeat_pipe_server`
+    (канал 1 — `respond_once` без timeout'а, `last_ping_at: Arc<AtomicU64>` оновлюється на кожен
+    ping; `recreate()` після дисконекту), `run_service_heartbeat_touch` (канал 2 — `service.hb`
+    щотіку), `run_service_to_watcher_watchdog` (`LoopDriver` `ServiceToWatcher`; `ipc_signal` =
+    `!is_stale(now, last_ping_at, 10s)`, `file_signal` = `watcher.hb` mtime; `Effect::Spawn` →
+    `spawn_sibling(Watcher)`; **`WriteState` не емітиться** для цього напряму — §7.1 #7). Модуль-
+    докоментар називає обидві інтерпретації (a) service-side канал 1 = «час від ping'а», не
+    server-initiated кадр; (b) `service→watcher` не персиститься.
+  - **`dnsqb-watcher` main** (`714381f`) — `todo!()` замінено. `#[tokio::main(flavor =
+    "current_thread")]`; `Cargo.toml` — `dnsqb-service` lib-dep + `tokio` features `["rt","net",
+    "time","process","sync","macros"]` (per §7.1 #9 verbatim; `process` фактично не потрібен —
+    `spawn_sibling` це `std::process`; лишено за списком §7.1 #9). Порядок: `app_data_dir()` →
+    `exit(1)` якщо немає (весь сенс watcher'а вимагає теку); `acquire_instance_guard(Watcher)` →
+    `exit(1)`; `write_pid_file(Watcher)`; `load_port` (відсутній конфіг → дефолт-порт + warn, не
+    hard-exit — watcher має піднімати сервіс, навіть якщо конфіг ще не створено). **T-150 ланчер
+    (лише старт):** `ensure_sibling_running(Service)`, `ensure_sibling_running(Tray)` — `read_pid_file
+    .ok()` → `verify_pid_alive` → `plan_launch` → `spawn_sibling`. **Цикл `watcher→service`:**
+    `LoopDriver::restored`-або-`new(WatcherToService)`; канал 1 — `HeartbeatPipeClient::connect` +
+    `ping` (reconnect на `Err`); канал 2 — `touch(watcher.hb)` + `read(service.hb)`; канал 3 —
+    `AdminClient::new(&dir, port)` + `.health()` (rebuild на `Err` / після виявленого рестарту —
+    §7.1 #10); `pid` лише в `VerifyingPid`; `Effect::WriteState` → `write_watchdog_state` **кожен
+    тік** (свіжість mtime — opening-advisor blocker #1).
+  - **`da0f595`** (ручний smoke виявив): вікно `watchdog_state_is_fresh` для `restored` — 30s →
+    **90s**. Service→watcher рестарт помічається за ~40s (3 пропуски + переходи автомата), тож
+    тісніше вікно ніколи не давало б service-рестартнутому watcher'у успадкувати бюджет — єдиний
+    сценарій, заради якого `LoopDriver::restored` існує.
+  - **`e1c6a33`** (той самий smoke): `dnsqb-tray` тепер бере `Tray` guard + пише `tray.pid`.
+    Без цього `ensure_sibling_running(Tray)` завжди бачить «не запущено» (`read_pid_file(Tray)` →
+    `Err` → `plan_launch(None, None)` → `Spawn`) і кожен старт watcher'а плодив би трей. Другий
+    інстанс тихо `return` — ідемпотентний-ланчер, не помилка (не `exit(1)` як service/watcher).
+- [x] T-95 — (Батч 3.3) Індикатор стану UI станом watchdog — `4f2596e` (`/admin/status`) + `b6cbad2`
+  (tray). **`AdminStatusResponse.watchdog: Option<WatchdogStatusView>`** — 2-варіантна UI-проєкція
+  `RESTARTING` (з `Restarting` **і** `BackoffWait`) / `GAVE_UP`; свідомо звужена відносно §7.1 #7's
+  ширшої форми (сирий 7-варіантний стан + поля) — 4 проміжні стани UI не показує, стале
+  (`mtime` > 3 інтервали) / відсутнє / побите `watchdog-state.json` → `None` (не фейковий
+  `HEALTHY` — Три Б). `dispatch::read_watchdog_view(paths, now)` — `now` параметром для тестів;
+  синхронне sub-KB читання на 2 s-polled шляху, свідомо не кешується (T-160-filing патерн). Tray:
+  `TrayStatus::{ServiceRestarting, ServiceGaveUp}` + `status::watchdog_override` (дубль ~8 рядків,
+  не спільний крос-crate хелпер — інший return-тип); перевіряється **перед** `/admin/status` у
+  циклі поллінгу (сервіс під час рестарту недосяжний на admin-каналі — файл стану єдине джерело).
+  **Порядок пріоритету індикатора — watchdog вище за 0-voters** (прохання користувача 2026-09-02,
+  DECISIONS.md; закриває ⚠️ GAP у `ui-status-indicator.md`).
+
+Задокументовані межі / інтерпретації (не дефекти):
+- **Напрям `service → watcher` не персиститься** у `watchdog-state.json` (§7.1 #7 — `dnsqb-watcher`
+  єдиний письменник); `WatchdogTarget::Watcher` лишається незаписаним варіантом. `service→watcher`
+  `GaveUp` сигналиться лише `tracing::error!`.
+- **§7.1 #9's «rt, не rt-multi-thread» не дотримано на рівні features** — `dnsqb-watcher` тягне
+  `dnsqb-service` як lib, feature-unification вносить `rt-multi-thread`. `#[tokio::main(flavor =
+  "current_thread")]` — те, що реально тримає однопотоковість.
+- **Service-side канал 1 = «час від останнього отриманого ping'а»**, не окремий server-initiated
+  кадр (§7.1 #1 «мультиплексовані» — задоволено по суті). `respond_once` без timeout'а — watcher
+  помер → `last_ping_at` просто перестає рухатись.
+- **Синхронне читання `watchdog-state.json` у `serve_admin_status`** на ~2 s-polled шляху —
+  свідомо, sub-KB, не кешується (кеш додав би власне вікно несвіжості).
+- `PidFile.started_at` (з 3.1) досі write-only — `verify_pid_alive` звіряє лише exe-шлях/ім'я, як
+  вимагає §7.1 #3.
+
+**Гейти:** `cargo test --workspace --lib --bins` (515 pass, +8 loop_driver / +4 launcher / +4
+`read_watchdog_view` / +3 tray `watchdog_override`; -6 злилися в наявні), `clippy --all-targets
+-D warnings`, `fmt --check`, `doc -D warnings`, `--doc` (0), conformance (18 / 2 ignored),
+`cargo audit`/`cargo deny check` (`chacha20 0.10.1` yanked — pre-existing, via `hickory-proto`;
+0 нових). **Ручний end-to-end** (scratch `%LOCALAPPDATA%`, `cargo build --workspace`):
+- (a) старт **лише** `dnsqb-watcher` → ланчер підняв `dnsqb-service` + **один** `dnsqb-tray`; усі
+  файли: `cert.pem`, `service.{lock,pid,hb}`, `watcher.{lock,pid,hb}`, `tray.{lock,pid}`,
+  `watchdog-state.json` (`HEALTHY`, mtime рухається щотіку).
+- (b) `Stop-Process dnsqb-service` → лог watcher'а + `watchdog-state.json`: `HEALTHY` → (t≈18s)
+  `SUSPECT_DEAD` → `VERIFYING_PID` → (`verify_pid_alive` = `Gone`) `RESTARTING` → **один** spawn →
+  `BACKOFF_WAIT` (`restart_attempts_in_window: 1`) → новий `dnsqb-service` живий → `HEALTHY`.
+- (c) `Stop-Process dnsqb-watcher` → `dnsqb-service`'s `service→watcher` цикл (unanimous по 2
+  каналах) → `spawn_sibling(Watcher)` за ~39s → watcher знову живий.
+- (d) `GET /admin/status.watchdog` = `null` у `HEALTHY`, `"RESTARTING"` коли файл у
+  `BACKOFF_WAIT` і новий сервіс уже відповідає; relaunch watcher'а → «service is already running»
+  / «tray is already running» / «resuming persisted watchdog state (Healthy)», **нуль** дублів.
+
+**Звірка діаграм:** `ui-status-indicator.md` — flowchart (`Check2`↔`Check3`), таблиця
+перенумерована, ⚠️ GAP → «Закрито (DECISIONS.md 2026-09-02)»; `watchdog-state.md` «Крос-посилання
+на UI» (умова 4 → 2, `WatchdogStatusView` 2-варіантна); `watchdog-channels.md` — «Закрито»-бул
+про service-side канал 1; `ui-dto-model.md` — клас `WatchdogStatusView` + поле, секція 379
+переписана, SOURCES +§7/§7.1/T-95. `watchdog-state.md` / `watchdog-channels.md` автомат/канали
+без змін логіки — Батч 3.3 виконує намальоване.

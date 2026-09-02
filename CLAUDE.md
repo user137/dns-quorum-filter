@@ -7,27 +7,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Phase:** Фаза 2 (cert automation, Windows) **formally closed 2026-08-31** (SPEC.md §"Фазований
 план" / TASKS.md §"Фаза 2"). **Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging)
 is next — a 9-batch execution plan (3.0–3.8) is in TASKS.md §"Фаза 3" ("План виконання Ф3",
-2026-09-01). **Батч 3.0 (watchdog design spike) done 2026-09-01**: `diagrams/watchdog-{state,
-channels}.md` + SPEC.md §7.1 (9 реалізаційні рішення — IPC via `tokio` named_pipe, own
-`share_mode(0)` lockfile guard, pid-files, fixed heartbeat frame, spawn from
-`current_exe().parent()`, `watchdog-state.json`, interval/backoff/budget numbers).
-**T-101 done 2026-09-01** (pulled forward from Батч 3.7): `.github/workflows/codeql.yml` — CodeQL
-SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR; alerts in the Security
-tab, triaged like clippy/audit findings (see the Commands section for the `gh` read command).
-**Батч 3.1 (liveness primitives) done 2026-09-02**: `crates/dnsqb-service/src/watchdog/` —
-`instance` (T-92: `share_mode(0)` lockfile guard + pid-file, wired into `dnsqb-service` main
-**before** cert gen), `frame`+`channel` (T-84 pure), `pipe` (T-84 `#[cfg(windows)]`),
-`heartbeat_file` (T-85), plus `GET /health` (T-86, in `dispatch::ROUTES`).
-**Батч 3.2 (watchdog decision core) done 2026-09-02** (8 commits): added `vote` (T-87/T-88 — two
-fixed-arity fns, not a slice, per T-41 footgun), `backoff` (T-90), `budget` (T-91 —
-`RestartBudget`, 5/600s per-target), `pid_check` (T-89 — `verify_pid_alive` via new dep `sysinfo`
-0.39.6, PID + exe-identity), `spawn` (`resolve_sibling_path` pure + `spawn_sibling`, no PATH/CWD,
-no `kill`), `state` (`WatchdogState`/`WatchdogStateFile` + atomic `watchdog-state.json` I/O,
-§7.1 #7), and pure `transition` composing them into the `diagrams/watchdog-state.md` automaton.
-T-93/T-94 covered at vote + `transition` level; loop-level assert is Батч 3.3. **Start at Батч
-3.3, T-150 / T-95** (assembly: `dnsqb-watcher` entry point + running loops + watchdog state in
-tray/`/admin/status`). Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
-RFC-conformance table T-1–T-19) done.
+2026-09-01). **T-101 done 2026-09-01** (pulled forward from Батч 3.7): `.github/workflows/
+codeql.yml` — CodeQL SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR;
+alerts in the Security tab, triaged like clippy/audit findings (see the Commands section for the
+`gh` read command).
+**Батчі 3.0–3.3 done 2026-09-02 — watchdog complete, demonstrated end-to-end.** 3.0: SPEC.md §7.1
+(9 реалізаційні рішення) + `diagrams/watchdog-{state,channels}.md`. 3.1: liveness primitives
+(`instance` guard/pid, `frame`/`channel`, `pipe`, `heartbeat_file`, `GET /health`). 3.2: pure
+decision core (`vote`, `backoff`, `budget`, `pid_check`, `spawn`, `state`, `transition`). 3.3:
+assembly — `watchdog::loop_driver` (pure per-direction tick automaton, loop-level T-93/T-94),
+`watchdog::launcher` (T-150 `plan_launch`), the three `dnsqb-service` heartbeat tasks +
+`service→watcher` loop, `dnsqb-watcher`'s real `main` (idempotent launcher + `watcher→service`
+loop, sole writer of `watchdog-state.json`), and T-95 (`/admin/status.watchdog` + tray). Per-batch
+narrative → TASKS-DONE.md. **Start at Батч 3.4 (T-155 / T-154 / T-152)** — network state; own
+plan-mode + advisor + AskUserQuestion. Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace,
+CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
 
@@ -52,7 +46,10 @@ catches, verification notes — goes to `TASKS-DONE.md`, never here. (This file 
 `dnsqb-service` — a real `hyper` + `rustls` DoH listener on `127.0.0.1` (T-143), resolving queries
 end to end through the Фаза 1 pipeline (allowlist → blocklist → cache → quorum; T-39) plus live
 GeoIP filtering (SPEC.md §3.5 / §5.3 step 8). The intermediate SPEC.md §5.3 steps — ccTLD block,
-rating filter, voter scope — are later phases, not built. Modules under `crates/dnsqb-service/src/`:
+rating filter, voter scope — are later phases, not built. Since Батч 3.3, `main.rs` also starts
+three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe server, `service.hb` touch, the
+in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists).
+Modules under `crates/dnsqb-service/src/`:
 
 | Module | Responsibility |
 |---|---|
@@ -68,9 +65,9 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
-| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call) |
-| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
-| `watchdog/` (Батч 3.1 primitives + Батч 3.2 decision core) | **Primitives (3.1):** `instance` (T-92: `Role`, `acquire` → `share_mode(0)` `<role>.lock` guard + `create_dir_all`, `write_pid_file`/`read_pid_file`); `frame` (T-84 pure: 20-byte `Frame`, `len`=18 after itself), `channel` (T-84 pure: `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`), `pipe` (T-84 `#[cfg(windows)]` named-pipe), `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale`). **Decision core (3.2):** `vote` (T-87/T-88: `vote_watcher_checks_service(ipc,file,health)` 2-of-3, `vote_service_checks_watcher(ipc,file)` unanimous → `Liveness` — two fixed-arity fns, never a slice); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `BudgetVerdict::{Allowed,GaveUp}`, 5/600s rolling, per-target, future-timestamp resets window; `::restored(window, attempts)` rebuilds from the persisted `watchdog-state.json` fields so a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `PidCheck::{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` — rejects non-absolute → `NotAbsolute`; thin `spawn_sibling` — `is_file()` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read` `watchdog-state.json`; `last_error: Option<WatchdogErrorLabel>` closed enum, not `String`); `transition` (pure `transition(WatchdogState, &TransitionInput) -> WatchdogState`, composes the above into the `diagrams/watchdog-state.md` automaton, total, returns next state only — the loop derives side effects). Running loops on both binaries + `dnsqb-watcher` main = Батч 3.3 |
+| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
+| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
+| `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
@@ -99,14 +96,26 @@ confirm-gated `/admin/shutdown`, "Close" exits the tray only, plus a confirm-gat
 сертифікат" (`cert_rotation::rotate_certificate` — reissue + re-trust; needs a manual `dnsqb-service`
 restart before the new cert is served — until then the running service still presents the previous,
 now-untrusted cert and the browser warns on `/admin/ui`; the tray's own cached-client status poll
-is unaffected). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tooltip has three top-level states (`Unreachable` / `NoActiveProvider` /
-`Filtering`); `Filtering` appends a degraded-upstream suffix when `AdminStats.degraded_events > 0`
-(raw counts over the last 20 `QUORUM` log entries — T-56, narrowed), not a fourth state.
+is unaffected). Also takes the `Tray` single-instance guard + writes `tray.pid` on startup
+(T-150 — the watcher's launcher needs a `tray.pid` to detect it; a second instance exits
+quietly). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tooltip states:
+`Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
+`status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —
+DECISIONS.md 2026-09-02) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
+suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM` log entries —
+T-56, narrowed).
 
-`dnsqb-watcher` — still a `todo!()` stub (its `main`, `Cargo.toml` deps, and the running
-heartbeat loops all land in Батч 3.3). The Батч 3.1 liveness primitives it will consume live in
-`dnsqb-service`'s `watchdog/` module (SPEC.md §7.1 #6 — watcher depends on the service crate as a
-lib). Фаза 3 (SPEC.md §7).
+`dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main` since Батч 3.3.
+`#[tokio::main(flavor = "current_thread")]` (§7.1 #9 — flavor, not features, keeps it
+single-threaded: the `dnsqb-service` lib dep unifies `rt-multi-thread` in regardless). Startup:
+`Watcher` guard + `watcher.pid`; **idempotent launcher (T-150)** — `ensure_sibling_running` for
+`dnsqb-service` and `dnsqb-tray`, once, via `plan_launch` + `verify_pid_alive` + `spawn_sibling`
+(tray is launcher-scope, never heartbeat-monitored). Then the `watcher→service` loop (5s tick:
+IPC ping/pong channel 1, `service.hb`/`watcher.hb` channel 2, `GET /health` via cert-pinned
+`AdminClient` channel 3; `LoopDriver` 2-of-3 vote; `spawn_sibling(Service)` on a confirmed-dead
+service; **sole writer** of `watchdog-state.json`, rewritten every tick for `mtime` freshness).
+`resume`s a <90s-old state file via `LoopDriver::restored`. Depends on `dnsqb-service` as a lib
+(§7.1 #6).
 
 ### GeoIP workstream (Фаза 2)
 
@@ -208,8 +217,10 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   copies or SSD wear-levelling.
 - **Admin-channel fuzz (T-58, narrowed)** covers `parse_pattern` / `wire_bytes_from_get` /
   `/admin/config` POST body only — other routes and the `/dns-query` POST body are not fuzzed.
-- **The status indicator (T-56, narrowed)** — browser-DoH-usage detection and watchdog state are
-  still unbuilt; the tray's degraded-upstream signal is a precursor, not the full indicator.
+- **The status indicator (T-56, narrowed)** — watchdog state is built (T-95: tray
+  `ServiceRestarting`/`ServiceGaveUp` + `/admin/status.watchdog`); browser-DoH-usage detection
+  (indicator condition 1) is still unbuilt (blocked on T-134). The full single-indicator UI (all
+  conditions as competing states, not a `Filtering` suffix) is still future.
 
 ### Recurring patterns (seen across many task slices — apply, don't re-derive)
 
@@ -284,7 +295,12 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 - `cargo test --workspace --lib --bins` — unit tests. **`--bins` is required, not optional** —
   `dnsqb-tray` / `dnsqb-watcher` are `[[bin]]`-only crates with no `[lib]` target, so `--lib` alone
   never compiles or runs their `#[cfg(test)]` modules (caught when `dnsqb-tray/src/browser.rs`'s
-  test turned out to have never run in CI).
+  test turned out to have never run in CI). **`cargo test ... --bins` builds the *test-harness*
+  exes, NOT the runnable `target/debug/<name>.exe`** — before a manual end-to-end smoke after a
+  `main.rs` edit, run `cargo build --workspace` or you'll run a stale binary (cost real time in
+  Батч 3.3: the watcher worked but the service showed no `service.hb` because its exe predated the
+  watchdog wiring). And a *running* smoke process holds `target/debug/<name>.exe` open → the next
+  `cargo build` fails with a link error; kill lingering `dnsqb-*` processes first.
 - `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green (un-`#[ignore]`d
   ones must pass; the count of each changes as Фаза 1/2 tasks land — check `TASKS.md` or run
   `-- --ignored`, don't trust a hardcoded number).

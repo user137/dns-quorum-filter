@@ -85,8 +85,12 @@ stateDiagram-v2
 
 ## Крос-посилання на UI
 
-`diagrams/ui-status-indicator.md` умова 4 — «Сервіс перезапускається» / «Сервіс зупинено —
-перевищено ліміт спроб перезапуску». Мапінг: `Restarting` / `BackoffWait` → «перезапускається»;
-`GaveUp` → «зупинено, ліміт вичерпано». `Healthy` / `ChannelDegraded` / `SuspectDead` /
-`VerifyingPid` UI окремо не показує (проміжні, суб-секундні–секундні). Поле-носій —
-`/admin/status.watchdog: WatchdogStatusView` (§7.1 #7), реалізація в Батчі 3.3 / T-95.
+`diagrams/ui-status-indicator.md` умова 2 (порядок пріоритету — DECISIONS.md 2026-09-02:
+watchdog вище за 0-voters) — «Сервіс перезапускається» / «Сервіс зупинено — перевищено ліміт
+спроб перезапуску». Реалізовано T-95 (Батч 3.3). Поле-носій — `/admin/status.watchdog:
+Option<WatchdogStatusView>` (`dispatch::read_watchdog_view`) + tray `TrayStatus::
+{ServiceRestarting, ServiceGaveUp}` (`status::watchdog_override`), обидва читають
+`watchdog-state.json`. **`WatchdogStatusView` — 2-варіантна проєкція, не сирий 7-варіантний
+`WatchdogState`:** `Restarting` / `BackoffWait` → `RESTARTING`; `GaveUp` → `GAVE_UP`; `Healthy` /
+`ChannelDegraded` / `SuspectDead` / `VerifyingPid` (проміжні, суб-секундні–секундні) і
+стале/відсутнє `watchdog-state.json` → `None` (не фейковий `HEALTHY` — Три Б).

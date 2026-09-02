@@ -94,6 +94,12 @@ flowchart TD
 
 ## Закрито
 
+- **Канал 1 для напряму `service → watcher`** — закрито Батчем 3.3. §7.1 #1 каже «обидва напрями
+  мультиплексовані на одному pipe», але сервіс **не шле власного ping-кадру**: він тримає
+  `last_ping_at` (час останнього отриманого від watcher'а ping'а), і «канал 1 мовчить» для
+  напряму service→watcher = `now − last_ping_at > поріг`. Один pipe несе докази для обох поглядів
+  без server-initiated кадру; watcher помер → мітка просто перестає рухатись. `respond_once` без
+  timeout'а. Записано в TASKS-DONE.md (Батч 3.3) як інтерпретація, не відхилення від SPEC.
 - **Форма «тіло-маркер OK» для `/health`** — закрито T-86 (Батч 3.1). «Здоровий» = **сам
   HTTP 200**; тіло `admin::HealthResponse { active_providers: usize, geoip: LOADED|ABSENT }` —
   інформаційне, не gate. Канал 3 проходить, коли `AdminClient::health()` віддає 200 **і** тіло

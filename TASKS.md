@@ -329,7 +329,7 @@ Concurrency/Recovery.
   `key_store::delete_secret` для TLS-запису (залишений trusted cert / secret-store ключ =
   клас бага SECURITY.md). macOS-половина → Ф6.
 
-**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → ~~3.1~~ (зроблено 2026-09-02) → ~~3.2~~ (зроблено 2026-09-02) → 3.3 (watchdog готовий) → 3.4 →
+**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → ~~3.1~~ (зроблено 2026-09-02) → ~~3.2~~ (зроблено 2026-09-02) → ~~3.3~~ (зроблено 2026-09-02) → 3.4 →
 3.5 → 3.6 → **T-100/T-102/T-103** → 3.8 (останній). 3.4 може йти раніше, якщо watchdog-батч
 застопориться (він незалежний).
 
@@ -416,8 +416,42 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   (`tokio` `process`/`rt`/`time`, §7.1 #9); `/admin/status.watchdog` + tray-tooltip → Батч 3.3 /
   T-95; `kill` sibling'а → лише якщо 3.3 доведе потребу.
 
-**Наступний — Батч 3.3, T-150 / T-95** (збірка: `dnsqb-watcher` як ідемпотентний entry point +
-робочі цикли + стан watchdog у tray/`/admin/status`).
+**Батч 3.3 зроблено 2026-09-02** (plan-mode + advisor kickoff і closing, 7 кодових + 1 docs коміт)
+— watchdog зібраний і демонстрований end-to-end:
+- **`watchdog::loop_driver`** (чистий) — один напрям як тік-автомат: тримає per-channel лічильники
+  пропусків, `RestartBudget`, backoff-дедлайн, spawn-once латч; `tick(now, ChannelObs) ->
+  TickOutcome { state, effects }` композить `channel_status`→`vote_*`→`transition`. **Loop-рівневі
+  T-93/T-94** тут (Батч 3.2 їх відклав): один канал мовчить → `ChannelDegraded`, **нуль** `Spawn`;
+  два мовчать → рестарт **рівно один** `Spawn` за епізод; 5/600s бюджет → `GaveUp` + `LogGaveUp`
+  один раз, далі нуль `Spawn`.
+- **`watchdog::launcher::plan_launch`** (чистий) — T-150 ідемпотентність: `AlreadyRunning` лише за
+  наявний pid-файл + `PidCheck::Alive`; усе інше → `Spawn`.
+- **`dnsqb-service` main** — 3 detached tokio-таски: pipe-сервер (канал 1; публікує `last_ping_at`),
+  `service.hb` touch (канал 2), цикл `service→watcher` (`LoopDriver` unanimous; `spawn_sibling
+  (Watcher)`; **не** персиститься — §7.1 #7). Service-side канал 1 = «час від останнього ping'а»,
+  без server-initiated кадру.
+- **`dnsqb-watcher`** — `todo!()` замінено: `#[tokio::main(flavor = "current_thread")]`
+  (`Cargo.toml` features per §7.1 #9; flavor тримає однопотоковість, бо lib-dep уніфікує
+  `rt-multi-thread`); guard + `watcher.pid`; **T-150 ланчер** (`ensure_sibling_running` для service
+  і tray, лише на старті — tray launcher-scope, не heartbeat-monitored); цикл `watcher→service`
+  (3 канали, `LoopDriver::restored`-або-`new`, пише `watchdog-state.json` **кожен тік** для
+  свіжості mtime). Вікно resume — 90s (покриває ~40s латентність service→watcher рестарту).
+- **T-95** — `AdminStatusResponse.watchdog: Option<WatchdogStatusView>` (2-варіантна проєкція
+  `RESTARTING`/`GAVE_UP`; `dispatch::read_watchdog_view`, стале/відсутнє/проміжне → `None`);
+  tray `TrayStatus::{ServiceRestarting, ServiceGaveUp}` (`status::watchdog_override`, перевіряється
+  **перед** `/admin/status` — watchdog вище за 0-voters, DECISIONS.md 2026-09-02).
+- **`dnsqb-tray`** — тепер бере `Tray` guard + пише `tray.pid` (ланчер це вимагає, інакше кожен
+  старт watcher'а плодив би трей).
+- **⚠️ GAP закрито:** DECISIONS.md 2026-09-02 — порядок пріоритету індикатора
+  `браузер → watchdog → 0-voters → деградація`.
+- Ручний end-to-end (scratch `%LOCALAPPDATA%`): (a) старт лише watcher'а → підняв service + один
+  tray, усі lock/pid/hb/state файли; (b) kill service → `HEALTHY→SUSPECT_DEAD→VERIFYING_PID→
+  RESTARTING→BACKOFF_WAIT→(spawn)→HEALTHY`, `watchdog-state.json` пройшов усі переходи; (c) kill
+  watcher → service підняв його за ~39s; (d) `/admin/status.watchdog` = `null` у HEALTHY,
+  `RESTARTING` під час рестарту; relaunch watcher'а → нуль дублів.
+
+**Наступний — Батч 3.4 (T-155 / T-154 / T-152)** — мережевий стан; власний plan-mode + advisor
+kickoff + AskUserQuestion (маркери досяжності, взаємодія з timeout-режимами).
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -426,7 +460,6 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   Manager — `key_store::delete_secret` для TLS-запису (виклик додати тут). Залишений ключ у
   secure storage після видалення застосунку — той самий клас бага безпеки, що й залишений
   довірений сертифікат (SECURITY.md). **macOS-половина (Keychain) → Фаза 6.**
-- [ ] T-95 — (Батч 3.3) Оновити індикатор стану UI станом watchdog (живий / мертвий / рестартує) (8, 7)
 - [ ] T-152 — (Батч 3.4) Виявлення відсутності інтернету як окремого стану, відмінного від "деградований апстрім" (3.3, 8, суміжно з T-56): періодична легка перевірка мережевої досяжності через **кілька незалежних** завжди-доступних маркерів в інтернеті (напр. `generate_204`-подібні ендпоінти кількох великих незалежних інфраструктур — не один-єдиний), легкі HTTP-запити чи ping, не повний DoH-раунд-тріп. Мета — коли інтернету взагалі немає, сервіс не повинен чекати повний per-query таймаут (3.3) на кожен окремий DNS-запит до апстрімів поспіль, а має розпізнати стан "офлайн" і реагувати швидко/явно, а не мовчки поводитись як при деградованому, але присутньому, апстрімі. Стан має бути видимий в UI (T-56's індикатор) окремо від "апстрім деградований, мережа є". Дизайн (яка кількість/які саме маркери, як часто перевіряти, як саме "швидкий шлях" узгоджується з існуючими fail-open/fail-closed/degraded режимами) — ще не вирішений, задача лише зафіксована.
 - [ ] T-154 — (Батч 3.4) Failover baseline на резервний DoH-ендпоінт при невідповіді основного (3.3, 3.4):
   `upstream::BASELINE_DOH_URL` зараз єдина хардкоджена Cloudflare-адреса, без запасної. Кандидати
@@ -463,7 +496,6 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   адмін-каналі/UI — консультувати baseline при недоступності обох фільтрів, чи ні — незалежно від
   fail-open/fail-closed/degraded, які лишаються про окреме питання (як тлумачити один timeout, не
   про "обидва фільтри мертві").
-- [ ] T-150 — (Батч 3.3) Інсталятор реєструє автозапуск через `dnsqb-watcher` як ідемпотентний ланчер, не напряму на `dnsqb-service` (Startup-ярлик/Run-ключ на Windows вказує на `dnsqb-watcher`; на запуску перевіряє стан обох інших процесів через single-instance guard/PID T-89/T-92 і піднімає відсутнє — `dnsqb-service` і/або `dnsqb-tray`; повторний запуск ярлика нічого не дублює) — початково зафіксовано під час T-149's plan-mode рев'ю як прямий Run-ключ на `dnsqb-service`, уточнено 2026-08-27 на ланчер-через-watcher; свідомо відкладено до Фази 3 разом із рештою `dnsqb-watcher` (SPEC.md §7, "Відкриті питання" п.13, DECISIONS.md)
 - [ ] T-96 — (Батч 3.5) Опційне шифроване персистентне зберігання логу (platform secure storage), явне попередження в UI (6, Відкриті питання п.5)
 - [ ] T-97 — (Батч 3.5) Опційне шифроване персистентне зберігання кешу (4, Відкриті питання п.5)
 - [ ] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` enterprise policy перед імплементацією (Відкриті питання п.3)

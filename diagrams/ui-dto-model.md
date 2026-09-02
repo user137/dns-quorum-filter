@@ -1,4 +1,5 @@
-SOURCES: SPEC.md §5, §5.1, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4.
+SOURCES: SPEC.md §5, §5.1, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
+T-95 (`AdminStatusResponse.watchdog`); DECISIONS.md 2026-09-02 (порядок пріоритету індикатора).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -163,13 +164,17 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 реалізовано>>
+        <<T-52 / T-72 / T-95 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
         +u16 port
         +AdminStats stats
+        +WatchdogStatusView? watchdog
         +bool persisted
+    }
+    class WatchdogStatusView {
+        <<T-95, реалізовано — enum RESTARTING | GAVE_UP>>
     }
     class AdminConfigUpdate {
         <<T-52 / T-72 — лише timeout>>
@@ -354,8 +359,9 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 підпис", що вже в `blocked`/`total` (T-139's `main.js`-банди) — advisor-catch під час планування:
 булевий поріг "хоч один timeout за N" був би майже завжди `true` при звичайному fail-open-режимі
 (поодинокий timeout — нормальна поведінка інтернету, не деградація), а вигаданий відсотковий поріг
-не мав би джерела в SPEC.md. Немає перевірки браузера (умова 1) чи watchdog (умова 4, Фаза 3 ще не
-існує) — обидва лишаються майбутнім, повний draft у `ui-status-indicator.md` не переписано.
+не мав би джерела в SPEC.md. Перевірки браузера (умова 1) немає — лишається майбутнім; **умова 2
+(watchdog) реалізована T-95** (`AdminStatusResponse.watchdog`, вище). Повний draft у
+`ui-status-indicator.md` не переписано під звужений tooltip.
 
 ## `AdminStatusResponse`/`AdminStats` та провайдер-DTO (T-52 → T-72/T-73)
 
@@ -376,20 +382,25 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 `upstream::ProviderSpec` → `ProviderView` — свідома проєкція (додає `is_builtin`), не reuse.
 `EnabledProviders` — видалено з коду.
 
-## `AdminStatusResponse.watchdog: WatchdogStatusView` — специфіковано, ще не в діаграмі (SPEC.md §7.1 #7, Ф3 Батч 3.3 / T-95)
+## `AdminStatusResponse.watchdog: Option<WatchdogStatusView>` — реалізовано (T-95, Ф3 Батч 3.3)
 
-Ф3 Батч 3.0 (design spike, `diagrams/watchdog-{state,channels}.md`) зафіксував у SPEC.md §7.1
-рішення #7: `GET /admin/status` отримає поле `watchdog: WatchdogStatusView`, яке
-`dnsqb-service` читає з файлу `<app-data>/watchdog-state.json` (єдиний письменник —
-`dnsqb-watcher`). Форма (за §7.1 #7): `state` (enum `Healthy`/`ChannelDegraded`/`SuspectDead`/
-`VerifyingPid`/`Restarting`/`BackoffWait`/`GaveUp`), `target`, `restart_attempts_in_window`,
-`window_started_at`, `last_transition_at`, `last_error: Option<String>`.
+`GET /admin/status` несе `watchdog: Option<WatchdogStatusView>`, яке `dnsqb-service` читає з
+`<app-data>/watchdog-state.json` (єдиний письменник — `dnsqb-watcher`, §7.1 #7) через
+`dispatch::read_watchdog_view`.
 
-**Навмисно ще не в class-діаграмі вище й не в SOURCES:** тип не існує в коді (`dnsqb-watcher` —
-`todo!()` заглушка), реалізація відкладена на Батч 3.3. Малювати його як реальний DTO зараз
-порушило б ground-truth правило в інший бік. Цей запис — форвард-вказівник, щоб Батч 3.3 додав
-клас і оновив SOURCES (`§7`, `§7.1`) тоді, коли поле справді з'явиться. Крос-посилання:
-`watchdog-state.md` «Крос-посилання на UI».
+**Реалізована форма звужена відносно §7.1 #7:** не сирий запис файлу (`state` 7-варіантний,
+`target`, `restart_attempts_in_window`, `window_started_at`, `last_transition_at`, `last_error`),
+а **2-варіантна UI-проєкція** `WatchdogStatusView` = `RESTARTING` (з `Restarting` **і**
+`BackoffWait`) | `GAVE_UP` (з `GaveUp`). `Healthy` / `ChannelDegraded` / `SuspectDead` /
+`VerifyingPid` (проміжні) і стале (`mtime` > 3 інтервали) / відсутнє / побите
+`watchdog-state.json` → `None` — не фейковий healthy-статус (Три Б). Це свідома проєкція з
+реальною зміною форми (той самий клас, що `OverrideListsResponse` / `ProviderView`), не reuse
+внутрішнього `WatchdogState`.
+
+Той самий read+проєкція продубльовано (не спільний крос-crate хелпер, ~8 рядків, інший
+return-тип) у `dnsqb-tray` як `status::watchdog_override` → `TrayStatus::{ServiceRestarting,
+ServiceGaveUp}`. Крос-посилання: `watchdog-state.md` «Крос-посилання на UI»; порядок пріоритету
+в індикаторі — DECISIONS.md 2026-09-02 (watchdog вище за 0-voters).
 
 ## `OverrideDomainView`/`OverrideListsResponse` — реальна реалізація, відмінна від чернеткового `OverrideEntry` (T-47)
 
