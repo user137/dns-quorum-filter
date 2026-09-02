@@ -13,4 +13,5 @@ pub mod pid_check;
 #[cfg(windows)]
 pub mod pipe;
 pub mod spawn;
+pub mod state;
 pub mod vote;
