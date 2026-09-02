@@ -61,6 +61,8 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | Поле | Тип | Джерело (SPEC.md) | Контрол UI | Що приймає / валідація |
 |---|---|---|---|---|
 | Індикатор стану | `StatusIndicatorState` (§4.6) | §8, §3.3, §7, ВП№10 | іконка + текст, завжди видимий у header | обчислюваний, не редагується користувачем |
+| Мережевий стан | `NetworkStatusView` (`ONLINE`/`OFFLINE`) в `AdminStatusResponse.network` | §3.7, T-152 | внесок в індикатор — умова #3 (між watchdog і "0 voters", DECISIONS.md 2026-09-03) | обчислюваний; `OFFLINE` публікується лише після 3 поспіль невдалих проб-циклів |
+| Активний baseline-endpoint | `BaselineEndpointView` (`PRIMARY`/`SECONDARY`/`TERTIARY`) в `AdminStatusResponse.baseline_endpoint` | §3.7, T-154 | діагностичний, лише читання | обчислюваний із `BaselineSelector.active_index` |
 | Бейдж рейтингового фільтра | `bool` | §5.3, T-128 | окремий бейдж поруч з індикатором | видимий лише коли `RatingFilterConfig.enabled = true` |
 | Тумблери провайдерів + попередження про порожній набір voters | — | §3.4 | — | ⚠️ T-72/T-73: перенесено на картку `#providers-body` (§3.4) — на Dashboard їх більше немає; `filtering_active` там замінив цей банер |
 | Статистика заблокованого (сьогодні) | `u32` | §8 "статистика заблокованого" | лічильник | обчислюваний з логу — ⚠️ T-139: реалізовано інакше за цей чернетковий рядок — `/admin/ui`'s dashboard показує `blocked`/`total`/`in_flight` (вже `AdminStats`, T-52/T-149) плюс частку у відсотках, обчислену клієнтським JS з тих самих полів (не окремий backend-лічильник, і не "сьогодні" — те саме live log-вікно, що й решта статистики) |
@@ -103,12 +105,14 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 (власний fetch/render-цикл, поза 2-с status-поллом) поверх маршрутів
 `GET /admin/providers` + `POST /admin/providers/{add,remove,set-enabled}`
 (`ProvidersResponse`/`ProviderView`/`ProviderAddRequest` — `diagrams/ui-dto-model.md`). Режим
-таймауту лишився на картці "Режим таймауту" в `#app-body` (`AdminConfigUpdate` тепер несе лише
-`timeout_mode`). Порт і baseline-резолвер — досі чернетка (не в картці).
+таймауту лишився на картці "Режим таймауту" в `#app-body` (`AdminConfigUpdate` тепер несе
+`timeout_mode` + `serve_baseline_when_filters_unreachable` — T-155, повна заміна кожного поля).
+Порт і baseline-резолвер (select) — досі чернетка (не в картці).
 
 | Поле | Тип | Джерело | Контрол UI | Що приймає / валідація | Фаза |
 |---|---|---|---|---|---|
 | Режим таймауту | `TimeoutMode` (§4.5) | §3.3 | radio: fail_open / fail_closed / degraded, картка `#app-body` | одне з трьох, дефолт `fail_open` | Ф1 ✅ |
+| Baseline-fallback коли жоден фільтр не відповів | `bool` (`serve_baseline_when_filters_unreachable`) | §3.7, T-155 | чекбокс `#baseline-fallback-toggle`, картка `#app-body`; `persisted:false` notice при невдалому збереженні | дефолт **вимкнено** (DECISIONS.md 2026-09-03 — OFF = сьогоднішня поведінка, лише рядок логу `BASELINE_FALLBACK`); ON = віддати нефільтровану baseline-відповідь незалежно від режиму таймауту | Ф3 ✅ |
 | Значення таймауту (мс) | `u32` | §3.3 | числове поле | дефолт ~2000мс, конфігурований (не в UI-картці) | Ф1 |
 | Порт локального DoH | `u16` | §1 | числове поле | конфліктний порт → **явна помилка**, не мовчазний fallback (§1); не в UI-картці | Ф1 |
 | Список voter'ів, згрупований за категорією | `ProviderView[]` (`ProvidersResponse.active`) | §3.4, T-72/T-73 | заголовки `SECURITY`/`ADS_TRACKERS`/`ADULT_CONTENT`, у кожній рядок із тумблером | тумблер → `POST /admin/providers/set-enabled`; бейдж `block_signature`; дефолт `quad9`+`adguard` ON (розбіжність зі SPEC §3.4/§3.5 "лише Security" — відкрите рішення) | Ф2 ✅ |

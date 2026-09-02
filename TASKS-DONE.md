@@ -2626,7 +2626,7 @@ nice-to-have, а exit-criterion батча (TASKS.md); (8) TDD-split — `loop_d
 переписана, SOURCES +§7/§7.1/T-95. `watchdog-state.md` / `watchdog-channels.md` автомат/канали
 без змін логіки — Батч 3.3 виконує намальоване.
 
-### Батч 3.4 — мережевий стан (зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 8 комітів)
+### Батч 3.4 — мережевий стан (зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 9 комітів)
 
 T-154 / T-155 / T-152 — поведінка резолвера, коли мережа/апстріми зовсім не відповідають (на
 відміну від 3.3, яка про *один* таймаут). **Kickoff-проба** (scratch `reqwest`-приклад,
@@ -2697,6 +2697,28 @@ T-155-гілка поверх стабільного `QuorumOutcome` → T-152.
 - T-152 офлайн-перехід (усі 3 маркери недоступні → `network:"OFFLINE"` → миттєвий SERVFAIL) —
   покрито unit/integration тестами; повний network-isolation smoke — у контрольованому середовищі
   (потребує firewall/hosts-правки з правами адміна), не на dev-боксі.
+
+**Closing advisor** (коміт 9, після пушу коміту 8, docs durable) — 1 блокер + 3 same-pass правки:
+- **Блокер: офлайн-детект без гістерезису входу.** `run_reachability_prober` публікував `Offline`
+  після **одного** циклу, де всі 3 маркери перевищили `PROBE_TIMEOUT` (Wi-Fi-роум, переконект VPN,
+  перевантажений момент) → кожен A/AAAA-запит SERVFAIL до наступного циклу (~6 s), тоді як до T-152
+  ті ж запити резолвились би через `fail_open`+живий baseline — строго гірше (Три Б), і SERVFAIL —
+  саме те, що штовхає браузер на власний резолвер (ВП №10). Асиметрія: `SWITCH_THRESHOLD`=3 для
+  низькоставкового «поміняти baseline-URL», але 1 цикл для високоставкового «провалити кожен
+  запит». Фікс: приватний `OfflineDebounce`, `OFFLINE_CONFIRM_CYCLES`=3 поспіль all-fail циклів
+  перед публікацією `Offline`; вихід — без гістерезису (1 успішний цикл → `Online`).
+  `next_probe_delay(previous, raw)` — швидкий recheck поки серія росте, не тільки після публікації.
+  Baseline-health-проба тепер на `raw == Online` (не `current`) — поки серія рахується, мережа
+  реально лежить, проба лише churn'ила б selector. 5 нових тестів.
+- Privacy-параграф `reachability.rs` суперечив коду: baseline-health-проба (додана `e6f105a`) шле
+  фіксований `example.com A` на активний baseline щоцикл — безперервний heartbeat Cloudflare,
+  ~2880/добу. Параграф module-doc + SPEC §3.7 виправлені: розмежовано ротовані маркери й
+  baseline-проба, ВП №2 (ToS) віднесено до останньої.
+- `UI-SPEC.md` не був зачеплений у комітах 1–8 (docs-map: per-screen field-таблиці) — додано рядки
+  `network`/`baseline_endpoint` (§3.1) і `serve_baseline_when_filters_unreachable` (§3.4);
+  `AdminConfigUpdate`-нотатка оновлена.
+- `sentinel_query`'s no-`else` `if let` — додано WHY-коментар; `offline_still_serves_local_override_lists`
+  розширено allowlist-половиною (офлайн + allowlist → чесний SERVFAIL, не фейк-Allow).
 
 **Звірка діаграм:** `ui-status-indicator.md` — нова умова #3 (таблиця + flowchart перенумеровані,
 Check2→Check3(мережа)→Check4(voters)→Check5(degraded)), SOURCES +§3.7/T-152/DECISIONS.md

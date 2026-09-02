@@ -3416,6 +3416,49 @@ mod tests {
             "a blocklisted domain is still NULL-blocked while offline"
         );
         assert_eq!(client.calls.load(Ordering::SeqCst), 0);
+
+        // Allowlist match — the allowlist branch sits *above* the offline
+        // check, so it still runs and tries the baseline; with the network
+        // down that is an honest SERVFAIL, never a fake Allow.
+        let allow_client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Error,
+            calls: AtomicU32::new(0),
+        };
+        let (allow_outcome, allow_meta) = handle_query(
+            &query_for("allowed.test.", RecordType::A),
+            &allow_client,
+            &overrides_with(vec![OverrideEntry {
+                domain: "allowed.test".to_string(),
+                is_wildcard: false,
+                list: ListKind::Allowlist,
+            }]),
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &upstream_ctx_offline(&timeout),
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(allow_response) = allow_outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(
+            allow_response.metadata.response_code,
+            hickory_proto::op::ResponseCode::ServFail,
+            "an allowlisted domain offline is an honest SERVFAIL, not a fake Allow"
+        );
+        let Some(allow_meta) = allow_meta else {
+            panic!("allowlist offline still logs a row");
+        };
+        assert_eq!(allow_meta.decision, Decision::Failed);
+        assert_eq!(allow_meta.decision_source, DecisionSource::Allowlist);
     }
 
     #[tokio::test]

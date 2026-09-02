@@ -5,15 +5,20 @@
 //! instead of making the browser wait out a `2s × N` timeout on every
 //! lookup.
 //!
-//! **Privacy (SPEC.md "Наскрізні вимоги"):** these markers are third-party
+//! **Privacy (SPEC.md "Наскрізні вимоги"):** the markers are third-party
 //! beacons hit on a timer from a privacy-focused product. Each request is a
 //! bare `HEAD` with no query string and no browsing data — it reveals only
 //! "this IP's box is online", which is exactly what a `generate_204`-class
 //! endpoint exists to receive. Three *independent* infrastructures (Google,
-//! Cloudflare, Apple) so no single operator sees a continuous heartbeat and
-//! one operator's outage can't fake an "offline" verdict. Cloudflare is
-//! already a data recipient here (the baseline resolver), so it adds no new
-//! third party.
+//! Cloudflare, Apple), rotated over, so the marker traffic gives no single
+//! one a continuous heartbeat and one operator's outage can't fake an
+//! "offline" verdict. Separately, the baseline health probe below **does**
+//! send one fixed `example.com A` query to the *active* baseline resolver
+//! every `Online` cycle — a continuous heartbeat to that one operator
+//! (usually Cloudflare, already this service's resolver for real traffic).
+//! It carries no browsing data and its cadence is bounded by
+//! [`IDLE_INTERVAL`]; the SPEC ВП №2 question about a public resolver's
+//! terms of service for an automated client applies to it, not the markers.
 //!
 //! Deliberately **not** wired into `GET /health` or any watchdog channel
 //! (TASKS.md — `/health` is upstream-free on purpose so a network outage
@@ -56,6 +61,47 @@ pub const IDLE_INTERVAL: Duration = Duration::from_secs(30);
 /// changed — short, so a transition (either direction) is caught fast.
 pub const RECHECK_INTERVAL: Duration = Duration::from_secs(3);
 
+/// Consecutive all-markers-failed cycles required before the prober publishes
+/// `Offline`. Publishing `Offline` fails *every* query fast — the high-stakes
+/// direction — so a single saturated moment, a Wi-Fi roam or a VPN reconnect
+/// (all three markers exceeding [`PROBE_TIMEOUT`] in one cycle) must not
+/// trigger it; a real outage lasts well past a few [`RECHECK_INTERVAL`]s.
+/// Recovery is deliberately **not** debounced — one successful cycle
+/// republishes `Online` at once (fast un-break). Mirrors
+/// `baseline_selector::SWITCH_THRESHOLD`, which guards the far lower-stakes
+/// "swap a baseline URL" decision with the same shape.
+pub const OFFLINE_CONFIRM_CYCLES: u32 = 3;
+
+/// Entry-only debounce for the `Offline` verdict (see [`OFFLINE_CONFIRM_CYCLES`]).
+/// Folds each cycle's raw verdict in and returns the verdict to *publish*.
+#[derive(Debug, Default)]
+struct OfflineDebounce {
+    consecutive_fail: u32,
+}
+
+impl OfflineDebounce {
+    /// A raw `Online` resets the streak and publishes `Online` immediately.
+    /// A raw `Offline` publishes `Offline` only once the streak has reached
+    /// [`OFFLINE_CONFIRM_CYCLES`]; until then the published verdict stays
+    /// `Online`.
+    fn observe(&mut self, raw: NetworkReachability) -> NetworkReachability {
+        match raw {
+            NetworkReachability::Online => {
+                self.consecutive_fail = 0;
+                NetworkReachability::Online
+            }
+            NetworkReachability::Offline => {
+                self.consecutive_fail = self.consecutive_fail.saturating_add(1);
+                if self.consecutive_fail >= OFFLINE_CONFIRM_CYCLES {
+                    NetworkReachability::Offline
+                } else {
+                    NetworkReachability::Online
+                }
+            }
+        }
+    }
+}
+
 /// Whether the machine currently has any internet connectivity (T-152).
 /// Starts `Online`: before the first probe completes there is no evidence
 /// of an outage, and a false `Offline` would fail every query.
@@ -79,12 +125,15 @@ pub fn verdict_from_probe_results(results: [bool; MARKERS.len()]) -> NetworkReac
     }
 }
 
-/// How long to wait before the next probe cycle. Steady `Online` → the full
-/// [`IDLE_INTERVAL`]; anything else (currently `Offline`, or the verdict
-/// just changed) → the short [`RECHECK_INTERVAL`].
+/// How long to wait before the next probe cycle. Only a steady `Online`
+/// (`previous` published `Online` **and** this cycle's `raw` verdict `Online`)
+/// earns the full [`IDLE_INTERVAL`]; anything else — a just-recovered link, or
+/// a failing cycle whether or not the debounce has published `Offline` yet —
+/// takes the short [`RECHECK_INTERVAL`], so a genuine outage is confirmed in a
+/// few seconds rather than a few [`IDLE_INTERVAL`]s.
 #[must_use]
-pub fn next_probe_delay(previous: NetworkReachability, current: NetworkReachability) -> Duration {
-    if previous == NetworkReachability::Online && current == NetworkReachability::Online {
+pub fn next_probe_delay(previous: NetworkReachability, raw: NetworkReachability) -> Duration {
+    if previous == NetworkReachability::Online && raw == NetworkReachability::Online {
         IDLE_INTERVAL
     } else {
         RECHECK_INTERVAL
@@ -102,8 +151,10 @@ pub async fn run_reachability_prober(
 ) {
     let sentinel = sentinel_query();
     let mut previous = NetworkReachability::Online;
+    let mut debounce = OfflineDebounce::default();
     loop {
-        let current = verdict_from_probe_results(probe_all_markers(&client).await);
+        let raw = verdict_from_probe_results(probe_all_markers(&client).await);
+        let current = debounce.observe(raw);
         if current != previous {
             match current {
                 NetworkReachability::Offline => {
@@ -115,13 +166,14 @@ pub async fn run_reachability_prober(
             }
         }
         state.update_reachability(current);
-        // T-154: only meaningful while the network is up — an `Offline`
-        // cycle would just report every chain entry dead and churn the
-        // selector for nothing.
-        if current == NetworkReachability::Online {
+        // T-154: gate on the *raw* verdict, not the published one — while the
+        // offline debounce is still counting (`raw == Offline`, `current`
+        // still `Online`) the network really is down, so a baseline probe
+        // would just report every chain entry dead and churn the selector.
+        if raw == NetworkReachability::Online {
             probe_baseline_health(&state, &sentinel).await;
         }
-        let delay = next_probe_delay(previous, current);
+        let delay = next_probe_delay(previous, raw);
         previous = current;
         tokio::time::sleep(delay).await;
     }
@@ -132,6 +184,10 @@ pub async fn run_reachability_prober(
 /// `SERVFAIL` an `RD=0` query for anything not edge-cached (CLAUDE.md gotcha).
 fn sentinel_query() -> Message {
     let mut message = Message::query();
+    // The literal always parses; the no-`else` `if let` is only to avoid an
+    // `unwrap`/`expect` (crate-wide deny). A question-less sentinel could
+    // never happen with this constant, and would at worst make every baseline
+    // probe read as failed — never a false `Responded`.
     if let Ok(name) = Name::from_ascii("example.com.") {
         message.add_query(Query::query(name, RecordType::A));
     }
@@ -202,8 +258,8 @@ async fn probe_one(client: &reqwest::Client, url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_probe_delay, verdict_from_probe_results, NetworkReachability, IDLE_INTERVAL,
-        RECHECK_INTERVAL,
+        next_probe_delay, verdict_from_probe_results, NetworkReachability, OfflineDebounce,
+        IDLE_INTERVAL, OFFLINE_CONFIRM_CYCLES, RECHECK_INTERVAL,
     };
 
     #[test]
@@ -263,9 +319,82 @@ mod tests {
     #[test]
     fn steady_online_uses_the_idle_interval_everything_else_the_recheck_interval() {
         use NetworkReachability::{Offline, Online};
+        // Second arg is this cycle's *raw* verdict.
         assert_eq!(next_probe_delay(Online, Online), IDLE_INTERVAL);
+        // A failing cycle takes the fast cadence even before the debounce
+        // has published `Offline` — otherwise a real outage would take
+        // `OFFLINE_CONFIRM_CYCLES * IDLE_INTERVAL` to confirm.
         assert_eq!(next_probe_delay(Online, Offline), RECHECK_INTERVAL);
         assert_eq!(next_probe_delay(Offline, Online), RECHECK_INTERVAL);
         assert_eq!(next_probe_delay(Offline, Offline), RECHECK_INTERVAL);
+    }
+
+    #[test]
+    fn one_failing_cycle_does_not_publish_offline() {
+        let mut d = OfflineDebounce::default();
+        assert_eq!(
+            d.observe(NetworkReachability::Offline),
+            NetworkReachability::Online,
+            "a single all-markers-failed cycle is not yet an outage"
+        );
+    }
+
+    #[test]
+    fn offline_is_published_only_after_the_confirm_threshold() {
+        let mut d = OfflineDebounce::default();
+        for _ in 0..OFFLINE_CONFIRM_CYCLES - 1 {
+            assert_eq!(
+                d.observe(NetworkReachability::Offline),
+                NetworkReachability::Online
+            );
+        }
+        assert_eq!(
+            d.observe(NetworkReachability::Offline),
+            NetworkReachability::Offline,
+            "the Nth consecutive failing cycle publishes Offline"
+        );
+    }
+
+    #[test]
+    fn one_success_resets_the_streak() {
+        let mut d = OfflineDebounce::default();
+        d.observe(NetworkReachability::Offline);
+        d.observe(NetworkReachability::Offline);
+        assert_eq!(
+            d.observe(NetworkReachability::Online),
+            NetworkReachability::Online
+        );
+        // Streak restarts from zero — two more fails still isn't an outage.
+        assert_eq!(
+            d.observe(NetworkReachability::Offline),
+            NetworkReachability::Online
+        );
+        assert_eq!(
+            d.observe(NetworkReachability::Offline),
+            NetworkReachability::Online
+        );
+    }
+
+    #[test]
+    fn recovery_from_confirmed_offline_is_immediate() {
+        let mut d = OfflineDebounce::default();
+        for _ in 0..OFFLINE_CONFIRM_CYCLES {
+            d.observe(NetworkReachability::Offline);
+        }
+        assert_eq!(
+            d.observe(NetworkReachability::Online),
+            NetworkReachability::Online,
+            "recovery is not debounced"
+        );
+    }
+
+    #[test]
+    fn a_long_outage_stays_offline_without_overflowing() {
+        let mut d = OfflineDebounce::default();
+        let mut last = NetworkReachability::Online;
+        for _ in 0..10_000 {
+            last = d.observe(NetworkReachability::Offline);
+        }
+        assert_eq!(last, NetworkReachability::Offline);
     }
 }

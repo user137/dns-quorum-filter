@@ -191,7 +191,7 @@ pub use quorum::{
 };
 pub use reachability::{
     next_probe_delay, run_reachability_prober, verdict_from_probe_results, NetworkReachability,
-    MARKERS,
+    MARKERS, OFFLINE_CONFIRM_CYCLES,
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
