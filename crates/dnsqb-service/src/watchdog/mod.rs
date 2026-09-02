@@ -9,3 +9,4 @@ pub mod heartbeat_file;
 pub mod instance;
 #[cfg(windows)]
 pub mod pipe;
+pub mod vote;

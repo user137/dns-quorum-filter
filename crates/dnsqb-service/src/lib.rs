@@ -204,6 +204,7 @@ pub use watchdog::instance::{
 };
 #[cfg(windows)]
 pub use watchdog::pipe::{HeartbeatPipeClient, HeartbeatPipeServer};
+pub use watchdog::vote::{vote_service_checks_watcher, vote_watcher_checks_service, Liveness};
 pub use wire::{
     attach_edns, build_block_response, decode_wire_message, encode_wire_message, forward_response,
     EDNS_UDP_PAYLOAD_SIZE,
