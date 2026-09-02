@@ -14,14 +14,19 @@ channels}.md` + SPEC.md §7.1 (9 реалізаційні рішення — IPC
 **T-101 done 2026-09-01** (pulled forward from Батч 3.7): `.github/workflows/codeql.yml` — CodeQL
 SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR; alerts in the Security
 tab, triaged like clippy/audit findings (see the Commands section for the `gh` read command).
-**Батч 3.1 (liveness primitives) done 2026-09-02**: new `crates/dnsqb-service/src/watchdog/`
-module tree — `instance` (T-92: `share_mode(0)` lockfile guard + pid-file, wired into
-`dnsqb-service` main **before** cert gen), `frame`+`channel` (T-84 pure: 20-byte heartbeat frame,
-`channel_status`→`Signal|NoSignal` at 3 misses), `pipe` (T-84 `#[cfg(windows)]`: named-pipe
-server/client), `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale`), plus `GET /health`
-(T-86: watchdog channel 3, in `dispatch::ROUTES`). Primitives only — the running loops on both
-binaries are Батч 3.3; voting/backoff/budget/PID-identity are Батч 3.2. **Start at Батч 3.2, T-87
-first.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
+**Батч 3.1 (liveness primitives) done 2026-09-02**: `crates/dnsqb-service/src/watchdog/` —
+`instance` (T-92: `share_mode(0)` lockfile guard + pid-file, wired into `dnsqb-service` main
+**before** cert gen), `frame`+`channel` (T-84 pure), `pipe` (T-84 `#[cfg(windows)]`),
+`heartbeat_file` (T-85), plus `GET /health` (T-86, in `dispatch::ROUTES`).
+**Батч 3.2 (watchdog decision core) done 2026-09-02** (8 commits): added `vote` (T-87/T-88 — two
+fixed-arity fns, not a slice, per T-41 footgun), `backoff` (T-90), `budget` (T-91 —
+`RestartBudget`, 5/600s per-target), `pid_check` (T-89 — `verify_pid_alive` via new dep `sysinfo`
+0.39.6, PID + exe-identity), `spawn` (`resolve_sibling_path` pure + `spawn_sibling`, no PATH/CWD,
+no `kill`), `state` (`WatchdogState`/`WatchdogStateFile` + atomic `watchdog-state.json` I/O,
+§7.1 #7), and pure `transition` composing them into the `diagrams/watchdog-state.md` automaton.
+T-93/T-94 covered at vote + `transition` level; loop-level assert is Батч 3.3. **Start at Батч
+3.3, T-150 / T-95** (assembly: `dnsqb-watcher` entry point + running loops + watchdog state in
+tray/`/admin/status`). Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
 RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -65,7 +70,7 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call) |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
-| `watchdog/` (Батч 3.1, primitives only) | `instance` (T-92: `Role`, `acquire` → `share_mode(0)` `<role>.lock` guard + `create_dir_all`, `GuardError`, `write_pid_file`/`read_pid_file`); `frame` (T-84 pure: 20-byte `Frame`, `encode`/`parse`, `len`=18 after itself), `channel` (T-84 pure: `channel_status(misses)` → `ChannelStatus::{Signal,NoSignal}` at `MISS_THRESHOLD`=3 — no `Dead` variant), `pipe` (T-84 `#[cfg(windows)]`: `HeartbeatPipeServer`/`HeartbeatPipeClient` over `tokio` named_pipe, `recreate` = `first_pipe_instance(false)`), `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now,mtime,threshold)`) |
+| `watchdog/` (Батч 3.1 primitives + Батч 3.2 decision core) | **Primitives (3.1):** `instance` (T-92: `Role`, `acquire` → `share_mode(0)` `<role>.lock` guard + `create_dir_all`, `write_pid_file`/`read_pid_file`); `frame` (T-84 pure: 20-byte `Frame`, `len`=18 after itself), `channel` (T-84 pure: `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`), `pipe` (T-84 `#[cfg(windows)]` named-pipe), `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale`). **Decision core (3.2):** `vote` (T-87/T-88: `vote_watcher_checks_service(ipc,file,health)` 2-of-3, `vote_service_checks_watcher(ipc,file)` unanimous → `Liveness` — two fixed-arity fns, never a slice); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `BudgetVerdict::{Allowed,GaveUp}`, 5/600s rolling, per-target, future-timestamp resets window); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `PidCheck::{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` — rejects non-absolute → `NotAbsolute`; thin `spawn_sibling` — `is_file()` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read` `watchdog-state.json`; `last_error: Option<WatchdogErrorLabel>` closed enum, not `String`); `transition` (pure `transition(WatchdogState, &TransitionInput) -> WatchdogState`, composes the above into the `diagrams/watchdog-state.md` automaton, total, returns next state only — the loop derives side effects). Running loops on both binaries + `dnsqb-watcher` main = Батч 3.3 |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
@@ -259,6 +264,13 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   (compile error without it); it also lists the Unix/Apple store crates target-gated — lockfile-only
   for windows-msvc, no `deny.toml` change. `unsafe` FFI is contained in
   `windows-native-keyring-store`, `#![forbid(unsafe_code)]` intact.
+- `sysinfo` (`default-features = false`, `features = ["system"]`) — `watchdog::pid_check::
+  verify_pid_alive` (T-89): the recycled-PID guard §7 requires before a restart. Named by SPEC.md
+  §7.1 #3. Pulls the transitive `winapi` 0.3.9 (via `ntapi`) + the `windows` 0.62 family —
+  0 new advisories, no `deny.toml` change (licences already allowed), `multiple-versions` stays a
+  warn; `unsafe` FFI contained in `ntapi`/`windows-*`, `#![forbid(unsafe_code)]` intact. Links
+  into `dnsqb-service` though only `dnsqb-watcher` calls it (§7.1 #6). Full reasoning: SECURITY.md
+  `sysinfo` row.
 - `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot`;
   depends on `dnsqb-service` as a library for `AdminClient`.
 - Dev-only: `tempfile` (`overrides` load tests), `x509-parser` (`cert` DER assertions), `proptest`

@@ -1,6 +1,8 @@
 SOURCES: SPEC.md §7 (вкл. §7.1 — реалізаційні рішення Ф3 Батч 3.0); TASKS.md T-87, T-88,
-T-89, T-90, T-91, T-92, T-95, T-150; `diagrams/watchdog-channels.md` (шар каналів, що годує
-цей автомат); `diagrams/ui-status-indicator.md` (умова 4 — як цей стан показується в UI).
+T-89, T-90, T-91, T-92, T-93, T-94, T-95, T-150 (Батч 3.2 реалізував цей автомат у
+`watchdog::transition` — код конформує до діаграми, не змінює її); `diagrams/watchdog-channels.md`
+(шар каналів, що годує цей автомат); `diagrams/ui-status-indicator.md` (умова 4 — як цей стан
+показується в UI).
 
 # Watchdog — автомат живучості / рестарту (на напрям)
 

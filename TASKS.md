@@ -329,7 +329,7 @@ Concurrency/Recovery.
   `key_store::delete_secret` для TLS-запису (залишений trusted cert / secret-store ключ =
   клас бага SECURITY.md). macOS-половина → Ф6.
 
-**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → ~~3.1~~ (зроблено 2026-09-02) → 3.2 → 3.3 (watchdog готовий) → 3.4 →
+**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → ~~3.1~~ (зроблено 2026-09-02) → ~~3.2~~ (зроблено 2026-09-02) → 3.3 (watchdog готовий) → 3.4 →
 3.5 → 3.6 → **T-100/T-102/T-103** → 3.8 (останній). 3.4 може йти раніше, якщо watchdog-батч
 застопориться (він незалежний).
 
@@ -382,7 +382,42 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   voting/backoff/budget/PID-identity → Батч 3.2. **T-93 per-channel тест** структурний
   (тип без `Dead`), спостережуваний per-channel тест приходить із wiring у Батчі 3.3.
 
-**Наступний — Батч 3.2, T-87 першим** (voting/backoff/budget).
+**Батч 3.2 зроблено 2026-09-02** (plan-mode + advisor kickoff і closing, 8 комітів) — ядро
+рішень watchdog у `crates/dnsqb-service/src/watchdog/`, усе — тестовані бібліотечні одиниці:
+- **T-87/T-88** — `watchdog::vote`: дві названі функції фіксованої арності (не одна на зрізі —
+  T-41 slice-footgun): `vote_watcher_checks_service(ipc,file,health)` → `Dead` на `>=2` `NoSignal`
+  (2-з-3), `vote_service_checks_watcher(ipc,file)` → `Dead` лише коли обидва `NoSignal` (unanimous).
+- **T-90** — `watchdog::backoff`: `next_backoff(attempt)` над фіксованим розкладом `1→2→4→8→16 s`,
+  cap 16 s; lookup через `.get().unwrap_or(CAP)`, in-bounds з рядка.
+- **T-91** — `watchdog::budget`: `RestartBudget::register_attempt(now)` → `Allowed|GaveUp`, 5 / 600 s
+  rolling window, per-target. Майбутній `window_started_at` (persisted, читається після годинникового
+  стрибка) → вікно скидається (`duration_since` майбутнього старту → `Duration::MAX`), помилка в бік
+  «дозволити рестарти», не «вічний GaveUp».
+- **T-89** — `watchdog::pid_check`: `verify_pid_alive(pid, expected_exe)` → `Alive|Gone|
+  IdentityMismatch` через `sysinfo` (0.39.6, `default-features=false`, `["system"]`; API звірено
+  scratch-пробою). Звіряє PID **і** exe-шлях (fallback на `name()`, якщо `exe()`=`None`) — recycled
+  PID інакше = тихий вічний збій. `sysinfo` тягне транзитивний `winapi` 0.3.9 (via `ntapi`) — 0
+  нових advisory, без змін `deny.toml`; повне обґрунтування в SECURITY.md.
+- **spawn** — `watchdog::spawn`: чиста `resolve_sibling_path(current_exe, role)` (відхиляє
+  не-абсолютний шлях → `NotAbsolute`, ніякого CWD-relative), тонка `spawn_sibling` (`is_file()` →
+  `NotFound`, hard error, ніколи PATH). `kill` свідомо не будується.
+- **state** — `watchdog::state`: `WatchdogState` (7 варіантів 1:1 з `watchdog-state.md`),
+  `WatchdogTarget` (2, вужче за `instance::Role`), `WatchdogStateFile` + атомарний `write`/`read`
+  `watchdog-state.json` (§7.1 #7). `last_error: Option<WatchdogErrorLabel>` — закритий enum, не
+  `String` (структурно не несе домен).
+- **transition** — `watchdog::transition`: чиста `transition(current, &TransitionInput) ->
+  WatchdogState`, композиція vote/pid/budget/backoff у автомат `watchdog-state.md`, тотальна.
+  Побічний ефект 3.3 виводить із поверненого стану.
+- **T-93 — чесно:** per-channel половина зроблена структурно в 3.1 (`ChannelStatus` без `Dead`);
+  vote-рівень тут (Коміт 1); e2e «один канал мовчить, два живі → не рестарт» на рівні `transition`
+  (Коміт 7, спостережувано на стані); loop-рівень — Батч 3.3. **T-94** — обидві гілки, напряму й
+  крізь `transition`.
+- Не в 3.2: робочі цикли на 5 s тику на обох бінарниках; `dnsqb-watcher` main + його Cargo.toml
+  (`tokio` `process`/`rt`/`time`, §7.1 #9); `/admin/status.watchdog` + tray-tooltip → Батч 3.3 /
+  T-95; `kill` sibling'а → лише якщо 3.3 доведе потребу.
+
+**Наступний — Батч 3.3, T-150 / T-95** (збірка: `dnsqb-watcher` як ідемпотентний entry point +
+робочі цикли + стан watchdog у tray/`/admin/status`).
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -391,13 +426,6 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   Manager — `key_store::delete_secret` для TLS-запису (виклик додати тут). Залишений ключ у
   secure storage після видалення застосунку — той самий клас бага безпеки, що й залишений
   довірений сертифікат (SECURITY.md). **macOS-половина (Keychain) → Фаза 6.**
-- [ ] T-87 — (Батч 3.2) Voting-логіка "watcher перевіряє service" — 2 з 3 каналів (7)
-- [ ] T-88 — (Батч 3.2) Voting-логіка "service перевіряє watcher" — unanimous по 2 каналах (7)
-- [ ] T-89 — (Батч 3.2) Перевірка PID перед перезапуском (відсутність heartbeat ≠ мертвий процес) (7)
-- [ ] T-90 — (Батч 3.2) Експоненційний backoff між спробами перезапуску (7)
-- [ ] T-91 — (Батч 3.2) Ліміт спроб перезапуску у вікні часу, зупинка з явним повідомленням в UI (не тихий нескінченний цикл) (7)
-- [ ] T-93 — (Батч 3.2) Юніт-тест "один канал мовчить, процес живий → не рестарт" (найважливіший тест watchdog-модуля) (7, Наскрізні вимоги) — per-channel половина зроблена в 3.1 структурно (тип `ChannelStatus` без `Dead`); end-to-end voting-варіант — тут
-- [ ] T-94 — (Батч 3.2) Юніт-тести 2-з-3 та unanimous-гілок голосування (7, Наскрізні вимоги)
 - [ ] T-95 — (Батч 3.3) Оновити індикатор стану UI станом watchdog (живий / мертвий / рестартує) (8, 7)
 - [ ] T-152 — (Батч 3.4) Виявлення відсутності інтернету як окремого стану, відмінного від "деградований апстрім" (3.3, 8, суміжно з T-56): періодична легка перевірка мережевої досяжності через **кілька незалежних** завжди-доступних маркерів в інтернеті (напр. `generate_204`-подібні ендпоінти кількох великих незалежних інфраструктур — не один-єдиний), легкі HTTP-запити чи ping, не повний DoH-раунд-тріп. Мета — коли інтернету взагалі немає, сервіс не повинен чекати повний per-query таймаут (3.3) на кожен окремий DNS-запит до апстрімів поспіль, а має розпізнати стан "офлайн" і реагувати швидко/явно, а не мовчки поводитись як при деградованому, але присутньому, апстрімі. Стан має бути видимий в UI (T-56's індикатор) окремо від "апстрім деградований, мережа є". Дизайн (яка кількість/які саме маркери, як часто перевіряти, як саме "швидкий шлях" узгоджується з існуючими fail-open/fail-closed/degraded режимами) — ще не вирішений, задача лише зафіксована.
 - [ ] T-154 — (Батч 3.4) Failover baseline на резервний DoH-ендпоінт при невідповіді основного (3.3, 3.4):

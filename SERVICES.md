@@ -117,8 +117,11 @@ sentinel-домену) — доводить, що lookup-код виконуєт
 `{"active_providers": N, "geoip": "LOADED"|"ABSENT"}`. Сам факт HTTP 200 і є сигналом здоров'я;
 тіло інформаційне. Споживач — `dnsqb-watcher` через `AdminClient::health()` (Батч 3.3).
 On-disk артефакти в `%LOCALAPPDATA%\dns-quorum-filter\`, які додав Батч 3.1: `service.lock`
-(0 байт, ексклюзивний хендл), `service.pid` (JSON). У Батчі 3.3 додасться `service.hb`
-(heartbeat-файл, канал 2).
+(0 байт, ексклюзивний хендл), `service.pid` (JSON). Батч 3.2 визначив формат `watchdog-state.json`
+(`{schema_version, state, target, restart_attempts_in_window, window_started_at, last_transition_at,
+last_error}`, §7.1 #7) — єдиний письменник `dnsqb-watcher`, атомарний replace (`.tmp` + rename);
+`dnsqb-service`/`dnsqb-tray` — лише читачі. Ні його, ні `service.hb` (канал 2) ще ніхто не пише —
+робочі цикли на обох бінарниках і сам `dnsqb-watcher` main — Батч 3.3.
 
 ### Логи
 

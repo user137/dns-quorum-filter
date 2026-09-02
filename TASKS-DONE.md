@@ -2383,3 +2383,101 @@ per-install суфікса для secret-store entry й (у 3.1) імені pipe
   `diagrams/watchdog-channels.md`: відкритий GAP «форма тіло-маркера `/health`» → закрито
   конкретним DTO. **Manual smoke**: `GET /health` через реальний hyper+rustls → 200
   `{"active_providers":2,"geoip":"ABSENT"}`; `/health/` → 404.
+
+### Батч 3.2 — ядро рішень watchdog (зроблено 2026-09-02, plan-mode + advisor kickoff і closing, 8 комітів)
+
+Автомат із `diagrams/watchdog-state.md`, розкладений на чисті функції + тонкі імпурні оболонки,
+усе бібліотечне у `crates/dnsqb-service/src/watchdog/`. Не в скоупі (Батч 3.3): робочі цикли на
+5 s тику на обох бінарниках, `dnsqb-watcher` main + його `Cargo.toml`, `/admin/status.watchdog` +
+tray-tooltip (T-95). **Opening advisor** дав 7 знахідок (3 blocking), усі враховані в плані до
+першого коміту: (1) голосування — дві названі функції фіксованої арності, не одна на зрізі
+(T-41 slice-footgun); (2) додати чисту `transition` (без неї «ядро рішень» нічого не секвенує —
+3.3 винаходив би автомат сам); (3) `last_error` — тип `Option<WatchdogErrorLabel>`, не
+`Option<String>` з конструктором-гейтом; (4) `resolve_sibling_path` — явна перевірка
+`is_absolute()` (інакше `parent()` порожнього шляху → CWD-relative спавн); (5) `sysinfo` API
+пробити scratch-біном до фіксації версії; (6) майбутній `window_started_at` → скидати вікно, не
+вічний GaveUp; (7) T-93 чесно розписати рівні.
+
+- [x] T-87 — (Батч 3.2) Voting-логіка "watcher перевіряє service" — 2 з 3 каналів (7) — `82f32be`.
+  `watchdog::vote::vote_watcher_checks_service(ipc, file, health) -> Liveness`, `Dead` якщо `>= 2`
+  з трьох аргументів `== ChannelStatus::NoSignal`. Фіксована арність, не `&[ChannelStatus]`:
+  зріз + внутрішня `.is_empty()`-перевірка = T-41 footgun (один мовчазний канал як 1-елем. зріз
+  оголосив би смерть — false-positive рестарт, від якого весь §7 захищає); з фікс-параметрами
+  «не зміг прочитати канал 2» пишеться на місці виклику як `NoSignal`, видимо.
+- [x] T-88 — (Батч 3.2) Voting-логіка "service перевіряє watcher" — unanimous по 2 каналах (7) —
+  `82f32be`. `vote_service_checks_watcher(ipc, file) -> Liveness`, `Dead` лише коли **обидва**
+  `NoSignal` (unanimous; `/health` у цьому напрямі не існує, тож 2-з-2 більшість спрацьовувала б
+  на будь-якому одиничному збої).
+- [x] T-90 — (Батч 3.2) Експоненційний backoff між спробами перезапуску (7) — `ac3dba9`.
+  `watchdog::backoff::next_backoff(attempt) -> Duration` над `BACKOFF_STEPS = [1,2,4,8,16] s`
+  (1-індексований), cap `BACKOFF_CAP` = 16 s поза розкладом. Lookup `BACKOFF_STEPS.get(idx)
+  .copied().unwrap_or(BACKOFF_CAP)` — in-bounds provable з рядка, не індексація, не `.unwrap()`.
+- [x] T-91 — (Батч 3.2) Ліміт спроб перезапуску у вікні часу, зупинка з явним повідомленням в UI
+  (не тихий нескінченний цикл) (7) — `14b93ee`. `watchdog::budget::RestartBudget::register_attempt
+  (now) -> BudgetVerdict::{Allowed, GaveUp}`, `MAX_RESTARTS_PER_WINDOW`=5 / `RESTART_WINDOW`=600 s
+  rolling, per-target (викличник тримає один `RestartBudget` на target). Чиста (час — параметр).
+  `elapsed = window_started_at.map_or(Duration::MAX, |s| now.duration_since(s).unwrap_or(MAX))` —
+  майбутній `window_started_at` (persisted у `watchdog-state.json`, читається після годинникового
+  стрибка) → `Err` → `MAX` → `> RESTART_WINDOW` → вікно скидається. Помилка в бік «дозволити
+  рестарти», не «заклинити в GaveUp назавжди» — та сама don't-do-the-drastic-thing логіка, що
+  `is_stale` майбутній-mtime у 3.1. UI-повідомлення про GaveUp — Батч 3.3 / T-95.
+- [x] T-89 — (Батч 3.2) Перевірка PID перед перезапуском (відсутність heartbeat ≠ мертвий процес)
+  (7) — `7cf2582`. `watchdog::pid_check::verify_pid_alive(pid, expected_exe) -> PidCheck::{Alive,
+  Gone, IdentityMismatch}`, тонка оболонка над `sysinfo` (`0.39.6`, `default-features = false,
+  features = ["system"]` — API `System::new()` + `refresh_processes(ProcessesToUpdate::Some(&[Pid]),
+  true)` single-PID; `Process::exe() -> Option<&Path>`; `Process::name() -> &OsStr` — усе звірено
+  throwaway scratch-біном до написання, per keyring-рядок SECURITY.md). Звіряє PID **і** exe-шлях
+  (fallback на `name()` vs `file_name()`, якщо OS не віддає повний шлях) — bare-PID читав би
+  recycled PID як «живий назавжди», watchdog ніколи не рестартнув би справді мертвий сервіс (тихий
+  вічний збій, гірший за restart loop). `sysinfo` тягне транзитивний `winapi` 0.3.9 (via `ntapi`)
+  — той самий старий FFI-стек, що §7.1 #2 відхилив для guard-крейта, але там була тривіальна safe
+  альтернатива (`share_mode(0)` lockfile), а для no-`unsafe` перевірки *ідентичності* процесу її
+  нема; **0 нових advisory** (`cargo audit` 12 warnings до і після), **без змін `deny.toml`** (усі
+  ліцензії вже дозволені), `#![forbid(unsafe_code)]` цілий (FFI у `ntapi`/`windows-*`). Повне
+  обґрунтування — рядок `sysinfo` у SECURITY.md. Тести біжать проти реальної таблиці процесів на
+  `windows-latest` CI (як `key_store` round-trip).
+- [x] T-93 — (Батч 3.2) Юніт-тест "один канал мовчить, процес живий → не рестарт" (найважливіший
+  тест watchdog-модуля) (7, Наскрізні вимоги) — per-channel половина зроблена структурно в 3.1
+  (`ChannelStatus` без `Dead`); **vote-рівень** — `82f32be` (`vote_watcher_checks_service(NoSignal,
+  Signal, Signal) == Alive`); **e2e «не рестарт»** — `07d28e1` на рівні `transition`: з
+  `ChannelDegraded` при тому голосі автомат тримає `ChannelDegraded`, **ніколи** не веде в
+  `SuspectDead`/`VerifyingPid`/`Restarting`/`GaveUp` — спостережувано на **поверненому стані**, не
+  лише на поверненні `vote`. Loop-рівень (реальний тік із каналами) — Батч 3.3.
+- [x] T-94 — (Батч 3.2) Юніт-тести 2-з-3 та unanimous-гілок голосування (7, Наскрізні вимоги) —
+  `82f32be` (обидві гілки напряму: рівно 2 з 3 `NoSignal` → `Dead`, 1 з 3 → `Alive`; обидва з 2
+  → `Dead`, будь-який один `Signal` → `Alive`) + `07d28e1` (ті самі гілки крізь `transition` →
+  `SuspectDead`).
+
+Додаткові (batch-supporting, без T-номера — як `paths`-рефактор у 3.1):
+- **`watchdog::spawn`** — `be22460`. Чиста `resolve_sibling_path(current_exe, role) -> Result
+  <PathBuf, SpawnError>`: `if !current_exe.is_absolute() → NotAbsolute` (advisor-catch:
+  `Path::new("dnsqb-watcher").parent()` = `Some("")` → resolver дав би відносний шлях, оболонка
+  спавнила б від CWD — той самий attacker-influenceable клас, що §7.1 #5 виключає), тоді
+  `parent()?.join(format!("dnsqb-{}{}", role.as_str(), EXE_SUFFIX))`. Тонка `spawn_sibling` —
+  `current_exe()` + `is_file()` (→ `NotFound`, hard error, **ніколи** PATH/CWD-fallback) +
+  `std::process::Command::spawn` (sync — не потребує `tokio` `process`-фічі). **`kill` свідомо
+  не будується**: watchdog spawn'ить лише процес, який уже підтвердив мертвим, а single-instance
+  guard (3.1) не дає дубля — живого «неправильного» екземпляра для kill не виникає.
+- **`watchdog::state`** — `10dd6b3`. `WatchdogState` (7 варіантів 1:1 з `watchdog-state.md`, serde
+  SCREAMING_SNAKE), `WatchdogTarget` (2 — вужче за `instance::Role`, watchdog не таргетить tray),
+  `WatchdogStateFile` (§7.1 #7 поля) + `write`/`read` `watchdog-state.json`. `write` атомарний —
+  sibling `.tmp` + same-dir `fs::rename` (дзеркало `geoip_updater::persist_atomically`). Формат
+  фіксується тут, бо читач (tray + `/admin/status`) у 3.3 / T-95 на нього залежить — той самий
+  мотив, що `read_pid_file` у 3.1. `last_error: Option<WatchdogErrorLabel>` — закритий serde-enum,
+  **не** `Option<String>` (advisor-catch: pub-поле поруч із гейт-конструктором = гейт декоративний;
+  `InvalidReason`-прецедент зробив *тип* нездатним нести текст) — структурно не несе домен ні на
+  запис, ні на читання.
+- **`watchdog::transition`** — `07d28e1`. Чиста `transition(current: WatchdogState, input:
+  &TransitionInput) -> WatchdogState` — композиція vote/pid_check/budget/backoff у автомат
+  `watchdog-state.md`, один `match`-arm на ребро, тотальна (кожна `(state, input)` пара → стан,
+  без паніки). Повертає **лише наступний стан** — побічний ефект (spawn/sleep/verify) Батч 3.3
+  виводить із нього (`match new_state`), що лишає 3.3 чистим wiring'ом. `TransitionInput { vote,
+  any_channel_degraded, pid: Option<PidCheck>, budget: Option<BudgetVerdict>, backoff_elapsed }`
+  — кожне поле консультується лише у своєму стані. Один тест на ребро (~13 у 8 `#[test]`).
+
+**Гейти:** `cargo test --workspace --lib --bins` (496 pass, +30 нових), `clippy --all-targets
+-D warnings`, `fmt --check`, `doc -D warnings`, `--doc` (0), conformance (18 pass / 2 ignored),
+`cargo audit`/`cargo deny check` — усі зелені локально. `main.rs` не зачеплений жодним комітом
+(цей батч нічого нового не запускає). **Ручний smoke не застосовний як окремий крок** —
+функціональна перевірка це самі юніт-тести (`pid_check` проти реальної таблиці процесів на
+`windows-latest` CI, `state` round-trip у tempdir, чисті функції з іменованими тестами).
