@@ -195,6 +195,9 @@ pub use watchdog::frame::{
     encode as encode_heartbeat_frame, parse as parse_heartbeat_frame, Frame, FrameError, FrameKind,
     FRAME_LEN,
 };
+pub use watchdog::heartbeat_file::{
+    is_stale, read as read_heartbeat_file, touch as touch_heartbeat_file, HeartbeatFile,
+};
 pub use watchdog::instance::{
     acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
     PidFile, Role as InstanceRole,

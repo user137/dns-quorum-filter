@@ -5,6 +5,7 @@
 
 pub mod channel;
 pub mod frame;
+pub mod heartbeat_file;
 pub mod instance;
 #[cfg(windows)]
 pub mod pipe;
