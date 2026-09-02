@@ -271,7 +271,7 @@ Concurrency/Recovery.
   lib-залежність від `dnsqb-service` (як трей — для `AdminClient`); як `dnsqb-watcher` без UI
   сигналить `GaveUp` (файл стану в app-data теці, який трей полить і `/admin/status` читає →
   Батч 3.3). Власний plan-mode + AskUserQuestion + advisor. Виводить сам цей блок у TASKS.md.
-- **Батч 3.1 — liveness-примітиви (T-92, T-84, T-85, T-86)**: single-instance guard першим (кожен
+- **Батч 3.1 — liveness-примітиви (T-92, T-84, T-85, T-86)** — ✅ зроблено 2026-09-02 (див. Прогрес нижче): single-instance guard першим (кожен
   spawn-шлях його потребує); named-pipe IPC ping/pong (framing/parse чистий, окремо від I/O);
   shared heartbeat-файл (`mtime` touch + чистий предикат "stale?"); `/health` на `dnsqb-service`
   (у `dispatch::ROUTES` + хендлер + перенести з `serve_returns_404_for_every_path_outside_the_
@@ -329,7 +329,7 @@ Concurrency/Recovery.
   `key_store::delete_secret` для TLS-запису (залишений trusted cert / secret-store ключ =
   клас бага SECURITY.md). macOS-половина → Ф6.
 
-**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → 3.1 → 3.2 → 3.3 (watchdog готовий) → 3.4 →
+**Порядок:** 3.0 → ~~T-101~~ (зроблено 2026-09-01) → ~~3.1~~ (зроблено 2026-09-02) → 3.2 → 3.3 (watchdog готовий) → 3.4 →
 3.5 → 3.6 → **T-100/T-102/T-103** → 3.8 (останній). 3.4 може йти раніше, якщо watchdog-батч
 застопориться (він незалежний).
 
@@ -359,8 +359,30 @@ codeql.yml`: CodeQL SAST, мова `rust`, `build-mode: none` (без cargo buil
 закрито реструктуризацією тестових catch-all (`other => panic!("{other:?}")` → явні
 `Ok(None)`/`Ok(Some(_))`/`Err(err)` arms, форматується лише coarse `{err}` Display). 2 останні
 (`trust_store.rs` 497/501 — `assert` друкує SHA-1 публічного сертифіката) dismiss'нуто через
-API (`used in tests`, коментар про несекретність). **0 open alertів.** Наступний — Батч 3.1,
-T-92 першим.
+API (`used in tests`, коментар про несекретність). **0 open alertів.**
+
+**Батч 3.1 зроблено 2026-09-02** (plan-mode + advisor kickoff і closing, 6 комітів) —
+liveness-примітиви як бібліотечний код у `crates/dnsqb-service/src/watchdog/`:
+- передуючий рефактор: `paths::app_data_dir_hash` (`pub(crate)`) витягнуто з `key_store` (§7.1 #6).
+- **T-92** — `watchdog::instance`: `share_mode(0)` advisory lockfile `<app-data>/<role>.lock`
+  (2-й same-role процес → `AlreadyRunning`, OS звільняє на виході), `write_pid_file`/
+  `read_pid_file` (`{pid,exe_path,started_at}` JSON, round-trip тест пінить формат для 3.2).
+  Wired у `dnsqb-service` main **перед** cert-генерацією (closing-advisor: інакше 2 паралельні
+  first-run'и пишуть неузгоджені cert.pem+ключ). `acquire` створює app-data теку.
+- **T-84** — `watchdog::frame` (чистий: 20-байтний кадр, `len`=18 після себе), `watchdog::channel`
+  (чистий: `channel_status(misses)` → `Signal|NoSignal` на `MISS_THRESHOLD`=3; T-93 per-channel
+  половина = тип без `Dead`-варіанта), `watchdog::pipe` (`#[cfg(windows)]`: `HeartbeatPipeServer`/
+  `Client` над `tokio` named_pipe, `recreate()` = `first_pipe_instance(false)`).
+- **T-85** — `watchdog::heartbeat_file`: `touch`/`read` + чистий `is_stale(now,mtime,threshold)`
+  (майбутній mtime → не stale). Чужий/обрізаний файл зі свіжим mtime → `marker_ok:false`.
+- **T-86** — `GET /health` (peer `/dns-query`, не `/admin/*`): у `ROUTES`+`serve`+`serve_health`
+  (прогонить локальний префікс pipeline для sentinel-домену, без upstream) → `HealthResponse
+  {active_providers, geoip}`; `AdminClient::health()`. Manual smoke: 200 через реальний TLS.
+- Не в 3.1: pipe-server/hb-touch цикли в main + `dnsqb-watcher` main + його Cargo.toml → Батч 3.3;
+  voting/backoff/budget/PID-identity → Батч 3.2. **T-93 per-channel тест** структурний
+  (тип без `Dead`), спостережуваний per-channel тест приходить із wiring у Батчі 3.3.
+
+**Наступний — Батч 3.2, T-87 першим** (voting/backoff/budget).
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -369,16 +391,12 @@ T-92 першим.
   Manager — `key_store::delete_secret` для TLS-запису (виклик додати тут). Залишений ключ у
   secure storage після видалення застосунку — той самий клас бага безпеки, що й залишений
   довірений сертифікат (SECURITY.md). **macOS-половина (Keychain) → Фаза 6.**
-- [ ] T-84 — (Батч 3.1) `dnsqb-watcher`: канал 1, IPC heartbeat (Unix socket / named pipe) (7)
-- [ ] T-85 — (Батч 3.1) Канал 2: shared heartbeat-файл (`mtime`) в app data (7)
-- [ ] T-86 — (Батч 3.1) Канал 3: HTTP `/health` на наявному DoH-порту, без нового слухача (7)
 - [ ] T-87 — (Батч 3.2) Voting-логіка "watcher перевіряє service" — 2 з 3 каналів (7)
 - [ ] T-88 — (Батч 3.2) Voting-логіка "service перевіряє watcher" — unanimous по 2 каналах (7)
 - [ ] T-89 — (Батч 3.2) Перевірка PID перед перезапуском (відсутність heartbeat ≠ мертвий процес) (7)
 - [ ] T-90 — (Батч 3.2) Експоненційний backoff між спробами перезапуску (7)
 - [ ] T-91 — (Батч 3.2) Ліміт спроб перезапуску у вікні часу, зупинка з явним повідомленням в UI (не тихий нескінченний цикл) (7)
-- [ ] T-92 — (Батч 3.1) Single-instance guard (файловий лок / named mutex) для обох процесів (7)
-- [ ] T-93 — (Батч 3.2) Юніт-тест "один канал мовчить, процес живий → не рестарт" (найважливіший тест watchdog-модуля) (7, Наскрізні вимоги)
+- [ ] T-93 — (Батч 3.2) Юніт-тест "один канал мовчить, процес живий → не рестарт" (найважливіший тест watchdog-модуля) (7, Наскрізні вимоги) — per-channel половина зроблена в 3.1 структурно (тип `ChannelStatus` без `Dead`); end-to-end voting-варіант — тут
 - [ ] T-94 — (Батч 3.2) Юніт-тести 2-з-3 та unanimous-гілок голосування (7, Наскрізні вимоги)
 - [ ] T-95 — (Батч 3.3) Оновити індикатор стану UI станом watchdog (живий / мертвий / рестартує) (8, 7)
 - [ ] T-152 — (Батч 3.4) Виявлення відсутності інтернету як окремого стану, відмінного від "деградований апстрім" (3.3, 8, суміжно з T-56): періодична легка перевірка мережевої досяжності через **кілька незалежних** завжди-доступних маркерів в інтернеті (напр. `generate_204`-подібні ендпоінти кількох великих незалежних інфраструктур — не один-єдиний), легкі HTTP-запити чи ping, не повний DoH-раунд-тріп. Мета — коли інтернету взагалі немає, сервіс не повинен чекати повний per-query таймаут (3.3) на кожен окремий DNS-запит до апстрімів поспіль, а має розпізнати стан "офлайн" і реагувати швидко/явно, а не мовчки поводитись як при деградованому, але присутньому, апстрімі. Стан має бути видимий в UI (T-56's індикатор) окремо від "апстрім деградований, мережа є". Дизайн (яка кількість/які саме маркери, як часто перевіряти, як саме "швидкий шлях" узгоджується з існуючими fail-open/fail-closed/degraded режимами) — ще не вирішений, задача лише зафіксована.

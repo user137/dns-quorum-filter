@@ -2314,3 +2314,72 @@ docs-only) не має номера задачі — його запис у CLAU
   - **Підсумок: 17 open → 0 open** (17 fixed CodeQL-ом, 2 dismissed). Токен `gh` має `repo` scope
     → code-scanning read+write на публічному репо без `gh auth refresh`. **Гоча в CLAUDE.md**
     (`rust/cleartext-logging` taint по імені функції; рекурує на secret-суміжних тестах Батча 3.1).
+
+### Батч 3.1 — liveness-примітиви (зроблено 2026-09-02, plan-mode + advisor kickoff і closing, 6 комітів)
+
+Увесь код — бібліотечний, у новому `crates/dnsqb-service/src/watchdog/` (§7.1 #6: `dnsqb-watcher`
+залежатиме від `dnsqb-service` як lib). Складання у робочі цикли на обох бінарниках — Батч 3.3;
+voting/backoff/budget/PID-identity — Батч 3.2. Передуючий рефактор-коміт `c82187f`:
+`paths::app_data_dir_hash` (`pub(crate)`) витягнуто з `key_store::entry_name` — одна деривація
+per-install суфікса для secret-store entry й (у 3.1) імені pipe.
+
+- [x] T-92 — (Батч 3.1) Single-instance guard (файловий лок / named mutex) для обох процесів (7)
+  — `watchdog::instance` (`83ffec9` + closing-review фікс `e1334e4`). Свій advisory lockfile:
+  `OpenOptions::share_mode(0)` на `<app-data>/<role>.lock` (`Role` = Service/Watcher/Tray). 2-й
+  same-role процес → `GuardError::AlreadyRunning` (raw OS error 32 `ERROR_SHARING_VIOLATION`); OS
+  закриває хендл на виході/краху → лок звільняється сам, cleanup-кроку нема. `#[cfg(not(windows))]`
+  → `UnsupportedPlatform` за тим самим підписом (Ф6 замінить на `flock`); `main.rs` match іменує
+  цей arm явно (E0004), коментований, не `unreachable!()`. `write_pid_file`/`read_pid_file`
+  (`{pid,exe_path,started_at}` serde JSON, перезапис при старті, **не** видаляється при виході —
+  §7.1 #3; identity-перевірка recycled PID → Батч 3.2/T-89) — reader у цьому коміті лише щоб
+  round-trip-тест пінив on-disk формат. Wired у `dnsqb-service` main **перед**
+  `load_or_generate_server_config` (`e1334e4`, closing-advisor #1): інакше два паралельні first-run
+  писали б неузгоджені `cert.pem` + ключ у Credential Manager (той самий клас, що T-67's discard
+  ordering); `app_data_dir()` — чистий env-read, нічого downstream не зсунулось. `acquire` тепер
+  `create_dir_all` app-data теки (він тепер перший, хто її чіпає). `let _instance_guard = …`
+  (іменований bind, не `let _ =` — RAII-пастка, яку жоден unit-тест не зловить бо `main.rs` не
+  тестується). **Manual smoke** (свіжий scratch `%LOCALAPPDATA%`): 2-й інстанс логує «already
+  running» і виходить з кодом 1; `service.lock`+`service.pid` присутні, pid у файлі = живому.
+  Тести: 4 категорії + recovery (drop guard'а звільняє лок).
+
+- [x] T-84 — (Батч 3.1) `dnsqb-watcher`: канал 1, IPC heartbeat (Unix socket / named pipe) (7)
+  — `98825ee`. `watchdog::frame` (чистий): фікс-кадр `[u16 LE len][u8 ver=1][u8 kind][u64 LE seq]
+  [u64 LE millis]`; **`len` = 18 байтів ПІСЛЯ себе**, не повні 20 — 3.3 stream-reader читає 2
+  байти = скільки ще; `len` є на кожному v1-кадрі заради forward-compat v2 зі змінним хвостом.
+  `encode`/`parse` + закритий `FrameError` (`TooShort`/`LengthMismatch`/`BadVersion`/`BadKind`),
+  4 категорії тестів. `watchdog::channel` (чистий): `channel_status(consecutive_misses)` →
+  `Signal`/`NoSignal` на `MISS_THRESHOLD`=3 (§7.1 #8), спільний для всіх 3 каналів. **T-93
+  per-channel половина = структурний доказ**: тип `ChannelStatus` не має `Dead`-варіанта, вирок
+  «мертвий» — voting-шар Батча 3.2; спостережуваний per-channel тест прийде з wiring у 3.3.
+  `watchdog::pipe` (`#[cfg(windows)]`, тонка I/O-оболонка): `HeartbeatPipeServer` (`dnsqb-service`)
+  / `HeartbeatPipeClient` (`dnsqb-watcher`) над `tokio::net::windows::named_pipe` — safe API
+  (перевірено: `ServerOptions::create`/`ClientOptions::open` — `pub fn`, не `unsafe`), жодного raw
+  FFI, `#![forbid(unsafe_code)]` цілий. `pipe_name` = `\\.\pipe\dns-quorum-filter\heartbeat-<h>`
+  (`<h>` = `app_data_dir_hash`). `recreate()` = `first_pipe_instance(false)` для кожного інстансу
+  після першого (§7.1 #1 — з `true` recreate впаде); тест робить реальний server/client
+  Ping→Pong round-trip + recreate для 2-го клієнта, seq echoed.
+
+- [x] T-85 — (Батч 3.1) Канал 2: shared heartbeat-файл (`mtime`) в app data (7) — `228f295`.
+  `watchdog::heartbeat_file`: `touch(app_data_dir, role)` = `fs::write(<role>.hb, marker_bytes)`
+  — фікс-маркер `dnsqb-heartbeat v1 <role>`, звичайний перезапис, без atomic-rename (§7.1 #4).
+  `read(path)` → `HeartbeatFile { marker_ok, role: Option<Role>, mtime }`. Чистий предикат
+  `is_stale(now, mtime, threshold)` = `now.duration_since(mtime).is_ok_and(|d| d > threshold)` —
+  mtime у майбутньому (розсинхрон годинника між процесами) → `Err` → **не** stale. Чужий/обрізаний
+  файл зі свіжим mtime → `marker_ok: false` (→ `NoSignal`), ніколи не «смерть». 4 категорії тестів
+  (поріг рівно/майбутнє/минуле; foreign; truncated; unknown-role token; missing paths → `Err`).
+
+- [x] T-86 — (Батч 3.1) Канал 3: HTTP `/health` на наявному DoH-порту, без нового слухача (7) —
+  `7915f20`. `GET /health` — peer `/dns-query`, **не** `/admin/*`: у `dispatch::ROUTES` +
+  `serve`-match + `serve_health`. «Глибша за ‹процес існує›, без upstream-виклику» (§7.1 #4/#10,
+  `watchdog-channels.md` рядок 19): `serve_health` прогонить локальний префікс pipeline для
+  sentinel `health-probe.dnsqb.invalid` — `overrides::decision` (sync) + `cache::get`
+  (`moka::future`, локальний), обидва мережево-вільні, результати відкинуто; це доводить, що
+  lookup-код виконується й lock не зайнятий писарем. Тіло `admin::HealthResponse
+  { active_providers: usize, geoip: LOADED|ABSENT }` — інформаційне; «здоровий» = сам HTTP 200
+  (closing-advisor: `&'static str status` поле прибрано — always-`"ok"` несе 0 інформації + не
+  `Deserialize`). `AdminClient::health()` — той самий cert-pinned клієнт, ніколи
+  `danger_accept_invalid_certs`. Route-allowlist тести: `/health` у `EXPECTED_ADMIN_ROUTES`,
+  `/health/` (trailing slash) лишається у 404-sweep, новий `serve_health_returns_200_with_pipeline_status`.
+  `diagrams/watchdog-channels.md`: відкритий GAP «форма тіло-маркера `/health`» → закрито
+  конкретним DTO. **Manual smoke**: `GET /health` через реальний hyper+rustls → 200
+  `{"active_providers":2,"geoip":"ABSENT"}`; `/health/` → 404.

@@ -27,6 +27,15 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
 
 ### Що робить при старті
 
+0. **Бере single-instance lock** (T-92, SPEC.md §7.1 #2) — ексклюзивно (`share_mode(0)`) відкриває
+   `%LOCALAPPDATA%\dns-quorum-filter\service.lock` (створюючи каталог, якщо його ще нема) і тримає
+   хендл увесь час життя процесу. Другий `dnsqb-service` на тій самій app-data теці логує
+   `another service instance is already running` і **виходить з кодом 1** — не бореться за порт і
+   конфіги. OS звільняє лок на виході (зокрема краху), осиротілого стану нема. Одразу після цього
+   пише `service.pid` (`{pid, exe_path, started_at}` JSON, перезаписується щостарту, **не**
+   видаляється при виході — джерело PID для watchdog'а, Батч 3.2/3.3). Якщо `%LOCALAPPDATA%` не
+   заданий — `warn!` і запуск без guard'а. Guard береться **перед** генерацією сертифіката: інакше
+   два паралельні перші запуски могли б записати неузгоджені `cert.pem` + ключ.
 1. Завантажує (або, при першому запуску, генерує і зберігає) self-signed TLS-лист-сертифікат —
    публічний `cert.pem` у `%LOCALAPPDATA%\dns-quorum-filter\`, приватний ключ у Windows
    Credential Manager через крейт `keyring` (T-48/T-142/T-67; запис
@@ -100,6 +109,16 @@ confirm-діалогом, що явно називає наслідок.
 Обмежень доступу, крім loopback-only + CSRF-гейта на POST-маршрутах, немає — сторінка не
 потребує браузерної автентифікації, лише дійсний TLS-хендшейк проти локального сертифіката (до
 T-49 — з попередженням про недовіру).
+
+`GET /health` (T-86, канал 3 watchdog'а — SPEC.md §7.1 #4/#10) — на тому ж порту й TLS, але
+**не** `/admin/*` (немає CSRF-гейта, read-only). Глибша за «процес існує», але без жодного
+upstream-виклику: прогонить локальний префікс конвеєра (override + cache lookup для
+sentinel-домену) — доводить, що lookup-код виконується й жоден писар не тримає lock — і повертає
+`{"active_providers": N, "geoip": "LOADED"|"ABSENT"}`. Сам факт HTTP 200 і є сигналом здоров'я;
+тіло інформаційне. Споживач — `dnsqb-watcher` через `AdminClient::health()` (Батч 3.3).
+On-disk артефакти в `%LOCALAPPDATA%\dns-quorum-filter\`, які додав Батч 3.1: `service.lock`
+(0 байт, ексклюзивний хендл), `service.pid` (JSON). У Батчі 3.3 додасться `service.hb`
+(heartbeat-файл, канал 2).
 
 ### Логи
 

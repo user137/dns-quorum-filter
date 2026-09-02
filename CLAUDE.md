@@ -14,7 +14,14 @@ channels}.md` + SPEC.md §7.1 (9 реалізаційні рішення — IPC
 **T-101 done 2026-09-01** (pulled forward from Батч 3.7): `.github/workflows/codeql.yml` — CodeQL
 SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR; alerts in the Security
 tab, triaged like clippy/audit findings (see the Commands section for the `gh` read command).
-**Start at Батч 3.1, T-92 first.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
+**Батч 3.1 (liveness primitives) done 2026-09-02**: new `crates/dnsqb-service/src/watchdog/`
+module tree — `instance` (T-92: `share_mode(0)` lockfile guard + pid-file, wired into
+`dnsqb-service` main **before** cert gen), `frame`+`channel` (T-84 pure: 20-byte heartbeat frame,
+`channel_status`→`Signal|NoSignal` at 3 misses), `pipe` (T-84 `#[cfg(windows)]`: named-pipe
+server/client), `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale`), plus `GET /health`
+(T-86: watchdog channel 3, in `dispatch::ROUTES`). Primitives only — the running loops on both
+binaries are Батч 3.3; voting/backoff/budget/PID-identity are Батч 3.2. **Start at Батч 3.2, T-87
+first.** Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI,
 RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -56,8 +63,9 @@ rating filter, voter scope — are later phases, not built. Modules under `crate
 | `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
-| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` |
-| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient`; embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
+| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call) |
+| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
+| `watchdog/` (Батч 3.1, primitives only) | `instance` (T-92: `Role`, `acquire` → `share_mode(0)` `<role>.lock` guard + `create_dir_all`, `GuardError`, `write_pid_file`/`read_pid_file`); `frame` (T-84 pure: 20-byte `Frame`, `encode`/`parse`, `len`=18 after itself), `channel` (T-84 pure: `channel_status(misses)` → `ChannelStatus::{Signal,NoSignal}` at `MISS_THRESHOLD`=3 — no `Dead` variant), `pipe` (T-84 `#[cfg(windows)]`: `HeartbeatPipeServer`/`HeartbeatPipeClient` over `tokio` named_pipe, `recreate` = `first_pipe_instance(false)`), `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now,mtime,threshold)`) |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
@@ -70,9 +78,11 @@ and updates the live `GeoipSource` + wakes the updater; `refresh_health` on the 
 that started failing later), `GET /admin/providers`
 + `POST /admin/providers/{add,remove,set-enabled}` (T-72/T-73; provider list edited here, **not**
 `/admin/config` — which now carries only `timeout_mode`), `/admin/log[/clear]`;
-`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. The MaxMind creds are their own OS
-secret-store entry with a single writer (that one POST route), not part of `resolver_config.toml`
-— no shared lock.
+`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
+**not** an admin route: `GET /health` (T-86, watchdog channel 3 — no CSRF gate, read-only,
+`HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
+creds are their own OS secret-store entry with a single writer (that one POST route), not part of
+`resolver_config.toml` — no shared lock.
 Every route that re-serializes `resolver_config.toml` shares
 `state.persist_lock` and reads the other fields' live values before saving — the cross-field-read
 discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77).
@@ -88,7 +98,10 @@ is unaffected). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Too
 `Filtering`); `Filtering` appends a degraded-upstream suffix when `AdminStats.degraded_events > 0`
 (raw counts over the last 20 `QUORUM` log entries — T-56, narrowed), not a fourth state.
 
-`dnsqb-watcher` — still a `todo!()` stub; Фаза 3 (SPEC.md §7).
+`dnsqb-watcher` — still a `todo!()` stub (its `main`, `Cargo.toml` deps, and the running
+heartbeat loops all land in Батч 3.3). The Батч 3.1 liveness primitives it will consume live in
+`dnsqb-service`'s `watchdog/` module (SPEC.md §7.1 #6 — watcher depends on the service crate as a
+lib). Фаза 3 (SPEC.md §7).
 
 ### GeoIP workstream (Фаза 2)
 
