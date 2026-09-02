@@ -29,7 +29,6 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use keyring::Entry;
-use sha1::{Digest, Sha1};
 use zeroize::Zeroizing;
 
 /// The `keyring` "service" component, shared by every entry this crate creates.
@@ -66,36 +65,13 @@ pub enum KeyStoreError {
 }
 
 /// The `keyring` "user" component for the secret named by `prefix` in the
-/// install rooted at `app_data_dir` — `<prefix>:<first 8 bytes of
-/// SHA-1(normalized path), hex>`. See the module documentation for why this is
-/// path-derived rather than constant.
-///
-/// The path is normalized before hashing — lowercased (Windows paths are
-/// case-insensitive) and trailing separators stripped — so `dnsqb-service` and
-/// `dnsqb-tray` (which runs cert rotation in a **separate process**) derive the
-/// same entry even if one holds `…\Local\dns-quorum-filter` and the other
-/// `…\local\dns-quorum-filter\`. Residual, not covered: an 8.3 short path in one
-/// process vs. the long form in the other would still diverge — both resolve
-/// the directory from the same `%LOCALAPPDATA%` env var via
-/// `paths::app_data_dir`, so this is a theoretical gap, not an observed one.
+/// install rooted at `app_data_dir` — `<prefix>:<8-byte app-data-dir hash,
+/// hex>`. See the module documentation for why this is path-derived rather than
+/// constant, and [`crate::paths::app_data_dir_hash`] for the hash itself and
+/// how the path is normalized before hashing (shared with the watchdog IPC
+/// pipe name, SPEC.md §7.1 #6).
 fn entry_name(prefix: &str, app_data_dir: &Path) -> String {
-    use std::fmt::Write;
-
-    let normalized = app_data_dir
-        .to_string_lossy()
-        .to_lowercase()
-        .trim_end_matches(['/', '\\'])
-        .to_owned();
-    let hex = Sha1::digest(normalized.as_bytes()).iter().take(8).fold(
-        String::with_capacity(16),
-        |mut acc, byte| {
-            // Writing a byte to a `String` via `write!` is infallible; the
-            // `fmt::Error` branch is unreachable for this sink.
-            let _ = write!(acc, "{byte:02x}");
-            acc
-        },
-    );
-    format!("{prefix}:{hex}")
+    format!("{prefix}:{}", crate::paths::app_data_dir_hash(app_data_dir))
 }
 
 /// Credential-store entry holding the local `DoH` listener's TLS private key

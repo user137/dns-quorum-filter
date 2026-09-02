@@ -20,7 +20,9 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use sha1::{Digest, Sha1};
 
 /// Errors resolving the app-data directory.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -54,11 +56,43 @@ pub fn app_data_dir() -> Result<PathBuf, PathsError> {
     resolve_app_data_dir(env::var_os("LOCALAPPDATA"))
 }
 
+/// The first 8 bytes of `SHA-1(normalized app_data_dir)`, hex-encoded — the
+/// per-install isolation suffix shared by the OS-secret-store entry names
+/// ([`crate::key_store`]) and the watchdog IPC pipe name (SPEC.md §7.1 #1 / #6),
+/// so a scratch instance in its own app-data directory never collides with a
+/// real one.
+///
+/// The path is normalized before hashing — lowercased (Windows paths are
+/// case-insensitive) and trailing separators stripped — so two processes that
+/// resolve the same directory in slightly different textual forms
+/// (`…\Local\dns-quorum-filter` vs `…\local\dns-quorum-filter\`) still derive the
+/// same suffix. An 8.3 short path vs the long form would still diverge; every
+/// caller resolves the directory from the same `%LOCALAPPDATA%` via
+/// [`app_data_dir`], so that is a theoretical gap, not an observed one.
+pub(crate) fn app_data_dir_hash(app_data_dir: &Path) -> String {
+    use std::fmt::Write;
+
+    let normalized = app_data_dir
+        .to_string_lossy()
+        .to_lowercase()
+        .trim_end_matches(['/', '\\'])
+        .to_owned();
+    Sha1::digest(normalized.as_bytes()).iter().take(8).fold(
+        String::with_capacity(16),
+        |mut acc, byte| {
+            // Writing a byte to a `String` via `write!` is infallible; the
+            // `fmt::Error` branch is unreachable for this sink.
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{resolve_app_data_dir, PathsError};
+    use super::{app_data_dir_hash, resolve_app_data_dir, PathsError};
     use std::ffi::OsString;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn resolves_under_the_given_local_app_data_root() {
@@ -74,6 +108,23 @@ mod tests {
         assert_eq!(
             resolve_app_data_dir(None),
             Err(PathsError::LocalAppDataNotSet)
+        );
+    }
+
+    #[test]
+    fn app_data_dir_hash_is_stable_case_and_trailing_separator_normalized() {
+        let a = app_data_dir_hash(Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter"));
+        let b = app_data_dir_hash(Path::new(r"c:\users\x\appdata\local\dns-quorum-filter\"));
+        assert_eq!(a, b, "case and a trailing separator must normalize away");
+        assert_eq!(a.len(), 16, "8 bytes, hex-encoded");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn app_data_dir_hash_differs_for_a_different_path() {
+        assert_ne!(
+            app_data_dir_hash(Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter")),
+            app_data_dir_hash(Path::new(r"C:\Users\y\AppData\Local\dns-quorum-filter")),
         );
     }
 }
