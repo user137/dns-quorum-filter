@@ -154,11 +154,16 @@ fn unix_millis(now: SystemTime) -> u64 {
 /// Whether `watchdog-state.json`'s own `mtime` is recent enough that resuming
 /// its record makes sense — an older file is from a prior boot, start fresh.
 /// Uses the file `mtime`, not `last_transition_at` (which is hours old in a
-/// stable `Healthy` run by design).
+/// stable `Healthy` run by design). The window is 90 s: a watcher the *service*
+/// restarts is only noticed and respawned ~40 s after it dies (three missed
+/// beats plus the automaton's own transitions), so a tighter window would never
+/// let a service-restarted watcher inherit the restart budget — the one case
+/// `LoopDriver::restored` exists for. A minutes-old file from a prior boot is
+/// still comfortably rejected.
 #[cfg(windows)]
 fn watchdog_state_is_fresh(app_data: &Path) -> bool {
     match std::fs::metadata(app_data.join(STATE_FILE_NAME)).and_then(|meta| meta.modified()) {
-        Ok(mtime) => !is_stale(SystemTime::now(), mtime, Duration::from_secs(30)),
+        Ok(mtime) => !is_stale(SystemTime::now(), mtime, Duration::from_secs(90)),
         Err(_) => false,
     }
 }
