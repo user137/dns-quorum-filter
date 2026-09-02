@@ -850,6 +850,12 @@ dependencies = [
 [[package]]
 name = "dnsqb-watcher"
 version = "0.1.0"
+dependencies = [
+ "dnsqb-service",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "dpi"
@@ -3512,6 +3518,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

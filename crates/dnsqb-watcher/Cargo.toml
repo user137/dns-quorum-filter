@@ -7,3 +7,13 @@ license.workspace = true
 [[bin]]
 name = "dnsqb-watcher"
 path = "src/main.rs"
+
+[dependencies]
+dnsqb-service = { path = "../dnsqb-service", version = "0.1.0" }
+# `flavor = "current_thread"` in `#[tokio::main]` is what keeps the watcher
+# single-threaded (SPEC.md §7.1 #9 "rt, не rt-multi-thread") — the feature set
+# alone cannot: the `dnsqb-service` lib dependency unifies `rt-multi-thread` in
+# regardless. Feature list is §7.1 #9 verbatim.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "net", "time", "process", "sync", "macros"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3"
