@@ -1,7 +1,7 @@
 SOURCES: SPEC.md §5, §5.1, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
 T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
-`serve_baseline_when_filters_unreachable`); DECISIONS.md 2026-09-02, 2026-09-03 (порядок
-пріоритету індикатора).
+`serve_baseline_when_filters_unreachable`); T-146 (`AdminStatusResponse.query_log_persisted`);
+DECISIONS.md 2026-09-02, 2026-09-03 (порядок пріоритету індикатора; шифрована персистентність).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -166,7 +166,7 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 / T-95 / T-152 / T-154 реалізовано>>
+        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
@@ -177,6 +177,7 @@ classDiagram
         +AdminStats stats
         +WatchdogStatusView? watchdog
         +bool persisted
+        +bool query_log_persisted
     }
     class WatchdogStatusView {
         <<T-95, реалізовано — enum RESTARTING | GAVE_UP>>

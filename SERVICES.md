@@ -47,6 +47,13 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
 2. Завантажує `resolver_config.toml` і `overrides.toml` (обидва — див.
    [`CONFIGURATION.md`](CONFIGURATION.md); поведінка при відсутньому/зламаному файлі описана
    там).
+2a. **Якщо `persist_query_log = true`** (T-146, SPEC.md §6) — бере/мінтить 32-байтний
+   `XChaCha20Poly1305`-ключ у Credential Manager (`persistence-key:<hash теки>`, той самий
+   механізм, що TLS-ключ), розшифровує `%LOCALAPPDATA%\dns-quorum-filter\query-log.enc` і
+   засіває ним in-memory ring buffer (з тим самим bounded-window 1000 / 24 год) — **до** того,
+   як слухач почне приймати трафік. Ключа нема, а файл є / файл пошкоджений → `warn!`, файл
+   перейменовується в `query-log.enc.orphaned-<unix_ts>` (не відновлюється), новий ключ, лог
+   порожній. Нема app-data теки → `warn!`, персистенція вимкнена на цей запуск.
 3. Біндить TCP-слухач на вказаному порту — зайнятий порт це явна фатальна помилка, не тихий
    fallback на інший порт (SPEC.md §1).
 4. Приймає з'єднання, термінує TLS (`rustls`), і на кожен DoH GET/POST-запит прогонює конвеєр
@@ -67,6 +74,11 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    (T-154): при повній відмові активного baseline-URL — перемикання Cloudflare → Quad9 → Google,
    з пробою основного кожні 300 s і поверненням на нього щойно він одужав; активний ендпоінт видно
    в `GET /admin/status.baseline_endpoint`.
+7. **Якщо `persist_query_log = true`** — запускає фоновий query-log-персистер (T-146): повний
+   перезапис `query-log.enc` кожні 60 s (атомарно: temp + `sync_all` + `rename`) плюс фінальний
+   флаш на graceful shutdown. Не append-only — hard crash губить ≤60 s хвоста логу. `GET
+   /admin/status.query_log_persisted` = стан прапорця; `/admin/ui` показує пасивний рядок,
+   поки він активний.
 
 ### Адмін-канал (T-52, розширено T-149)
 

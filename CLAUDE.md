@@ -27,9 +27,15 @@ T-155 `DecisionSource::BaselineFallback` + `serve_baseline_when_filters_unreacha
 (default OFF — DECISIONS.md 2026-09-03: OFF = today's behaviour, better-labelled, zero regress);
 T-152 `reachability` module (3 independent `generate_204` markers, Offline only if all fail) +
 offline fast path in `handle_query` (instant SERVFAIL, no fan-out/cache) + status-indicator
-condition #3. Per-batch narrative → TASKS-DONE.md. **Start at Батч 3.5 (T-96 / T-97 / T-146)** —
-encrypted persistence; own plan-mode + advisor. Фаза 1 formally closed 2026-08-29; Крок 0 (Rust
-workspace, CI, RFC-conformance table T-1–T-19) done.
+condition #3. Per-batch narrative → TASKS-DONE.md.
+**Батч 3.5 — T-146 + T-96 done 2026-09-03** (7 code + 1 docs commit, plan+advisor): opt-in
+encrypted persistence of the query log. `encrypted_file` (`XChaCha20Poly1305`, RustCrypto —
+user decision, DECISIONS.md 2026-09-03), 32-byte key in the OS secret store (`key_store`, the
+T-67 mechanism), `query-log.enc` format, `persist_query_log` config flag (**no admin toggle** —
+hand-edit only), passive `/admin/ui` indicator (`AdminStatusResponse.query_log_persisted`).
+**T-97 (encrypted persistent cache) carved out** — own task, own go-ahead + mini plan+advisor
+(advisor kickoff #4: most novel risk, lowest value). **Start at T-97.** Фаза 1 formally closed
+2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
 
@@ -72,9 +78,12 @@ Modules under `crates/dnsqb-service/src/`:
 | `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
-| `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear` |
-| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`); per-field validation, loud errors |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides); `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
+| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` bool (T-146, default `false`, **no admin route** — carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
+| `encrypted_file` | T-146 pure AEAD codec: `seal`/`open` over `XChaCha20Poly1305`; 6-byte cleartext header (`DQF1` / `FileKind` / version) is the AAD, validated **before** the AEAD open (`UnsupportedVersion` distinct from `Decrypt`); `EncryptedFileError` payload-free |
+| `persist_dto` | T-146 serde mirrors of `LogEntry` (`SystemTime`↔u64 millis, `RecordType`↔u16, `error_kind` `&'static str` re-interned through a closed set); `PersistedFileV1` wrapper (struct, additive); `to_json`/`from_json` |
+| `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed) |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key for `query-log.enc`; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
@@ -183,6 +192,13 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
+- **Encrypted query-log persistence (T-146)** — best-effort scrub only (no defence vs VSS shadow
+  copies / SSD wear-levelling, same honesty as `key_store::overwrite_with_zeros`); a hard crash
+  loses ≤60s of the log tail (periodic full-snapshot rewrite, not append-only — deliberate); an
+  orphaned `query-log.enc` (key gone) is renamed `.orphaned-<ts>` and **never** decrypted/
+  recovered, a fresh key is minted (a query log is re-creatable — warn+proceed, unlike a TLS
+  key); the `persistence-key` entry is not deleted on uninstall (folds into T-70, same as the
+  TLS key). `persist_cache` (T-97) is not in this batch.
 - **`fail_closed` timeout-Block is still cached** for `block_verdict_ttl` — a network outage
   poisons the cache with blocks that outlive it. T-152's offline fast path does **not** write the
   cache; a retrofit of the pre-existing `fail_closed` branch is a separate task (Батч 3.4 scoped
@@ -299,10 +315,20 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 - `url` — custom DoH provider URL parsing + literal-host SSRF classification (T-72). Already in the
   tree transitively via `reqwest`/`hickory-proto`; promoted to a direct dep, no new licence entry.
 - `keyring` (`default-features = false`, `features = ["v1"]`) — the OS secret store (`key_store.rs`):
-  the TLS private key (T-67) and the MaxMind account-id+license-key blob (T-163). `v1` is required
+  the TLS private key (T-67), the MaxMind account-id+license-key blob (T-163), and the
+  `XChaCha20Poly1305` persistence key (T-146). `v1` is required
   (compile error without it); it also lists the Unix/Apple store crates target-gated — lockfile-only
   for windows-msvc, no `deny.toml` change. `unsafe` FFI is contained in
   `windows-native-keyring-store`, `#![forbid(unsafe_code)]` intact.
+- `chacha20poly1305` (`default-features = false`, `features = ["alloc", "zeroize"]`) + `getrandom`
+  (promoted transitive→direct, like `url` at T-72) — T-146's `encrypted_file` AEAD. RustCrypto,
+  chosen over promoting `aws-lc-rs` (user decision 2026-09-03 — pure Rust, no C toolchain). 4 new
+  crates (`chacha20poly1305`/`aead`/`poly1305`/`universal-hash`); `chacha20`/`cipher` 0.5/
+  `crypto-common` 0.2 move dev-only→runtime (were via `proptest`'s `rand`); `cargo update -p
+  chacha20` pins the tree off yanked 0.10.1 → non-yanked 0.10.2, `cargo audit` 12→11.
+  `multiple-versions` ticks (`block-buffer` 0.10/0.12, `crypto-common` 0.1/0.2) — `warn`, gate
+  green; no `deny.toml` change (all `MIT OR Apache-2.0`). `unsafe` SIMD contained in
+  `chacha20`/`poly1305`, `#![forbid(unsafe_code)]` intact. SECURITY.md row.
 - `sysinfo` (`default-features = false`, `features = ["system"]`) — `watchdog::pid_check::
   verify_pid_alive` (T-89): the recycled-PID guard §7 requires before a restart. Named by SPEC.md
   §7.1 #3. Pulls the transitive `winapi` 0.3.9 (via `ntapi`) + the `windows` 0.62 family —
@@ -366,7 +392,10 @@ all resolved in **T-165** (`0` open now): the one real one (`examples/phase1_met
 `danger_accept_invalid_certs(true)`) fixed by pinning `cert.pem`; 14× `rust/cleartext-logging`
 fixed by restructuring `#[cfg(test)]` catch-all `other => panic!("{other:?}")` arms; 2×
 (`trust_store.rs` 497/501, an assert printing a public cert thumbprint) dismissed via API as
-`used in tests`.
+`used in tests`. **T-146** added 2 more `used in tests` dismissals — `rust/hard-coded-cryptographic-value`
+(critical) on the fixed test keys in `encrypted_file.rs`'s `#[cfg(test)]` module (`const KEY = [7u8;32]`,
+`let wrong = [8u8;32]`); a deterministic AEAD round-trip / wrong-key test needs a fixed key and it
+never reaches production (real key = `key_store::load_or_create_persistence_key`).
 
 **Check the actual CI run after every push — local-green is not CI-green**, especially for
 OS-permission/environment-dependent code. `gh run list --branch main --limit 5`; `gh run watch
@@ -404,7 +433,14 @@ reasoning (search by section number rather than re-deriving a decision from scra
   bound. A mock impl with no `.await` inside needs `std::future::ready(...)` instead of `async fn`
   to satisfy `clippy::unused_async_trait_impl`.
 - Windows: the bundled `curl.exe` (Schannel libcurl) has no `--http2` — use PowerShell's
-  `Invoke-WebRequest -HttpVersion 2.0` for HTTP/2 (relevant here: `dns.quad9.net` requires it).
+  `Invoke-WebRequest -HttpVersion 2.0` for HTTP/2 (relevant here: `dns.quad9.net` requires it,
+  and so does this project's own hyper `DoH` listener).
+- **`std::fs::rename` on this Windows toolchain atomically replaces an existing destination**
+  (`MOVEFILE_REPLACE_EXISTING`) and consumes the source — verified with a scratch probe before
+  `paths::write_atomic` (T-146) relied on it. So the atomic-write pattern is just write-`<path>.tmp`
+  → `sync_all` → `rename(tmp, path)`; **not** remove-then-rename (which reopens the torn-write
+  window). `sync_all` the temp *before* the rename or a power loss can leave a renamed-but-empty
+  file (same habit as `key_store::overwrite_with_zeros`).
 - The PowerShell tool's working directory doesn't reliably persist between separate tool calls in
   this environment — `cd` inside the same command string, don't rely on a prior call's `cd`. Its
   static guard also misfires on `/flag:value` args or `X:`-shaped substrings in a command that

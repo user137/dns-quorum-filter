@@ -2724,3 +2724,71 @@ T-155-гілка поверх стабільного `QuorumOutcome` → T-152.
 Check2→Check3(мережа)→Check4(voters)→Check5(degraded)), SOURCES +§3.7/T-152/DECISIONS.md
 2026-09-03; `ui-dto-model.md` — класи `NetworkStatusView`/`BaselineEndpointView` + нові поля
 `AdminStatusResponse`/`AdminConfigUpdate`. `watchdog-*.md` — без змін (reachability не канал §7).
+
+### Батч 3.5 — шифрований персистентний журнал (T-146 + T-96, зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 7 кодових + 1 docs коміт)
+
+T-146 (формат + вмикання прапорцем) + T-96 (пасивний UI-індикатор) — opt-in шифрована
+персистенція логу запитів (SPEC.md §6 / Відкриті питання п.5). **T-97 (персистентний кеш)
+винесено в окрему задачу** (advisor kickoff #4: найбільше нового ризику при найнижчій цінності —
+рішення, не контингенція).
+
+**Рішення користувача (AskUserQuestion 2026-09-03) → DECISIONS.md 2026-09-03:** (1) шифр —
+RustCrypto `chacha20poly1305`, конкретно `XChaCha20Poly1305` (не промоушн `aws-lc-rs`, не `age`);
+(2) вмикання лише конфіг-файлом + пасивний індикатор (не UI-тумблер); (3) два незалежні прапорці
+(`persist_query_log` тут, `persist_cache` — T-97).
+
+**Kickoff advisor (9 пунктів, критичні в плані):** #1 orphaned-ciphertext — названий стан, не
+тихий regen (rename в `.orphaned-<ts>`, новий ключ, лог порожній; інваріант «ключ раз» ← 
+`instance::acquire`); #2 `chacha20` yank клас, не кількість — `cargo update -p chacha20` пінить
+на **0.10.2** (не-yanked; фікс SSE4.1-інтрінсика в SSE2-бекенді RNG/legacy-варіантів, не крипто-
+баг, не на AEAD-шляху), `cargo audit` 12→11; #3 збій `getrandom` = hard don't-write (нема
+fallback-nonce, флаш переривається); #5 `write_atomic` перевірено scratch-пробою (Windows
+`fs::rename` поверх наявного = atomic replace); #7 magic/version до AEAD-open (`UnsupportedVersion`
+окремо від `Decrypt`); #8 discriminating-тест «sealed-байти не містять plaintext».
+
+- [x] T-146 — `encrypted_file` (`b179870`): `seal`/`open`, `XChaCha20Poly1305`, 6-байтний
+  cleartext-заголовок (`DQF1`/kind/version) як AAD; `key_store::load_or_create_persistence_key`
+  (`9fe132e`) — 3-й секрет (`persistence-key:<hash>`), `KeyStoreError::{Rng,MalformedKey}`,
+  orphan-детект за `ciphertext_present`; `config.rs` `persist_query_log` (`07f1e64`) через
+  `PersistTarget` + cross-field-read кожного запису `resolver_config.toml`; `persist_dto` +
+  `QueryLog::restore` + `paths::write_atomic` + `log_persist` (`4947b17`) — `persist_snapshot`
+  (serialize→seal→write), `load_persisted_query_log` (startup: mint/read key, decrypt, seed;
+  orphan/corrupt → rename-aside + порожній), `run_query_log_persister` (60 s + shutdown флаш,
+  тонка оболонка). `main.rs` — сід до `AppState::new`, спавн після; GeoIP/reachability спавни
+  винесені в `spawn_public_http_tasks` (розплата за `too_many_lines`, структурно).
+- [x] T-96 — пасивний індикатор (`f9528f7`): `AdminStatusResponse.query_log_persisted` (read-only,
+  нема адмін-маршруту), `/admin/ui` `.notice.warn` рядок поки прапорець активний, називає файл і
+  спосіб вимкнути. Не per-event confirm: вмикання вже свідома правка конфіга.
+
+**Задокументовані межі** (→ CLAUDE.md «Known limitations»):
+- Best-effort scrub — VSS shadow copies / SSD wear-levelling не покриті (як `key_store::
+  overwrite_with_zeros`).
+- Hard crash губить ≤60 с хвоста логу — свідомо (snapshot-семантика, не append-only).
+- Orphaned `query-log.enc` (ключ зник) — перейменовується, ніколи не відновлюється; новий ключ.
+  Query-лог — re-creatable-класу (warn+proceed); TLS-ключ так не можна.
+- Persistence-ключ не видаляється при деінсталяції — фолдиться в T-70 (як TLS-ключ).
+- macOS/Linux `keyring`-backends не перевірені — Ф6/T-71.
+- `persist_cache` — не в цьому батчі (T-97, окремий go-ahead).
+- `chacha20`/`cipher 0.5`/`crypto-common 0.2` — тепер runtime-залежності (були dev-only через
+  `proptest`'s `rand`); `multiple-versions` тикнув (`block-buffer` 0.10/0.12, `crypto-common`
+  0.1/0.2) — `warn`, гейт зелений. SECURITY.md-рядок.
+
+**Manual end-to-end smoke** (scratch `%LOCALAPPDATA%`, `persist_query_log = true`, порт 18443):
+(a) DoH-запит `example.com` → 200; `/admin/status` `total=1`, `query_log_persisted=true`;
+graceful shutdown → `query-log.enc` 410 байт, заголовок `44 51 46 31 01 01` (`DQF1`+kind 01+
+ver 01), сирі байти **не містять** `example` / `QUORUM`; `.tmp` не лишився. (b) рестарт →
+`INFO log_persist: restored 1 query-log entries from disk`, `/admin/status` `total=1`.
+(c) flip 1 байта в ct → рестарт: `WARN ... failed authentication ... starting empty and moving
+the file aside` + `WARN ... moved ... to query-log.enc.orphaned-1788446882`; orphan збережений
+(410 байт), лог порожній. (d) missing-key → той самий `rename_orphan`-шлях (unit-covered:
+`ciphertext_present_with_no_stored_key_signals_an_orphan`), live не ганяв (треба scratch keyring-
+delete bin). (e) `persist_query_log = false` → жодного `query-log.enc`, поведінка без змін.
+(f) `/admin/ui` — `query_log_persisted:true` + admin_ui unit-тест на gated рядок.
+
+**CodeQL:** 2 `hard-coded-cryptographic-value` (critical) на тестових ключах `encrypted_file.rs`
+(`const KEY = [7u8;32]`, `let wrong = [8u8;32]` у `#[cfg(test)]`) — dismiss'нуто через API як
+«used in tests» (той самий клас FP, що 2 з T-165). Відкритих алертів: 0.
+
+**Звірка діаграм:** `ui-dto-model.md` — `AdminStatusResponse` +`query_log_persisted: bool`.
+`ui-status-indicator.md` — **без змін** (персистенція не умова індикатора, пасивний рядок).
+`watchdog-*.md` — без змін.

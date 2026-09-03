@@ -451,3 +451,53 @@ filtering-voter не відповів — задача в TASKS.md схилял�
   ігнор режиму таймауту); `DecisionSource::BaselineFallback` для «усі фільтри мовчать».
 - `crates/dnsqb-service/src/config.rs` — нове поле `serve_baseline_when_filters_unreachable`
   (`resolver_config.toml`, дефолт `false`).
+
+---
+
+## 2026-09-03 — Батч 3.5: шифрована персистентність логу — шифр, спосіб вмикання, розбиття батча
+
+**Контекст:** SPEC.md §6 / Відкриті питання п.5 давно передбачали opt-in шифровану персистенцію
+логу й кешу, без вибору механізму. Батч 3.5 (T-146 + T-96) реалізує половину — лог; kickoff
+plan-mode + AskUserQuestion + advisor.
+
+**Рішення:**
+
+1. **Шифр — RustCrypto `chacha20poly1305`, конкретно `XChaCha20Poly1305`** (192-бітний nonce).
+   Відхилено: промоушн `aws-lc-rs` (уже крипто-бекенд проекту через rustls/rcgen — але користувач
+   обрав pure-Rust, без C-тулчейну) і `age` (важкий формат із власним recipient/passphrase-
+   механізмом, зайвим коли ключ із OS-сховища). `XChaCha` замість `ChaCha` — 24-байтний
+   випадковий nonce знімає питання birthday-колізії для файлу, що перезаписується щофлаш, за
+   12 зайвих байт. `cargo update -p chacha20` пінить дерево з yanked 0.10.1 (був dev-only) на
+   0.10.2; `cargo audit` 12 → 11 warning'ів. Ключ — 32 байти у Credential Manager
+   (`persistence-key:<hash теки>`), той самий `key_store`/`keyring`-механізм, що TLS-ключ T-67.
+   Формат: 6-байтний cleartext-заголовок (`DQF1`/kind/version) як AAD — версійний cutover і
+   підміна типу файлу стають гучними названими помилками, не auth-fail (дисципліна T-144/145/148).
+
+2. **Вмикання — лише прапорцем `persist_query_log` у `resolver_config.toml`, без UI-тумблера**
+   (T-146 так і формулює). `/admin/ui` показує пасивний рядок-попередження, поки прапорець
+   активний (`AdminStatusResponse.query_log_persisted`). Зберігати історію переглядів на диску
+   має бути свідома дія; завжди-видимий банер для стану, який користувач сам обрав, — не
+   анти-патерн «always-on banner ≠ попередження» (нема per-event, який підтверджувати).
+   Узгоджено з «backend before UI» і реверсом T-57 (прибрання always-on розкриття).
+
+3. **Два незалежні прапорці** (`persist_query_log`, `persist_cache`) — не один спільний. Лог і
+   кеш різняться чутливістю й ціннісною пропозицією (кеш = холодний старт). **Цей батч додає
+   лише `persist_query_log`.**
+
+4. **Батч розділено:** T-146 + T-96 (лог) — зараз; **T-97 (кеш) — окрема задача, окремий
+   go-ahead + власний міні plan+advisor.** T-97 несе найбільше нового ризику (`Instant`→wall-clock
+   реконструкція TTL, вікно виселення `moka`, `moka::iter()` семантика) при найнижчій цінності;
+   advisor kickoff #4 радив зробити це рішенням, не контингенцією.
+
+**Наслідки:**
+- Нові модулі `encrypted_file` (чистий AEAD-кодек), `persist_dto` (serde-дзеркала `LogEntry`),
+  `log_persist` (`persist_snapshot` / `load_persisted_query_log` / `run_query_log_persister`).
+- `key_store` — третій секрет (`load_or_create_persistence_key`, `KeyStoreError::{Rng,MalformedKey}`).
+- `config.rs` / `dispatch::PersistTarget` — `persist_query_log` через cross-field-read кожного
+  запису `resolver_config.toml`.
+- `paths::write_atomic` (temp + `sync_all` + `rename`; `fs::rename` поверх наявного файлу на
+  Windows перевірено scratch-пробою).
+- `main.rs` — сід логу до `AppState::new`, спавн персистера після; GeoIP-updater + reachability
+  проб винесені в `spawn_public_http_tasks` (розплата за `too_many_lines`, структурно).
+- 2 CodeQL `hard-coded-cryptographic-value` (critical) на тестових ключах у `encrypted_file.rs`
+  — dismiss'нуто як «used in tests» (той самий клас, що T-165's тестові FP).
