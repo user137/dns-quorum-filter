@@ -392,9 +392,10 @@ all resolved in **T-165** (`0` open now): the one real one (`examples/phase1_met
 `danger_accept_invalid_certs(true)`) fixed by pinning `cert.pem`; 14× `rust/cleartext-logging`
 fixed by restructuring `#[cfg(test)]` catch-all `other => panic!("{other:?}")` arms; 2×
 (`trust_store.rs` 497/501, an assert printing a public cert thumbprint) dismissed via API as
-`used in tests`. **T-146** added 2 more `used in tests` dismissals — `rust/hard-coded-cryptographic-value`
-(critical) on the fixed test keys in `encrypted_file.rs`'s `#[cfg(test)]` module (`const KEY = [7u8;32]`,
-`let wrong = [8u8;32]`); a deterministic AEAD round-trip / wrong-key test needs a fixed key and it
+`used in tests`. **T-146** added 6 more `used in tests` dismissals — `rust/hard-coded-cryptographic-value`
+(critical) on fixed test keys in `#[cfg(test)]` modules: 2 in `encrypted_file.rs` (`const KEY = [7u8;32]`,
+`let wrong = [8u8;32]`) and 4 in `log_persist.rs` (`let key = [3|5|9u8;32]` in the round-trip / overwrite
+/ corrupt-file tests). A deterministic AEAD round-trip / wrong-key test needs a fixed key and it
 never reaches production (real key = `key_store::load_or_create_persistence_key`).
 
 **Check the actual CI run after every push — local-green is not CI-green**, especially for

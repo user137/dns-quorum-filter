@@ -10,10 +10,12 @@
 //! `V1` suffix tracks the *inner* JSON shape, bumped only if a field's
 //! meaning changes incompatibly.
 //!
-//! [`TryFrom`] (not `From`) on the way *in* from disk: an entry with an
-//! unrecognized enum string or an out-of-range value is dropped with a
-//! `warn`, never allowed to abort the whole restore — a partially corrupt
-//! file still yields the entries that survived.
+//! [`From`], not [`TryFrom`], on the way *in* from disk: the plaintext is
+//! AEAD-authenticated, so if it decrypts at all every byte is intact and a
+//! malformed *entry* can only come from a newer build's schema. [`from_json`]
+//! lets `serde` fail the whole document in that case; the caller
+//! ([`crate::log_persist`]) renames the file aside and starts from an empty
+//! log rather than recovering a partial one.
 
 use serde::{Deserialize, Serialize};
 

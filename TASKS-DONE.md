@@ -2725,7 +2725,7 @@ Check2→Check3(мережа)→Check4(voters)→Check5(degraded)), SOURCES +§3
 2026-09-03; `ui-dto-model.md` — класи `NetworkStatusView`/`BaselineEndpointView` + нові поля
 `AdminStatusResponse`/`AdminConfigUpdate`. `watchdog-*.md` — без змін (reachability не канал §7).
 
-### Батч 3.5 — шифрований персистентний журнал (T-146 + T-96, зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 7 кодових + 1 docs коміт)
+### Батч 3.5 — шифрований персистентний журнал (T-146 + T-96, зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 5 кодових + 1 docs + 1 closing-review коміт)
 
 T-146 (формат + вмикання прапорцем) + T-96 (пасивний UI-індикатор) — opt-in шифрована
 персистенція логу запитів (SPEC.md §6 / Відкриті питання п.5). **T-97 (персистентний кеш)
@@ -2785,9 +2785,19 @@ the file aside` + `WARN ... moved ... to query-log.enc.orphaned-1788446882`; orp
 delete bin). (e) `persist_query_log = false` → жодного `query-log.enc`, поведінка без змін.
 (f) `/admin/ui` — `query_log_persisted:true` + admin_ui unit-тест на gated рядок.
 
-**CodeQL:** 2 `hard-coded-cryptographic-value` (critical) на тестових ключах `encrypted_file.rs`
-(`const KEY = [7u8;32]`, `let wrong = [8u8;32]` у `#[cfg(test)]`) — dismiss'нуто через API як
-«used in tests» (той самий клас FP, що 2 з T-165). Відкритих алертів: 0.
+**CodeQL:** 6 `hard-coded-cryptographic-value` (critical), усі на фіксованих тестових ключах у
+`#[cfg(test)]` — 2 в `encrypted_file.rs` (`const KEY = [7u8;32]`, `let wrong = [8u8;32]`), 4 в
+`log_persist.rs` (`let key = [3|5|9u8;32]` у round-trip/overwrite/corrupt-file тестах, що
+потребують детермінованого ключа). Усі dismiss'нуто через API як «used in tests» (той самий клас
+FP, що 2 з T-165). Детермінований AEAD-раундтріп по-справжньому потребує фіксованого ключа.
+Відкритих алертів: 0.
+
+**Closing advisor (self, як у 3.3/3.4):** одна знахідка — module-doc `persist_dto.rs` усе ще
+описував pre-implementation-дизайн (per-entry `TryFrom` skip-with-warn, часткове відновлення), а
+код свідомо зроблено як інфалібельний `From` + `serde` валить весь документ + викликач
+(`log_persist`) перейменовує файл aside і стартує з порожнім логом (smoke (c) саме це й показав).
+Doc виправлено під код тим самим проходом (`persist_dto.rs` §module-doc). Решта — plan і код
+збігаються.
 
 **Звірка діаграм:** `ui-dto-model.md` — `AdminStatusResponse` +`query_log_persisted: bool`.
 `ui-status-indicator.md` — **без змін** (персистенція не умова індикатора, пасивний рядок).
