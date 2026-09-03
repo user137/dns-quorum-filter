@@ -501,3 +501,55 @@ plan-mode + AskUserQuestion + advisor.
   проб винесені в `spawn_public_http_tasks` (розплата за `too_many_lines`, структурно).
 - 2 CodeQL `hard-coded-cryptographic-value` (critical) на тестових ключах у `encrypted_file.rs`
   — dismiss'нуто як «used in tests» (той самий клас, що T-165's тестові FP).
+
+---
+
+## 2026-09-03 — T-97: шифрована персистентність кешу — настінний дедлайн, лише Allow, вмикання
+
+**Контекст:** винесена половина Батча 3.5 (див. запис вище). Kickoff plan-mode + AskUserQuestion +
+advisor. Механізм (`encrypted_file` / `XChaCha20Poly1305` / `persistence-key` у OS-сховищі)
+переиспользано з T-146 без змін; `FileKind::Cache` (0x02) уже був у коді.
+
+**Рішення:**
+
+1. **На диск пишеться абсолютний настінний дедлайн, не `Instant` і не відносний залишок.**
+   `CacheEntry.expires_at` — монотонний `Instant`, який скидається при перезавантаженні, тож
+   серіалізувати його безглуздо. Snapshot конвертує в `SystemTime`-дедлайн; restore обчислює
+   залишок проти поточного настінного часу. **Запис, чий дедлайн сплив за час простою,
+   відкидається** — не подається як stale: RFC 8767 stale-if-error не підключено
+   (`should_serve_stale` — unconsumed predicate), тож споживача в прострочених записів нема.
+   Оригінальний `ttl` (діагностичний, не в гарячому шляху) при цьому втрачається — на restore
+   `ttl = remaining`.
+
+2. **Персиститься лише `Verdict::Allow`; `Block` відкидається при знятті snapshot.** Рішення
+   користувача (AskUserQuestion) проти альтернативи «персистити обидва + задокументувати».
+   Причина (advisor kickoff): `fail_closed` + коротка мережева проблема кешують таймаут-`Block`
+   на `block_verdict_ttl` (дефолт 24 год); з персистентним кешем такий «отруєний» блок пережив би
+   рестарт — у т.ч. **автоматичний рестарт watchdog**, що є саме шляхом відновлення, який Батчі
+   3.0–3.3 будували. `CacheEntry` не несе provenance, тож відфільтрувати саме timeout-блоки не
+   можна — але Allow-only прибирає клас структурно, доказово з рядка фільтра. Ціна: свіжий
+   quorum-`Block` треба перерахувати одним round-trip після старту (OR-logic → будь-який
+   провайдер одразу переблокує); прогрів холодного старту домінований Allow-записами. DTO
+   (`PCacheVerdict`) лишає `Block` представним, `to_json` його не емітить — зміна політики не
+   потребує bump'у формату.
+
+3. **`Verdict::Allow` IP лишаються `IpAddr` у DTO**, не дзеркаляться в рядки (на відміну від
+   `SystemTime`/`RecordType`/`&'static str` у `persist_dto`) — `IpAddr` має власний serde-impl,
+   round-trip lossless, дзеркало було б зайвим кодом.
+
+4. **Вмикання — лише прапорцем `persist_cache` у `resolver_config.toml`, без адмін-маршруту**
+   (як `persist_query_log`). Пасивний `/admin/ui`-рядок. Два прапорці об'єднано в один DTO-об'єкт
+   `AdminStatusResponse.encrypted_persistence { query_log, cache }` — тримає `AdminStatusResponse`
+   під `clippy::struct_excessive_bools` без `#[allow]`, і вони справді один набір.
+
+**Наслідки:**
+- Нові модулі `cache_persist_dto` (DTO + Instant→wall конвертація з інжектованим годинником) і
+  `cache_persist` (`persist_cache_snapshot` / `load_persisted_cache` / `run_cache_persister`).
+- `Cache::snapshot` (через синхронний `moka::future::Cache::iter()` → `(Arc<K>, V)`, best-effort)
+  / `Cache::restore`; `CacheKey::domain()`/`qtype()` accessor'и; `AppState::cache_snapshot` /
+  `restore_cache` (lock не тримається через `.await`).
+- `log_persist::rename_orphan` → `pub(crate)`, переиспользано.
+- `AdminStatusResponse.query_log_persisted` → `.encrypted_persistence.query_log`; `main.js` / tray
+  / тести оновлено.
+- CodeQL `hard-coded-cryptographic-value` на нових фіксованих тестових ключах — очікувано
+  dismiss «used in tests» (той самий клас, що T-146/T-165).

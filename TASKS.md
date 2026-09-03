@@ -308,9 +308,13 @@ Concurrency/Recovery.
   (plan+advisor kickoff+closing) — `encrypted_file` (`XChaCha20Poly1305`, RustCrypto, рішення
   користувача), ключ у OS secret store (`key_store`, T-67-механізм), формат `query-log.enc`,
   `persist_query_log` конфіг-прапорець (без UI-тумблера), пасивний `/admin/ui`-індикатор
-  (`AdminStatusResponse.query_log_persisted`). Наратив → TASKS-DONE.md. **T-97 (кеш) винесено
-  окремо** — своя задача, окремий go-ahead + міні plan+advisor (advisor kickoff #4: найбільше
-  нового ризику при найнижчій цінності — `Instant`→wall-clock TTL, вікно виселення `moka`).
+  (`AdminStatusResponse.query_log_persisted`). Наратив → TASKS-DONE.md.
+- **T-97 — шифрована персистентність кешу**: ~~`persist_cache`~~ **зроблено 2026-09-03**
+  (plan+advisor kickoff+closing, коміти `9f5a316`…) — `cache.enc` (той самий `encrypted_file` /
+  `FileKind::Cache` / один `persistence-key`), `cache_persist_dto` (абсолютний настінний дедлайн
+  замість монотонного `Instant`; лише `Verdict::Allow` — `Block` не персиститься), `cache_persist`
+  (`Cache::snapshot`/`restore`, 60 s + shutdown флаш), `AdminStatusResponse.encrypted_persistence`
+  + пасивний `/admin/ui`-рядок. Наратив → TASKS-DONE.md.
 - **Батч 3.6 — enterprise policy (T-98, T-99)**: T-98 — чиста research (WebFetch поточних доків
   Chrome `DnsOverHttpsTemplates`/`DnsOverHttpsMode`), без коду, гейтить T-99 і інформує Відкрите
   питання п.10. T-99 — registry-запис (Windows); AskUserQuestion на kickoff: чи взагалі в скоупі
@@ -345,8 +349,11 @@ Concurrency/Recovery.
 2026-09-03), `key_store::load_or_create_persistence_key` (3-й секрет, orphan-детект),
 `persist_dto` + `log_persist` (`QueryLog::restore`, `write_atomic`, 60 s + shutdown флаш),
 `persist_query_log` конфіг-прапорець, пасивний `/admin/ui`-індикатор. Наратив → TASKS-DONE.md.
-**Наступний — T-97 (persist_cache)**: окрема задача, окремий go-ahead + власний міні
-plan+advisor цикл; потім Батч 3.6.
+
+**T-97 (persist_cache) зроблено 2026-09-03** (plan+advisor kickoff+closing, коміти `9f5a316`…):
+`cache.enc` (спільний `encrypted_file` / `persistence-key` з логом), абсолютний настінний дедлайн
+замість `Instant`, лише `Allow`-вердикти (рішення користувача — `fail_closed`×persist взаємодія),
+`AdminStatusResponse.encrypted_persistence`. **Наступний — Батч 3.6** (T-98, T-99).
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -465,8 +472,8 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   watcher → service підняв його за ~39s; (d) `/admin/status.watchdog` = `null` у HEALTHY,
   `RESTARTING` під час рестарту; relaunch watcher'а → нуль дублів.
 
-**Батч 3.5 (T-146 + T-96) зроблено 2026-09-03.** **Наступний — T-97 (persist_cache)**: окрема
-задача, окремий go-ahead + власний міні plan-mode + advisor цикл.
+**Батч 3.5 (T-146 + T-96) зроблено 2026-09-03. T-97 (persist_cache) зроблено 2026-09-03.**
+**Наступний — Батч 3.6** (T-98 research → T-99 enterprise policy).
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -475,7 +482,6 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   Manager — `key_store::delete_secret` для TLS-запису (виклик додати тут). Залишений ключ у
   secure storage після видалення застосунку — той самий клас бага безпеки, що й залишений
   довірений сертифікат (SECURITY.md). **macOS-половина (Keychain) → Фаза 6.**
-- [ ] T-97 — (наступна задача, окремий go-ahead + міні plan+advisor) Опційне шифроване персистентне зберігання кешу (`persist_cache`, той самий `encrypted_file` механізм, `FileKind::Cache`) (4, Відкриті питання п.5)
 - [ ] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` enterprise policy перед імплементацією (Відкриті питання п.3)
 - [ ] T-99 — (Батч 3.6) Enterprise policy автоматизація (Chrome `DnsOverHttpsTemplates` через registry/plist) (Фазований план, Фаза 3)
 - [ ] T-100 — (Батч 3.7) Reproducible builds / підписані релізні бінарники (Наскрізні вимоги)

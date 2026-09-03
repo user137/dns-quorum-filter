@@ -1,6 +1,7 @@
 SOURCES: SPEC.md §5, §5.1, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
 T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
-`serve_baseline_when_filters_unreachable`); T-146 (`AdminStatusResponse.query_log_persisted`);
+`serve_baseline_when_filters_unreachable`); T-146/T-97
+(`AdminStatusResponse.encrypted_persistence { query_log, cache }`);
 DECISIONS.md 2026-09-02, 2026-09-03 (порядок пріоритету індикатора; шифрована персистентність).
 
 # DTO-модель каналу UI ↔ Backend
@@ -177,7 +178,12 @@ classDiagram
         +AdminStats stats
         +WatchdogStatusView? watchdog
         +bool persisted
-        +bool query_log_persisted
+        +EncryptedPersistenceView encrypted_persistence
+    }
+    class EncryptedPersistenceView {
+        <<T-146 / T-97, реалізовано — пасивні /admin/ui індикатори>>
+        +bool query_log
+        +bool cache
     }
     class WatchdogStatusView {
         <<T-95, реалізовано — enum RESTARTING | GAVE_UP>>
@@ -299,6 +305,7 @@ classDiagram
     ProvidersResponse --> ProviderView
     ProviderAddRequest --> Category
     AdminStatusResponse --> ProviderStatusView
+    AdminStatusResponse --> EncryptedPersistenceView
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck

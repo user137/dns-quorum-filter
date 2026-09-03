@@ -2802,3 +2802,64 @@ Doc виправлено під код тим самим проходом (`pers
 **Звірка діаграм:** `ui-dto-model.md` — `AdminStatusResponse` +`query_log_persisted: bool`.
 `ui-status-indicator.md` — **без змін** (персистенція не умова індикатора, пасивний рядок).
 `watchdog-*.md` — без змін.
+
+### T-97 — шифрований персистентний кеш (`persist_cache`, зроблено 2026-09-03, plan-mode + advisor kickoff і closing, 4 кодових + 1 docs коміт)
+
+Винесена половина Батча 3.5. Механізм (`encrypted_file` / `XChaCha20Poly1305` / `persistence-key`
+у OS-сховищі) — з T-146 без змін; `FileKind::Cache` (0x02) уже був у коді й покритий тестами.
+
+- **`9f5a316` — `cache.enc` codec + `Cache::snapshot`/`restore`:** новий `cache_persist_dto`
+  (`PersistedCacheEntry { domain, qtype: u16, expiry_millis: u64, verdict: PCacheVerdict }`;
+  `to_json`/`from_json` з інжектованим годинником; `to_json` фільтрує `Verdict::Block` + не-свіжі,
+  конвертує монотонний `Instant` → абсолютний настінний дедлайн; `from_json` відкидає запис, чий
+  дедлайн уже минув). Новий `cache_persist` (`persist_cache_snapshot`, `load_persisted_cache` →
+  `CacheInit`, `run_cache_persister`). `Cache::snapshot` (синхронний `moka::future::Cache::iter()`)
+  / `Cache::restore`; `CacheKey::domain()`/`qtype()`. `AppState::cache_snapshot`;
+  `log_persist::rename_orphan` → `pub(crate)`.
+- **`0c1be2c` — `persist_cache` прапорець:** `ResolverConfig`/`ResolverConfigFile` +поле
+  (`#[serde(default)]`, дефолт `false`), `PersistTarget` +поле через cross-field-read кожного
+  запису `resolver_config.toml`, `main.rs` сідить із конфіга. Наявний cross-field-тест тепер
+  перевіряє й `persist_cache`.
+- **`332ddf3` — wiring:** `main.rs` — `load_persisted_cache` до `AppState::new`,
+  `AppState::restore_cache` (lock не тримається через `.await`) після, `spawn_cache_persister`.
+- **`4ee18fc` — пасивний `/admin/ui` індикатор:** `AdminStatusResponse` +`encrypted_persistence
+  { query_log, cache }` (об'єднання двох прапорців у власний DTO-об'єкт тримає
+  `AdminStatusResponse` під `clippy::struct_excessive_bools` без `#[allow]`; `query_log_persisted`
+  → `encrypted_persistence.query_log` скрізь — `main.js`, tray, тести). Другий пасивний
+  `.notice.warn`-рядок у `main.js` про `cache.enc`.
+
+**Kickoff advisor (9 пунктів; критичні):** (1) `fail_closed`×persist-cache — advisor завернув
+«приймається + документується», бо `block_verdict_ttl` дефолт = 24 год і персистентний `Block`
+пережив би навіть автоматичний рестарт watchdog; винесено користувачу (AskUserQuestion) → рішення
+**персистити лише `Allow`** (клас отруєння структурно не перетинає рестарт, доказово з рядка
+фільтра). (2) restore-wiring не мусить тримати `RwLock`-guard через `.await` — виправлено в плані
+до реалізації (`Arc::clone(&state.cache.read())` перед `.await`). (3) `moka::iter()` семантика
+прострочених записів — проби не треба, бо `is_fresh` строго тісніший за вікно `moka`; додано
+речення в план. Решта — `IpAddr` лишити un-mirrored (має serde-impl); незалежний `ciphertext_present`
+на файл ок (ключ ідемпотентний); verification (b) — дискримінуючий крок.
+
+**Задокументовані межі** (CLAUDE.md «Known limitations»): персиститься лише `Allow` (свіжий `Block`
+= один round-trip після старту); запис, чий настінний дедлайн сплив за простій, відкидається (не
+stale — `should_serve_stale` unconsumed); на restore `ttl = remaining` (оригінал діагностичний,
+не в гарячому шляху); `/admin/cache-config/apply` будує новий порожній `Cache` → наступний флаш
+перезапише `cache.enc` майже-порожнім; best-effort scrub / ≤60 с при hard crash / спільний
+`persistence-key` не видаляється при деінсталяції (T-70) — те саме, що T-146.
+
+**Manual end-to-end smoke** (scratch `%LOCALAPPDATA%`, `persist_cache = true`, порт 18453):
+(a) 2 різні DoH-запити + повтор → graceful shutdown; `cache.enc` 288 байт, заголовок `DQF1` +
+kind-байт `2`, сирі байти **не містять** `example.com` / `wikipedia`; `.tmp` не лишився.
+(b) рестарт → `INFO cache_persist: restored 2 cache entries from disk`, повторний Allow-запит
+йде з кешу (лог `CACHE`). (c) flip 1 байта → старт з порожнім кешем + `warn`, файл →
+`cache.enc.orphaned-<ts>`. (d) видалення `persistence-key:<hash>` з Credential Manager (через
+`cmdkey /delete:LegacyGeneric:target=persistence-key:<hash>.dns-quorum-filter`) → старт: новий
+ключ, старий `cache.enc` → `.orphaned-<ts>`, кеш порожній. (e) `persist_cache = false` → жодного
+`cache.enc`. (f) `/admin/ui/main.js` містить `status.encrypted_persistence.cache` + `cache.enc`;
+`/admin/status.encrypted_persistence` = `{ query_log: false, cache: true }`.
+
+**CodeQL:** очікувано `hard-coded-cryptographic-value` на нових фіксованих тестових ключах
+(`[3|4|5|6|9u8;32]` у `#[cfg(test)]`) — dismiss «used in tests» (той самий клас, що T-146/T-165).
+[кількість + closing advisor — заповнити після пушу docs-коміту]
+
+**Звірка діаграм:** `ui-dto-model.md` — `AdminStatusResponse.query_log_persisted` →
+`encrypted_persistence { query_log, cache }` + новий клас `EncryptedPersistenceView`.
+`ui-status-indicator.md` / `watchdog-*.md` — без змін (персистенція не умова індикатора).

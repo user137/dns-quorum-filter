@@ -32,10 +32,17 @@ condition #3. Per-batch narrative → TASKS-DONE.md.
 encrypted persistence of the query log. `encrypted_file` (`XChaCha20Poly1305`, RustCrypto —
 user decision, DECISIONS.md 2026-09-03), 32-byte key in the OS secret store (`key_store`, the
 T-67 mechanism), `query-log.enc` format, `persist_query_log` config flag (**no admin toggle** —
-hand-edit only), passive `/admin/ui` indicator (`AdminStatusResponse.query_log_persisted`).
-**T-97 (encrypted persistent cache) carved out** — own task, own go-ahead + mini plan+advisor
-(advisor kickoff #4: most novel risk, lowest value). **Start at T-97.** Фаза 1 formally closed
-2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
+hand-edit only), passive `/admin/ui` indicator.
+**T-97 done 2026-09-03** (5 code + 1 docs commit, plan+advisor kickoff+closing): opt-in
+encrypted persistence of the verdict cache. Same `encrypted_file` / `FileKind::Cache` / single
+`persistence-key` as the log; `cache_persist_dto` stores an **absolute wall-clock deadline** (the
+live `expires_at` is a monotonic `Instant` that resets on reboot) and drops an entry whose TTL
+elapsed during downtime; **only `Verdict::Allow` is persisted** — `Block` is filtered at snapshot
+(user decision: a `fail_closed` timeout-`Block` must not survive a restart / the watchdog's
+auto-restart). `persist_cache` config flag (no admin route), `AdminStatusResponse.encrypted_persistence
+{ query_log, cache }` (replaced the bare `query_log_persisted` bool — kept `AdminStatusResponse`
+under `clippy::struct_excessive_bools`), passive `/admin/ui` line. **Next — Батч 3.6** (T-98/T-99).
+Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
 
@@ -73,17 +80,19 @@ Modules under `crates/dnsqb-service/src/`:
 | `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature)` (3 heuristics: `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`); early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
 | `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 30s only when both Online, else recheck 3s — so a building outage still probes fast); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
-| `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear` |
+| `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear`; T-97 added `snapshot()` (sync `moka::future::Cache::iter()`, best-effort) / `restore()` and `CacheKey::domain()`/`qtype()` accessors for `cache.enc` |
 | `overrides` | allowlist/blocklist `load`/`save`/`decision`/`conflicts`; suffix-wildcard match; `InvalidEntry` (domain-redacting) |
 | `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
-| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` bool (T-146, default `false`, **no admin route** — carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
+| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
 | `encrypted_file` | T-146 pure AEAD codec: `seal`/`open` over `XChaCha20Poly1305`; 6-byte cleartext header (`DQF1` / `FileKind` / version) is the AAD, validated **before** the AEAD open (`UnsupportedVersion` distinct from `Decrypt`); `EncryptedFileError` payload-free |
 | `persist_dto` | T-146 serde mirrors of `LogEntry` (`SystemTime`↔u64 millis, `RecordType`↔u16, `error_kind` `&'static str` re-interned through a closed set); `PersistedFileV1` wrapper (struct, additive); `to_json`/`from_json` |
-| `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed) |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key for `query-log.enc`; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed). `rename_orphan` is `pub(crate)`, reused by `cache_persist` |
+| `cache_persist_dto` | T-97 serde form of the verdict cache. `PersistedCacheEntry { domain, qtype: u16, expiry_millis: u64, verdict: PCacheVerdict }` — `expiry_millis` is an **absolute wall-clock** deadline (the live `CacheEntry.expires_at` is a monotonic `Instant`, unserialisable); `to_json(snapshot, now_wall, now_mono)` filters `Verdict::Block` + non-fresh + converts `Instant`→wall (clocks injected for tests); `from_json(plaintext, now_wall)` drops any entry whose deadline already passed. `PCacheVerdict` keeps `Block` representable (format-stable) though `to_json` never emits it. `IpAddr` kept un-mirrored (has its own serde impl) |
+| `cache_persist` | T-97, sibling of `log_persist`: `persist_cache_snapshot` (→`seal(FileKind::Cache)`→`write_atomic`), `load_persisted_cache` (→`CacheInit { restore, flusher }`; independent `ciphertext_present` for `cache.enc`, shared `persistence-key`), `run_cache_persister` (60s + shutdown). `AppState::cache_snapshot`/`restore_cache` pass-throughs (lock dropped before `.await`) |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; **one** key seals **both** `query-log.enc` (T-146) and `cache.enc` (T-97), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
@@ -198,11 +207,21 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   orphaned `query-log.enc` (key gone) is renamed `.orphaned-<ts>` and **never** decrypted/
   recovered, a fresh key is minted (a query log is re-creatable — warn+proceed, unlike a TLS
   key); the `persistence-key` entry is not deleted on uninstall (folds into T-70, same as the
-  TLS key). `persist_cache` (T-97) is not in this batch.
-- **`fail_closed` timeout-Block is still cached** for `block_verdict_ttl` — a network outage
-  poisons the cache with blocks that outlive it. T-152's offline fast path does **not** write the
-  cache; a retrofit of the pre-existing `fail_closed` branch is a separate task (Батч 3.4 scoped
-  it out).
+  TLS key).
+- **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-not-
+  deleted-on-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
+  is persisted** — `Block` is dropped at snapshot (so `fail_closed` timeout-blocks never cross a
+  restart), meaning a fresh quorum `Block` costs one round-trip to re-derive after a restart. An
+  entry whose **absolute wall-clock deadline** elapsed during downtime is dropped on restore, never
+  served stale (RFC 8767 stale-if-error is still unconsumed — `should_serve_stale`). The restored
+  entry's `ttl` is the *remaining* lifetime, not the original (diagnostic-only field). A
+  `/admin/cache-config/apply` builds a fresh empty `Cache` (T-153) — the next flush overwrites
+  `cache.enc` near-empty.
+- **`fail_closed` timeout-Block is still cached in memory** for `block_verdict_ttl` — a network
+  outage poisons the *in-memory* cache with blocks that outlive it. T-152's offline fast path does
+  **not** write the cache, and T-97 does **not** persist `Block`, so a restart / watchdog restart
+  still clears these; a retrofit of the pre-existing `fail_closed` branch is a separate task (Батч
+  3.4 scoped it out).
 - **`ProxyToSingleUpstream` (non-A/AAAA: HTTPS/SVCB/MX/TXT) has no offline fast path** — it falls
   through to its own per-query timeout while offline, not the instant SERVFAIL A/AAAA gets (T-152).
 - **A `BASELINE_FALLBACK` ALLOW is not GeoIP-filtered** (T-155) — filtering already failed that
@@ -511,6 +530,18 @@ reasoning (search by section number rather than re-deriving a decision from scra
   tests the caller's code, not `moka`'s internal removal timing. For that one assertion, a short
   real `tokio::time::sleep` is the right tool, not a `#[tokio::test(start_paused = true)]` violation
   of the usual "avoid real waits" preference.
+- **`moka::future::Cache::iter()` (0.12.16) is a *synchronous* method** (verified in the vendored
+  `future/cache.rs` — no `.await`), yielding `(Arc<K>, V)` with `V` cloned. Its documented
+  guarantees (no dup, won't yield a post-`iter()` insert, won't yield a removed entry) are enough
+  for a best-effort snapshot but it **may** yield a logically-expired-but-not-yet-swept entry
+  (eviction is lazy) — T-97's `Cache::snapshot` doesn't probe that: `cache_persist_dto`'s own
+  `entry.is_fresh(Instant::now())` filter is strictly tighter than moka's `ttl + stale_grace`
+  window, so a stale-but-present entry is dropped by that check regardless.
+- **Persisting a `std::time::Instant` is meaningless** — it's monotonic and resets on reboot (T-97).
+  `CacheEntry.expires_at` is persisted as an *absolute wall-clock* deadline (`SystemTime` → millis):
+  snapshot does `now_wall + expires_at.saturating_duration_since(now_mono)`, restore does
+  `deadline.duration_since(SystemTime::now())` and drops the entry on `Err`/zero (expired during
+  downtime). Same shape as `persist_dto`'s `ts_millis`, but for a *deadline* not a timestamp.
 - **`hickory_proto::rr::Name::from_utf8` silently accepts inputs that look malformed at first
   glance — verify empirically, don't assume a rejection.** `Label::from_utf8` (vendored `label.rs`,
   0.26.1) special-cases a label equal to exactly `"*"` as the legal RFC 1034 wildcard-RR label and

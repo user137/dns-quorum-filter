@@ -54,6 +54,12 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    як слухач почне приймати трафік. Ключа нема, а файл є / файл пошкоджений → `warn!`, файл
    перейменовується в `query-log.enc.orphaned-<unix_ts>` (не відновлюється), новий ключ, лог
    порожній. Нема app-data теки → `warn!`, персистенція вимкнена на цей запуск.
+2b. **Якщо `persist_cache = true`** (T-97, SPEC.md §4) — той самий `persistence-key:<hash>` (один
+   ключ на обидва файли), розшифровує `%LOCALAPPDATA%\dns-quorum-filter\cache.enc` і засіває ним
+   кеш вердиктів **після** побудови `AppState`, але **до** прийому трафіку. Зберігаються/
+   відновлюються лише `Allow`-вердикти; запис, чий абсолютний (настінний) дедлайн сплив за час
+   простою, відкидається. Зниклий ключ + наявний файл / пошкоджений файл → `cache.enc.orphaned-<unix_ts>`,
+   новий ключ, кеш порожній.
 3. Біндить TCP-слухач на вказаному порту — зайнятий порт це явна фатальна помилка, не тихий
    fallback на інший порт (SPEC.md §1).
 4. Приймає з'єднання, термінує TLS (`rustls`), і на кожен DoH GET/POST-запит прогонює конвеєр
@@ -76,9 +82,13 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    в `GET /admin/status.baseline_endpoint`.
 7. **Якщо `persist_query_log = true`** — запускає фоновий query-log-персистер (T-146): повний
    перезапис `query-log.enc` кожні 60 s (атомарно: temp + `sync_all` + `rename`) плюс фінальний
-   флаш на graceful shutdown. Не append-only — hard crash губить ≤60 s хвоста логу. `GET
-   /admin/status.query_log_persisted` = стан прапорця; `/admin/ui` показує пасивний рядок,
-   поки він активний.
+   флаш на graceful shutdown. Не append-only — hard crash губить ≤60 s хвоста логу.
+7a. **Якщо `persist_cache = true`** — так само, окремий фоновий cache-персистер (T-97): повний
+   перезапис `cache.enc` кожні 60 s + фінальний флаш на shutdown. Config-зміна кешу через
+   `/admin/cache-config/apply` будує новий порожній `Cache` (T-153) — наступний флаш перезапише
+   `cache.enc` майже-порожнім.
+8. `GET /admin/status.encrypted_persistence` = `{ query_log, cache }` (стан обох прапорців);
+   `/admin/ui` показує окремий пасивний рядок-попередження на кожен активний.
 
 ### Адмін-канал (T-52, розширено T-149)
 
