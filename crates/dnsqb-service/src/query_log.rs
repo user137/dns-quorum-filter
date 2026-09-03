@@ -221,6 +221,37 @@ impl QueryLog {
         self.entries.write().clear();
     }
 
+    /// Seeds the buffer from a previous run's persisted entries (T-146 —
+    /// [`Self::snapshot`] output, decrypted from `query-log.enc`), oldest
+    /// first, then re-applies **both** bounds against `now`: entries past
+    /// `max_age` are dropped, and any excess over `max_entries` is evicted
+    /// oldest-first. SPEC.md §6's "1000 записів або 24 години" window is not
+    /// bypassed by restoring from disk. Called once at startup before the
+    /// listener accepts traffic; a no-op on empty input.
+    ///
+    /// The two post-conditions (`guard.len() <= max_entries`, every kept
+    /// entry within `max_age` of `now`) hold from the loops themselves, the
+    /// same way `push`/`age_filtered_entries` establish them — not from an
+    /// assumption about what the caller passed in.
+    pub fn restore(&self, entries: Vec<LogEntry>, now: SystemTime) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut guard = self.entries.write();
+        for entry in entries {
+            guard.push_back(entry);
+        }
+        guard.retain(|entry| {
+            // Same clock-skew handling as `age_filtered_entries`: a
+            // future-dated entry (`Err` from `duration_since`) is kept.
+            now.duration_since(entry.timestamp)
+                .map_or(true, |age| age <= self.max_age)
+        });
+        while guard.len() > self.max_entries {
+            guard.pop_front();
+        }
+    }
+
     /// Shared implementation behind [`Self::snapshot`]/[`Self::search`]: one
     /// age-eviction pass under one write-lock acquisition, then `predicate`
     /// narrows what gets cloned into the returned `Vec` — the age bound is
@@ -463,6 +494,55 @@ mod tests {
         log.clear();
 
         assert!(log.snapshot(now).is_empty());
+    }
+
+    #[test]
+    fn restore_seeds_entries_and_reapplies_both_bounds() {
+        let log = QueryLog::new(2, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let Some(stale) = now.checked_sub(Duration::from_hours(25)) else {
+            panic!("valid fixture timestamp");
+        };
+        let mut a = entry_at(stale);
+        a.domain = "too-old.example".to_string();
+        let mut b = entry_at(now);
+        b.domain = "b.example".to_string();
+        let mut c = entry_at(now);
+        c.domain = "c.example".to_string();
+        let mut d = entry_at(now);
+        d.domain = "d.example".to_string();
+
+        log.restore(vec![a, b, c, d], now);
+
+        let snap = log.snapshot(now);
+        let domains: Vec<&str> = snap.iter().map(|e| e.domain.as_str()).collect();
+        assert_eq!(
+            domains,
+            vec!["c.example", "d.example"],
+            "the stale entry is dropped and the count is trimmed to the newest max_entries"
+        );
+    }
+
+    #[test]
+    fn restore_of_an_empty_vec_is_a_no_op() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        log.push(entry_at(now));
+        log.restore(Vec::new(), now);
+        assert_eq!(log.snapshot(now).len(), 1);
+    }
+
+    #[test]
+    fn restore_appends_after_existing_entries() {
+        let log = QueryLog::new(10, Duration::from_hours(24));
+        let now = SystemTime::now();
+        let mut live = entry_at(now);
+        live.domain = "live.example".to_string();
+        log.push(live);
+        let mut restored = entry_at(now);
+        restored.domain = "restored.example".to_string();
+        log.restore(vec![restored], now);
+        assert_eq!(log.snapshot(now).len(), 2);
     }
 
     #[test]

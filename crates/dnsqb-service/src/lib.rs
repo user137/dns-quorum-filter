@@ -134,8 +134,10 @@ mod geoip_download;
 mod geoip_updater;
 mod key_store;
 mod listener;
+mod log_persist;
 mod overrides;
 mod paths;
+mod persist_dto;
 mod pipeline;
 mod query_log;
 mod quorum;
@@ -182,6 +184,7 @@ pub use geoip_updater::{
 };
 pub use key_store::{load_or_create_persistence_key, KeyStoreError, PersistenceKey};
 pub use listener::{bind_listener, BindError};
+pub use log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };

@@ -20,6 +20,8 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::fs::{self, File};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use sha1::{Digest, Sha1};
@@ -88,9 +90,34 @@ pub(crate) fn app_data_dir_hash(app_data_dir: &Path) -> String {
     )
 }
 
+/// Writes `bytes` to `path` atomically (T-146): a sibling `<path>.tmp` is
+/// written, `sync_all`-flushed, then renamed over `path`. On this Windows
+/// toolchain `std::fs::rename` replaces an existing destination in one
+/// `MoveFileExW` (`MOVEFILE_REPLACE_EXISTING`) — verified with a scratch
+/// probe — so a reader (or a crash) sees either the whole previous file or
+/// the whole new one, never a partial write. For an AEAD container a torn
+/// write is unrecoverable, so this is not optional.
+///
+/// # Errors
+///
+/// Propagates any I/O error from creating / writing / syncing the temp file
+/// or renaming it into place. On a failed rename the temp file is left
+/// behind for the next attempt to overwrite.
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    {
+        let mut file = File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{app_data_dir_hash, resolve_app_data_dir, PathsError};
+    use super::{app_data_dir_hash, resolve_app_data_dir, write_atomic, PathsError};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
@@ -125,6 +152,30 @@ mod tests {
         assert_ne!(
             app_data_dir_hash(Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter")),
             app_data_dir_hash(Path::new(r"C:\Users\y\AppData\Local\dns-quorum-filter")),
+        );
+    }
+
+    #[test]
+    fn write_atomic_replaces_an_existing_file_and_leaves_no_temp() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("query-log.enc");
+        if let Err(err) = write_atomic(&path, b"first version") {
+            panic!("first write: {err}");
+        }
+        if let Err(err) = write_atomic(&path, b"a second, different-length version") {
+            panic!("overwrite: {err}");
+        }
+        match std::fs::read(&path) {
+            Ok(got) => assert_eq!(got, b"a second, different-length version"),
+            Err(err) => panic!("read back: {err}"),
+        }
+        let mut tmp = path.into_os_string();
+        tmp.push(".tmp");
+        assert!(
+            !Path::new(&tmp).exists(),
+            "the temp file must be consumed by the rename"
         );
     }
 }

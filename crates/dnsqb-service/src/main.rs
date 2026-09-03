@@ -24,20 +24,22 @@
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, load_maxmind_credentials,
-    load_or_generate_server_config, migrate_legacy_credentials_file, run_geoip_updater,
-    run_reachability_prober, serve, write_pid_file, AppState, BindError, Cache, CacheState,
-    GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError, InstanceGuard, InstanceRole,
-    InvalidEntry, OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLog,
-    ReqwestDohClient, ResolverConfig, RuntimeInit, TimeoutConfig,
+    load_or_generate_server_config, load_persisted_query_log, migrate_legacy_credentials_file,
+    run_geoip_updater, run_query_log_persister, run_reachability_prober, serve, write_pid_file,
+    AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState,
+    GuardError, InstanceGuard, InstanceRole, InvalidEntry, OverrideLists, OverridesState,
+    PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit,
+    TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use hyper_util::server::graceful::GracefulShutdown;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_rustls::TlsAcceptor;
+use zeroize::Zeroizing;
 
 // Batch 3.3 — the watchdog wiring (SPEC.md §7). Windows-only for now, the same
 // `#[cfg(windows)]` seam `watchdog::pipe` already sits behind; the Фаза 6 port
@@ -158,11 +160,14 @@ async fn main() {
         source: load_geoip_source(app_data.as_deref()),
     };
 
-    // Cache TTL/capacity config is now live-editable (T-153) - built from
-    // whatever `resolver_config.toml`'s own `[cache]` table resolved to
-    // (defaults if absent), not a hardcoded `CacheConfig::default()`.
-    // Query-log sizing itself stays config-free - T-146 (SPEC.md §6's own
-    // stated defaults: 1000 entries or 24 hours).
+    // T-146: seed the query log from encrypted `query-log.enc` when
+    // `persist_query_log` is set; `flusher` feeds the background persister.
+    let QueryLogInit {
+        log: query_log,
+        flusher: query_log_flusher,
+    } = load_persisted_query_log(app_data.as_deref(), resolver_config.persist_query_log);
+
+    // Cache config is live-editable (T-153); built from the `[cache]` table.
     let state = Arc::new(AppState::new(
         client,
         OverridesState {
@@ -175,42 +180,12 @@ async fn main() {
             config: resolver_config.cache,
         },
         geoip,
-        QueryLog::default(),
+        query_log,
         persist,
     ));
 
-    // T-75: the GeoIP database updater talks to a public third party
-    // (db-ip.com, or download.maxmind.com in T-80's advanced mode), never
-    // this service's own pinned-cert admin channel - a separate,
-    // plainly-configured `reqwest::Client` with normal public-CA validation,
-    // the same construction `ReqwestDohClient` itself uses for its own public
-    // upstream queries (Quad9/AdGuard/Cloudflare).
-    if let Some(path) = geoip_path {
-        match reqwest::Client::builder().build() {
-            Ok(geoip_client) => {
-                tokio::spawn(run_geoip_updater(geoip_client, path, Arc::clone(&state)));
-            }
-            Err(err) => {
-                tracing::error!("failed to build the GeoIP update HTTP client: {err}");
-            }
-        }
-    } else {
-        tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
-    }
-
-    // T-152: the network-reachability prober. Its own plain `reqwest::Client`
-    // (public-CA validation, no connection pool shared with the DoH client) —
-    // hitting a few third-party `generate_204`-class markers has nothing to
-    // do with upstream resolution. Deliberately not tied to `/health` or any
-    // watchdog channel (a network outage must not look like a dead service).
-    match reqwest::Client::builder().build() {
-        Ok(probe_client) => {
-            tokio::spawn(run_reachability_prober(probe_client, Arc::clone(&state)));
-        }
-        Err(err) => {
-            tracing::error!("failed to build the reachability probe HTTP client: {err}");
-        }
-    }
+    spawn_query_log_persister(&state, query_log_flusher);
+    spawn_public_http_tasks(&state, geoip_path);
 
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
@@ -246,6 +221,49 @@ fn watchdog_now_millis() -> u64 {
         .ok()
         .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
         .unwrap_or(u64::MAX)
+}
+
+/// T-146: spawns the encrypted query-log persister (a 60 s flush loop plus a
+/// final flush on shutdown) when [`load_persisted_query_log`] resolved a
+/// key — a no-op otherwise.
+fn spawn_query_log_persister(
+    state: &Arc<AppState<ReqwestDohClient>>,
+    flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
+) {
+    if let Some((path, key)) = flusher {
+        tokio::spawn(run_query_log_persister(Arc::clone(state), path, key));
+    }
+}
+
+/// Spawns the two background tasks that talk to public third parties over
+/// their own plainly-configured `reqwest::Client` (public-CA validation, no
+/// pool shared with the pinned-cert admin channel or the `DoH` client):
+///
+/// - the `GeoIP` database updater (T-75 — `db-ip.com` / `download.maxmind.com`),
+///   skipped with a warning if no app-data directory resolved `geoip_path`;
+/// - the network-reachability prober (T-152 — a few `generate_204`-class
+///   markers), deliberately **not** wired to `/health` or any watchdog
+///   channel, so a network outage can never read as a dead service.
+fn spawn_public_http_tasks(state: &Arc<AppState<ReqwestDohClient>>, geoip_path: Option<PathBuf>) {
+    match (geoip_path, reqwest::Client::builder().build()) {
+        (Some(path), Ok(client)) => {
+            tokio::spawn(run_geoip_updater(client, path, Arc::clone(state)));
+        }
+        (Some(_), Err(err)) => {
+            tracing::error!("failed to build the GeoIP update HTTP client: {err}");
+        }
+        (None, _) => {
+            tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
+        }
+    }
+    match reqwest::Client::builder().build() {
+        Ok(client) => {
+            tokio::spawn(run_reachability_prober(client, Arc::clone(state)));
+        }
+        Err(err) => {
+            tracing::error!("failed to build the reachability probe HTTP client: {err}");
+        }
+    }
 }
 
 /// Starts the three background watchdog tasks (SPEC.md §7): the channel-1

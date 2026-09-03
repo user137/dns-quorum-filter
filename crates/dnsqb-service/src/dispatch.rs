@@ -887,6 +887,15 @@ impl<C: DohClient + Sync> AppState<C> {
     pub fn shutdown_handle(&self) -> watch::Receiver<bool> {
         self.shutdown_tx.subscribe()
     }
+
+    /// The current query-log contents, age-bounded to `now` (T-146) — the
+    /// snapshot `log_persist::run_query_log_persister` seals to
+    /// `query-log.enc`. A thin pass-through to [`crate::query_log::QueryLog::snapshot`]
+    /// so the field itself stays private to this module.
+    #[must_use]
+    pub fn query_log_snapshot(&self, now: SystemTime) -> Vec<LogEntry> {
+        self.query_log.snapshot(now)
+    }
 }
 
 /// RAII in-flight counter guard (T-149) — increments on construction,
