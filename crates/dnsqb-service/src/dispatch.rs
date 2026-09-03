@@ -282,13 +282,13 @@ impl Default for RuntimeInit {
 }
 
 /// Where (if anywhere) admin-channel config changes should be persisted,
-/// plus the immutable `port` and `persist_query_log` values needed to
-/// reconstruct a full [`ResolverConfig`] for that write. Neither is
-/// admin-mutable — `port` needs a listener re-bind, and `persist_query_log`
-/// (T-146) is deliberately hand-edit-only (no admin route) — but every route
-/// that re-serializes `resolver_config.toml` must carry their live values or
-/// an unrelated toggle would blank them on save (the cross-field-read bug
-/// class, T-57/T-139/T-149/T-47/T-77).
+/// plus the immutable `port` / `persist_query_log` / `persist_cache` values
+/// needed to reconstruct a full [`ResolverConfig`] for that write. None is
+/// admin-mutable — `port` needs a listener re-bind, and the two persistence
+/// flags (T-146 / T-97) are deliberately hand-edit-only (no admin route) —
+/// but every route that re-serializes `resolver_config.toml` must carry their
+/// live values or an unrelated toggle would blank them on save (the
+/// cross-field-read bug class, T-57/T-139/T-149/T-47/T-77).
 #[derive(Debug, Clone)]
 pub struct PersistTarget {
     /// The local `DoH` listener's port (unchanging at runtime).
@@ -297,6 +297,10 @@ pub struct PersistTarget {
     /// (SPEC.md §6). Set once from `resolver_config.toml` at startup; carried
     /// through every config rewrite so an admin change doesn't wipe it.
     pub persist_query_log: bool,
+    /// T-97 — whether the quorum-verdict cache is persisted to `cache.enc`
+    /// (SPEC.md §4). Same hand-edit-only, carried-through-every-rewrite
+    /// treatment as `persist_query_log`.
+    pub persist_cache: bool,
     /// Where `resolver_config.toml`/`overrides.toml` live, or `None` if no
     /// app-data directory was available at startup (same tolerance
     /// `main.rs` already applies to loading them) — an admin write with no
@@ -1082,6 +1086,7 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // T-146 cross-field read: not admin-mutable, but this write
                 // rewrites the whole file so it must carry the live value.
                 persist_query_log: state.persist.persist_query_log,
+                persist_cache: state.persist.persist_cache,
             };
             match config.save(&paths.config) {
                 Ok(()) => true,
@@ -1596,6 +1601,7 @@ fn apply_cache_config<C: DohClient + Sync>(
                 // T-146 cross-field read: not admin-mutable, but this write
                 // rewrites the whole file so it must carry the live value.
                 persist_query_log: state.persist.persist_query_log,
+                persist_cache: state.persist.persist_cache,
                 providers,
                 cache: new_config,
                 geoip: GeoipConfig { blocked_countries },
@@ -1740,6 +1746,7 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 // T-146 cross-field read: not admin-mutable, but this write
                 // rewrites the whole file so it must carry the live value.
                 persist_query_log: state.persist.persist_query_log,
+                persist_cache: state.persist.persist_cache,
                 providers,
                 cache: cache_config,
                 geoip: GeoipConfig {
@@ -2112,6 +2119,7 @@ where
                 // T-146 cross-field read: not admin-mutable, but this write
                 // rewrites the whole file so it must carry the live value.
                 persist_query_log: state.persist.persist_query_log,
+                persist_cache: state.persist.persist_cache,
                 providers: after.clone(),
                 cache: cache_config,
                 geoip: GeoipConfig { blocked_countries },
@@ -3226,6 +3234,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: None,
             },
         )
@@ -3296,6 +3305,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: None,
             },
         ))
@@ -3546,6 +3556,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: true,
+                persist_cache: true,
                 paths: None,
             },
         );
@@ -3859,6 +3870,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -3905,6 +3917,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -3938,12 +3951,12 @@ mod tests {
         assert_eq!(loaded.providers, ProviderEntry::default_active_set());
     }
 
-    // T-146 cross-field read: `persist_query_log` has no admin route, but an
-    // unrelated POST /admin/config still re-serializes the whole file - so
-    // its live value (from PersistTarget) must survive the write, not reset
-    // to `false`.
+    // T-146 / T-97 cross-field read: neither `persist_query_log` nor
+    // `persist_cache` has an admin route, but an unrelated POST /admin/config
+    // still re-serializes the whole file - so both live values (from
+    // PersistTarget) must survive the write, not reset to `false`.
     #[tokio::test]
-    async fn serve_admin_config_preserves_persist_query_log_on_an_unrelated_write() {
+    async fn serve_admin_config_preserves_persist_flags_on_an_unrelated_write() {
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -3953,6 +3966,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: true,
+                persist_cache: true,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -3970,10 +3984,16 @@ mod tests {
         }
 
         match ResolverConfig::load(&path) {
-            Ok(loaded) => assert!(
-                loaded.persist_query_log,
-                "an unrelated config write must not blank persist_query_log"
-            ),
+            Ok(loaded) => {
+                assert!(
+                    loaded.persist_query_log,
+                    "an unrelated config write must not blank persist_query_log"
+                );
+                assert!(
+                    loaded.persist_cache,
+                    "an unrelated config write must not blank persist_cache"
+                );
+            }
             Err(err) => panic!("the saved file must load back: {err}"),
         }
     }
@@ -3997,6 +4017,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4054,6 +4075,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4213,6 +4235,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4270,6 +4293,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4324,6 +4348,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4435,6 +4460,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4516,6 +4542,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4617,6 +4644,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: None,
             },
         );
@@ -4722,6 +4750,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: None,
             },
         );
@@ -4785,6 +4814,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: overrides_path.clone(),
@@ -4892,6 +4922,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: overrides_path.clone(),
@@ -5088,6 +5119,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -5130,6 +5162,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -5266,6 +5299,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -5363,6 +5397,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
                     overrides: overrides_path,
@@ -5591,6 +5626,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: dir.path().join("overrides.toml"),
@@ -6049,6 +6085,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -6091,6 +6128,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -6662,6 +6700,7 @@ mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                persist_cache: false,
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: dir.path().join("overrides.toml"),

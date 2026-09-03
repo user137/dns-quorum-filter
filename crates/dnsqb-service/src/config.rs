@@ -216,6 +216,15 @@ pub struct ResolverConfig {
     /// passive. The same bounded window (1000 entries / 24 h) is re-applied
     /// to a restored log.
     pub persist_query_log: bool,
+    /// T-97 — persist the quorum-verdict cache to an encrypted file
+    /// (`cache.enc`, same `encrypted_file` mechanism and `key_store`
+    /// persistence key as `persist_query_log`) so a restart keeps a warm
+    /// cache (SPEC.md §4). `false` (default) keeps the cache memory-only.
+    /// Independent of `persist_query_log` — two separate flags. Like it, this
+    /// has **no** admin route (a hand-edit only) and a passive `/admin/ui`
+    /// indicator. Only `Allow` verdicts are persisted, and an entry whose TTL
+    /// elapsed during downtime is dropped on restore (see `cache_persist_dto`).
+    pub persist_cache: bool,
 }
 
 impl Default for ResolverConfig {
@@ -230,6 +239,7 @@ impl Default for ResolverConfig {
             geoip: GeoipConfig::default(),
             serve_baseline_when_filters_unreachable: false,
             persist_query_log: false,
+            persist_cache: false,
         }
     }
 }
@@ -319,6 +329,7 @@ impl ResolverConfig {
             geoip: GeoipConfig { blocked_countries },
             serve_baseline_when_filters_unreachable: file.serve_baseline_when_filters_unreachable,
             persist_query_log: file.persist_query_log,
+            persist_cache: file.persist_cache,
         })
     }
 
@@ -348,6 +359,7 @@ impl ResolverConfig {
             timeout_ms: self.timeout_ms,
             serve_baseline_when_filters_unreachable: self.serve_baseline_when_filters_unreachable,
             persist_query_log: self.persist_query_log,
+            persist_cache: self.persist_cache,
             providers: self.providers.iter().map(ProviderFileEntry::from).collect(),
             cache: CacheConfigFile {
                 clamp_min_secs: cache_secs.clamp_min_secs,
@@ -450,6 +462,8 @@ struct ResolverConfigFile {
     serve_baseline_when_filters_unreachable: bool,
     /// T-146 — see [`ResolverConfig::persist_query_log`].
     persist_query_log: bool,
+    /// T-97 — see [`ResolverConfig::persist_cache`].
+    persist_cache: bool,
     providers: Vec<ProviderFileEntry>,
     cache: CacheConfigFile,
     geoip: GeoipConfigFile,
@@ -516,6 +530,7 @@ impl Default for ResolverConfigFile {
             serve_baseline_when_filters_unreachable: defaults
                 .serve_baseline_when_filters_unreachable,
             persist_query_log: defaults.persist_query_log,
+            persist_cache: defaults.persist_cache,
             providers: defaults
                 .providers
                 .iter()
@@ -636,6 +651,7 @@ mod tests {
                 geoip: GeoipConfig::default(),
                 serve_baseline_when_filters_unreachable: false,
                 persist_query_log: false,
+                persist_cache: false,
             }
         );
     }
@@ -880,6 +896,7 @@ mod tests {
             },
             serve_baseline_when_filters_unreachable: true,
             persist_query_log: true,
+            persist_cache: true,
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -951,6 +968,50 @@ mod tests {
             Ok(config) => assert!(config.persist_query_log, "a saved `true` must round-trip"),
             Err(err) => panic!("must be able to load what was just saved: {err}"),
         }
+    }
+
+    // T-97: `persist_cache` - independent second flag, same shape as
+    // `persist_query_log`: absent from a partial file defaults to `false`
+    // (memory-only cache), a `true` round-trips, `save()` is the only writer.
+    #[test]
+    fn persist_cache_is_absent_by_default_and_round_trips_when_set() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "port = 9000\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => assert!(
+                !config.persist_cache,
+                "a field absent from a partial file must default to false"
+            ),
+            Err(err) => panic!("a partial file must still load: {err}"),
+        }
+
+        let enabled = ResolverConfig {
+            persist_cache: true,
+            ..ResolverConfig::default()
+        };
+        if let Err(err) = enabled.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => assert!(config.persist_cache, "a saved `true` must round-trip"),
+            Err(err) => panic!("must be able to load what was just saved: {err}"),
+        }
+    }
+
+    // T-97: an unknown key inside the file is still rejected loudly with the
+    // new field present (deny_unknown_fields is unchanged).
+    #[test]
+    fn load_rejects_a_misspelled_persist_cache_key() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "persist_cahce = true\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
     }
 
     // T-76: [geoip] - default empty (SPEC.md §3.5's own stated default: an
