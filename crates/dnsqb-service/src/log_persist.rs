@@ -92,11 +92,11 @@ enum LoadError {
     Parse(#[source] serde_json::Error),
 }
 
-/// Renames an un-decryptable / malformed `query-log.enc` to
-/// `query-log.enc.orphaned-<unix_ts>` so the next flush does not overwrite
-/// (and destroy) whatever it held — a key might resurface. Best-effort: a
-/// failed rename is logged, not fatal.
-fn rename_orphan(path: &Path) {
+/// Renames an un-decryptable / malformed persisted file (`query-log.enc`, or
+/// `cache.enc` — T-97 reuses this) to `<path>.orphaned-<unix_ts>` so the next
+/// flush does not overwrite (and destroy) whatever it held — a key might
+/// resurface. Best-effort: a failed rename is logged, not fatal.
+pub(crate) fn rename_orphan(path: &Path) {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());

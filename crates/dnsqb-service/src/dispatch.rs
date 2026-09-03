@@ -31,7 +31,7 @@ use crate::admin::{
 };
 use crate::admin_ui;
 use crate::baseline_selector::BaselineSelector;
-use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheKey};
+use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
@@ -895,6 +895,16 @@ impl<C: DohClient + Sync> AppState<C> {
     #[must_use]
     pub fn query_log_snapshot(&self, now: SystemTime) -> Vec<LogEntry> {
         self.query_log.snapshot(now)
+    }
+
+    /// A point-in-time copy of the live quorum-verdict cache (T-97) — the
+    /// snapshot `cache_persist::run_cache_persister` seals to `cache.enc`.
+    /// `Arc::clone`s the current [`CacheState`] and drops the lock before
+    /// returning; the scan itself is synchronous, no lock held across the
+    /// caller's `.await`.
+    #[must_use]
+    pub fn cache_snapshot(&self) -> Vec<(CacheKey, CacheEntry)> {
+        Arc::clone(&self.cache.read()).cache.snapshot()
     }
 }
 

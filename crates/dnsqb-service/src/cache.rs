@@ -34,6 +34,20 @@ impl CacheKey {
             qtype,
         })
     }
+
+    /// The normalized domain this key matches — needed by T-97 to serialize a
+    /// cache snapshot. Restore goes back through [`Self::new`], not a struct
+    /// literal, so the `normalize_domain` invariant still holds on the way in.
+    #[must_use]
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    /// The record type this key matches (T-97, paired with [`Self::domain`]).
+    #[must_use]
+    pub fn qtype(&self) -> RecordType {
+        self.qtype
+    }
 }
 
 /// A cached quorum verdict (SPEC.md §4) — never `quorum::QuorumVerdict::
@@ -370,6 +384,30 @@ impl Cache {
             tracing::warn!(
                 "override-list cache invalidation rejected: cache built without invalidation-closure support"
             );
+        }
+    }
+
+    /// T-97: a point-in-time copy of every currently-held `(key, entry)` pair,
+    /// for the encrypted `cache.enc` snapshot. `moka`'s `iter()` is a
+    /// best-effort concurrent scan — an entry inserted after the scan begins
+    /// may be missed (the next flush picks it up), and a logically-expired but
+    /// not-yet-swept entry may be yielded (`cache_persist_dto`'s own freshness
+    /// filter drops it). Neither matters for a cache.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<(CacheKey, CacheEntry)> {
+        self.inner
+            .iter()
+            .map(|(key, entry)| (key.as_ref().clone(), entry))
+            .collect()
+    }
+
+    /// T-97: re-inserts entries restored from `cache.enc`, once at startup
+    /// before the listener accepts traffic. Each entry's `moka` eviction
+    /// window is derived from its (already downtime-adjusted) `ttl` exactly as
+    /// a fresh insert's is; a zero-TTL entry is a no-op ([`Self::insert`]).
+    pub async fn restore(&self, entries: Vec<(CacheKey, CacheEntry)>) {
+        for (key, entry) in entries {
+            self.insert(key, entry).await;
         }
     }
 
