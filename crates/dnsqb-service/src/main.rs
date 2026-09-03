@@ -24,12 +24,12 @@
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, load_maxmind_credentials,
-    load_or_generate_server_config, load_persisted_query_log, migrate_legacy_credentials_file,
-    run_geoip_updater, run_query_log_persister, run_reachability_prober, serve, write_pid_file,
-    AppState, BindError, Cache, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState,
-    GuardError, InstanceGuard, InstanceRole, InvalidEntry, OverrideLists, OverridesState,
-    PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit,
-    TimeoutConfig,
+    load_or_generate_server_config, load_persisted_cache, load_persisted_query_log,
+    migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater,
+    run_query_log_persister, run_reachability_prober, serve, write_pid_file, AppState, BindError,
+    Cache, CacheInit, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError,
+    InstanceGuard, InstanceRole, InvalidEntry, OverrideLists, OverridesState, PersistPaths,
+    PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -168,6 +168,15 @@ async fn main() {
         flusher: query_log_flusher,
     } = load_persisted_query_log(app_data.as_deref(), resolver_config.persist_query_log);
 
+    // T-97: decrypt `cache.enc` for a warm-cache restart when `persist_cache`
+    // is set. The cache itself is built inside `AppState::new`, so the restored
+    // entries are applied just after the state exists; `flusher` feeds the
+    // background persister.
+    let CacheInit {
+        restore: cache_restore,
+        flusher: cache_flusher,
+    } = load_persisted_cache(app_data.as_deref(), resolver_config.persist_cache);
+
     // Cache config is live-editable (T-153); built from the `[cache]` table.
     let state = Arc::new(AppState::new(
         client,
@@ -185,7 +194,11 @@ async fn main() {
         persist,
     ));
 
+    // T-97: seed the cache from `cache.enc` before the listener accepts
+    // traffic, then start its persister (no-op when `persist_cache` is off).
+    state.restore_cache(cache_restore).await;
     spawn_query_log_persister(&state, query_log_flusher);
+    spawn_cache_persister(&state, cache_flusher);
     spawn_public_http_tasks(&state, geoip_path);
 
     let port = resolver_config.port;
@@ -233,6 +246,18 @@ fn spawn_query_log_persister(
 ) {
     if let Some((path, key)) = flusher {
         tokio::spawn(run_query_log_persister(Arc::clone(state), path, key));
+    }
+}
+
+/// T-97: spawns the encrypted cache persister (a 60 s flush loop plus a final
+/// flush on shutdown) when [`load_persisted_cache`] resolved a key — a no-op
+/// otherwise.
+fn spawn_cache_persister(
+    state: &Arc<AppState<ReqwestDohClient>>,
+    flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
+) {
+    if let Some((path, key)) = flusher {
+        tokio::spawn(run_cache_persister(Arc::clone(state), path, key));
     }
 }
 

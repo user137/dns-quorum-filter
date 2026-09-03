@@ -910,6 +910,15 @@ impl<C: DohClient + Sync> AppState<C> {
     pub fn cache_snapshot(&self) -> Vec<(CacheKey, CacheEntry)> {
         Arc::clone(&self.cache.read()).cache.snapshot()
     }
+
+    /// Re-seeds the live cache from a persisted `cache.enc` snapshot (T-97),
+    /// once at startup before the listener accepts traffic. `Arc::clone`s the
+    /// current [`CacheState`] and releases the lock before the `.await`, the
+    /// same discipline as every other `AppState` reader.
+    pub async fn restore_cache(&self, entries: Vec<(CacheKey, CacheEntry)>) {
+        let cache_state = Arc::clone(&self.cache.read());
+        cache_state.cache.restore(entries).await;
+    }
 }
 
 /// RAII in-flight counter guard (T-149) — increments on construction,
