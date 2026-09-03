@@ -207,7 +207,10 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   orphaned `query-log.enc` (key gone) is renamed `.orphaned-<ts>` and **never** decrypted/
   recovered, a fresh key is minted (a query log is re-creatable — warn+proceed, unlike a TLS
   key); the `persistence-key` entry is not deleted on uninstall (folds into T-70, same as the
-  TLS key).
+  TLS key). **Orphaned `.enc` files (`query-log.enc` / `cache.enc`) accumulate indefinitely** —
+  `rename_orphan` never deletes (a key *might* resurface), but for a re-creatable store that
+  recovery value is ~nil while each incident leaves a permanent undecryptable blob of
+  browsing-derived data; no cleanup path exists yet.
 - **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-not-
   deleted-on-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
   is persisted** — `Block` is dropped at snapshot (so `fail_closed` timeout-blocks never cross a

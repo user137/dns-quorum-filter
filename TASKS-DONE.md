@@ -2848,17 +2848,35 @@ stale — `should_serve_stale` unconsumed); на restore `ttl = remaining` (ор
 **Manual end-to-end smoke** (scratch `%LOCALAPPDATA%`, `persist_cache = true`, порт 18453):
 (a) 2 різні DoH-запити + повтор → graceful shutdown; `cache.enc` 288 байт, заголовок `DQF1` +
 kind-байт `2`, сирі байти **не містять** `example.com` / `wikipedia`; `.tmp` не лишився.
-(b) рестарт → `INFO cache_persist: restored 2 cache entries from disk`, повторний Allow-запит
-йде з кешу (лог `CACHE`). (c) flip 1 байта → старт з порожнім кешем + `warn`, файл →
-`cache.enc.orphaned-<ts>`. (d) видалення `persistence-key:<hash>` з Credential Manager (через
-`cmdkey /delete:LegacyGeneric:target=persistence-key:<hash>.dns-quorum-filter`) → старт: новий
-ключ, старий `cache.enc` → `.orphaned-<ts>`, кеш порожній. (e) `persist_cache = false` → жодного
-`cache.enc`. (f) `/admin/ui/main.js` містить `status.encrypted_persistence.cache` + `cache.enc`;
-`/admin/status.encrypted_persistence` = `{ query_log: false, cache: true }`.
+(b) рестарт → `INFO cache_persist: restored 2 cache entries from disk`; повторний
+`example.com`-запит — `/admin/log` `decision/decision_source` = **`ALLOWED/CACHE`** (запис реально
+прочитано з `cache.enc` конвеєром, не просто розпарсено). (c) flip 1 байта → старт з порожнім
+кешем + `warn`, файл → `cache.enc.orphaned-<ts>`. (d) видалення `persistence-key:<hash>` з
+Credential Manager (`cmdkey /delete:LegacyGeneric:target=persistence-key:<hash>.dns-quorum-filter`)
+→ старт: новий ключ, старий `cache.enc` → `.orphaned-<ts>`, кеш порожній. (e) `persist_cache =
+false` → жодного `cache.enc`. (f) `/admin/ui/main.js` містить `status.encrypted_persistence.cache`
++ `cache.enc`; `/admin/status.encrypted_persistence` = `{ query_log: false, cache: true }`.
+(g) **Block не перетинає рестарт:** `fail_closed` + `timeout_ms = 1` → кожен voter таймаутить →
+`blocked-by-timeout.example` = `BLOCKED/BASELINE_FALLBACK`, кешується `Verdict::Block` на
+`block_verdict_ttl`; graceful shutdown → рестарт (`fail_open`) → `restored 0 cache entries` (Block
+відкинуто при знятті snapshot — доказ рішення «персистити лише `Allow`» end-to-end, не лише unit).
 
-**CodeQL:** очікувано `hard-coded-cryptographic-value` на нових фіксованих тестових ключах
-(`[3|4|5|6|9u8;32]` у `#[cfg(test)]`) — dismiss «used in tests» (той самий клас, що T-146/T-165).
-[кількість + closing advisor — заповнити після пушу docs-коміту]
+**CodeQL:** 3 нові `hard-coded-cryptographic-value` (critical), усі на фіксованих ключах у
+`cache_persist.rs` `#[cfg(test)]` — `[4u8;32]` (round-trip), `[6u8;32]`×2 (overwrite,
+corrupt-file). `cache_persist_dto.rs` тести ключа не мають (там plaintext JSON). Alerts 26–28
+dismiss'нуто через API як «used in tests» — детермінований AEAD-раундтріп по-справжньому потребує
+фіксованого ключа, у прод він не потрапляє (`key_store::load_or_create_persistence_key`). Той
+самий клас FP, що T-146 (20–25) / T-165. Відкритих алертів: 0. CI + CodeQL зелені на всіх 5
+комітах (`9f5a316`, `0c1be2c`, `332ddf3`, `4ee18fc`, `b8169c4`).
+
+**Closing advisor (self, як у 3.3–3.5):** 5 знахідок, усі закриті в тому ж проході (коміт
+`<follow-up>`): (1) рішення «персистити лише `Allow`» мало лише unit-покриття — додано smoke (g)
+end-to-end (`fail_closed`+`timeout_ms=1` → Block кешується → рестарт → `restored 0`). (2) smoke
+(b) перевіряв підрядок `cache` замість поля — тепер парсить `/admin/log` JSON і асертить
+`decision_source == CACHE`. (3) CodeQL-плейсхолдер + помилковий список ключів із тексту T-146 —
+виправлено (див. вище). (4) `UI-SPEC.md` не містить `query_log_persisted` (T-96 його там і не
+додавав) — нічого не застаріло. (5) осиротілі `.enc` накопичуються без прибирання — додано в
+CLAUDE.md «Known limitations». Дизайн і решта коду — plan і результат збігаються.
 
 **Звірка діаграм:** `ui-dto-model.md` — `AdminStatusResponse.query_log_persisted` →
 `encrypted_persistence { query_log, cache }` + новий клас `EncryptedPersistenceView`.
