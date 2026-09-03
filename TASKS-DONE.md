@@ -2870,7 +2870,7 @@ dismiss'нуто через API як «used in tests» — детермінов�
 комітах (`9f5a316`, `0c1be2c`, `332ddf3`, `4ee18fc`, `b8169c4`).
 
 **Closing advisor (self, як у 3.3–3.5):** 5 знахідок, усі закриті в тому ж проході (коміт
-`<follow-up>`): (1) рішення «персистити лише `Allow`» мало лише unit-покриття — додано smoke (g)
+`abb682e`): (1) рішення «персистити лише `Allow`» мало лише unit-покриття — додано smoke (g)
 end-to-end (`fail_closed`+`timeout_ms=1` → Block кешується → рестарт → `restored 0`). (2) smoke
 (b) перевіряв підрядок `cache` замість поля — тепер парсить `/admin/log` JSON і асертить
 `decision_source == CACHE`. (3) CodeQL-плейсхолдер + помилковий список ключів із тексту T-146 —
