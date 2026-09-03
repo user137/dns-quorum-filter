@@ -2,9 +2,19 @@
 //! plaintext files on disk (SPEC.md §2: "Приватний ключ — у платформному secure
 //! storage … **ніколи не plaintext-файлом поруч із конфігом**"; the ACL-locked
 //! plaintext files were the explicitly-tracked MVP fallback, "технічний борг …
-//! а не дефолт назавжди"). Two secrets go through here: the local `DoH`
-//! listener's TLS private key (T-67, [`tls_key_entry`]) and the optional
-//! `MaxMind GeoLite2` download credentials (T-163, [`maxmind_credentials_entry`]).
+//! а не дефолт назавжди"). Three secrets go through here: the local `DoH`
+//! listener's TLS private key (T-67, [`tls_key_entry`]), the optional
+//! `MaxMind GeoLite2` download credentials (T-163, [`maxmind_credentials_entry`]),
+//! and the symmetric key for the opt-in encrypted on-disk persistence
+//! (T-146, [`persistence_key_entry`] / [`load_or_create_persistence_key`] —
+//! the query log, and the verdict cache at T-97).
+//!
+//! **The persistence key is created exactly once.** [`load_or_create_persistence_key`]
+//! mints it on first run and reads it back on every run after; nothing
+//! rotates or re-mints it while a stored copy exists. That "exactly once"
+//! rests on `watchdog::instance::acquire` (SPEC.md §7.1) guaranteeing a
+//! single live `dnsqb-service` — two concurrent processes could otherwise
+//! both see "no key" and race to store different ones.
 //!
 //! This is the crate's single boundary to the OS secret store — the only
 //! module that names [`keyring`]. `keyring` (`v1` feature) resolves per
@@ -62,6 +72,17 @@ pub enum KeyStoreError {
     /// text that this type structurally cannot contain.
     #[error("OS credential store error: {0}")]
     Backend(#[from] keyring::Error),
+    /// The OS RNG failed while generating a new persistence key
+    /// ([`load_or_create_persistence_key`]). No key is written; the caller
+    /// leaves persistence disabled for the run rather than fall back to a
+    /// weak or fixed key.
+    #[error("the OS random number generator failed while generating the persistence key")]
+    Rng,
+    /// The stored persistence key is not 32 bytes — the credential-store
+    /// entry was truncated or overwritten by something else. Treated as
+    /// unusable rather than padded or guessed.
+    #[error("the stored persistence key has an unexpected length")]
+    MalformedKey,
 }
 
 /// The `keyring` "user" component for the secret named by `prefix` in the
@@ -84,6 +105,84 @@ pub(crate) fn tls_key_entry(app_data_dir: &Path) -> String {
 /// credentials (T-163) for the install rooted at `app_data_dir`.
 pub(crate) fn maxmind_credentials_entry(app_data_dir: &Path) -> String {
     entry_name("maxmind-credentials", app_data_dir)
+}
+
+/// Credential-store entry holding the 32-byte symmetric key for the opt-in
+/// encrypted on-disk persistence (T-146) for the install rooted at
+/// `app_data_dir`.
+fn persistence_key_entry(app_data_dir: &Path) -> String {
+    entry_name("persistence-key", app_data_dir)
+}
+
+/// The persistence key plus a one-shot signal for a key/ciphertext mismatch.
+pub struct PersistenceKey {
+    /// The 32-byte `XChaCha20Poly1305` key, wiped on drop.
+    pub key: Zeroizing<[u8; 32]>,
+    /// `true` when no stored key was found **and** a persisted ciphertext
+    /// file already exists on disk. The freshly minted `key` cannot decrypt
+    /// that file, so the caller must move it aside (rename to
+    /// `<name>.orphaned-<timestamp>`) rather than let the next flush
+    /// overwrite it — see [`load_or_create_persistence_key`].
+    pub orphaned_ciphertext: bool,
+}
+
+impl std::fmt::Debug for PersistenceKey {
+    /// Never prints the key bytes.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PersistenceKey")
+            .field("key", &"<redacted 32 bytes>")
+            .field("orphaned_ciphertext", &self.orphaned_ciphertext)
+            .finish()
+    }
+}
+
+/// Copies a stored secret into a fixed 32-byte key, rejecting any other
+/// length rather than padding or truncating.
+fn key_from_secret(bytes: &[u8]) -> Result<Zeroizing<[u8; 32]>, KeyStoreError> {
+    if bytes.len() != 32 {
+        return Err(KeyStoreError::MalformedKey);
+    }
+    let mut key = Zeroizing::new([0u8; 32]);
+    // `bytes.len() == 32` is checked immediately above - provable from the
+    // line, not from a caller invariant.
+    key.copy_from_slice(bytes);
+    Ok(key)
+}
+
+/// Returns the install's persistence key, minting and storing one on first
+/// run. `ciphertext_present` is whether a persisted ciphertext file already
+/// exists on disk — used only to set [`PersistenceKey::orphaned_ciphertext`]
+/// when a key has to be freshly minted despite a file already being there
+/// (Credential Manager cleared, or the app-data directory copied to another
+/// Windows account). Idempotent once a key exists: every later run reads the
+/// same bytes back (see the module docs on the "exactly once" invariant).
+///
+/// # Errors
+///
+/// [`KeyStoreError::Backend`] for a credential-store failure other than a
+/// missing entry; [`KeyStoreError::Rng`] if the OS RNG fails while minting a
+/// new key (persistence must then stay disabled for the run — never a
+/// fallback key); [`KeyStoreError::MalformedKey`] if a stored key is not
+/// exactly 32 bytes.
+pub fn load_or_create_persistence_key(
+    app_data_dir: &Path,
+    ciphertext_present: bool,
+) -> Result<PersistenceKey, KeyStoreError> {
+    let entry = persistence_key_entry(app_data_dir);
+    if let Some(existing) = load_secret(&entry)? {
+        return Ok(PersistenceKey {
+            key: key_from_secret(&existing)?,
+            orphaned_ciphertext: false,
+        });
+    }
+    let mut key = Zeroizing::new([0u8; 32]);
+    // A failing OS RNG aborts key creation - never a zero or fixed key.
+    getrandom::fill(key.as_mut_slice()).map_err(|_| KeyStoreError::Rng)?;
+    store_secret(&entry, key.as_slice())?;
+    Ok(PersistenceKey {
+        key,
+        orphaned_ciphertext: ciphertext_present,
+    })
 }
 
 /// Store `bytes` under `entry`, overwriting any existing value — so this is
@@ -174,10 +273,11 @@ pub(crate) fn erase_and_remove(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        delete_secret, erase_and_remove, load_secret, maxmind_credentials_entry,
-        overwrite_with_zeros, store_secret, tls_key_entry,
+        delete_secret, erase_and_remove, load_or_create_persistence_key, load_secret,
+        maxmind_credentials_entry, overwrite_with_zeros, persistence_key_entry, store_secret,
+        tls_key_entry, KeyStoreError,
     };
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     /// A distinct `keyring` entry name per test run, so a real dev machine's or
     /// CI session's stored secrets are never touched and parallel tests don't
@@ -345,5 +445,133 @@ mod tests {
             panic!("erase_and_remove must succeed: {err}");
         }
         assert!(!path.exists(), "file must be gone after erase_and_remove");
+    }
+
+    /// Like [`ScratchEntry`] but for [`load_or_create_persistence_key`], whose
+    /// entry name is derived from an app-data *path* (which need not exist on
+    /// disk — [`persistence_key_entry`] only hashes the string). `Drop`
+    /// deletes the derived credential-store entry.
+    struct ScratchPersistDir {
+        dir: PathBuf,
+        _guard: parking_lot::MutexGuard<'static, ()>,
+    }
+
+    impl ScratchPersistDir {
+        fn new(tag: &str) -> Self {
+            let guard = super::STORE_TEST_GUARD.lock();
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos());
+            let dir = PathBuf::from(format!(
+                r"C:\scratch\dnsqb-persist-test\{tag}-{nanos}-{:?}",
+                std::thread::current().id()
+            ));
+            Self { dir, _guard: guard }
+        }
+    }
+
+    impl Drop for ScratchPersistDir {
+        fn drop(&mut self) {
+            // Best-effort - a leaked test entry is harmless.
+            let _ = delete_secret(&persistence_key_entry(&self.dir));
+        }
+    }
+
+    #[test]
+    fn persistence_key_entry_differs_from_the_other_two_and_shares_the_dir_hash() {
+        let dir = Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter");
+        let persist = persistence_key_entry(dir);
+        assert!(persist.starts_with("persistence-key:"));
+        assert_ne!(persist, tls_key_entry(dir));
+        assert_ne!(persist, maxmind_credentials_entry(dir));
+        assert_eq!(
+            persist.rsplit(':').next(),
+            tls_key_entry(dir).rsplit(':').next(),
+            "all three entries derive from the same normalized path hash"
+        );
+    }
+
+    #[test]
+    fn first_run_generates_and_persists_a_key() {
+        let scratch = ScratchPersistDir::new("first-run");
+        let pk = match load_or_create_persistence_key(&scratch.dir, false) {
+            Ok(pk) => pk,
+            Err(err) => panic!("first run must mint a key: {err}"),
+        };
+        assert!(!pk.orphaned_ciphertext, "no ciphertext file was present");
+        assert!(
+            !pk.key.iter().all(|&b| b == 0),
+            "a freshly generated key must not be all zeros"
+        );
+        // It was actually written to the store.
+        match load_secret(&persistence_key_entry(&scratch.dir)) {
+            Ok(Some(stored)) => assert_eq!(stored.len(), 32),
+            Ok(None) => panic!("the minted key must be persisted"),
+            Err(err) => panic!("reading the minted key back failed: {err}"),
+        }
+    }
+
+    #[test]
+    fn a_second_call_returns_the_same_key() {
+        let scratch = ScratchPersistDir::new("idempotent");
+        let first = match load_or_create_persistence_key(&scratch.dir, false) {
+            Ok(pk) => pk,
+            Err(err) => panic!("first call: {err}"),
+        };
+        let second = match load_or_create_persistence_key(&scratch.dir, false) {
+            Ok(pk) => pk,
+            Err(err) => panic!("second call: {err}"),
+        };
+        assert!(
+            first.key.as_slice() == second.key.as_slice(),
+            "the second call must return the same stored key bytes"
+        );
+        assert!(!second.orphaned_ciphertext);
+    }
+
+    #[test]
+    fn ciphertext_present_with_no_stored_key_signals_an_orphan() {
+        let scratch = ScratchPersistDir::new("orphan");
+        let pk = match load_or_create_persistence_key(&scratch.dir, true) {
+            Ok(pk) => pk,
+            Err(err) => panic!("must still mint a key: {err}"),
+        };
+        assert!(
+            pk.orphaned_ciphertext,
+            "a ciphertext file with no key must flag the caller to move it aside"
+        );
+        assert!(
+            !pk.key.iter().all(|&b| b == 0),
+            "a key must still have been minted"
+        );
+    }
+
+    #[test]
+    fn once_a_key_exists_ciphertext_present_does_not_signal_an_orphan() {
+        let scratch = ScratchPersistDir::new("no-orphan-when-key-exists");
+        if let Err(err) = load_or_create_persistence_key(&scratch.dir, false) {
+            panic!("seed the key: {err}");
+        }
+        let pk = match load_or_create_persistence_key(&scratch.dir, true) {
+            Ok(pk) => pk,
+            Err(err) => panic!("second call: {err}"),
+        };
+        assert!(
+            !pk.orphaned_ciphertext,
+            "the stored key can decrypt the existing file - not an orphan"
+        );
+    }
+
+    #[test]
+    fn a_stored_key_of_the_wrong_length_is_rejected() {
+        let scratch = ScratchPersistDir::new("malformed");
+        if let Err(err) = store_secret(&persistence_key_entry(&scratch.dir), b"not thirty-two") {
+            panic!("seed a malformed entry: {err}");
+        }
+        match load_or_create_persistence_key(&scratch.dir, false) {
+            Err(KeyStoreError::MalformedKey) => {}
+            Ok(_) => panic!("a wrong-length stored key must not be accepted"),
+            Err(err) => panic!("expected MalformedKey, got {err}"),
+        }
     }
 }
