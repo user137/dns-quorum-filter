@@ -91,8 +91,24 @@ fn respond(
 
 #[cfg(test)]
 mod tests {
-    use super::{serve_css, serve_html, serve_js, INDEX_HTML};
+    use super::{serve_css, serve_html, serve_js, INDEX_HTML, MAIN_JS};
     use http::{Method, StatusCode};
+
+    // T-96: the passive query-log-persistence warning is rendered only when
+    // `query_log_persisted` is true, and it names the file and how to turn it
+    // off (a config-file edit - there is no toggle in the UI by design).
+    #[test]
+    fn main_js_shows_the_persistence_warning_gated_on_the_status_flag() {
+        assert!(
+            MAIN_JS.contains("status.query_log_persisted"),
+            "the warning must be gated on the status flag, not always shown"
+        );
+        assert!(MAIN_JS.contains("query-log.enc"));
+        assert!(
+            MAIN_JS.contains("persist_query_log = false"),
+            "the warning must tell the operator how to disable persistence"
+        );
+    }
 
     // T-81: DB-IP Lite's CC BY 4.0 licence requires the "IP Geolocation by
     // DB-IP" anchor text AND a link back to db-ip.com in the *same* element,

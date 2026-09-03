@@ -235,6 +235,7 @@ mod tests {
             stats,
             watchdog: None,
             persisted: true,
+            query_log_persisted: false,
         }
     }
 

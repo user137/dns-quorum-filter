@@ -990,6 +990,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         stats: live_stats(state, &entries),
         watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
         persisted,
+        query_log_persisted: state.persist.persist_query_log,
     }
 }
 
@@ -1095,6 +1096,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
         watchdog,
         persisted,
+        query_log_persisted: state.persist.persist_query_log,
     }
 }
 
@@ -3515,10 +3517,44 @@ mod tests {
             .collect();
         assert_eq!(active_ids, vec!["quad9", "adguard"]);
         assert!(status.persisted);
+        assert!(
+            !status.query_log_persisted,
+            "T-96: the default fixture has persist_query_log off"
+        );
         assert_eq!(status.stats.total, 0);
         // `state_with` uses `paths: None`, so there is nowhere to read a
         // watchdog state file from (T-95).
         assert_eq!(status.watchdog, None);
+    }
+
+    // T-96: `GET /admin/status` echoes `query_log_persisted` from the live
+    // flag, so the passive `/admin/ui` warning reflects the actual state.
+    #[tokio::test]
+    async fn serve_admin_status_reports_query_log_persisted_when_the_flag_is_set() {
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: true,
+                paths: None,
+            },
+        );
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/status")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert!(status.query_log_persisted);
     }
 
     fn watchdog_test_paths(dir: &std::path::Path) -> PersistPaths {

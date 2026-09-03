@@ -120,6 +120,13 @@ pub struct AdminStatusResponse {
     /// already took effect and must not be reported as failed, but the
     /// caller needs to know it won't survive a restart.
     pub persisted: bool,
+    /// T-96 — whether the query log is being written to the encrypted
+    /// `query-log.enc` on disk (i.e. `persist_query_log` is set in
+    /// `resolver_config.toml`). Read-only here: there is deliberately **no**
+    /// admin route to toggle it — enabling it stores browsing history on
+    /// disk, so it is a hand-edit only. `/admin/ui` shows a passive warning
+    /// line while it is `true` (SPEC.md §6).
+    pub query_log_persisted: bool,
 }
 
 /// T-152 DTO form of [`crate::NetworkReachability`] — a genuine projection

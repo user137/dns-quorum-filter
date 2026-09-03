@@ -94,7 +94,15 @@ function render(status) {
     configPersistFailed || status.persisted === false
       ? `<div class="notice warn">Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.</div>`
       : "";
+  // T-96: passive indicator that the query log (i.e. browsing history) is
+  // being written to disk. Enabling this is a hand-edit of resolver_config.toml
+  // by design (no toggle here), so this is a plain always-visible line, not a
+  // per-event confirm.
+  const persistWarning = status.query_log_persisted
+    ? `<div class="notice warn">Журнал запитів зберігається на диск у зашифрованому файлі (query-log.enc) — це зберігає історію переглядів між перезапусками. Вимкнути: <code>persist_query_log = false</code> у resolver_config.toml.</div>`
+    : "";
   appBody.innerHTML = `
+    ${persistWarning}
     <div class="card">
       <h3>Режим таймауту</h3>
       ${configWarning}
