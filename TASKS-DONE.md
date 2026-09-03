@@ -2315,6 +2315,43 @@ docs-only) не має номера задачі — його запис у CLAU
     → code-scanning read+write на публічному репо без `gh auth refresh`. **Гоча в CLAUDE.md**
     (`rust/cleartext-logging` taint по імені функції; рекурує на secret-суміжних тестах Батча 3.1).
 
+- [x] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` /
+  `DnsOverHttpsMode` enterprise policy перед імплементацією T-99 (Відкриті питання п.3) —
+  **зроблено 2026-09-04, чиста research, 1 docs-only коміт, той самий «дослідження, не
+  імплементація» прецедент, що T-134/T-164.** Advisor до старту: (1) головне — не хоронити
+  вже-помічений відкритий підпункт (чи HKLM-політики працюють на не-domain-joined машині) у
+  висновку; лишити явною відкритою гілкою для kickoff T-99, бо «не в скоупі» як *вимушене*
+  (механізму нема для цільового користувача, як T-164) проти *вибору* (posture привілеїв) — це
+  дві різні задачі. (2) Писати п.3 tiered — він і так існує *через* те, що хтось написав «із
+  загального знання»; плоске «звірено» над змішаними за надійністю джерелами повторює ту саму
+  помилку. (3) Переформулювати kickoff-питання T-99 навколо двох фактів, що реально керують
+  відповіддю: `secure` робить Chrome-резолвінг hard-fail при мертвому сервісі; `dynamic_refresh:
+  true` (opt-in тумблер застосовується/відкочується без рестарту).
+
+  **Звірено з першоджерелом** (`chromium.googlesource.com/.../policy_definitions/Miscellaneous/
+  DnsOverHttpsMode.yaml` + `DnsOverHttpsTemplates.yaml`, гілка `main`, fetched 2026-09-04):
+  - `DnsOverHttpsMode` — Chrome 78+ (Android 85+, ChromeOS 78+); enum `off`/`automatic`/`secure`;
+    `secure` = «лише DoH-запити, помилка резолву при збої» — **без тихого фолбеку на нативний
+    резолвер** (саме механізм, потрібний п.10); `dynamic_refresh: true`, `per_profile: false`.
+  - `DnsOverHttpsTemplates` — Chrome 80+; **обов'язковий і непорожній при `mode = secure`**;
+    кілька резолверів через пробіл; `{?dns}` ⇒ GET, інакше POST; **некоректний шаблон мовчки
+    ігнорується**; приклад `https://dns.example.net/dns-query{?dns}`.
+  - Реєстр (вторинне — hardening-гайди + Google support `answer/9131254`):
+    `HKLM\SOFTWARE\Policies\Google\Chrome`, обидва `REG_SZ` (також `HKCU\...`, per-user, без
+    адмін-прав). Google 9131254 явно позиціонує реєстровий шлях для не-AD-машин.
+  - **Не закрито:** чи DoH входить у Chromium `kSensitivePolicies` (ігнор на не-керованій
+    машині) — масив дістати не вдалося (2 спроби, 3-attempt rule); проти цього — hardening-гайди
+    покладаються на standalone-Windows + Google 9131254. Емпіричний `chrome://policy` на цільовій
+    машині → винесено в kickoff T-99.
+  - **Гоча (→ CLAUDE.md):** `chromeenterprise.google/policies/*` — JS-рендер, WebFetch бачить
+    оболонку; `chromium.googlesource.com` `.yaml` fetch-иться; `admx.help` цього дня лежав (522).
+
+  Docs-коміт: SPEC.md §"Відкриті питання" п.3 (переписано tiered: Первинне / Вторинне / Не
+  закрито / Наслідок для T-99), рядок 82 таблиці каналів (Безпека-колонка), Фазований план Фаза 3
+  bullet; TASKS.md (`- [ ] T-98` → `- [x]`, Батч 3.6-опис, 2 progress-рядки). Без DECISIONS.md
+  (уточнення відкритого пункту, не реверс шипнутого рішення — той самий критерій, що T-134).
+  Без коду, без CI-relevant змін.
+
 ### Батч 3.1 — liveness-примітиви (зроблено 2026-09-02, plan-mode + advisor kickoff і closing, 6 комітів)
 
 Увесь код — бібліотечний, у новому `crates/dnsqb-service/src/watchdog/` (§7.1 #6: `dnsqb-watcher`

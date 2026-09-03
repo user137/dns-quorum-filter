@@ -315,9 +315,12 @@ Concurrency/Recovery.
   замість монотонного `Instant`; лише `Verdict::Allow` — `Block` не персиститься), `cache_persist`
   (`Cache::snapshot`/`restore`, 60 s + shutdown флаш), `AdminStatusResponse.encrypted_persistence`
   + пасивний `/admin/ui`-рядок. Наратив → TASKS-DONE.md.
-- **Батч 3.6 — enterprise policy (T-98, T-99)**: T-98 — чиста research (WebFetch поточних доків
-  Chrome `DnsOverHttpsTemplates`/`DnsOverHttpsMode`), без коду, гейтить T-99 і інформує Відкрите
-  питання п.10. T-99 — registry-запис (Windows); AskUserQuestion на kickoff: чи взагалі в скоупі
+- **Батч 3.6 — enterprise policy (T-98, T-99)**: **T-98 зроблено 2026-09-04** (чиста research,
+  docs-only коміт) — механізм звірено з Chromium `policy_definitions` YAML: `DnsOverHttpsMode`
+  enum `off/automatic/secure` (Chrome 78+), `secure` = без тихого фолбеку; `DnsOverHttpsTemplates`
+  (Chrome 80+) обов'язковий при `secure`, `{?dns}` ⇒ GET, некоректний шаблон мовчки ігнорується;
+  реєстр `HKLM\SOFTWARE\Policies\Google\Chrome`, `REG_SZ`; tiered-докази в SPEC.md §"Відкриті
+  питання" п.3. T-99 — registry-запис (Windows); AskUserQuestion на kickoff: чи взагалі в скоупі
   для не-enterprise користувача, чи лише opt-in "advanced" (міняє posture привілеїв). **Якщо
   "не в скоупі" — T-99 закривається без коду** (у TASKS-DONE.md, як T-164).
 - **Батч 3.7 — release-інженерія (T-100, T-102, T-103; T-101 винесено вперед, зроблено 2026-09-01)**:
@@ -353,7 +356,11 @@ Concurrency/Recovery.
 **T-97 (persist_cache) зроблено 2026-09-03** (plan+advisor kickoff+closing, коміти `9f5a316`…):
 `cache.enc` (спільний `encrypted_file` / `persistence-key` з логом), абсолютний настінний дедлайн
 замість `Instant`, лише `Allow`-вердикти (рішення користувача — `fail_closed`×persist взаємодія),
-`AdminStatusResponse.encrypted_persistence`. **Наступний — Батч 3.6** (T-98, T-99).
+`AdminStatusResponse.encrypted_persistence`.
+
+**T-98 (Батч 3.6, research) зроблено 2026-09-04** (docs-only): Chrome DoH enterprise-policy
+механізм звірено з Chromium `policy_definitions` YAML — SPEC.md §"Відкриті питання" п.3 (tiered).
+**Наступний — T-99** (registry-запис), kickoff-AskUserQuestion про скоуп ще не поставлено.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -473,7 +480,8 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   `RESTARTING` під час рестарту; relaunch watcher'а → нуль дублів.
 
 **Батч 3.5 (T-146 + T-96) зроблено 2026-09-03. T-97 (persist_cache) зроблено 2026-09-03.**
-**Наступний — Батч 3.6** (T-98 research → T-99 enterprise policy).
+**T-98 (Батч 3.6, research) зроблено 2026-09-04. Наступний — T-99** (kickoff-AskUserQuestion про
+скоуп).
 
 - [ ] T-70 — (Батч 3.8) **Windows-половина** (перенесено з Фази 2 2026-08-31 — заблокована на T-156, яка
   тут): `trust_store::uninstall()` (T-49) уже є примітивом; лишається сам пакетований
@@ -482,8 +490,8 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
   Manager — `key_store::delete_secret` для TLS-запису (виклик додати тут). Залишений ключ у
   secure storage після видалення застосунку — той самий клас бага безпеки, що й залишений
   довірений сертифікат (SECURITY.md). **macOS-половина (Keychain) → Фаза 6.**
-- [ ] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` enterprise policy перед імплементацією (Відкриті питання п.3)
-- [ ] T-99 — (Батч 3.6) Enterprise policy автоматизація (Chrome `DnsOverHttpsTemplates` через registry/plist) (Фазований план, Фаза 3)
+- [x] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` enterprise policy перед імплементацією (Відкриті питання п.3) — **зроблено 2026-09-04, docs-only** (SPEC.md §"Відкриті питання" п.3 tiered; TASKS-DONE.md)
+- [ ] T-99 — (Батч 3.6) Enterprise policy автоматизація (Chrome `DnsOverHttpsMode=secure` + `DnsOverHttpsTemplates` через registry) (Фазований план, Фаза 3) — kickoff-AskUserQuestion про скоуп; якщо «не в скоупі» → закривається без коду, як T-164
 - [ ] T-100 — (Батч 3.7) Reproducible builds / підписані релізні бінарники (Наскрізні вимоги)
 - [ ] T-102 — (Батч 3.7) **Виправлено 2026-08-29 (застаріле формулювання)**: CI-автоматизація code-signing
   релізних бінарників per-OS (Windows/macOS) — раніше називало "Tauri-бандлів", застаріло з T-149

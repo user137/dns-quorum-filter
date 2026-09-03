@@ -79,7 +79,7 @@ element-picker / cosmetic filtering / URL-pattern blocking, які робить 
 | 4 | ~~UI ↔ Backend (Tauri IPC)~~ — **історичний, каналу більше не існує (T-149)** | ~~Tauri webview (JS) ↔ Rust-ядро~~ | ~~Вбудований Tauri IPC-міст~~ | ~~Tauri commands (`invoke`/`emit`), JSON~~ | ~~Двобічний~~ | Видалено разом із `crates/dnsqb-ui` (DECISIONS.md) — жоден процес більше не має власного webview чи Rust-ядра, що спілкуються всередині одного бінарника. Allowlist-принцип, що тут стояв, не зник — переїхав на рядок 12 нижче (`/admin/*` маршрути — HTTP-роутинг сам є allowlist'ом). | 8 (застаріло) |
 | 5 | GeoIP updater ↔ джерело бази | `dnsqb-service` ↔ DB-IP Lite distribution | HTTPS, зовнішня мережа | Бінарний download (.mmdb) + checksum | Періодичний outbound pull | TLS + перевірка цілісності перед атомарною заміною | 3.5 |
 | 6 | Installer ↔ OS trust store | Інсталятор ↔ Certificate Store / Keychain / NSS DB | Платформні API (не мережа) | `certutil`, `security`, `libsecret`-подібні виклики | Одноразовий write (install), write (uninstall) | Підвищені права лише одноразово, не постійно | 2 |
-| 7 | Installer ↔ Browser policy store | Інсталятор ↔ Chrome enterprise policy (registry/plist) | Платформні API (не мережа) | `DnsOverHttpsTemplates` | Одноразовий write | **Статус не підтверджено** — див. Відкриті питання, Фаза 3 | Фазований план (Фаза 3) |
+| 7 | Installer ↔ Browser policy store | Інсталятор ↔ Chrome enterprise policy (registry/plist) | Платформні API (не мережа) | `DnsOverHttpsMode=secure` + `DnsOverHttpsTemplates`, `REG_SZ` під `HKLM\SOFTWARE\Policies\Google\Chrome` | Одноразовий write | Механізм звірено (T-98, 2026-09-04) — Відкриті питання п.3; скоуп T-99 (чи для не-enterprise користувача) відкритий | Фазований план (Фаза 3) |
 | 8 | Користувач ↔ override-файл | Людина (текстовий редактор) ↔ TOML-файл в app data | Файлова система, без мережі | TOML/текст, редагований вручну | Прямий запис користувачем, читання сервісом | Файлові права ОС; зміни інвалідують відповідні записи кешу (5) | 5 |
 | 9 | Курація ↔ Cloudflare Radar | Проєктний процес (не клієнт користувача) ↔ Cloudflare Radar API | HTTPS, зовнішня мережа | REST API, токен Cloudflare-акаунту | Періодичний outbound pull (на боці проєкту) | Токен належить проєкту, не вбудований у клієнтський застосунок — той самий принцип, що й з MaxMind (3.5) | 5.1 |
 | 10 | Клієнт ↔ дистрибутив топ-сайтів | `dnsqb-service` ↔ CDN/реліз-канал проєкту | HTTPS, зовнішня мережа | Версійований файл (список доменів) + checksum | Періодичний outbound pull | TLS + перевірка цілісності перед атомарною заміною, той самий паттерн, що GeoIP (3.5) | 5.1 |
@@ -1729,8 +1729,10 @@ provider, що резолвить через нього живий домен. �
   перенесено з Фази 2 — Windows-половина; macOS-половина у Фазі 6).
 - Опційне шифроване персистентне зберігання логу і кешу (DPAPI / Keychain /
   Secret Service).
-- Enterprise policy автоматизація (Chrome `DnsOverHttpsTemplates` через registry/plist) —
-  **потребує перевірки актуальної Chrome policy документації, не підтверджено тут**.
+- Enterprise policy автоматизація (Chrome `DnsOverHttpsMode=secure` + `DnsOverHttpsTemplates`
+  через `HKLM\SOFTWARE\Policies\Google\Chrome`, `REG_SZ`) — **механізм звірено з першоджерелом
+  T-98 (2026-09-04); tiered-докази й наслідки в §"Відкриті питання" п.3. Скоуп T-99 (чи взагалі
+  для не-enterprise користувача, чи лише opt-in "advanced") — окреме рішення на kickoff.**
 - Детальний батч-план виконання (9 батчів, порядок, per-batch plan+advisor gate) —
   **TASKS.md §"Фаза 3", блок "План виконання Ф3"** (2026-09-01). Глибокий дизайн watchdog
   лишається тут, у §7; порядок виконання — робота TASKS.md, той самий поділ, що для Ф2.
@@ -1869,8 +1871,52 @@ provider, що резолвить через нього живий домен. �
 2. **ToS апстрімів** — чи дозволяють Quad9 / AdGuard DNS автоматизовані DoH-запити
    від стороннього клієнтського застосунку. Не перевірено; юридична звірка потрібна
    до публічного релізу.
-3. **Chrome `DnsOverHttpsTemplates` enterprise policy** — з загального знання про
-   механізм, не звірено з офіційною документацією.
+3. **Chrome DoH enterprise policy — звірено з першоджерелом (T-98, 2026-09-04).**
+   Джерело: `chromium.googlesource.com/chromium/src/+/main/components/policy/
+   resources/templates/policy_definitions/Miscellaneous/DnsOverHttpsMode.yaml`
+   + `DnsOverHttpsTemplates.yaml` (гілка `main`, fetched 2026-09-04). Гоча для
+   наступних сесій: `chromeenterprise.google/policies/*` — JS-рендер, WebFetch
+   бачить лише оболонку; `chromium.googlesource.com` `.yaml` fetch-иться;
+   `admx.help` цього дня лежав (522).
+
+   **Первинне (Chromium `policy_definitions` YAML):**
+   - `DnsOverHttpsMode` — Chrome 78+ (Android 85+, ChromeOS 78+). Enum
+     `off` / `automatic` / `secure`. `secure` = «надсилає лише DoH-запити й
+     повертає помилку резолву при збої» — **без тихого фолбеку на нативний
+     резолвер** (це і є механізм, потрібний п.10 нижче). `dynamic_refresh: true`
+     (застосовується й відкочується без рестарту Chrome), `per_profile: false`
+     (глобально для браузера, не per-profile).
+   - `DnsOverHttpsTemplates` — Chrome 80+. **Обов'язковий і непорожній, коли
+     `mode = secure`.** Кілька резолверів — URI-шаблони через пробіл. `{?dns}`
+     у шаблоні ⇒ GET, інакше POST. **Некоректний шаблон мовчки ігнорується**
+     (у `secure` це = усі запити провалюються без діагностики). Приклад:
+     `https://dns.example.net/dns-query{?dns}`.
+
+   **Вторинне (сторонні hardening-гайди CleanBrowsing/NextDNS + Google support
+   `answer/9131254`):** реєстр `HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\
+   Chrome`, обидва значення `REG_SZ` (також `HKCU\SOFTWARE\Policies\Google\
+   Chrome` — per-user, без адмін-прав). Google support 9131254 явно описує
+   реєстровий шлях як механізм «для комп'ютерів, не приєднаних до AD-домену».
+
+   **Не закрито цим проходом:** чи DoH-політики входять у Chromium
+   `kSensitivePolicies` (малий список, ігнорований на *не*-керованій машині) —
+   джерельний масив цим проходом дістати не вдалося (2 спроби, 3-attempt rule).
+   Проти цього: hardening-гайди покладаються на роботу цих політик на
+   standalone-Windows, і Google 9131254 документує не-AD-шлях. Остаточна
+   перевірка — емпіричний `chrome://policy` на цільовій машині — винесена в
+   kickoff T-99.
+
+   **Наслідок для T-99:** `secure` + шаблон `https://127.0.0.1:<port>/
+   dns-query{?dns}` закриває п.10 для Chrome, але робить Chrome-резолвінг
+   **жорстко залежним** від живого `dnsqb-service` (watchdog 3.0–3.3 пом'якшує,
+   не усуває hard dependency). Запис `HKLM\...\Policies` потребує адмін-прав і
+   глобальний для машини — конфлікт із «без постійних підвищених прав»
+   (Наскрізні вимоги), той самий, що вже названо для Firefox (T-134). Chrome-
+   only; Edge — та сама схема під `HKLM\SOFTWARE\Policies\Microsoft\Edge`.
+   Передумови, дві з яких провалюються тихо: шаблон містить конфігурований порт
+   (оператор змінює порт → застаріла політика, а некоректний шаблон мовчки
+   ігнорується), і Chrome має вже довіряти T-49 leaf-сертифікату, інакше
+   endpoint не працює.
 4. **Приватність кворуму:** N провайдерів замість одного означає, що історія
    браузингу видима одразу N сторонам на кожен новий (не кешований) домен. Це
    об'єктивно **гірше для приватності**, ніж один провайдер, в обмін на краще
