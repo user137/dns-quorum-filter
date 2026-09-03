@@ -24,10 +24,11 @@
 use crate::admin::{
     compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
     BaselineEndpointView, CacheConfigUpdate, CacheConfigView, DatabaseSource,
-    GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip, HealthResponse, LogEntryView,
-    LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
-    NetworkStatusView, OverrideAddRequest, OverrideDomainView, OverrideListsResponse,
-    OverrideRemoveRequest, ProviderStatusView, WatchdogStatusView,
+    EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
+    HealthResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
+    MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
+    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
+    WatchdogStatusView,
 };
 use crate::admin_ui;
 use crate::baseline_selector::BaselineSelector;
@@ -1013,7 +1014,10 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         stats: live_stats(state, &entries),
         watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
         persisted,
-        query_log_persisted: state.persist.persist_query_log,
+        encrypted_persistence: EncryptedPersistenceView {
+            query_log: state.persist.persist_query_log,
+            cache: state.persist.persist_cache,
+        },
     }
 }
 
@@ -1120,7 +1124,10 @@ fn apply_admin_config<C: DohClient + Sync>(
         stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
         watchdog,
         persisted,
-        query_log_persisted: state.persist.persist_query_log,
+        encrypted_persistence: EncryptedPersistenceView {
+            query_log: state.persist.persist_query_log,
+            cache: state.persist.persist_cache,
+        },
     }
 }
 
@@ -3547,8 +3554,12 @@ mod tests {
         assert_eq!(active_ids, vec!["quad9", "adguard"]);
         assert!(status.persisted);
         assert!(
-            !status.query_log_persisted,
+            !status.encrypted_persistence.query_log,
             "T-96: the default fixture has persist_query_log off"
+        );
+        assert!(
+            !status.encrypted_persistence.cache,
+            "T-97: the default fixture has persist_cache off"
         );
         assert_eq!(status.stats.total, 0);
         // `state_with` uses `paths: None`, so there is nowhere to read a
@@ -3556,10 +3567,11 @@ mod tests {
         assert_eq!(status.watchdog, None);
     }
 
-    // T-96: `GET /admin/status` echoes `query_log_persisted` from the live
-    // flag, so the passive `/admin/ui` warning reflects the actual state.
+    // T-96 / T-97: `GET /admin/status` echoes both persistence flags from the
+    // live `PersistTarget`, so each passive `/admin/ui` warning reflects the
+    // actual state.
     #[tokio::test]
-    async fn serve_admin_status_reports_query_log_persisted_when_the_flag_is_set() {
+    async fn serve_admin_status_reports_the_persistence_flags_when_they_are_set() {
         let state = state_with_persist(
             no_op_client(),
             PersistTarget {
@@ -3584,7 +3596,8 @@ mod tests {
         let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
             panic!("response body must decode as AdminStatusResponse");
         };
-        assert!(status.query_log_persisted);
+        assert!(status.encrypted_persistence.query_log);
+        assert!(status.encrypted_persistence.cache);
     }
 
     fn watchdog_test_paths(dir: &std::path::Path) -> PersistPaths {

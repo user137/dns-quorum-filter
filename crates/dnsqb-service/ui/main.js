@@ -98,11 +98,17 @@ function render(status) {
   // being written to disk. Enabling this is a hand-edit of resolver_config.toml
   // by design (no toggle here), so this is a plain always-visible line, not a
   // per-event confirm.
-  const persistWarning = status.query_log_persisted
+  const persistWarning = status.encrypted_persistence.query_log
     ? `<div class="notice warn">Журнал запитів зберігається на диск у зашифрованому файлі (query-log.enc) — це зберігає історію переглядів між перезапусками. Вимкнути: <code>persist_query_log = false</code> у resolver_config.toml.</div>`
+    : "";
+  // T-97: the same kind of passive, hand-edit-only indicator for the
+  // quorum-verdict cache. Independent flag, its own file, its own line.
+  const cachePersistWarning = status.encrypted_persistence.cache
+    ? `<div class="notice warn">Кеш вердиктів зберігається на диск у зашифрованому файлі (cache.enc) — між перезапусками зберігається, які домени резолвилися. Вимкнути: <code>persist_cache = false</code> у resolver_config.toml.</div>`
     : "";
   appBody.innerHTML = `
     ${persistWarning}
+    ${cachePersistWarning}
     <div class="card">
       <h3>Режим таймауту</h3>
       ${configWarning}

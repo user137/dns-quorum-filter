@@ -235,7 +235,10 @@ mod tests {
             stats,
             watchdog: None,
             persisted: true,
-            query_log_persisted: false,
+            encrypted_persistence: dnsqb_service::EncryptedPersistenceView {
+                query_log: false,
+                cache: false,
+            },
         }
     }
 

@@ -153,10 +153,11 @@ mod wire;
 
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    BaselineEndpointView, DatabaseSource, HealthGeoip, HealthResponse, MaxmindCredentialCheck,
-    MaxmindCredentialsRequest, MaxmindCredentialsView, MaxmindRefreshHealth, NetworkStatusView,
-    ProviderAddRequest, ProviderRemoveRequest, ProviderSetEnabledRequest, ProviderStatusView,
-    ProviderView, ProvidersResponse, WatchdogStatusView,
+    BaselineEndpointView, DatabaseSource, EncryptedPersistenceView, HealthGeoip, HealthResponse,
+    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
+    MaxmindRefreshHealth, NetworkStatusView, ProviderAddRequest, ProviderRemoveRequest,
+    ProviderSetEnabledRequest, ProviderStatusView, ProviderView, ProvidersResponse,
+    WatchdogStatusView,
 };
 pub use baseline_selector::{
     BaselineEvent, BaselineHealth, BaselineSelector, BASELINE_CHAIN, RETRY_PRIMARY_AFTER,

@@ -95,17 +95,33 @@ mod tests {
     use http::{Method, StatusCode};
 
     // T-96: the passive query-log-persistence warning is rendered only when
-    // `query_log_persisted` is true, and it names the file and how to turn it
-    // off (a config-file edit - there is no toggle in the UI by design).
+    // the flag is true, and it names the file and how to turn it off (a
+    // config-file edit - there is no toggle in the UI by design).
     #[test]
     fn main_js_shows_the_persistence_warning_gated_on_the_status_flag() {
         assert!(
-            MAIN_JS.contains("status.query_log_persisted"),
+            MAIN_JS.contains("status.encrypted_persistence.query_log"),
             "the warning must be gated on the status flag, not always shown"
         );
         assert!(MAIN_JS.contains("query-log.enc"));
         assert!(
             MAIN_JS.contains("persist_query_log = false"),
+            "the warning must tell the operator how to disable persistence"
+        );
+    }
+
+    // T-97: the cache-persistence warning is the same shape - gated on its own
+    // `encrypted_persistence.cache` flag, names `cache.enc`, and tells the
+    // operator the config-file edit that turns it off.
+    #[test]
+    fn main_js_shows_the_cache_persistence_warning_gated_on_the_status_flag() {
+        assert!(
+            MAIN_JS.contains("status.encrypted_persistence.cache"),
+            "the warning must be gated on the status flag, not always shown"
+        );
+        assert!(MAIN_JS.contains("cache.enc"));
+        assert!(
+            MAIN_JS.contains("persist_cache = false"),
             "the warning must tell the operator how to disable persistence"
         );
     }
