@@ -127,6 +127,7 @@ mod cert;
 mod cert_rotation;
 mod config;
 mod dispatch;
+mod encrypted_file;
 mod geoip;
 mod geoip_credentials;
 mod geoip_download;
@@ -167,6 +168,9 @@ pub use config::{ConfigError, GeoipConfig, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
     PersistTarget, RuntimeInit, RuntimeSettings,
+};
+pub use encrypted_file::{
+    open as open_encrypted, seal as seal_encrypted, EncryptedFileError, FileKind,
 };
 pub use geoip::{GeoipError, GeoipReader};
 pub use geoip_credentials::{
