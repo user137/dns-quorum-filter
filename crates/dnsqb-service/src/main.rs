@@ -129,6 +129,7 @@ async fn main() {
     // same `app_data_dir()` call - never independently `Some`/`None`.
     let persist = PersistTarget {
         port: resolver_config.port,
+        persist_query_log: resolver_config.persist_query_log,
         paths: app_data.as_deref().map(|dir| PersistPaths {
             config: dir.join("resolver_config.toml"),
             overrides: dir.join("overrides.toml"),
