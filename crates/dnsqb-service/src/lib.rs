@@ -136,6 +136,7 @@ mod geoip_download;
 mod geoip_updater;
 mod key_store;
 mod listener;
+mod local_state;
 mod log_persist;
 mod overrides;
 mod paths;
@@ -188,6 +189,7 @@ pub use geoip_updater::{
 };
 pub use key_store::{load_or_create_persistence_key, KeyStoreError, PersistenceKey};
 pub use listener::{bind_listener, BindError};
+pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
 pub use log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,

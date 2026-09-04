@@ -110,7 +110,7 @@ pub(crate) fn maxmind_credentials_entry(app_data_dir: &Path) -> String {
 /// Credential-store entry holding the 32-byte symmetric key for the opt-in
 /// encrypted on-disk persistence (T-146) for the install rooted at
 /// `app_data_dir`.
-fn persistence_key_entry(app_data_dir: &Path) -> String {
+pub(crate) fn persistence_key_entry(app_data_dir: &Path) -> String {
     entry_name("persistence-key", app_data_dir)
 }
 
