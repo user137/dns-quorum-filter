@@ -215,5 +215,7 @@ jobs:
           "@
           $notes | Out-File notes.md -Encoding utf8
           $assets = Get-ChildItem dist -File | ForEach-Object { $_.FullName }
-          gh release create $tag --draft --title $tag --notes-file notes.md @assets
+          # --repo: neither checkout is at the job root (both used `path:`), so
+          # gh cannot infer the repo from a .git dir here.
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --title $tag --notes-file notes.md @assets
           if ($LASTEXITCODE -ne 0) { exit 1 }
