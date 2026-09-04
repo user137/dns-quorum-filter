@@ -28,7 +28,7 @@ use crate::admin::{
     HealthResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
     MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
     OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
-    WatchdogStatusView,
+    UninstallLocalStateResponse, WatchdogStatusView,
 };
 use crate::admin_ui;
 use crate::baseline_selector::BaselineSelector;
@@ -106,6 +106,7 @@ const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
 const ADMIN_PROVIDERS_SET_ENABLED_PATH: &str = "/admin/providers/set-enabled";
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
+const ADMIN_UNINSTALL_LOCAL_STATE_PATH: &str = "/admin/uninstall-local-state";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
@@ -142,6 +143,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_PROVIDERS_SET_ENABLED_PATH, &[Method::POST]),
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
+    (ADMIN_UNINSTALL_LOCAL_STATE_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
@@ -2500,6 +2502,39 @@ where
     status_response(StatusCode::OK)
 }
 
+/// `POST /admin/uninstall-local-state` (T-70) — the in-app "Prepare for
+/// removal" action `dnsqb-tray`'s "Повністю видалити" menu item and
+/// `/admin/ui`'s danger-zone button both call. MSIX (T-156) has no
+/// uninstall-time code hook, so this is the only place the trusted
+/// certificate and the three Credential Manager secrets ever actually get
+/// cleared — the caller still has to remove the app itself afterward. Same
+/// CSRF gate and body-size cap as every other admin `POST`; no config file
+/// touched, so no `persist_lock`.
+async fn serve_admin_uninstall_local_state<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    if limited.collect().await.is_err() {
+        return status_response(StatusCode::BAD_REQUEST);
+    }
+    let app_data_dir = state.persist.paths.as_ref().map(PersistPaths::app_data_dir);
+    let report = crate::local_state::remove_all(app_data_dir.as_deref());
+    json_response(&UninstallLocalStateResponse::from(report))
+}
+
 /// `POST /admin/shutdown` (T-149) — the highest blast-radius endpoint on
 /// this channel: its only consumer is `dnsqb-tray`'s "Зупинити фільтрацію"
 /// menu item, which gates it behind a confirm dialog that names the
@@ -2658,6 +2693,7 @@ where
         ADMIN_PROVIDERS_SET_ENABLED_PATH => serve_admin_providers_set_enabled(req, &state).await,
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
+        ADMIN_UNINSTALL_LOCAL_STATE_PATH => serve_admin_uninstall_local_state(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
@@ -2675,8 +2711,8 @@ mod tests {
         admin_status, content_type_is_dns_message, parse_log_query, read_watchdog_view,
         resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
         GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
-        PersistTarget, RuntimeInit, WatchdogState, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH,
-        MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        PersistTarget, RuntimeInit, WatchdogState, ADMIN_UNINSTALL_LOCAL_STATE_PATH,
+        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
@@ -2876,21 +2912,46 @@ mod tests {
     // "unlikely" isn't the same as "provably never" the way it is for the
     // admin-only property above, which never reaches `handle_query` at all.
 
-    /// Total `(path, method)` pairs across every [`ROUTES`] entry - a plain
-    /// module-level fn, not a captured closure, since `proptest!`'s
+    /// Routes this property deliberately never selects. T-70's real handler
+    /// (once past the content-type gate, which this property always
+    /// satisfies for a non-GET route - see below) spawns a real
+    /// `certutil.exe` subprocess and mutates whatever this project's fixed
+    /// `CommonName` has installed in the machine's actual `CurrentUser\Root`
+    /// store, the same real-external-resource side effect `trust_store`'s
+    /// and `cert_rotation`'s own tests already refuse to trigger (see
+    /// `local_state.rs`'s `remove_all` doc comment). Unlike every other
+    /// route this property fuzzes, the handler never even inspects the
+    /// body once the gate passes, so fuzzing it here buys nothing while
+    /// still paying a real subprocess-spawn cost per case, repeated across
+    /// however many of `Config::with_cases`' 64 cases happen to land on it.
+    /// Routing/method-gating for this path is proven instead by
+    /// `serve_matches_the_documented_admin_route_allowlist` +
+    /// `serve_enforces_the_route_table_it_matched_above` (whose fixture
+    /// request carries no `Content-Type` at all, so it never reaches the
+    /// real handler either), plus this route's own two gate tests below.
+    const FUZZ_EXCLUDED_ROUTES: &[&str] = &[ADMIN_UNINSTALL_LOCAL_STATE_PATH];
+
+    fn fuzzable_routes() -> impl Iterator<Item = &'static (&'static str, &'static [Method])> {
+        ROUTES
+            .iter()
+            .filter(|(path, _)| !FUZZ_EXCLUDED_ROUTES.contains(path))
+    }
+
+    /// Total `(path, method)` pairs across every fuzzable [`ROUTES`] entry -
+    /// a plain module-level fn, not a captured closure, since `proptest!`'s
     /// generated `#[test] fn` can only reference items, not locals from an
     /// enclosing block.
     fn route_method_count() -> usize {
-        ROUTES.iter().map(|(_, methods)| methods.len()).sum()
+        fuzzable_routes().map(|(_, methods)| methods.len()).sum()
     }
 
-    /// The `index`-th `(path, method)` pair, flattening `ROUTES` in
-    /// declaration order. Panics on an out-of-range `index` - callers only
-    /// ever pass `0..route_method_count()`, so this is a real invariant
-    /// violation, not untrusted input.
+    /// The `index`-th `(path, method)` pair, flattening the fuzzable subset
+    /// of `ROUTES` in declaration order. Panics on an out-of-range `index` -
+    /// callers only ever pass `0..route_method_count()`, so this is a real
+    /// invariant violation, not untrusted input.
     fn route_method_at(index: usize) -> (&'static str, Method) {
         let mut remaining = index;
-        for (path, methods) in ROUTES {
+        for (path, methods) in fuzzable_routes() {
             if remaining < methods.len() {
                 return (path, methods[remaining].clone());
             }
@@ -6614,6 +6675,46 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
+    // T-70: only the two gates that reject *before* `local_state::
+    // remove_all` is ever called are tested through `serve()` here — the
+    // real success path spawns a real `certutil.exe` and mutates the
+    // machine's actual trust store (see `serve_never_panics_on_arbitrary_
+    // input_for_any_documented_route`'s `FUZZ_EXCLUDED_ROUTES` comment for
+    // the full reasoning); `local_state::remove_secret` is unit-tested
+    // directly instead, in `local_state.rs`.
+
+    #[tokio::test]
+    async fn serve_admin_uninstall_local_state_rejects_non_post_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/uninstall-local-state")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_uninstall_local_state_rejects_a_missing_content_type() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/uninstall-local-state")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
     /// T-53/T-59: `serve()`'s `ROUTES` table (declared near this module's
     /// `_PATH` consts) is the actual dispatch source — a request is checked
     /// against it *before* the handler-selection `match` in `serve()` ever
@@ -6648,6 +6749,7 @@ mod tests {
         ("/admin/providers/set-enabled", &[Method::POST]),
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
+        ("/admin/uninstall-local-state", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),

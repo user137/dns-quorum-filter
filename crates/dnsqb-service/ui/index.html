@@ -60,6 +60,24 @@
     <h3>Лог запитів</h3>
     <p>Завантаження…</p>
   </div>
+  <!-- T-70: MSIX (T-156) has no uninstall-time code hook - the OS just
+       deletes the package's files, nothing runs afterward - so the trusted
+       certificate and Credential Manager secrets have to be cleared from
+       *inside* the running app, before the user removes it. Static markup
+       (no fetch/render cycle - there is no persisted state to show, only a
+       button and its one-shot result), kept as its own card at the bottom
+       of the page rather than folded into any status card above. -->
+  <div id="danger-zone-body" class="card">
+    <h3>Повне видалення</h3>
+    <p class="notice warn">
+      Видаляє локальний довірений сертифікат dns-quorum-filter і всі збережені ключі/креденшели
+      (TLS-ключ, ключ шифрування журналу й кешу, креденшели MaxMind, якщо є) зі сховища
+      облікових даних Windows. Це <strong>не</strong> видаляє сам застосунок — після цього кроку
+      видаліть dns-quorum-filter у Параметрах Windows окремо.
+    </p>
+    <button type="button" id="uninstall-local-state-btn">Повністю видалити</button>
+    <div id="uninstall-local-state-result"></div>
+  </div>
   <!-- T-81: attribution / credits. Static markup, no JS and no DTO - it must
        be present on every render because this page displays GeoIP-derived
        country data (the log's resolved_ip_country column, the GeoIP card),

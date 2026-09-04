@@ -44,7 +44,10 @@ use dnsqb_service::{
     acquire_instance_guard, app_data_dir, write_pid_file, AdminClient, AdminClientError,
     GuardError, InstanceRole, ResolverConfig,
 };
-use dnsqb_service::{ensure_installed, rotate_certificate, uninstall as uninstall_trust_store};
+use dnsqb_service::{
+    ensure_installed, remove_all_local_state, rotate_certificate,
+    uninstall as uninstall_trust_store, ArtifactOutcome, UninstallReport,
+};
 use status::TrayStatus;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -76,6 +79,7 @@ const CLOSE_ID: &str = "close";
 const INSTALL_CERT_ID: &str = "install-cert";
 const UNINSTALL_CERT_ID: &str = "uninstall-cert";
 const ROTATE_CERT_ID: &str = "rotate-cert";
+const REMOVE_ALL_ID: &str = "remove-all-local-state";
 
 /// Re-check cadence for `muda`'s global menu-event channel (see the module
 /// doc comment for why this loop drives it rather than `tao` itself) —
@@ -174,6 +178,7 @@ fn build_menu() -> Menu {
     let install_cert = MenuItem::with_id(INSTALL_CERT_ID, "Встановити сертифікат", true, None);
     let uninstall_cert = MenuItem::with_id(UNINSTALL_CERT_ID, "Видалити сертифікат", true, None);
     let rotate_cert = MenuItem::with_id(ROTATE_CERT_ID, "Перевипустити сертифікат", true, None);
+    let remove_all = MenuItem::with_id(REMOVE_ALL_ID, "Повністю видалити", true, None);
     let stop_filtering = MenuItem::with_id(STOP_FILTERING_ID, "Зупинити фільтрацію", true, None);
     let close = MenuItem::with_id(CLOSE_ID, "Закрити", true, None);
     if let Err(err) = menu.append_items(&[
@@ -184,6 +189,8 @@ fn build_menu() -> Menu {
         &install_cert,
         &uninstall_cert,
         &rotate_cert,
+        &PredefinedMenuItem::separator(),
+        &remove_all,
         &PredefinedMenuItem::separator(),
         &stop_filtering,
         &close,
@@ -229,6 +236,20 @@ fn handle_menu_event(id: &str, app_data: &Path, port: u16, control_flow: &mut Co
                     "rotate",
                     "Перевипустити сертифікат",
                     || rotate_certificate().map(|report| report.to_string()),
+                );
+            }
+        }
+        REMOVE_ALL_ID => {
+            if confirm_remove_all_local_state() {
+                let app_data = app_data.to_path_buf();
+                spawn_trust_store_action(
+                    "remove-all-local-state",
+                    "Повністю видалити",
+                    move || -> Result<String, std::convert::Infallible> {
+                        Ok(format_uninstall_report(&remove_all_local_state(Some(
+                            &app_data,
+                        ))))
+                    },
                 );
             }
         }
@@ -384,6 +405,48 @@ fn confirm_rotate_cert() -> bool {
         .set_buttons(rfd::MessageButtons::YesNo)
         .show();
     result == rfd::MessageDialogResult::Yes
+}
+
+/// Native confirm dialog before T-70's full local-state removal — names
+/// every artifact it touches (the trusted certificate *and* all three
+/// Credential Manager secrets) and the one thing it deliberately does
+/// **not** do: MSIX (T-156) gives this app no code to run at uninstall
+/// time, so removing the app itself is still a separate, manual step in
+/// Windows Settings.
+fn confirm_remove_all_local_state() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_title("Повністю видалити")
+        .set_description(
+            "Буде видалено локальний сертифікат dns-quorum-filter із довірених кореневих \
+             сертифікатів, а також TLS-ключ, ключ шифрування журналу/кешу та збережені \
+             креденшели MaxMind (якщо є) зі сховища облікових даних Windows. Це НЕ видаляє \
+             сам застосунок — після цього кроку видаліть dns-quorum-filter у Параметрах \
+             Windows окремо. Продовжити?",
+        )
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    result == rfd::MessageDialogResult::Yes
+}
+
+/// One line per artifact, never a single collapsed pass/fail — the same
+/// discipline [`UninstallReport`] itself follows.
+fn format_uninstall_report(report: &UninstallReport) -> String {
+    fn line(label: &str, outcome: ArtifactOutcome) -> String {
+        let text = match outcome {
+            ArtifactOutcome::Removed => "видалено",
+            ArtifactOutcome::NotPresent => "не було встановлено",
+            ArtifactOutcome::Failed(_) => "НЕ ВДАЛОСЯ видалити",
+        };
+        format!("{label}: {text}")
+    }
+    [
+        line("Сертифікат", report.cert),
+        line("TLS-ключ", report.tls_key),
+        line("Ключ шифрування", report.persistence_key),
+        line("Креденшели MaxMind", report.maxmind_creds),
+    ]
+    .join("\n")
 }
 
 fn show_about_dialog() {

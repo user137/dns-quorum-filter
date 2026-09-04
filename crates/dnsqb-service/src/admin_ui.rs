@@ -94,6 +94,30 @@ mod tests {
     use super::{serve_css, serve_html, serve_js, INDEX_HTML, MAIN_JS};
     use http::{Method, StatusCode};
 
+    // T-70: MSIX has no uninstall-time code hook, so the danger-zone card is
+    // the only place the trusted cert / Credential Manager secrets ever get
+    // cleared — it must actually call the real route, warn about the
+    // certificate and every secret by name, and say plainly that this does
+    // not remove the app itself.
+    #[test]
+    fn danger_zone_calls_the_uninstall_route_and_names_every_consequence() {
+        assert!(INDEX_HTML.contains("uninstall-local-state-btn"));
+        assert!(
+            MAIN_JS.contains("/admin/uninstall-local-state"),
+            "the button must call the real route"
+        );
+        for word in ["сертифікат", "TLS-ключ", "MaxMind"] {
+            assert!(
+                INDEX_HTML.contains(word),
+                "the danger-zone warning must name {word} as something it removes"
+            );
+        }
+        assert!(
+            INDEX_HTML.contains("не</strong> видаляє сам застосунок"),
+            "must say plainly that this does not remove the app itself"
+        );
+    }
+
     // T-96: the passive query-log-persistence warning is rendered only when
     // the flag is true, and it names the file and how to turn it off (a
     // config-file edit - there is no toggle in the UI by design).

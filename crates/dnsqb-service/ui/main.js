@@ -1731,3 +1731,82 @@ async function refreshProviders() {
 }
 
 refreshProviders();
+
+// T-70: "Повністю видалити" - no fetch/render cycle, no 2s poll (there is
+// nothing persisted to show, only the one-shot result of the last click).
+// Two-step confirm, same established convention as #log-body's "Очистити
+// лог" above - this is a strictly higher-blast-radius action (trust store +
+// three Credential Manager secrets), so it gets the same in-page pattern,
+// not a native window.confirm() this page has no other precedent for.
+
+const OUTCOME_LABELS = {
+  REMOVED: "видалено",
+  NOT_PRESENT: "не було встановлено",
+  FAILED: "НЕ ВДАЛОСЯ видалити",
+};
+
+async function uninstallLocalState() {
+  const response = await fetch("/admin/uninstall-local-state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function renderUninstallResult(result) {
+  const box = document.getElementById("uninstall-local-state-result");
+  box.textContent = "";
+  const rows = [
+    ["Сертифікат", result.cert],
+    ["TLS-ключ", result.tls_key],
+    ["Ключ шифрування", result.persistence_key],
+    ["Креденшели MaxMind", result.maxmind_creds],
+  ];
+  const anyFailed = rows.some(([, outcome]) => outcome === "FAILED");
+  const panel = document.createElement("p");
+  panel.className = anyFailed ? "notice warn" : "notice ok";
+  panel.textContent = rows
+    .map(([label, outcome]) => `${label}: ${OUTCOME_LABELS[outcome] || outcome}`)
+    .join(" · ");
+  box.appendChild(panel);
+}
+
+function renderUninstallError(err) {
+  const box = document.getElementById("uninstall-local-state-result");
+  box.textContent = "";
+  const panel = document.createElement("p");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  box.appendChild(panel);
+}
+
+const uninstallBtn = document.getElementById("uninstall-local-state-btn");
+let confirmingUninstall = false;
+uninstallBtn.addEventListener("click", async () => {
+  if (!confirmingUninstall) {
+    confirmingUninstall = true;
+    uninstallBtn.textContent = "Точно видалити все?";
+    setTimeout(() => {
+      if (confirmingUninstall) {
+        confirmingUninstall = false;
+        uninstallBtn.textContent = "Повністю видалити";
+      }
+    }, 4000);
+    return;
+  }
+  confirmingUninstall = false;
+  try {
+    renderUninstallResult(await uninstallLocalState());
+  } catch (err) {
+    renderUninstallError(err);
+  } finally {
+    // Same live-verified fix as #log-body's clearBtn - without it a
+    // successful click leaves the button permanently reading "Точно
+    // видалити все?" even though the action already completed.
+    uninstallBtn.textContent = "Повністю видалити";
+  }
+});

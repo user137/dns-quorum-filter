@@ -1395,6 +1395,58 @@ impl AdminClient {
     }
 }
 
+/// Wire form of [`crate::local_state::ArtifactOutcome`] — the `Failed`
+/// variant's coarse label is dropped rather than sent to the browser: it's a
+/// fixed, non-secret string (never the underlying error), but the UI only
+/// ever needs to know *that* it failed, not the internal label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ArtifactOutcomeView {
+    /// It was present and is now gone.
+    Removed,
+    /// It was already absent.
+    NotPresent,
+    /// The removal attempt failed.
+    Failed,
+}
+
+impl From<crate::local_state::ArtifactOutcome> for ArtifactOutcomeView {
+    fn from(outcome: crate::local_state::ArtifactOutcome) -> Self {
+        match outcome {
+            crate::local_state::ArtifactOutcome::Removed => Self::Removed,
+            crate::local_state::ArtifactOutcome::NotPresent => Self::NotPresent,
+            crate::local_state::ArtifactOutcome::Failed(_) => Self::Failed,
+        }
+    }
+}
+
+/// The body of `POST /admin/uninstall-local-state` (T-70) — one outcome per
+/// artifact, mirroring [`crate::local_state::UninstallReport`], so the
+/// `/admin/ui` danger-zone card can show exactly what happened rather than a
+/// single pass/fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UninstallLocalStateResponse {
+    /// The trusted leaf certificate in `CurrentUser\Root` (T-49).
+    pub cert: ArtifactOutcomeView,
+    /// The `DoH` listener's TLS private key (T-67).
+    pub tls_key: ArtifactOutcomeView,
+    /// The `XChaCha20Poly1305` persistence key (T-146).
+    pub persistence_key: ArtifactOutcomeView,
+    /// The optional `MaxMind` `GeoLite2` account credentials (T-163).
+    pub maxmind_creds: ArtifactOutcomeView,
+}
+
+impl From<crate::local_state::UninstallReport> for UninstallLocalStateResponse {
+    fn from(report: crate::local_state::UninstallReport) -> Self {
+        Self {
+            cert: report.cert.into(),
+            tls_key: report.tls_key.into(),
+            persistence_key: report.persistence_key.into(),
+            maxmind_creds: report.maxmind_creds.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{compute_stats, degraded_counts, AdminStats, DEGRADED_LOOKBACK};
