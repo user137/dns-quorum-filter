@@ -12,6 +12,13 @@ on:
 permissions:
   contents: read
 
+# Re-tagging the same version supersedes the earlier run. No rust-cache in this
+# workflow: every build here must be a clean rebuild (reproducibility gate +
+# signing integrity).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 

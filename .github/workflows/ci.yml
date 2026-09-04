@@ -2,7 +2,16 @@ name: CI
 
 on:
   push:
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
   pull_request:
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
+
+# A docs-only push cannot break a cargo gate, so it skips this workflow (a change
+# touching ci.yml itself, or any non-doc file, still runs). Superseded runs on
+# the same ref are cancelled — the latest commit is the one that matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,12 +25,18 @@ env:
 # silently update Cargo.lock, so a CI build resolves the exact same dependency
 # graph a third party gets from `git clone`. rust-toolchain.toml (pinned) and a
 # tracked Cargo.lock are the other two legs; the `repro` job proves the result.
+#
+# Swatinem/rust-cache restores ~/.cargo + target/ so a small change is an
+# incremental rebuild. The `repro` job is deliberately left uncached: it must
+# clean-build twice to prove reproducibility, and a restored target/ could serve
+# a stale artifact and hide non-determinism.
 
 jobs:
   build-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --lib --bins --locked
 
@@ -29,6 +44,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo fmt --all -- --check
 
@@ -36,6 +52,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - run: cargo doc --workspace --no-deps --document-private-items --locked
         env:
           RUSTDOCFLAGS: -D warnings
@@ -45,6 +62,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo audit
@@ -54,6 +72,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       # Blocking: catches compile breaks and an accidentally-removed #[ignore]
       # the same way any other test regression would (T-13).
       - run: cargo test --test conformance -p dnsqb-service --locked
@@ -68,6 +87,7 @@ jobs:
     continue-on-error: true # T-19: published as an artifact, non-blocking on MVP-stage
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info --locked
       - uses: actions/upload-artifact@v4
@@ -81,7 +101,7 @@ jobs:
     # paths, not a same-directory double build — a third party rebuilding from
     # source is the use case (SPEC.md "Наскрізні вимоги"), and only a path
     # difference exercises --remap-path-prefix. Two independent checkouts under
-    # build-a/ and build-b/ give that.
+    # build-a/ and build-b/ give that. No rust-cache here (see file header).
     steps:
       - uses: actions/checkout@v4
         with:

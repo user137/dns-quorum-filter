@@ -2,7 +2,13 @@ name: CodeQL
 
 on:
   push:
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
   pull_request:
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
 
 # runs-on: windows-latest, not ubuntu — with build-mode: none the Rust extractor
 # resolves `#[cfg(...)]` against the extraction host, so a Linux run would silently
