@@ -983,6 +983,10 @@ reasoning (search by section number rather than re-deriving a decision from scra
   an elevated PowerShell session to write to — a real, if one-time and install-only, elevation
   cost that `packaging/README.md` and every release's notes now state explicitly rather than
   leaving a sideloader to discover it via a cryptic HRESULT.
+- **A `gh` call inside a job that checks out multiple copies via `path: build-a`/`build-b`**
+  (`release.yml`'s repro-then-release job) **needs `--repo $env:GITHUB_REPOSITORY` explicitly** —
+  the job's own working directory has no `.git`, so `gh release create` fails "not a git
+  repository" otherwise.
 
 ## Documentation map — who owns what
 
