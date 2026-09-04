@@ -54,7 +54,20 @@ with no code** (kickoff AskUserQuestion, T-164 format): `secure` makes all Chrom
 hard-fail when `dnsqb-service` is down (Три Б user-safety), `HKLM\...\Policies` needs admin +
 is machine-global (conflicts with "no persistent elevated privileges"), Chrome-only — same
 conclusion T-134 reached for Firefox. Mechanism documented for a possible future phase, not
-built. **Next — Батч 3.7** (T-100/T-102/T-103, release engineering).
+built. **Батч 3.7 (T-100/T-102/T-103) done 2026-09-04, CI-only** (plan+advisor). T-100:
+`--locked` on every CI `cargo`; `.cargo/config.toml` `/Brepro` (MSVC triple only) +
+`[profile.release] codegen-units = 1` (default 16 built `dnsqb-service` non-deterministically);
+blocking `repro` job = two clean `--release` builds in **different absolute paths**, SHA-256
+compared. T-102: `.github/workflows/release.yml` builds + signs the 3 binaries — **ephemeral
+self-signed `test-signed`** by default (real cert optional via `CODESIGN_PFX` secret; production
+trust = Microsoft Store re-signing the MSIX at publication, Батч 3.8); artifact name carries the
+mode. T-103: `v*` tag → re-proves cross-path reproducibility → **draft** GitHub release with the
+3 `.exe` + `SHA256SUMS`, published by a human. Also: `Swatinem/rust-cache` on the cargo jobs
+(**not** `repro`/release — they must clean-build), `concurrency: cancel-in-progress` on all 3
+workflows, `paths-ignore` for `**/*.md`/`diagrams/**`/`mockups/**` on ci.yml + codeql.yml (a
+docs-only commit triggers neither). **Next — Батч 3.8** (T-156 MSIX + T-70 uninstaller, last;
+own plan+advisor). **T-167** (full doc-verification pass, README build/pipeline for a lay
+reader, SECURITY.md reorg) is a queued Ф3 task — see TASKS.md.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -380,7 +393,14 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 
 - `cargo build --workspace` — build all three crates. No `tauri-cli` / frontend build step of any
   kind — `dnsqb-tray` is a plain Rust binary, and `/admin/ui` is served from `include_str!`-embedded
-  HTML/CSS/JS, no bundler.
+  HTML/CSS/JS, no bundler. CI adds `--locked` to every `cargo` invocation (T-100) — run it that
+  way locally too if you touched deps, so a stale-lock failure shows up before the push.
+- Reproducible release build (T-100): `.cargo/config.toml` forces `/Brepro` on the MSVC triple and
+  `Cargo.toml` sets `[profile.release] codegen-units = 1`; a `--release --workspace` build is
+  byte-identical on rebuild. To reproduce the CI `repro` check locally, build `--release` twice in
+  two differently-named dirs with `RUSTFLAGS="--remap-path-prefix=<dir>=src ..."` and compare
+  `Get-FileHash` of the three `target/release/*.exe`. **Do not add rust-cache to a reproducibility
+  build** — a restored `target/` can mask non-determinism.
 - `cargo test --workspace --lib --bins` — unit tests. **`--bins` is required, not optional** —
   `dnsqb-tray` / `dnsqb-watcher` are `[[bin]]`-only crates with no `[lib]` target, so `--lib` alone
   never compiles or runs their `#[cfg(test)]` modules (caught when `dnsqb-tray/src/browser.rs`'s
@@ -411,7 +431,17 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   the step exists so the first one is actually run.
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
-conformance step and `coverage` (both `continue-on-error: true`).
+conformance step and `coverage` (both `continue-on-error: true`). Since Батч 3.7: `ci.yml` also
+has a blocking `repro` job (T-100, cross-path bit-identical release build), `Swatinem/rust-cache`
+on the cargo jobs (not `repro`), `concurrency: cancel-in-progress`, and `paths-ignore` for
+`**/*.md` / `diagrams/**` / `mockups/**` — **a docs-only commit runs no CI at all** (`ci.yml` and
+`codeql.yml` both skip it), so don't wait on a CI run after a pure-docs push.
+
+`.github/workflows/release.yml` (T-102/T-103) — `workflow_dispatch` builds + signs the 3 binaries
+(ephemeral `test-signed`, or strict with a `CODESIGN_PFX` secret) and uploads a mode-named
+artifact; a `v*` tag additionally re-proves reproducibility and opens a **draft** GitHub release
+(3 `.exe` + `SHA256SUMS`). No rust-cache anywhere in this workflow — every build is a clean build.
+To exercise it without a real tag: `gh workflow run release.yml` (must be on `main`).
 
 `.github/workflows/codeql.yml` (T-101) is a separate workflow — CodeQL SAST, language `rust`,
 `build-mode: none` (no cargo build), `runs-on: windows-latest` (cfg visibility for

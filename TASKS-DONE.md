@@ -2391,6 +2391,77 @@ docs-only) не має номера задачі — його запис у CLAU
   абзац); TASKS.md (`- [ ] T-99` → `- [x]`, Батч 3.6 → завершено, 2 progress-рядки → «Наступний —
   Батч 3.7»). Closing advisor — по фактичному docs-результату батча.
 
+### Батч 3.7 — release-інженерія (T-100 / T-102 / T-103), зроблено 2026-09-04
+
+CI-only батч, plan+advisor kickoff+closing. 7 комітів на `main`: `b5da074` (T-100 `--locked` +
+`repro`-джоба), `ab7731a` + `ef7259e` (T-102 sign-крок + фікс exit-code), `4112916` (T-103
+тег→чернетка), `23a5292` (T-100 `codegen-units = 1`), `e32cfcc` (T-103 `--repo`), `82a8340`
+(rust-cache/concurrency/paths-ignore), + docs-коміт.
+
+**Kickoff AskUserQuestion (2 forks):**
+- *T-102 модель підпису.* Відповідь: **«сам створи локальний підпис, майкрософт підпише сам під
+  час публікації»** → реальний cert необов'язковий; CI-крок завжди підписує ефемерним self-signed
+  (`test-signed`), продакшн-довіра = пере-підпис Microsoft Store при публікації MSIX (Батч 3.8).
+  Хук на реальний cert (`CODESIGN_PFX` secret) лишено. Зсув від формулювання TASKS.md «інертний
+  скелет skip-if-no-secret» до «завжди `test-signed`, реальний cert опційно» — ніколи не мовчазно
+  беззнаковий (ім'я артефакту несе режим).
+- *T-103 скоуп vs Батч 3.8.* Відповідь: **тег → build → hash → sign(skip) → чернетка GitHub-релізу**;
+  MSIX — іменована прогалина для 3.8; `per-OS` = лише Windows (macOS/Linux → Ф6).
+
+**T-100 — reproducible builds.** `--locked` на кожному `cargo` у `ci.yml`; `.cargo/config.toml`
+`[target.x86_64-pc-windows-msvc] rustflags = ["-C", "link-arg=/Brepro"]` (детермінований PE
+`TimeDateStamp`; MSVC-triple, бо MinGW `ld` на gnu-dev-боксі відхиляє `/Brepro` — зловлено
+локальним `cargo build` до пушу); `[profile.release] codegen-units = 1` у корені `Cargo.toml`.
+Блокуюча джоба `repro`: два `actions/checkout` у `build-a/`+`build-b/`, `RUSTFLAGS` з
+`--remap-path-prefix` для обох тек + `CARGO_HOME` + `/Brepro` (env замінює config), дві `--release
+--workspace --locked` збірки, `Get-FileHash` SHA-256 трьох `.exe`, `exit 1` на розбіжність.
+**Діагностичний порядок advisor'а справдився:** `--remap-path-prefix` + `/Brepro` дали bit-identical
+на перших прогонах, але тег-реліз спіймав `dnsqb-service.exe` з різними хешами в одному job'і
+(`watcher`/`tray` стабільні) — типове паралельного codegen; `codegen-units = 1` (крок 4 у списку,
+навмисно не front-loaded) прибрало це, підтверджено на 4 наступних зелених прогонах.
+
+**T-102 — code-signing.** Новий `.github/workflows/release.yml`. Job `build-sign`: repro-`RUSTFLAGS`,
+`--release --workspace --locked`, знаходить `signtool.exe` під `C:\Program Files (x86)\Windows
+Kits\10\bin\*\x64\` (на `windows-latest` = `10.0.26100.0`), `resolve-cert`: `CODESIGN_PFX` secret
+→ строгий режим, інакше `New-SelfSignedCertificate -Type CodeSigningCert` ефемерний (ключ не
+виходить за раннер, `::add-mask::` на пароль), `signtool sign /fd SHA256 /tr digicert /td SHA256`,
+для `test-signed` перевірка через `Get-AuthenticodeSignature` (не `signtool verify /pa`, який
+завжди `exit 1` на недовіреному ланцюгу — саме це завалило перший прогін через trailing
+`$LASTEXITCODE`; фікс: `$PSNativeCommandUseErrorActionPreference = $false` + `$failed`-флаг +
+явний `exit`). `SHA256SUMS` **після** підпису. `upload-artifact` з ім'ям
+`release-binaries-<mode>`.
+
+**T-103 — release-pipeline.** `release.yml` +`push: tags: ['v*']`; job `release` (`if:
+startsWith(github.ref,'refs/tags/')`, `needs: build-sign`, `permissions: contents: write` тільки
+тут): власний cross-path repro-gate (ci.yml `repro` не біжить логічно прив'язаний до тегового
+job'а), `download-artifact`, `gh release create $tag --repo $GITHUB_REPOSITORY --draft` (без
+`--repo` падало `not a git repository` — обидва checkout'и в підтеки) з 3 `.exe` + `SHA256SUMS` +
+notes (фактичний режим підпису з job-output, як звірити суми, репродукованість, MSIX→3.8).
+**Manual smoke:** `gh workflow run release.yml` → артефакт `release-binaries-test-signed` (3
+підписані `.exe` + суми); тег `v0.0.0-ci-test` → чернетка релізу з 4 ассетами й правильним тілом
+→ `gh release delete --cleanup-tag`, тег видалено. Реальний реліз не публікувався.
+
+**CI-інфра (коміт `82a8340`, окремо від задач — release-інженерія).** `Swatinem/rust-cache@v2` на
+`build-test`/`lint`/`docs`/`audit`/`conformance`/`coverage`; **не** на `repro` і **не** в
+`release.yml` — вони мусять чисто перезбирати (відновлений `target/` сховав би недетермінізм).
+`concurrency: cancel-in-progress` на всіх 3 workflow. `paths-ignore: ['**/*.md', 'diagrams/**',
+'mockups/**', 'LICENSE']` на `ci.yml` + `codeql.yml` — коміт лише з докам не запускає жодного CI
+(тому docs-коміт цього батча — без CI-прогону).
+
+**Без DECISIONS.md** — TASKS.md-формулювання «інертний скелет» було планом, не шипнутим рішенням
+(той самий критерій, що T-99/T-164). Модель підпису зафіксовано в SPEC.md §"Наскрізні вимоги" +
+SECURITY.md.
+
+**Нова задача T-167** (запит користувача під час батча): повна ревізія кожного `.md` з advisor'ом
+на відповідність community-стандартам / перевантаженість / читабельність людиною; README —
+прості build/run-інструкції + конвеєр фільтра доступною мовою/діаграмою; SECURITY.md після
+таблиці залежностей — реорганізувати. Додано в TASKS.md, власний plan+advisor.
+
+Docs-коміт: SPEC.md §"Наскрізні вимоги" (розгорнутий bullet), SECURITY.md, CLAUDE.md (phase-рядок
++ Commands), TASKS.md (T-100/102/103 → `[x]`, +T-167, progress-рядки, «Порядок»),
+цей запис. `diagrams/`/`SERVICES.md`/`CONFIGURATION.md` — `grep` порожній, синку не треба.
+Closing advisor — по фактичному результату.
+
 ### Батч 3.1 — liveness-примітиви (зроблено 2026-09-02, plan-mode + advisor kickoff і closing, 6 комітів)
 
 Увесь код — бібліотечний, у новому `crates/dnsqb-service/src/watchdog/` (§7.1 #6: `dnsqb-watcher`
