@@ -47,8 +47,13 @@ jobs:
           CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
+          # signtool's exit codes are inspected explicitly below; don't let a
+          # non-zero native exit throw (PS 7.4 default) or leak as the step's
+          # own exit code (this step ends with an explicit `exit`).
+          $PSNativeCommandUseErrorActionPreference = $false
           $rel = "target/release"
           $names = 'dnsqb-service.exe', 'dnsqb-watcher.exe', 'dnsqb-tray.exe'
+          $failed = $false
 
           $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
                        Sort-Object FullName -Descending | Select-Object -First 1).FullName
@@ -80,17 +85,23 @@ jobs:
           foreach ($n in $names) {
             & $signtool sign /fd SHA256 /f $pfx /p $pw /tr http://timestamp.digicert.com /td SHA256 (Join-Path $rel $n)
             if ($LASTEXITCODE -ne 0) {
-              if ($strict) { throw "signtool sign failed for $n (exit $LASTEXITCODE)" }
-              # test-signed: an untrusted ephemeral chain still signs; a
-              # timestamp-server hiccup should not fail a test build.
-              Write-Host "::warning::signtool sign returned $LASTEXITCODE for $n (tolerated for test-signed)"
+              # A timestamp-server hiccup should not fail a test build; a real
+              # cert must sign cleanly.
+              Write-Host "::warning::signtool sign returned $LASTEXITCODE for $n"
+              if ($strict) { $failed = $true }
             }
           }
 
-          & $signtool verify /pa /v (Join-Path $rel $names[0])
-          if ($LASTEXITCODE -ne 0) {
-            if ($strict) { throw "signtool verify failed (exit $LASTEXITCODE)" }
-            Write-Host "::warning::signtool verify failed for the ephemeral chain (expected for test-signed)"
+          if ($strict) {
+            & $signtool verify /pa /v (Join-Path $rel $names[0])
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::signtool verify failed (exit $LASTEXITCODE)"; $failed = $true }
+          } else {
+            # An ephemeral chain never verifies against a trusted root; report
+            # the signature's presence without a process that always exits 1.
+            foreach ($n in $names) {
+              $sig = Get-AuthenticodeSignature (Join-Path $rel $n)
+              Write-Host ("  {0}: {1}" -f $n, $sig.Status)
+            }
           }
 
           Remove-Item $pfx -Force
@@ -102,6 +113,9 @@ jobs:
           $sums | Out-File (Join-Path $rel "SHA256SUMS") -Encoding ascii
           Get-Content (Join-Path $rel "SHA256SUMS")
           "mode=$mode" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+
+          if ($failed) { exit 1 }
+          exit 0
 
       - name: Upload signed binaries
         uses: actions/upload-artifact@v4
