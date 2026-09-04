@@ -1,9 +1,13 @@
 name: Release
 
-# T-102 / T-103. workflow_dispatch alone for now (T-102: build + sign, artifact
-# only); the `v*` tag trigger and the draft-release job are added by T-103.
+# T-102 (build + sign) + T-103 (tag -> draft GitHub release, gated on a
+# cross-path reproducibility re-check). workflow_dispatch builds + signs and
+# stops at the artifact; a `v*` tag also runs the `release` job.
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
@@ -14,6 +18,8 @@ env:
 jobs:
   build-sign:
     runs-on: windows-latest
+    outputs:
+      mode: ${{ steps.sign.outputs.mode }}
     steps:
       - uses: actions/checkout@v4
 
@@ -129,3 +135,85 @@ jobs:
             target/release/dnsqb-watcher.exe
             target/release/dnsqb-tray.exe
             target/release/SHA256SUMS
+
+  # T-103: only on a `v*` tag. Re-proves the cross-path bit-identical property
+  # for this exact tag (ci.yml's `repro` runs on branch pushes, not here), then
+  # publishes a DRAFT release — a maintainer reviews and clicks Publish. The
+  # MSIX package is a named gap for Батч 3.8 (T-156), not built here.
+  release:
+    needs: build-sign
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: build-a
+      - uses: actions/checkout@v4
+        with:
+          path: build-b
+      - name: Compute path-independence RUSTFLAGS
+        shell: pwsh
+        run: |
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
+          $flags = @(
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE\build-a=src"
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE\build-b=src"
+            "--remap-path-prefix=$cargoHome=cargo"
+            "-Clink-arg=/Brepro"
+          ) -join " "
+          "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build in path A
+        working-directory: build-a
+        run: cargo build --release --workspace --locked
+      - name: Build in path B
+        working-directory: build-b
+        run: cargo build --release --workspace --locked
+      - name: Reproducibility gate
+        shell: pwsh
+        run: |
+          $names = 'dnsqb-service.exe', 'dnsqb-watcher.exe', 'dnsqb-tray.exe'
+          $mismatch = $false
+          foreach ($n in $names) {
+            $a = (Get-FileHash "build-a/target/release/$n" -Algorithm SHA256).Hash
+            $b = (Get-FileHash "build-b/target/release/$n" -Algorithm SHA256).Hash
+            if ($a -ne $b) { Write-Host "MISMATCH  $n`n  A: $a`n  B: $b"; $mismatch = $true }
+            else { Write-Host "OK  $n  $a" }
+          }
+          if ($mismatch) { Write-Host "::error::unsigned build is not reproducible for this tag — not publishing"; exit 1 }
+      - name: Download signed binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-binaries-*
+          path: dist
+          merge-multiple: true
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGN_MODE: ${{ needs.build-sign.outputs.mode }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = $env:GITHUB_REF_NAME
+          $signLine = if ($env:SIGN_MODE -eq "signed") {
+            "Binaries are signed with the configured production code-signing certificate."
+          } else {
+            "Binaries are **test-signed** with an ephemeral certificate and are NOT trusted by Windows. Production signing is applied by the Microsoft Store when the app is published there."
+          }
+          $notes = @"
+          Automated **draft** release for ``$tag``. A maintainer reviews and publishes it.
+
+          **Windows x64 binaries:** ``dnsqb-service.exe``, ``dnsqb-watcher.exe``, ``dnsqb-tray.exe``
+          **Checksums:** ``SHA256SUMS`` — verify with ``Get-FileHash <file> -Algorithm SHA256``.
+
+          **Signing:** $signLine
+
+          **Reproducible build:** the unsigned binaries are byte-identical when rebuilt from this tag's source in a different directory; CI re-proves this before the draft is created.
+
+          **Installer / MSIX packaging:** not in this release — Батч 3.8 (T-156).
+          "@
+          $notes | Out-File notes.md -Encoding utf8
+          $assets = Get-ChildItem dist -File | ForEach-Object { $_.FullName }
+          gh release create $tag --draft --title $tag --notes-file notes.md @assets
+          if ($LASTEXITCODE -ne 0) { exit 1 }
