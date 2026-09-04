@@ -176,7 +176,7 @@ Store-лістинг (T-156, Батч 3.8):
 | [`SPEC.md`](SPEC.md) | Технічний спек: архітектура, обґрунтування рішень, таблиця RFC-відповідності, фазований план, відкриті питання. |
 | [`SERVICES.md`](SERVICES.md) | Що робить кожен бінарник, як запускати, логи, відомі прогалини. |
 | [`CONFIGURATION.md`](CONFIGURATION.md) | Повний довідник по обох TOML-файлах конфігурації. |
-| [`UI-SPEC.md`](UI-SPEC.md) | GUI: екранний inventory, поля/типи по екрану, DTO, чернетка Tauri-команд; мокап у [`mockups/`](mockups/). |
+| [`UI-SPEC.md`](UI-SPEC.md) | GUI: екранний inventory, поля/типи по екрану, DTO для admin HTTP-каналу (не Tauri — той канал видалений T-149); мокап у [`mockups/`](mockups/). |
 | [`TASKS.md`](TASKS.md) / [`TASKS-DONE.md`](TASKS-DONE.md) | Поточний і завершений backlog. |
 | [`DECISIONS.md`](DECISIONS.md) | Журнал ретроактивних архітектурних рішень. |
 | [`SECURITY.md`](SECURITY.md) | Модель загроз, жорсткі обмеження, таблиця ветингу залежностей. |
@@ -194,6 +194,8 @@ Store-лістинг (T-156, Батч 3.8):
 | Кеш (per-entry TTL) | `moka` |
 | GeoIP | `maxminddb` |
 | UI | Трей-індикатор (`tray-icon`/`tao`/`rfd`) + вбудований веб-UI на `dnsqb-service`'s адмін-каналі |
+| Watchdog (взаємний heartbeat, авто-рестарт) | `dnsqb-watcher`, власний код + `sysinfo` для PID-перевірки |
+| MSIX-пакування | Windows SDK (`makeappx`/`signtool`), без нового Rust-крейту |
 | Fuzz/property tests | `proptest` |
 
 Деталі й обґрунтування вибору кожного компонента — SPEC.md, розділ "Технічний стек".

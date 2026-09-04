@@ -1000,7 +1000,7 @@ reasoning (search by section number rather than re-deriving a decision from scra
 | File | Owns | Update when |
 |---|---|---|
 | `SPEC.md` | full design + reasoning: architecture, RFC table, phased plan, open questions | a design decision changes or a new one is made |
-| `UI-SPEC.md` | GUI: screen inventory, per-screen field/type tables, Tauri command allowlist draft — no rationale, links back to SPEC.md §8 by section number | a screen, field, or DTO changes; rationale changes go in SPEC.md instead |
+| `UI-SPEC.md` | GUI: screen inventory, per-screen field/type tables, DTOs for the admin HTTP channel (not Tauri — that channel was removed at T-149) — no rationale, links back to SPEC.md §8 by section number | a screen, field, or DTO changes; rationale changes go in SPEC.md instead |
 | `diagrams/` | architecture + UI diagrams, each anchored to a SOURCES section list; ground-truth ritual in `diagrams/README.md` applies from here on | a diagrammed state/flow/DTO changes — see the ritual's trigger list |
 | `CLAUDE.md` | agent-facing summary: commands, architecture at a glance, non-obvious gotchas | architecture/commands change |
 | `TASKS.md` | open backlog — status only, no reasoning | a task starts or gets added |
