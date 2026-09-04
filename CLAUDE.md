@@ -68,9 +68,28 @@ workflows, `ci.yml`/`codeql.yml` `push: branches: ['**']` (not tags) + `paths-ig
 `**/*.md`/`diagrams/**`/`mockups/**` (a docs-only commit, and any tag push, triggers neither —
 `release.yml` owns the tag path). **Version bumped `0.1.0` → `0.2.0`; `v0.2.0` tagged →
 `release.yml` produced a DRAFT GitHub release (test-signed binaries + `SHA256SUMS`), left for a
-human to publish.** **Next — Батч 3.8** (T-156 MSIX + T-70 uninstaller, last;
-own plan+advisor). **T-167** (full doc-verification pass, README build/pipeline for a lay
-reader, SECURITY.md reorg) is a queued Ф3 task — see TASKS.md.
+human to publish.**
+**Батч 3.8 (T-156 MSIX + T-70 local-state removal) done 2026-09-04 — Фаза 3 formally closed**
+(plan+advisor kickoff+closing). T-156: `packaging/AppxManifest.template.xml` (sideload
+placeholder identity, kickoff decision; `runFullTrust`; entry point + `windows.startupTask` both
+`dnsqb-watcher.exe`, T-150's idempotent launcher) + `packaging/pack-msix.ps1` (stages binaries +
+`assets/icon/`'s 3 MSIX PNGs + substituted manifest → `makeappx pack` → `signtool sign`, same
+ephemeral-or-`CODESIGN_PFX` model as T-102, `Subject` = `-Publisher` exactly or signing fails) +
+`release.yml`'s new `msix` job (attaches `.msix`+`.cer` to the tag draft release alongside the
+raw `.exe`s). Verified empirically end-to-end on this machine (Windows SDK 10.0.26100.0, same as
+CI) — pack+sign works against real `--release` binaries; **confirmed, not assumed:
+`Cert:\CurrentUser\TrustedPeople` is NOT enough for `Add-AppxPackage` (`0x800B0109`) — needs
+`Cert:\LocalMachine\Root`/`\TrustedPeople`, both requiring elevation.** T-70:
+`local_state::remove_all` (new module) — MSIX has no uninstall-time code hook at all, so clearing
+the trusted cert + 3 Credential Manager secrets is an in-app action (tray "Повністю видалити" +
+`/admin/ui` danger-zone card + `POST /admin/uninstall-local-state`), per-artifact report
+(`Removed`/`NotPresent`/`Failed`), never one collapsed bool. Also: `assets/gen-icon.py` +
+`assets/icon/` — one drawing source for the app icon everywhere (MSIX tile, README wordmark, a
+future Store listing/Linux icon), user-revised mid-batch from a low-contrast navy/cyan/white
+funnel to a two-tone (Windows accent blue + white) wireframe hexagon with vertex dots. **Next —
+T-167** (full doc-verification pass, README build/pipeline for a lay reader, SECURITY.md reorg)
+**or the carried-forward Ф1 gates** (T-66 metrics, live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`)
+— user picks, no more numbered Ф3 batches.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -123,6 +142,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `cache_persist` | T-97, sibling of `log_persist`: `persist_cache_snapshot` (→`seal(FileKind::Cache)`→`write_atomic`), `load_persisted_cache` (→`CacheInit { restore, flusher }`; independent `ciphertext_present` for `cache.enc`, shared `persistence-key`), `run_cache_persister` (60s + shutdown). `AppState::cache_snapshot`/`restore_cache` pass-throughs (lock dropped before `.await`) |
 | `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; **one** key seals **both** `query-log.enc` (T-146) and `cache.enc` (T-97), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
+| `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
@@ -139,7 +159,8 @@ and updates the live `GeoipSource` + wakes the updater; `refresh_health` on the 
 that started failing later), `GET /admin/providers`
 + `POST /admin/providers/{add,remove,set-enabled}` (T-72/T-73; provider list edited here, **not**
 `/admin/config` — which carries `timeout_mode` + `serve_baseline_when_filters_unreachable` (T-155)),
-`/admin/log[/clear]`;
+`/admin/log[/clear]`; `POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
+`resolver_config.toml`);
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
 **not** an admin route: `GET /health` (T-86, watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
@@ -440,11 +461,19 @@ on the cargo jobs (not `repro`), `concurrency: cancel-in-progress`, and `paths-i
 `**/*.md` / `diagrams/**` / `mockups/**` — **a docs-only commit runs no CI at all** (`ci.yml` and
 `codeql.yml` both skip it), so don't wait on a CI run after a pure-docs push.
 
-`.github/workflows/release.yml` (T-102/T-103) — `workflow_dispatch` builds + signs the 3 binaries
-(ephemeral `test-signed`, or strict with a `CODESIGN_PFX` secret) and uploads a mode-named
-artifact; a `v*` tag additionally re-proves reproducibility and opens a **draft** GitHub release
-(3 `.exe` + `SHA256SUMS`). No rust-cache anywhere in this workflow — every build is a clean build.
-To exercise it without a real tag: `gh workflow run release.yml` (must be on `main`).
+`.github/workflows/release.yml` (T-102/T-103/T-156) — `workflow_dispatch` builds + signs the 3
+binaries (ephemeral `test-signed`, or strict with a `CODESIGN_PFX` secret), then a `msix` job
+packs+signs a `.msix` via `packaging/pack-msix.ps1` (same signing model); a `v*` tag additionally
+re-proves reproducibility and opens a **draft** GitHub release (3 `.exe` + `SHA256SUMS` +
+`.msix`(+`.cer`)). No rust-cache anywhere in this workflow — every build is a clean build. To
+exercise it without a real tag: `gh workflow run release.yml` (must be on `main`).
+
+`packaging/pack-msix.ps1` — runnable standalone (`.\packaging\pack-msix.ps1 -BinDir
+target\release -OutFile dist\dns-quorum-filter.msix`), needs the Windows SDK's `makeappx.exe`/
+`signtool.exe` (`Windows Kits\10\bin\10.*\x64\`) — present on this dev machine as well as CI, so
+it can be (and was, T-156) verified locally before ever pushing. `assets/gen-icon.py` (Pillow) —
+regenerate `assets/icon/*.png` after editing it, never hand-edit a PNG; needs Segoe UI Bold
+(`C:\Windows\Fonts\segoeuib.ttf`, present on any current Windows install) for `wordmark.png`.
 
 `.github/workflows/codeql.yml` (T-101) is a separate workflow — CodeQL SAST, language `rust`,
 `build-mode: none` (no cargo build), `runs-on: windows-latest` (cfg visibility for
@@ -918,6 +947,42 @@ reasoning (search by section number rather than re-deriving a decision from scra
   state=dismissed -f dismissed_reason="used in tests"`, don't churn code to dodge it. Expect this
   on every new secret-adjacent test (Батч 3.1 `key_store`/pipe work) — write the exhaustive match
   from the start.
+- **A generic "fuzz every documented route" property test can turn a new admin route's real
+  handler into a per-CI-run liability, not just a coverage win — check what the property's
+  fixture actually satisfies before trusting "it'll just get covered automatically."**
+  `serve_never_panics_on_arbitrary_input_for_any_documented_route` (T-58) builds a request for
+  every `ROUTES` entry with a real `Content-Type: application/json` header on every non-GET
+  route specifically so it reaches each handler's real body, not just its CSRF gate — which is
+  exactly right for every route that existed when it was written (a `keyring` write, a cache
+  rebuild, all fast and idempotent). Adding `POST /admin/uninstall-local-state` (T-70) without
+  checking this meant a proptest case landing on it would run `local_state::remove_all` for
+  real — spawning an actual `certutil.exe` subprocess and mutating whatever this project's CN
+  has installed in `CurrentUser\Root` — on every `cargo test`, silently, since the handler never
+  even inspects the arbitrary body once the gate passes. Caught by the test suite going from
+  ~2s to a 60+-second hang immediately after adding the route, not by reading the property
+  first. Fixed with a documented `FUZZ_EXCLUDED_ROUTES` allowlist-of-exclusions (one path so
+  far) rather than weakening the property for every route; the excluded route's own two gates
+  (wrong method, missing content-type — the paths that reject *before* the real handler runs)
+  get their own direct tests instead, mirroring `serve_admin_shutdown`'s existing pair.
+- **MSIX `.msix` signature Subject and `<Identity Publisher>` must match character for
+  character, or `signtool sign` fails with a generic-looking error, not an obvious "these
+  don't match."** `packaging/pack-msix.ps1` derives both from the one `-Publisher` parameter
+  (never a manifest literal + a separate `New-SelfSignedCertificate -Subject` literal that
+  happen to agree today) — confirmed by a real local pack+sign against both debug and
+  `--release` binaries using the Windows SDK at `Windows Kits\10\bin\10.0.26100.0\x64\` (the
+  same version `windows-latest` CI runners use), not assumed from documentation.
+- **MSIX `<Identity Version>` is 4-part `Major.Minor.Build.Revision`, Revision always `0`** —
+  `pack-msix.ps1` takes the crate's 3-part `Cargo.toml` version (or a `v*` git tag, cross-checked
+  against it, `throw`ing on mismatch so a `.msix` can never carry a version different from the
+  binaries packed inside it) and appends `.0`.
+- **Sideloading a self-signed `.msix` needs the signing cert in `Cert:\LocalMachine\Root` or
+  `\LocalMachine\TrustedPeople` — `Cert:\CurrentUser\TrustedPeople` is NOT enough.** Confirmed
+  empirically (2026-09-04, this session, no admin access): importing the ephemeral test cert
+  into `CurrentUser\TrustedPeople` and running `Add-AppxPackage` failed with `0x800B0109`
+  ("root certificate ... not trusted by the trust provider"). Both `LocalMachine` locations need
+  an elevated PowerShell session to write to — a real, if one-time and install-only, elevation
+  cost that `packaging/README.md` and every release's notes now state explicitly rather than
+  leaving a sideloader to discover it via a cryptic HRESULT.
 
 ## Documentation map — who owns what
 

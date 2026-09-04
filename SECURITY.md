@@ -102,6 +102,25 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   publication** (a real cert can be supplied as the `CODESIGN_PFX` secret to sign strictly
   instead). The `v*`-tag release job re-proves reproducibility before it publishes a **draft**
   release; a human publishes it.
+- MSIX packaging (Батч 3.8, T-156) — `runFullTrust`, not an AppContainer sandbox: the app already
+  needs ordinary Win32 access outside any package (spawning siblings, `CurrentUser\Root`,
+  Credential Manager), and grants no capability beyond that (no hidden MITM/proxy — this is a DoH
+  filter the browser is explicitly pointed at). The `.msix` signature must match `<Identity
+  Publisher>` exactly (`packaging/pack-msix.ps1` derives both from one `-Publisher` value, never
+  two literals). **The sideload trust certificate is a *different* certificate from the one the
+  running app installs for `127.0.0.1` DoH traffic** — trusting one does not trust the other, and
+  the two must never be conflated in operator-facing instructions. Confirmed empirically
+  (2026-09-04): `Cert:\CurrentUser\TrustedPeople` is *not* sufficient for `Add-AppxPackage`
+  (`0x800B0109`) — sideloading needs `Cert:\LocalMachine\Root` or `\LocalMachine\TrustedPeople`,
+  both requiring an elevated session, which is itself a real (if one-time, install-only) elevation
+  cost this project's "no persistent elevated privileges" principle doesn't otherwise carry.
+- **T-70 residual risk, MSIX-specific**: MSIX has no uninstall-time code hook at all — the OS just
+  deletes the package's files, nothing runs afterward. `local_state::remove_all` (tray "Повністю
+  видалити" / `/admin/ui`'s danger-zone card) is therefore an **in-app, user-triggered** action
+  that must run *before* the package is removed, not an automatic cleanup step. If a user removes
+  the app from Windows Settings without running it first, the trusted certificate and Credential
+  Manager secrets are left behind — the same class of bug as any other left-behind trusted cert,
+  but not structurally preventable under MSIX's model. Stated, not silently assumed away.
 
 ## Dependency vetting
 

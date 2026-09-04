@@ -2471,6 +2471,119 @@ Docs-коміт: SPEC.md §"Наскрізні вимоги" (розгорнут
 цей запис. `diagrams/`/`SERVICES.md`/`CONFIGURATION.md` — `grep` порожній, синку не треба.
 Closing advisor — по фактичному результату.
 
+### Батч 3.8 — MSIX-пакування + повне видалення (T-156, T-70), зроблено 2026-09-04 — Фаза 3 закрита
+
+**Останній батч Фази 3.** Причина зараз: користувач — «люди хочуть встановити й клацнути на
+одному ярлику, а в нас просто екзешники; так само це має видалятись». plan+advisor kickoff+closing.
+7 комітів на `main`: `f2fd5de` (T-70 `local_state` модуль), `0513d23` (T-70 трей +
+`/admin/uninstall-local-state`), `6e21f90` (T-156 маніфест + плейсхолдер-логотипи, перша версія),
+`4ef22fd` (T-156 `pack-msix.ps1` + переробка іконки на `assets/gen-icon.py` за запитом
+користувача), `7e1cdc2` (T-156 `release.yml`'s `msix`-job) + docs-коміт.
+
+**Kickoff AskUserQuestion (3 форки):**
+1. **Ціль MSIX:** *«Sideload зараз, Store-identity пізніше»* → плейсхолдер `Publisher=
+   "CN=dns-quorum-filter"`, той самий ефемерний self-signed, що T-102; Store-субміт = пізніша
+   підміна identity + пере-підпис Microsoft (модель уже вирішена T-102).
+2. **Механізм T-70:** *«Дія в застосунку «Повністю видалити»»* — MSIX не має хука на
+   деінсталяцію (ОС просто видаляє пакет), тож прибирання = явна in-app дія, не «скрипт на
+   видаленні». Без scheduled-task (фрагільно, суперечить «watcher мінімальний»).
+3. **Скоуп:** *«Повний»* — маніфест + іконки + `makeappx` у CI + `.msix` у чернетці релізу +
+   T-70 очищення в коді, все за один батч.
+
+**T-70 — `local_state::remove_all`.** Новий `crates/dnsqb-service/src/local_state.rs`:
+`pub fn remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — `trust_store::uninstall()`
++ `key_store::delete_secret` для TLS-ключа (T-67), persistence-ключа (T-146), MaxMind-кредів
+(T-163); кожен із чотирьох артефактів — незалежний `ArtifactOutcome::{Removed, NotPresent,
+Failed(&'static str)}`, ніколи не один bool (та сама дисципліна `persisted:false`, що вже
+рекурентна в цьому репо). `app_data_dir: None` (рідкісний деградований старт) все одно намагається
+прибрати сертифікат (він keyed на фіксований CN, не на app-data шлях), три ключі — `Failed`.
+`key_store::persistence_key_entry` розширено до `pub(crate)` (був приватним, відповідає двом
+сусідам).
+
+**Знахідка advisor-рівня, зловлена самостійно (реальний ризик, не гіпотетичний):**
+`local_state::remove_all`/`remove_cert` **навмисно нетестовані** — `remove_cert` завжди кличе
+реальний `trust_store::uninstall()` (справжній `certutil -delstore -user Root` sweep), той самий
+клас реального зовнішнього ресурсу, який `trust_store`'s і `cert_rotation`'s власні тести
+принципово ніколи не викликають насправжки (підтверджено читанням обох файлів, не припущенням) —
+бо це видалило б будь-який реально встановлений (напр., вручну для T-49 dev-тестування)
+довірений сертифікат розробника щоразу під час `cargo test`. Перша версія тестів `local_state.rs`
+викликала `remove_all` напряму (і тому реальний `trust_store::uninstall()`) — спіймано
+самостійно **до** коміту через живу перевірку `certutil -store -user Root` (реальний dev-сертифікат
+цього сеансу залишився цілим, ризик не матеріалізувався, але доводить, що ризик був реальний, не
+теоретичний). Виправлено: тести кличуть `remove_secret` напряму (справжнє Removed/NotPresent/
+Failed рішення), `remove_all`/`remove_cert` лишаються untested-by-design, як `paths::
+app_data_dir`.
+
+**Друга знахідка того самого класу, зловлена вже готовим кодом:** існуючий proptest
+`serve_never_panics_on_arbitrary_input_for_any_documented_route` (T-58) генерує запит для
+**кожного** `ROUTES`-запису з реальним `Content-Type: application/json` на не-GET маршрутах —
+саме для того, щоб доходити до реального тіла хендлера. Додавання `POST /admin/
+uninstall-local-state` без перевірки цього означало, що proptest-кейс на цьому маршруті реально
+викликав би `local_state::remove_all` — справжній spawn `certutil.exe` + мутація реального
+`CurrentUser\Root` на кожному `cargo test`. Зловлено емпірично: тестовий набір із ~2с раптово
+завис на 60+с одразу після додавання маршруту (не через читання коду заздалегідь). Виправлено
+`FUZZ_EXCLUDED_ROUTES` (задокументований allowlist винятків, один шлях) + два прямі тести на
+ворота, що відхиляють *до* виклику реального хендлера (неправильний метод, відсутній
+content-type) — той самий патерн, що вже є для `/admin/shutdown`.
+
+**T-70 UI:** `POST /admin/uninstall-local-state` (CSRF-гейт, тіло не парситься) +
+`UninstallLocalStateResponse`/`ArtifactOutcomeView` DTO (мітка `Failed`'s внутрішній рядок не йде
+на wire — фіксований, несекретний, але UI треба лише факт невдачі). `/admin/ui` — нова секція
+«Повне видалення», **двокроковий in-page confirm** (та сама конвенція, що `#log-body`'s
+«Очистити лог» — advisor'ом не піднімалось, знайдено читанням `main.js`'s власного коментаря «no
+precedent for window.confirm() anywhere else on this page» перед тим, як писати щось інше).
+`dnsqb-tray` — пункт «Повністю видалити» (дев'ятий), `spawn_trust_store_action` (той самий
+патерн, що встановлення/видалення/перевипуск сертифіката — прямий виклик lib-функції в окремому
+потоці, не HTTP), нативний confirm-діалог, що називає всі чотири артефакти й прямо каже — це не
+видаляє застосунок.
+
+**T-156 — MSIX.** `packaging/AppxManifest.template.xml` (`{{VERSION}}`/`{{PUBLISHER}}`
+підстановка, `runFullTrust`, entry point + `windows.startupTask` обидва `dnsqb-watcher.exe` —
+той самий ідемпотентний ланчер T-150) + `packaging/pack-msix.ps1` (стейджинг → `makeappx pack` →
+`signtool sign`; версія — 4-частинна, revision завжди `0`, джерело істини git-тег, звірка з
+`cargo metadata`, `throw` на розбіжності; підпис — ефемерний self-signed чи `-PfxPath`, subject
+**точно** = `-Publisher`, інакше `signtool sign` падає publisher-mismatch) + `release.yml`'s
+новий `msix`-job (`needs: build-sign`, той самий CODESIGN_PFX-чи-ефемерний вибір, `.msix`+`.cer`
+у чернетці релізу поряд із голими бінарниками).
+
+**Емпірична перевірка — локально, з реальним Windows SDK (той самий `10.0.26100.0`, що CI):**
+`makeappx`/`signtool` знайдено локально; `pack-msix.ps1` успішно спакував+підписав **і** debug-,
+**і** реальні `--release`-бінарники з першого разу (маніфест — `windows.startupTask`'s XML-схема —
+виявився правильним без жодної ітерації, підтверджено `makeappx`'s власним виводом, не
+припущенням). **Підтверджено емпірично, не з документації:** `Cert:\CurrentUser\TrustedPeople`
+**недостатньо** для `Add-AppxPackage` (`0x800B0109`, root certificate not trusted) — потрібен
+`Cert:\LocalMachine\Root`/`\TrustedPeople`, обидва вимагають elevated-сесії; ця сесія без
+адмін-прав, тож повний `Add-AppxPackage`/запуск плитки/старт-таск-верифікація **не** пройдені тут
+— задокументовано як крок для користувача (README/packaging/README.md/release notes), не
+пропущено мовчки.
+
+**CI — двічі підтверджено на реальних прогонах:** `workflow_dispatch` → `msix`-job зелений з
+першого разу (`release-msix-test-signed` артефакт, `.msix`+`.cer`); тестовий тег
+`v0.0.0-ci-test` → повний `release`-job (repro-гейт → `msix` → чернетка) → чернетка релізу з
+**усіма 6** ассетами (3 `.exe` + `SHA256SUMS` + `.msix` + `.cer`) і правильним тілом
+(sideload-інструкція, «Повністю видалити» перед видаленням, версія збігається); тег+чернетку
+прибрано після перевірки.
+
+**Іконка (запит користувача, mid-batch, 3 ітерації):** перша версія (`packaging/gen-assets.py`,
+суцільна заливка + лійка) відхилена як не MSIX-специфічна («це буде іконка застосунку всюди — і
+в Сторі, і на Linux»). Перероблено на `assets/gen-icon.py` + `assets/icon/` — єдине джерело:
+плитка (MSIX-розміри), `wordmark.png` (README/сайт), і повний набір freedesktop hicolor-розмірів
+про запас для Фази 6 (Linux). Дизайн — дротовий шестигранник із крапками на вершинах («щит для
+запитів») — перша палітра (navy/cyan/white, 3 близькі холодні відтінки) відхилена користувачем як
+«з кольорами не вийшло»; виправлено на двоколірну (Windows system accent blue + білий,
+максимальний контраст на малому розмірі). README.md тепер веде з `wordmark.png`.
+
+**Без DECISIONS.md** — нічого шипнутого не реверсовано (T-99/T-164-критерій).
+
+Docs-коміт: SPEC.md (§2 деінсталятор-MSIX-реалізація, §7 `windows.startupTask` реалізовано,
+Фаза 3 закрита + новий §"Пакування (MSIX)"), SECURITY.md (MSIX-підпис/`runFullTrust`/дві довіри/
+T-70 залишковий ризик), SERVICES.md (9-й пункт меню, `/admin/uninstall-local-state`,
+`%LOCALAPPDATA%`-редирект під пакетом), README.md (секція «Встановлення (MSIX)» + wordmark),
+CLAUDE.md (phase-рядок, модуль-таблиця `local_state`, Commands, 4 нові gotchas), TASKS.md
+(T-156/T-70 → `[x]`, Фаза 3 закрита, «Порядок» усе `~~…~~`), цей запис. `diagrams/` — `grep`
+порожній (лише самопосилання на назви файлів), синку не треба. Closing advisor — по фактичному
+результату, durable-first.
+
 ### Батч 3.1 — liveness-примітиви (зроблено 2026-09-02, plan-mode + advisor kickoff і closing, 6 комітів)
 
 Увесь код — бібліотечний, у новому `crates/dnsqb-service/src/watchdog/` (§7.1 #6: `dnsqb-watcher`
