@@ -1,4 +1,4 @@
-# DNS Quorum Filter
+![DNS Quorum Filter](assets/icon/wordmark.png)
 
 Локальний DNS-over-HTTPS фільтр, що приймає рішення про блокування за принципом **кворуму**
 незалежних провайдерів, а не довіряє одному.
