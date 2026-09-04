@@ -143,12 +143,59 @@ jobs:
             target/release/dnsqb-tray.exe
             target/release/SHA256SUMS
 
+  # T-156: packs the signed binaries + assets/icon/'s three MSIX logos into a
+  # .msix via packaging/pack-msix.ps1, using the exact same signing model as
+  # build-sign (real CODESIGN_PFX if set, else an ephemeral self-signed cert —
+  # pack-msix.ps1's own Subject=-Publisher discipline keeps the package
+  # signature and its <Identity Publisher> in agreement). Runs on
+  # workflow_dispatch too, same as build-sign, so the packaging step itself
+  # can be exercised without cutting a tag.
+  msix:
+    needs: build-sign
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-binaries-*
+          path: bin
+          merge-multiple: true
+      - name: Pack and sign MSIX
+        shell: pwsh
+        env:
+          CODESIGN_PFX: ${{ secrets.CODESIGN_PFX }}
+          CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          if ($env:CODESIGN_PFX) {
+            $pfxPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODESIGN_PFX))
+            try {
+              .\packaging\pack-msix.ps1 -BinDir bin -OutFile dist\dns-quorum-filter.msix -PfxPath $pfxPath -PfxPassword $env:CODESIGN_PASSWORD
+            } finally {
+              Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+            }
+          } else {
+            .\packaging\pack-msix.ps1 -BinDir bin -OutFile dist\dns-quorum-filter.msix
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          # A .cer only exists for the ephemeral (test-signed) path — a real
+          # cert needs no companion trust file. dist/* covers both shapes
+          # without a separate conditional path list. secrets.* (not the
+          # prior step's env, which doesn't carry over) is what's actually in
+          # scope here.
+          name: release-msix-${{ secrets.CODESIGN_PFX && 'signed' || 'test-signed' }}
+          if-no-files-found: error
+          path: dist/*
+
   # T-103: only on a `v*` tag. Re-proves the cross-path bit-identical property
   # for this exact tag (ci.yml's `repro` runs on branch pushes, not here), then
-  # publishes a DRAFT release — a maintainer reviews and clicks Publish. The
-  # MSIX package is a named gap for Батч 3.8 (T-156), not built here.
+  # publishes a DRAFT release — a maintainer reviews and clicks Publish.
   release:
-    needs: build-sign
+    needs: [build-sign, msix]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     permissions:
@@ -189,10 +236,15 @@ jobs:
             else { Write-Host "OK  $n  $a" }
           }
           if ($mismatch) { Write-Host "::error::unsigned build is not reproducible for this tag — not publishing"; exit 1 }
-      - name: Download signed binaries
+      - name: Download signed binaries and MSIX
         uses: actions/download-artifact@v4
         with:
           pattern: release-binaries-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-msix-*
           path: dist
           merge-multiple: true
       - name: Create draft release
@@ -208,17 +260,25 @@ jobs:
           } else {
             "Binaries are **test-signed** with an ephemeral certificate and are NOT trusted by Windows. Production signing is applied by the Microsoft Store when the app is published there."
           }
+          $sideloadLine = if ($env:SIGN_MODE -eq "signed") {
+            "Install: ``Add-AppxPackage dns-quorum-filter.msix``."
+          } else {
+            "**Sideload install (test-signed):** trust ``dns-quorum-filter.cer`` first -- it must go into ``Cert:\LocalMachine\Root`` or ``Cert:\LocalMachine\TrustedPeople`` (an elevated PowerShell session; ``Cert:\CurrentUser\TrustedPeople`` is not enough, confirmed empirically), then ``Add-AppxPackage dns-quorum-filter.msix``. This is a different certificate from the one the running app installs for 127.0.0.1 DoH traffic -- trusting one does not trust the other."
+          }
           $notes = @"
           Automated **draft** release for ``$tag``. A maintainer reviews and publishes it.
 
           **Windows x64 binaries:** ``dnsqb-service.exe``, ``dnsqb-watcher.exe``, ``dnsqb-tray.exe``
-          **Checksums:** ``SHA256SUMS`` — verify with ``Get-FileHash <file> -Algorithm SHA256``.
+          **MSIX package:** ``dns-quorum-filter.msix`` -- Start-menu tile + autostart (Settings > Apps > Startup), both via ``dnsqb-watcher.exe``'s idempotent launcher.
+          **Checksums:** ``SHA256SUMS`` -- verify with ``Get-FileHash <file> -Algorithm SHA256``.
 
           **Signing:** $signLine
 
+          $sideloadLine
+
           **Reproducible build:** the unsigned binaries are byte-identical when rebuilt from this tag's source in a different directory; CI re-proves this before the draft is created.
 
-          **Installer / MSIX packaging:** not in this release — Батч 3.8 (T-156).
+          **Full removal:** the tray's "Повністю видалити" (or ``/admin/ui``'s danger-zone card) clears the trusted certificate and Credential Manager secrets -- MSIX has no uninstall-time code hook, so run it before removing the app in Windows Settings, not after.
           "@
           $notes | Out-File notes.md -Encoding utf8
           $assets = Get-ChildItem dist -File | ForEach-Object { $_.FullName }
