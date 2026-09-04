@@ -1,0 +1,10 @@
+# Reproducible builds (T-100). link.exe stamps a wall-clock TimeDateStamp into
+# the PE header by default; /Brepro replaces it with a hash of the input, so two
+# builds of identical sources produce byte-identical binaries. Gated to the MSVC
+# target triple (deny.toml's sole `[graph] targets` entry, and what CI +
+# distribution builds use) — /Brepro is a link.exe option and a MinGW `ld` would
+# reject it, so a `x86_64-pc-windows-gnu` dev build is deliberately left alone.
+# RUSTFLAGS in the environment REPLACES (does not merge with) this, so the CI
+# `repro` job re-states /Brepro in its own RUSTFLAGS alongside --remap-path-prefix.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/Brepro"]

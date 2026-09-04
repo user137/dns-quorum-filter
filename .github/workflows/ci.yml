@@ -11,30 +11,35 @@ env:
 # and every job's first `cargo`/`rustup` invocation reads rust-toolchain.toml and
 # installs that exact pinned version + its declared components. Keeping the pin
 # in one file (not duplicated as action inputs) avoids the two configs disagreeing.
+#
+# --locked on every cargo invocation (T-100): the build must fail rather than
+# silently update Cargo.lock, so a CI build resolves the exact same dependency
+# graph a third party gets from `git clone`. rust-toolchain.toml (pinned) and a
+# tracked Cargo.lock are the other two legs; the `repro` job proves the result.
 
 jobs:
   build-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo build --workspace
-      - run: cargo test --workspace --lib --bins
+      - run: cargo build --workspace --locked
+      - run: cargo test --workspace --lib --bins --locked
 
   lint:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo fmt --all -- --check
 
   docs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cargo doc --workspace --no-deps --document-private-items
+      - run: cargo doc --workspace --no-deps --document-private-items --locked
         env:
           RUSTDOCFLAGS: -D warnings
-      - run: cargo test --workspace --doc
+      - run: cargo test --workspace --doc --locked
 
   audit:
     runs-on: windows-latest
@@ -51,11 +56,11 @@ jobs:
       - uses: actions/checkout@v4
       # Blocking: catches compile breaks and an accidentally-removed #[ignore]
       # the same way any other test regression would (T-13).
-      - run: cargo test --test conformance -p dnsqb-service
+      - run: cargo test --test conformance -p dnsqb-service --locked
       # Informational red board, not a merge gate: every RFC requirement not
       # yet implemented in Фаза 1 is `#[ignore]`d (DECISIONS.md, 2026-08-25) —
       # this step is expected to fail until Фаза 1 removes each #[ignore].
-      - run: cargo test --test conformance -p dnsqb-service -- --ignored
+      - run: cargo test --test conformance -p dnsqb-service --locked -- --ignored
         continue-on-error: true
 
   coverage:
@@ -64,8 +69,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info
+      - run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info --locked
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
           path: lcov.info
+
+  repro:
+    runs-on: windows-latest
+    # T-100: reproducibility must be proven across two DIFFERENT absolute build
+    # paths, not a same-directory double build — a third party rebuilding from
+    # source is the use case (SPEC.md "Наскрізні вимоги"), and only a path
+    # difference exercises --remap-path-prefix. Two independent checkouts under
+    # build-a/ and build-b/ give that.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: build-a
+      - uses: actions/checkout@v4
+        with:
+          path: build-b
+      - name: Compute path-independence RUSTFLAGS
+        shell: pwsh
+        run: |
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { "$env:USERPROFILE\.cargo" }
+          # RUSTFLAGS in the env replaces .cargo/config.toml rustflags, so /Brepro
+          # is re-stated here alongside the remaps.
+          $flags = @(
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE\build-a=src"
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE\build-b=src"
+            "--remap-path-prefix=$cargoHome=cargo"
+            "-Clink-arg=/Brepro"
+          ) -join " "
+          "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build in path A
+        working-directory: build-a
+        run: cargo build --release --workspace --locked
+      - name: Build in path B
+        working-directory: build-b
+        run: cargo build --release --workspace --locked
+      - name: Compare release binary hashes
+        shell: pwsh
+        run: |
+          $names = 'dnsqb-service.exe', 'dnsqb-watcher.exe', 'dnsqb-tray.exe'
+          $mismatch = $false
+          foreach ($n in $names) {
+            $a = (Get-FileHash "build-a/target/release/$n" -Algorithm SHA256).Hash
+            $b = (Get-FileHash "build-b/target/release/$n" -Algorithm SHA256).Hash
+            if ($a -ne $b) {
+              Write-Host "MISMATCH  $n"
+              Write-Host "  A: $a"
+              Write-Host "  B: $b"
+              $mismatch = $true
+            } else {
+              Write-Host "OK  $n  $a"
+            }
+          }
+          if ($mismatch) { exit 1 }
