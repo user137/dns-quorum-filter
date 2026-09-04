@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T-156 (Батч 3.8). {{VERSION}} / {{PUBLISHER}} are substituted by
+  pack-msix.ps1 at pack time — never hand-edit a literal version/publisher
+  in here, it would silently drift from what the binaries and the signing
+  cert actually carry.
+
+  Publisher identity is a placeholder for sideload (kickoff decision,
+  2026-09-04): "CN=dns-quorum-filter", matched exactly by the signing
+  cert's subject (see pack-msix.ps1 — one shared value, not two literals
+  that happen to agree today). A future Microsoft Store submission replaces
+  Name/Publisher with the values Partner Center assigns and re-signs with
+  Microsoft's own certificate (the same model already decided for binary
+  signing, T-102) — nothing else in this file needs to change for that.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap desktop rescap">
+
+  <Identity
+    Name="dns-quorum-filter"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>DNS Quorum Filter</DisplayName>
+    <PublisherDisplayName>DNS Quorum Filter</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="uk-UA" />
+  </Resources>
+
+  <!--
+    runFullTrust (T-156): this is a packaged Win32 desktop app ("Desktop
+    Bridge"), not an AppContainer-sandboxed UWP app — it needs ordinary
+    Win32 access this project already relies on outside the package:
+    spawning sibling processes (dnsqb-watcher's launcher, T-150), the
+    CurrentUser\Root certificate store (T-49), and Windows Credential
+    Manager (T-67/T-146/T-163). None of that is available to a sandboxed
+    app. No hidden MITM or traffic interception — this is a DoH filter the
+    browser is pointed at explicitly, not a proxy, so there's no capability
+    here a Store reviewer would need to specially justify beyond
+    runFullTrust itself.
+  -->
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="App" Executable="dnsqb-watcher.exe" EntryPoint="Windows.FullTrustApplication">
+      <!--
+        The Start-menu tile launches dnsqb-watcher.exe, not dnsqb-service.exe
+        or dnsqb-tray.exe directly — the watcher's idempotent launcher
+        (watchdog::launcher::plan_launch, T-150) is what actually brings up
+        the service and tray if they aren't already running, and does
+        nothing if they are. One shortcut either starts everything or
+        confirms everything is already running.
+      -->
+      <uap:VisualElements
+        DisplayName="DNS Quorum Filter"
+        Description="Локальний DoH quorum-фільтр"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        BackgroundColor="transparent" />
+      <Extensions>
+        <!--
+          T-150's autostart design (SPEC.md §7): the Startup-entry target is
+          dnsqb-watcher.exe, never dnsqb-service.exe directly — same
+          idempotent-launcher reasoning as the tile above, just triggered at
+          login instead of by a click. User-visible and user-toggleable in
+          Settings > Apps > Startup, not a hidden registry Run key.
+        -->
+        <desktop:Extension Category="windows.startupTask" Executable="dnsqb-watcher.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="DnsqbWatcherStartup" Enabled="true" DisplayName="DNS Quorum Filter" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>
