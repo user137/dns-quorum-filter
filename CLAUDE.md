@@ -86,10 +86,17 @@ the trusted cert + 3 Credential Manager secrets is an in-app action (tray "По�
 (`Removed`/`NotPresent`/`Failed`), never one collapsed bool. Also: `assets/gen-icon.py` +
 `assets/icon/` — one drawing source for the app icon everywhere (MSIX tile, README wordmark, a
 future Store listing/Linux icon), user-revised mid-batch from a low-contrast navy/cyan/white
-funnel to a two-tone (Windows accent blue + white) wireframe hexagon with vertex dots. **Next —
-T-167** (full doc-verification pass, README build/pipeline for a lay reader, SECURITY.md reorg)
-**or the carried-forward Ф1 gates** (T-66 metrics, live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`)
-— user picks, no more numbered Ф3 batches.
+funnel to a two-tone (Windows accent blue + white) wireframe hexagon with vertex dots.
+**T-167 done 2026-09-04** (plan+advisor, 3 commits, TASKS-DONE.md): README rewritten for a lay
+reader (build/run steps taken through to a browser-DoH-config step, honestly capped at the
+still-unverified live browser→DoH pass; a new "Як працює фільтрація" section with the 8-step
+SPEC.md §5.3 pipeline + a lightweight `mermaid` flowchart, embedded directly rather than as a
+`diagrams/` file since it's a lay illustration, not a synced dev artifact); SECURITY.md's
+dependency table compressed to a current-state snapshot (57065→19099 chars, ~66%, same
+principle as this file's own Project State compression — every row's why-this-crate/`unsafe`-
+location/accepted-risk fact checked to survive, none dropped). **Next — the carried-forward Ф1
+gates** (T-66 metrics, live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`) — user picks, no more
+numbered Ф3 batches, and no other item currently queued.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
