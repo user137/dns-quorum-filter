@@ -5,3 +5,12 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2021"
 license = "Apache-2.0"
+
+# Reproducible builds (T-100). The default codegen-units = 16 lets rustc
+# schedule codegen across threads non-deterministically; on the large
+# `dnsqb-service` crate that produced intermittently different binaries from
+# identical sources (the two small binaries were already stable). = 1 removes
+# the parallelism, so a rebuild is byte-identical; it also tightens release
+# optimization, at the cost of a slower release compile.
+[profile.release]
+codegen-units = 1
