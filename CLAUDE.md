@@ -64,8 +64,11 @@ trust = Microsoft Store re-signing the MSIX at publication, Батч 3.8); artif
 mode. T-103: `v*` tag → re-proves cross-path reproducibility → **draft** GitHub release with the
 3 `.exe` + `SHA256SUMS`, published by a human. Also: `Swatinem/rust-cache` on the cargo jobs
 (**not** `repro`/release — they must clean-build), `concurrency: cancel-in-progress` on all 3
-workflows, `paths-ignore` for `**/*.md`/`diagrams/**`/`mockups/**` on ci.yml + codeql.yml (a
-docs-only commit triggers neither). **Next — Батч 3.8** (T-156 MSIX + T-70 uninstaller, last;
+workflows, `ci.yml`/`codeql.yml` `push: branches: ['**']` (not tags) + `paths-ignore` for
+`**/*.md`/`diagrams/**`/`mockups/**` (a docs-only commit, and any tag push, triggers neither —
+`release.yml` owns the tag path). **Version bumped `0.1.0` → `0.2.0`; `v0.2.0` tagged →
+`release.yml` produced a DRAFT GitHub release (test-signed binaries + `SHA256SUMS`), left for a
+human to publish.** **Next — Батч 3.8** (T-156 MSIX + T-70 uninstaller, last;
 own plan+advisor). **T-167** (full doc-verification pass, README build/pipeline for a lay
 reader, SECURITY.md reorg) is a queued Ф3 task — see TASKS.md.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
