@@ -42,15 +42,19 @@ elapsed during downtime; **only `Verdict::Allow` is persisted** — `Block` is f
 auto-restart). `persist_cache` config flag (no admin route), `AdminStatusResponse.encrypted_persistence
 { query_log, cache }` (replaced the bare `query_log_persisted` bool — kept `AdminStatusResponse`
 under `clippy::struct_excessive_bools`), passive `/admin/ui` line.
-**T-98 done 2026-09-04** (Батч 3.6, research, docs-only): Chrome DoH enterprise-policy mechanism
-verified against the Chromium `policy_definitions` YAML — `DnsOverHttpsMode` enum `off/automatic/
-secure` (Chrome 78+, `secure` = no silent native-resolver fallback, `dynamic_refresh:true`),
-`DnsOverHttpsTemplates` (Chrome 80+, mandatory-non-empty under `secure`, `{?dns}`⇒GET, a
-malformed template is silently ignored), registry `HKLM\SOFTWARE\Policies\Google\Chrome` `REG_SZ`.
-Tiered write-up in SPEC.md §"Відкриті питання" п.3. Gotcha: `chromeenterprise.google/policies/*`
-is a JS SPA (WebFetch sees only the shell) — fetch the raw `chromium.googlesource.com/.../
-policy_definitions/*.yaml` instead. **Next — T-99** (registry write; kickoff AskUserQuestion on
-scope pending — if "not in scope" it closes with no code, like T-164).
+**Батч 3.6 (T-98 + T-99) done 2026-09-04, docs-only.** T-98 (research): Chrome DoH
+enterprise-policy mechanism verified against the Chromium `policy_definitions` YAML —
+`DnsOverHttpsMode` enum `off/automatic/secure` (Chrome 78+, `secure` = no silent native-resolver
+fallback, `dynamic_refresh:true`), `DnsOverHttpsTemplates` (Chrome 80+, mandatory-non-empty under
+`secure`, `{?dns}`⇒GET, a malformed template is silently ignored), registry
+`HKLM\SOFTWARE\Policies\Google\Chrome` `REG_SZ`. Tiered write-up in SPEC.md §"Відкриті питання"
+п.3. Gotcha: `chromeenterprise.google/policies/*` is a JS SPA (WebFetch sees only the shell) —
+fetch the raw `chromium.googlesource.com/.../policy_definitions/*.yaml` instead. **T-99 closed
+with no code** (kickoff AskUserQuestion, T-164 format): `secure` makes all Chrome resolution
+hard-fail when `dnsqb-service` is down (Три Б user-safety), `HKLM\...\Policies` needs admin +
+is machine-global (conflicts with "no persistent elevated privileges"), Chrome-only — same
+conclusion T-134 reached for Firefox. Mechanism documented for a possible future phase, not
+built. **Next — Батч 3.7** (T-100/T-102/T-103, release engineering).
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
