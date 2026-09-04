@@ -95,8 +95,9 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   system, so binary trust is as security-critical as the certificate itself. Built (Батч 3.7,
   T-100/T-102/T-103): pinned toolchain + tracked `Cargo.lock` + `--locked` everywhere +
   `/Brepro` + `codegen-units = 1`, verified by a blocking CI job that clean-builds twice in
-  different paths and compares SHA-256. A third party can rebuild a tag's source and confirm the
-  unsigned binaries byte-for-byte. **CI signing is `test-signed` with an ephemeral certificate —
+  different paths and compares SHA-256 (proven on the pinned toolchain + `windows-latest` runner
+  image; a different Windows SDK could change `link.exe` output — untested). A third party on the
+  same toolchain/SDK can rebuild a tag's source and confirm the unsigned binaries byte-for-byte. **CI signing is `test-signed` with an ephemeral certificate —
   not trusted; production trust comes only from Microsoft Store re-signing the MSIX at
   publication** (a real cert can be supplied as the `CODESIGN_PFX` secret to sign strictly
   instead). The `v*`-tag release job re-proves reproducibility before it publishes a **draft**

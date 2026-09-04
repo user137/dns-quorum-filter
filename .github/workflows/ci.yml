@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches: ['**']  # not tags — a v* tag is a commit that already passed CI on main;
+                       # release.yml owns the tag path and has its own repro gate.
     paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
   pull_request:
     paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']

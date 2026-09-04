@@ -2433,8 +2433,9 @@ Kits\10\bin\*\x64\` (на `windows-latest` = `10.0.26100.0`), `resolve-cert`: `C
 
 **T-103 — release-pipeline.** `release.yml` +`push: tags: ['v*']`; job `release` (`if:
 startsWith(github.ref,'refs/tags/')`, `needs: build-sign`, `permissions: contents: write` тільки
-тут): власний cross-path repro-gate (ci.yml `repro` не біжить логічно прив'язаний до тегового
-job'а), `download-artifact`, `gh release create $tag --repo $GITHUB_REPOSITORY --draft` (без
+тут): **власний** cross-path repro-gate — `ci.yml` навмисно виключено з тегів (`push: branches:
+['**']`, closing-review фікс), тож на тег біжить лише цей gate, не дубль із `ci.yml`,
+`download-artifact`, `gh release create $tag --repo $GITHUB_REPOSITORY --draft` (без
 `--repo` падало `not a git repository` — обидва checkout'и в підтеки) з 3 `.exe` + `SHA256SUMS` +
 notes (фактичний режим підпису з job-output, як звірити суми, репродукованість, MSIX→3.8).
 **Manual smoke:** `gh workflow run release.yml` → артефакт `release-binaries-test-signed` (3

@@ -2,6 +2,7 @@ name: CodeQL
 
 on:
   push:
+    branches: ['**']  # not tags (same reason as ci.yml)
     paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
   pull_request:
     paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
