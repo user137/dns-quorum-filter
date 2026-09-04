@@ -94,9 +94,12 @@ SPEC.md §5.3 pipeline + a lightweight `mermaid` flowchart, embedded directly ra
 `diagrams/` file since it's a lay illustration, not a synced dev artifact); SECURITY.md's
 dependency table compressed to a current-state snapshot (57065→19099 chars, ~66%, same
 principle as this file's own Project State compression — every row's why-this-crate/`unsafe`-
-location/accepted-risk fact checked to survive, none dropped). **Next — the carried-forward Ф1
-gates** (T-66 metrics, live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`) — user picks, no more
-numbered Ф3 batches, and no other item currently queued.
+location/accepted-risk fact checked to survive, none dropped). **T-168 queued 2026-09-05**
+(user request): performance/complexity analysis of critical pipeline paths, a load test against
+a mocked `DohClient`, and a resource-exhaustion-safeguard design (bounded concurrency vs. a
+waiting queue, sizing methodology) for the local-client-misbehavior threat model — TASKS.md has
+the full scope, not yet started. **Next** — T-168 or the carried-forward Ф1 gates (T-66 metrics,
+live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`) — user picks, no more numbered Ф3 batches.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
