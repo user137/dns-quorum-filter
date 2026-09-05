@@ -112,8 +112,13 @@ itself a slow-loris DoS). New `[limits]` table in `resolver_config.toml`
 `active_connections` (live snapshot) on `GET /admin/status`. `[limits]` is not admin-mutable and
 `apply_admin_reset` does **not** rebuild the gate — a `[limits]` change needs a service restart
 (like `port`).
-**Next** — the carried-forward Ф1 gates (T-66 metrics, live Chrome-DoH pass,
-`DEFAULT_PROVIDER_IDS`) — user picks, no more numbered Ф3 batches.
+**Next** — Batches 3.9 + 3.10 close Phase 3 completely (plan in TASKS.md §"Фаза 3", "План
+фінального закриття Ф3"): **3.9** = the three carried-forward Ф1 gates as honest verification, not
+new features (T-170 `DEFAULT_PROVIDER_IDS` decision + change, T-171 re-measure T-66 quorum
+coverage on a bigger sample, T-172 live "browser → local DoH" pass); **3.10** = T-173 version bump
+`0.2.0` → `0.3.0` + `v0.3.0` tag → the existing `release.yml` produces a draft MSIX release for a
+human to publish. T-51 / T-56 stay carried-forward backlog (blocked on out-of-MVP T-132 / T-134),
+not part of the Phase 3 close.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
