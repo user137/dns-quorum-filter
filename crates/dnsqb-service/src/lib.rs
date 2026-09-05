@@ -213,9 +213,10 @@ pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
 pub use trust_store::{ensure_installed, uninstall, TrustStoreError, TrustStoreOutcome};
 pub use upstream::{
-    all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, validate_provider_url,
-    BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec, ProviderUrlError,
-    ReqwestDohClient, UpstreamError, BASELINE_DOH_URL, DEFAULT_PROVIDER_IDS,
+    all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, sinkhole_nets_for,
+    validate_provider_url, BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec,
+    ProviderUrlError, ReqwestDohClient, SinkholeNet, UpstreamError, BASELINE_DOH_URL,
+    DEFAULT_PROVIDER_IDS,
 };
 pub use watchdog::backoff::{next_backoff, BACKOFF_CAP, BACKOFF_STEPS};
 pub use watchdog::budget::{BudgetVerdict, RestartBudget, MAX_RESTARTS_PER_WINDOW, RESTART_WINDOW};

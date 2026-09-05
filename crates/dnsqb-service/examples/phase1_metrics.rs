@@ -80,6 +80,23 @@
 //! `0.0.0.0`/`::` anywhere — so a 0% rate is a real finding about this
 //! sample, not a masked detection bug.
 //!
+//! **T-175 — sinkhole-IP detection**: each preset's block check now passes
+//! `sinkhole_nets_for(&spec.id)` (not `&[]`), so a preset that blocks by
+//! substituting a provider-specific block-page IP (`adguard`,
+//! `adguard-family`, `opendns-familyshield`, `dns4eu-*`) is finally counted.
+//! Rates for those presets rise relative to T-174; the quorum-hypothesis
+//! verdict is *strengthened*, not changed.
+//!
+//! **Optional `oisd:<n>` corpus** (`cargo run --example phase1_metrics
+//! [port] oisd:2000`): a random-stride sample of `n` domains from the oisd
+//! "big" aggregated community blocklist. Deeper coverage for ads/trackers,
+//! but it is **agreement with a big list, not detection of known-bad** — a
+//! large fraction of oisd resolves fine and a Security-tier resolver
+//! correctly leaves it alone. Printed as its own labelled section and
+//! **never folded into the quorum-hypothesis verdict** (that stays the
+//! malware corpus only). There is a circularity caveat too: some providers
+//! share upstream list sources with oisd.
+//!
 //! Output is a report to stdout only. Per-domain lines are indexed, not
 //! labeled with the raw domain text — the fetched malicious-domain list
 //! itself is never persisted anywhere in this repo (someone else's live
@@ -87,8 +104,8 @@
 
 use dnsqb_service::{
     all_builtin_presets, app_data_dir, decode_wire_message, doh_get_url, encode_wire_message,
-    is_blocked, BlockSignature, Category, DohClient, ProviderSpec, ReqwestDohClient,
-    BASELINE_CHAIN, BASELINE_DOH_URL,
+    is_blocked, sinkhole_nets_for, BlockSignature, Category, DohClient, ProviderSpec,
+    ReqwestDohClient, BASELINE_CHAIN, BASELINE_DOH_URL,
 };
 use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -109,6 +126,10 @@ use std::time::{Duration, Instant};
 const SECOND_BASELINE_URL: &str = BASELINE_CHAIN[1];
 
 const URLHAUS_RECENT_CSV: &str = "https://urlhaus.abuse.ch/downloads/csv_recent/";
+/// oisd "big" list, plain-hostname format (~200k lines, `#`/`!` comments).
+/// Only fetched when `oisd:<n>` is passed; a random-stride sample of `n` is
+/// taken (T-133 ToS — never all 200k against public resolvers).
+const OISD_BIG_URL: &str = "https://big.oisd.nl/";
 // T-171 widened this from 40 to a ~100-200 target (T-133 ToS: moderate
 // volume, no bulk abuse). The feed's `csv_recent` dump holds a few thousand
 // rows; the cap plus the baseline-NoError filter decides the final n.
@@ -166,6 +187,15 @@ enum Corpus {
     Malware,
     Ads,
     Adult,
+    /// A random-stride sample of the oisd "big" aggregated community blocklist
+    /// (opt-in, `oisd:<n>` CLI arg — T-175). **Not ground truth**: oisd is an
+    /// aggregate of ads/trackers/malware/phishing lists, and a large share of
+    /// its entries are ad/tracker hosts that resolve fine and that a
+    /// Security-tier resolver correctly does *not* block — so a "detection
+    /// rate" against it measures *agreement with a big list*, not filtering
+    /// accuracy, and it never feeds the quorum-hypothesis verdict (that stays
+    /// [`Corpus::Malware`]-only).
+    Oisd,
 }
 
 impl Corpus {
@@ -174,6 +204,7 @@ impl Corpus {
             Corpus::Malware => "malware",
             Corpus::Ads => "ads",
             Corpus::Adult => "adult",
+            Corpus::Oisd => "oisd-biglist",
         }
     }
 }
@@ -205,7 +236,8 @@ enum Sampled {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let port = local_port_from_args()?;
+    let args = parse_args()?;
+    let port = args.port;
 
     let feed_client = reqwest::Client::new();
     let malware = fetch_urlhaus_domains(&feed_client, SAMPLE_CAP).await?;
@@ -222,8 +254,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .iter()
             .map(|d| ((*d).to_string(), Corpus::Adult)),
     );
+
+    let mut oisd_count = 0usize;
+    if let Some(n) = args.oisd_sample {
+        let oisd = fetch_oisd_domains(&feed_client, n).await?;
+        oisd_count = oisd.len();
+        println!(
+            "fetched {oisd_count} oisd domains (random-stride sample of {n}) - \
+             agreement-with-a-big-list, NOT part of the quorum verdict"
+        );
+        sample.extend(oisd.into_iter().map(|d| (d, Corpus::Oisd)));
+    }
     println!(
-        "corpora: {} malware + {} ads + {} adult",
+        "corpora: {} malware + {} ads + {} adult + {oisd_count} oisd",
         sample.iter().filter(|(_, c)| *c == Corpus::Malware).count(),
         ADS_DOMAINS.len(),
         ADULT_DOMAINS.len()
@@ -293,11 +336,62 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn local_port_from_args() -> Result<u16, Box<dyn Error>> {
-    match std::env::args().nth(1) {
-        Some(arg) => Ok(arg.parse()?),
-        None => Ok(DEFAULT_LOCAL_PORT),
+/// CLI args, order-independent: a bare number is the local service port
+/// (default [`DEFAULT_LOCAL_PORT`]); `oisd:<n>` opts a random-stride sample of
+/// `n` oisd domains into the run as a separate [`Corpus::Oisd`] section.
+/// Anything else is an error rather than a silent ignore.
+struct Args {
+    port: u16,
+    oisd_sample: Option<usize>,
+}
+
+fn parse_args() -> Result<Args, Box<dyn Error>> {
+    let mut port = DEFAULT_LOCAL_PORT;
+    let mut oisd_sample = None;
+    for arg in std::env::args().skip(1) {
+        if let Some(rest) = arg.strip_prefix("oisd:") {
+            let n: usize = rest.parse()?;
+            if n == 0 {
+                return Err("oisd:<n> must be > 0".into());
+            }
+            oisd_sample = Some(n);
+        } else if let Ok(p) = arg.parse::<u16>() {
+            port = p;
+        } else {
+            return Err(format!("unrecognised arg {arg:?} (expected a port or oisd:<n>)").into());
+        }
     }
+    Ok(Args { port, oisd_sample })
+}
+
+/// Fetches the oisd "big" list and takes a deterministic even-stride sample of
+/// `n` hostnames — deterministic (not `rand`) so a number that lands in
+/// `PERFORMANCE.md` is re-runnable to the same result, and `rand` is a
+/// dev-only dep in this tree. Comment lines (`#`, `!`) and bare IPs are
+/// dropped. If the list has `<= n` usable lines, all of them are returned.
+async fn fetch_oisd_domains(
+    client: &reqwest::Client,
+    n: usize,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let text = client
+        .get(OISD_BIG_URL)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let all: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with('!'))
+        .filter(|line| line.parse::<IpAddr>().is_err())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if all.len() <= n {
+        return Ok(all);
+    }
+    let stride = all.len() / n;
+    Ok(all.into_iter().step_by(stride).take(n).collect())
 }
 
 /// Fetches the URLhaus recent-URLs CSV and extracts up to `cap` unique
@@ -397,7 +491,15 @@ async fn resolve_all_voters(
     let mut voter_blocked = Vec::with_capacity(presets.len());
     for spec in presets {
         let response = client.query(&spec.doh_url, &query).await?;
-        voter_blocked.push(is_blocked(spec.block_signature, &response, &baseline));
+        // T-175: every preset gets its own sinkhole prefixes — `&[]` here
+        // would silently re-create the undercount this measurement exists to
+        // expose (presets that block via a provider-specific block-page IP).
+        voter_blocked.push(is_blocked(
+            spec.block_signature,
+            &response,
+            &baseline,
+            sinkhole_nets_for(&spec.id),
+        ));
         voter_rcode.push(response.metadata.response_code);
     }
     Ok(Sampled::Kept(Box::new(DomainResult {
@@ -418,6 +520,14 @@ fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
 
     for corpus in [Corpus::Malware, Corpus::Ads, Corpus::Adult] {
         report_corpus(results, presets, corpus);
+    }
+    if results.iter().any(|r| r.corpus == Corpus::Oisd) {
+        report_corpus(results, presets, Corpus::Oisd);
+        println!(
+            "  ^ oisd is an aggregated community blocklist, not known-bad ground truth: \
+             a low rate here (esp. Quad9) can mean the resolver is correctly NOT blocking \
+             ad/tracker hosts. Reported separately; never folded into the quorum verdict."
+        );
     }
 
     report_quorum_hypothesis(results, presets);

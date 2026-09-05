@@ -739,3 +739,88 @@ Raw-вихід: scratchpad `t174_advisor_twobaseline_2026-09-05.txt`. Побіч
 непослідовність, яку advisor теж зауважив: PERFORMANCE.md давав caveat «upper bound» лише
 Quad9, а не CleanBrowsing (та сама сигнатура) — тепер обидва під тим самим двобейзлайновим
 гейтом і з тим самим формулюванням.
+
+## 2026-09-06 — T-175: sinkhole-IP-детекція через network-префікс (не новий `BlockSignature`)
+
+**Контекст:** T-174-прогін по всіх 10 пресетах показав `adguard-family` / `opendns-familyshield`
+/ `dns4eu-*` як «0 блоків» там, де мали б блокувати. Орієнтаційна проба (`examples/sinkhole_probe.rs`,
+живі запити) з'ясувала: **жоден пресет не «нічого не фільтрує»** — вони блокують, підмінюючи
+відповідь сталим провайдер-специфічним sinkhole/block-page IP (не `0.0.0.0`, не NXDOMAIN), який
+`quorum::evaluate` не декодував. Це стосувалось і **shipped-дефолтного `adguard`** для частини
+malware. Дві AskUserQuestion: (1) детектувати гібридно (хардкод-набір + baseline-guard), (2) на
+тиху ротацію IP — не покладатись на точні `/32`, а на network-префікс власника + рекалібратор.
+
+**Рішення:**
+
+1. **Адитивний параметр `sinkhole_nets: &[SinkholeNet]` на `evaluate` / `is_blocked` / `known_signal`,
+   НЕ новий `BlockSignature`-варіант.** Sinkhole композується з наявною сигнатурою: `adguard`
+   лишається `NullIp` (для `0.0.0.0`-реклами) **і** отримує sinkhole-набір (для malware). Новий
+   enum-варіант зробив би це взаємовиключним. `evaluate` перевіряє sinkhole **перед** `match
+   signature`, але тільки якщо `!has_null_ip` (`0.0.0.0` — безумовний блок, виграє).
+
+2. **`Signal::NeedsBaseline`, не `Signal::Blocked`.** Sinkhole IP — підмінена відповідь, але, на
+   відміну від `0.0.0.0`, невідрізненна від реального резолву без baseline (домен *міг би*
+   легітимно жити на тій адресі). Той самий baseline-guard, що й для голого NXDOMAIN: block лише
+   коли baseline сам віддав `NoError`. **Наслідок під `fail_closed`:** якщо baseline сам
+   `TimedOut`/`Errored`, `resolve_needs_baseline` → `unresponsive_signal(FailClosed)` → `Blocked`
+   — новий сигнал у старій mode-залежній гілці, безпечний бік (консистентно з voter-таймаутом),
+   задокументовано навмисно.
+
+3. **Матч за network-префіксом власника (RDAP-звірено 2026-09-06), не за точним IP:**
+   `adguard`/`adguard-family` → `94.140.14.0/24` (у зареєстрованому AdGuard `94.140.14.0/23`,
+   містить їхні резолвери `.14/.15`; фільтр-інфра, не хостинг); `opendns-familyshield` →
+   `146.112.61.104/29` (у Cisco OpenDNS `146.112.0.0/16`, історичний block-page-діапазон);
+   `dns4eu-*` → `51.15.69.11/32` (**exact only** — IP у Scaleway `51.15.0.0/17`, загальний
+   хостинг, `/24` там небезпечний). Матч: `(ip ^ net).leading_zeros() >= prefix` — без зсуву,
+   без `<< 32` overflow-шляху (паніка на serve-шляху = watchdog restart loop). `SinkholeNet` без
+   `Default` (`0.0.0.0/0` = match-everything), інваріант `prefix ∈ 1..=32`.
+
+4. **Стійкість до ротації — 2 шари** (пасивний аларм відхилено): (1) префікс поглинає ротацію
+   хост-бітів у мережі провайдера; (2) `examples/sinkhole_probe.rs` перетворено на **рекалібратор**
+   — звірка канарковим доменом (`internetbadguys.com` — офіційний Cisco/OpenDNS тест-домен;
+   стабільний adult-домен для `*-family`; свіжий URLhaus-хост для pure-malware) + власним доменом
+   провайдера як контролем, друкує `IN`/`OUT` префікса. Не-CI, ганяти перед релізом. **Пасивний
+   аларм «0-in-prefix за вікно» — відхилено** (advisor): предикат «одиничний *незнайомий* A»
+   необчислюваний (CDN-варіативність домінує знаменник), справжній сигнал потребує персистованого
+   історичного rate; окрема майбутня задача, якщо взагалі.
+
+5. **Per-user фоновий рекалібратор** («раз на кілька годин») і **чиста структурна евристика**
+   («той самий IP для ≥K доменів») — відхилено: перше — privacy/traffic-ціна на кожного
+   користувача; друге — крос-запитовий стан біля decision-core + CDN false-positive.
+
+**Перемір (`phase1_metrics.rs`, sinkhole-детекція увімкнена, n = 111 malware, гейт: два
+нефільтровані резолвери, 0 розбіжностей):**
+
+| | blocked | rate |
+|---|---|---|
+| Quad9 | 66/111 | 59.5 % |
+| **DNS4EU Protective** (у T-174 = 0, block через sinkhole) | **92/111** | **82.9 %** |
+| CleanBrowsing Security | 59/111 | 53.2 % |
+| Cloudflare Malware | 39/111 | 35.1 % |
+| AdGuard (shipped-дефолт) | 45/111 | 40.5 % |
+| **Кворум OR (усі 10 / Security-tier 4)** | **99/111** | **89.2 %** |
+| **дельта над найкращим одиночним (`dns4eu-protective`)** | **+7/111** | **+6.3 pp** |
+
+**Причина / що це означає:**
+- Гіпотезу **лишено підтвердженою** (дельта додатна: кворум ловить 7 доменів, яких не ловить
+  жоден одиночний). Але маржа — **+6.3 pp**, не T-174-ві **+17.0 pp**: sinkhole-детекція зробила
+  `dns4eu-protective` видимим як найсильніший одиночний (82.9 %), тож планка «найкращий одиночний»
+  піднялась. Це **чесніша** цифра, не регрес вердикту.
+- SPEC.md §"Відкриті питання" / Ф1/Ф2 closure-абзаци — T-175-уточнення дельти.
+- `adguard` shipped-дефолт: sinkhole-детекція підняла його malware-rate (частина через
+  `94.140.14.x`); кворум тепер рахує ці блоки.
+
+**Наслідки:**
+- `upstream.rs` — `SinkholeNet` + `SINKHOLE_NETS` + `sinkhole_nets_for` + тести (маска, межі,
+  invariant, negative-control на власних доменах провайдерів).
+- `quorum.rs` — `evaluate`/`is_blocked`/`known_signal` +param; 3 внутрішні виклики
+  (`voter_record`/`combine`/`resolve`-early-block) + `representative_allow_answer`; ~8 нових
+  тестів. 3 `resolve`-тести: фікстура `94.140.14.14` (реальний AdGuard-резолвер, тепер у sinkhole
+  `/24`) → TEST-NET-3 `203.0.113.14`.
+- `phase1_metrics.rs` — `sinkhole_nets_for(&spec.id)` для **кожного** пресета (ніколи `&[]`);
+  opt-in `oisd:<n>` корпус (детермінований stride-семпл `big.oisd.nl`; **окрема секція, НЕ у
+  кворум-вердикт** — oisd це блоклист, не known-bad, Security-резолвер коректно не блокує ad/tracker).
+- `sinkhole_probe.rs` — з orientation-проби на постійний рекалібратор.
+- SPEC.md §3.4, CONFIGURATION.md, PERFORMANCE.md, CLAUDE.md.
+- Raw-виходи: scratchpad `t175_sinkhole_probe_2026-09-05.txt` (орієнтація),
+  `t175_phase1_metrics_2026-09-06.txt` (фінальний перемір).

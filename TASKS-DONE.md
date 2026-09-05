@@ -3588,3 +3588,70 @@ bound», CleanBrowsing-й — ні: тепер обидва під тим сам
 header-нота + «Resolution — T-174»), DECISIONS.md (T-174-запис), CLAUDE.md (Ф1-closure +
 Known-limitations: CleanBrowsing→fixed, +T-175-рядок), TASKS.md (T-175 заведено). Raw-виходи —
 scratchpad `t174_3corpus_run_prefix_2026-09-05.txt` (до), `t174_remeasure_fixed_2026-09-05.txt` (після).
+
+### T-175 — sinkhole-IP-детекція через network-префікс (зроблено 2026-09-06, plan+advisor kickoff+closing, 1 коміт)
+
+- [x] T-175 — 5 пресетів (`adguard`, `adguard-family`, `opendns-familyshield`,
+  `dns4eu-protective`, `dns4eu-child`) блокують, підмінюючи відповідь сталим провайдер-специфічним
+  block-page IP (не `0.0.0.0`, не NXDOMAIN), який `quorum::evaluate` не декодував — стосувалось і
+  shipped-дефолтного `adguard`. Не потребувало нового `BlockSignature`-варіанта.
+
+**Механізм** (2 AskUserQuestion: гібридна детекція + network-префікс проти тихої ротації):
+- `upstream.rs` — `SinkholeNet { addr: Ipv4Addr, prefix: u8 }` (`Copy`, **без** `Default` —
+  `0.0.0.0/0` = match-everything), `const SINKHOLE_NETS: &[(&str, &[SinkholeNet])]`, `pub fn
+  sinkhole_nets_for(id) -> &'static [SinkholeNet]` (порожньо для невідомого/кастомного). Префікси
+  — з RDAP-звірки власника мережі: `94.140.14.0/24` (AdGuard, у їх `/23`, містить резолвери
+  `.14/.15`), `146.112.61.104/29` (Cisco OpenDNS, у їх `/16`, block-page діапазон), `51.15.69.11/32`
+  (DNS4EU — IP у Scaleway `/17` загальному хостингу, **без** розширення). Match:
+  `(ip ^ net).leading_zeros() >= prefix` — без зсуву, без `<< 32` overflow (паніка на serve-шляху
+  = watchdog loop). Інваріант `prefix ∈ 1..=32`.
+- `quorum.rs` — `evaluate` / `is_blocked` / `known_signal` отримали `&[SinkholeNet]`; перевірка
+  **перед** `match signature`, тільки якщо `!has_null_ip` (`0.0.0.0` виграє). Sinkhole IP у
+  відповіді → `Signal::NeedsBaseline` (block лише коли baseline сам `NoError`) — той самий
+  baseline-guard, що для голого NXDOMAIN. Композується з наявною сигнатурою (`adguard` лишає
+  `NullIp` для реклами). 3 внутрішні виклики (`voter_record`/`combine`/`resolve`-early-block) +
+  `representative_allow_answer` передають `sinkhole_nets_for(&entry.spec.id)`.
+- Наслідок під `fail_closed`: baseline-timeout → sinkhole-відповідь `Blocked` через
+  `unresponsive_signal` (безпечний бік, консистентно з voter-таймаутом — задокументовано).
+
+**Тести** (~12 нових): `evaluate`/`is_blocked` — sinkhole+baseline-NoError→block,
+sinkhole+SERVFAIL→не-block, sinkhole+реальний IP разом→block, порожній набір→стара поведінка,
+композиція з `NullIp`; **negative-control** — `adguard` набір + `adguard.com` (реальний IP поза
+`/24`) → NotBlocked (ловить занадто широкий префікс); `SinkholeNet::contains` — маска, сусіди,
+`/32`-точність; `SINKHOLE_NETS` invariant — `prefix ∈ 1..=32`, addr = network-адреса, спостережені
+пробою IP всередині свого префікса. 3 `resolve`-тести: фікстура `94.140.14.14` (реальний
+AdGuard-резолвер, тепер у sinkhole `/24`) → TEST-NET-3 `203.0.113.14`.
+
+**Стійкість до ротації — 2 шари** (пасивний аларм і per-user фоновий рекалібратор — **відхилено**,
+DECISIONS.md): (1) префікс поглинає ротацію хост-бітів у мережі провайдера; (2)
+`examples/sinkhole_probe.rs` з orientation-проби → **рекалібратор**: звірка канарковим доменом
+(`internetbadguys.com` для OpenDNS — офіційний тест-домен; стабільний adult-домен для `*-family`;
+свіжий URLhaus-хост для pure-malware) + власним доменом провайдера як контролем, друкує `IN`/`OUT`
+префікса, ненульовий exit при `OUT`. Ганяти перед релізом.
+
+**Перемір** (`phase1_metrics.rs`, sinkhole увімкнено, n=111 malware, гейт: два нефільтровані
+резолвери, 0 розбіжностей): `dns4eu-protective` **92/111 (82.9 %)** — у T-174 рахувалось як 0
+(block через `51.15.69.11`); тепер найсильніший одиночний. Кворум OR (усі 10 / Security-tier 4 —
+однаково) **99/111 (89.2 %)** — **+7 доменів / +6.3 pp** над найкращим одиночним. **Гіпотеза
+лишається підтвердженою** (дельта додатна), але маржа менша за T-174-ві +17.0 pp, бо
+best-single baseline піднявся з Quad9 (~55 %) до dns4eu-protective (83 %) — чесніша цифра, не
+регрес вердикту. Adult-корпус: `adguard-family`/`dns4eu-child` тепер 8/8 (у T-174 = 0/9).
+`adguard` shipped-дефолт: malware-rate піднявся (частина через `94.140.14.x`) — кворум рахує.
+
+**Також:** opt-in `--corpus oisd:<n>` у `phase1_metrics.rs` (запит користувача — `big.oisd.nl`,
+детермінований stride-семпл, **окрема секція, НЕ у кворум-вердикт**: oisd це агрегований
+блоклист, не known-bad; Security-резолвер коректно не блокує ad/tracker-хости, тож «detection
+rate» проти нього = «згода з великим списком», + ризик циркулярності).
+
+**Advisor (kickoff):** підтвердив маршрут sinkhole → `NeedsBaseline` → `resolve_needs_baseline`
+коректний (не збіг); катчі — маска через `leading_zeros` а не `<< (32-prefix)` (overflow/паніка),
+без `Default` на `SinkholeNet`, пасивний аларм вилучити зі скоупу (необчислюваний предикат),
+negative-control на власних доменах провайдерів обов'язковий, `phase1_metrics` ніколи `&[]`,
+прочитати `representative_allow_answer` fallback (sinkhole-only + baseline SERVFAIL → Allow/None,
+не forward block-page IP клієнту — перевірено, покращення), oisd-числа окремо від вердикту.
+
+**Файли:** `upstream.rs`, `quorum.rs`, `lib.rs` (реекспорт `SinkholeNet`/`sinkhole_nets_for`),
+`examples/phase1_metrics.rs`, `examples/sinkhole_probe.rs`, SPEC.md §3.4 + Ф1/Ф2 closure,
+DECISIONS.md, CONFIGURATION.md, PERFORMANCE.md («Resolution — T-175»), CLAUDE.md, TASKS.md.
+Raw-виходи — scratchpad `t175_sinkhole_probe_2026-09-05.txt` (орієнтація),
+`t175_phase1_metrics_2026-09-06.txt` (фінальний перемір).

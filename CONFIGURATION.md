@@ -95,6 +95,11 @@ block_signature = "NULL_IP_OR_NXDOMAIN"  # опційно; NULL_IP | NXDOMAIN_VS
 | `category` | enum | лише для кастомного `id` | Група в `/admin/ui`. |
 | `block_signature` | enum | ні (дефолт `NULL_IP_OR_NXDOMAIN`) | Як quorum читає блок-відповіді цього провайдера. |
 
+Для 5 preset-`id` (`adguard`, `adguard-family`, `opendns-familyshield`, `dns4eu-protective`,
+`dns4eu-child`) детекція блоку **додатково** доповнена sinkhole-IP-набором (T-175): ці провайдери
+блокують, підмінюючи відповідь сталим block-page IP у власній мережі, і quorum матчить його за
+network-префіксом. Це вбудоване, не налаштовується; кастомний провайдер такого не має.
+
 Вимкнення **одного** voter'а не вимикає quorum — резолвер усе одно опитує baseline і решту
 увімкнених, блокуючи за OR-логікою. Вимкнення/видалення **всіх** — явний pass-through через
 baseline-резолвер (SPEC.md §3/§8.1), не fail-closed і не тихий no-op. Дозволи/блоклист діють

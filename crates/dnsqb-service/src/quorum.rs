@@ -10,7 +10,9 @@
 //! per-provider `match`.
 
 use crate::timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
-use crate::upstream::{BlockSignature, DohClient, ProviderEntry, UpstreamError};
+use crate::upstream::{
+    sinkhole_nets_for, BlockSignature, DohClient, ProviderEntry, SinkholeNet, UpstreamError,
+};
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;
 use hickory_proto::op::{Message, ResponseCode};
@@ -95,6 +97,17 @@ fn is_null_ip(record: &Record) -> bool {
     }
 }
 
+/// Whether `record` is an A record inside one of `nets` — a provider-specific
+/// sinkhole / block-page address (T-175). Same `RData::A` read shape as
+/// [`is_null_ip`]; AAAA is not covered (no observed provider sinkholes an
+/// AAAA answer, and the prefixes are IPv4).
+fn is_sinkhole_ip(record: &Record, nets: &[SinkholeNet]) -> bool {
+    let RData::A(A(ip)) = &record.data else {
+        return false;
+    };
+    nets.iter().any(|net| net.contains(*ip))
+}
+
 /// A single voter's contribution to the OR-decision, once any
 /// baseline-dependence has been resolved (or ruled undecidable — SPEC.md
 /// §3.3 addendum). Not part of the public API: [`is_blocked`] is the public
@@ -118,8 +131,30 @@ enum Signal {
 /// doc-derived and carry `#[ignore]`d live-verify tests. A `NullIp` signature
 /// is self-sufficient; an `NxdomainVsBaseline` one needs baseline comparison,
 /// which this function alone can't do (see `resolve_needs_baseline`, `combine`).
-fn evaluate(signature: BlockSignature, response: &Message) -> Signal {
+///
+/// `sinkhole_nets` (T-175, [`sinkhole_nets_for`]) composes with **every**
+/// signature: a provider-specific sinkhole/block-page IP in the answer is a
+/// substituted response, but — unlike `0.0.0.0` — indistinguishable from a
+/// genuine resolution without the baseline (the domain *could* legitimately
+/// live at that address), so it yields [`Signal::NeedsBaseline`], the same
+/// baseline guard a bare `NXDOMAIN` gets. `0.0.0.0` still wins if somehow both
+/// are present: it is an unconditional block that needs no baseline. `&[]`
+/// (custom provider, or a preset with no known sinkhole) ⇒ old behaviour
+/// exactly.
+fn evaluate(
+    signature: BlockSignature,
+    response: &Message,
+    sinkhole_nets: &[SinkholeNet],
+) -> Signal {
     let has_null_ip = response.answers.iter().any(is_null_ip);
+    if !has_null_ip
+        && response
+            .answers
+            .iter()
+            .any(|record| is_sinkhole_ip(record, sinkhole_nets))
+    {
+        return Signal::NeedsBaseline;
+    }
     let is_nxdomain = response.metadata.response_code == ResponseCode::NXDomain;
     match signature {
         BlockSignature::NullIp => {
@@ -186,13 +221,14 @@ fn unresponsive_signal(mode: TimeoutMode) -> Signal {
 /// blocked" — callers must not treat it as `NotBlocked`.
 fn known_signal(
     signature: BlockSignature,
+    sinkhole_nets: &[SinkholeNet],
     outcome: Option<&VoterOutcome>,
     baseline: Option<&VoterOutcome>,
     mode: TimeoutMode,
 ) -> Option<Signal> {
     match outcome? {
         VoterOutcome::TimedOut | VoterOutcome::Errored(_) => Some(unresponsive_signal(mode)),
-        VoterOutcome::Responded(message) => match evaluate(signature, message) {
+        VoterOutcome::Responded(message) => match evaluate(signature, message, sinkhole_nets) {
             Signal::NeedsBaseline => baseline.map(|outcome| resolve_needs_baseline(outcome, mode)),
             resolved => Some(resolved),
         },
@@ -265,7 +301,13 @@ fn voter_record(
         Some(VoterOutcome::TimedOut) => (VoterVerdict::Timeout, None, None),
         Some(VoterOutcome::Errored(err)) => (VoterVerdict::Error, None, Some(error_kind(err))),
         Some(VoterOutcome::Responded(message)) => {
-            match known_signal(entry.spec.block_signature, outcome, baseline, mode) {
+            match known_signal(
+                entry.spec.block_signature,
+                sinkhole_nets_for(&entry.spec.id),
+                outcome,
+                baseline,
+                mode,
+            ) {
                 Some(Signal::Blocked) => (VoterVerdict::Block, None, None),
                 Some(Signal::NotBlocked) => {
                     (VoterVerdict::Allow, Some(count_ip_answers(message)), None)
@@ -304,9 +346,18 @@ fn voter_records(
 /// given [`BlockSignature`] — always has a concrete baseline `Message`
 /// (unlike [`resolve_needs_baseline`], which also has to handle a baseline
 /// that never answered; `resolve` is the only caller that needs that).
+///
+/// `sinkhole_nets` (T-175) is this voter's [`sinkhole_nets_for`] slice — `&[]`
+/// for any provider without a known sinkhole, which reproduces the pre-T-175
+/// behaviour exactly.
 #[must_use]
-pub fn is_blocked(signature: BlockSignature, response: &Message, baseline: &Message) -> bool {
-    match evaluate(signature, response) {
+pub fn is_blocked(
+    signature: BlockSignature,
+    response: &Message,
+    baseline: &Message,
+    sinkhole_nets: &[SinkholeNet],
+) -> bool {
+    match evaluate(signature, response, sinkhole_nets) {
         Signal::Blocked => true,
         Signal::NotBlocked => false,
         Signal::NeedsBaseline => baseline.metadata.response_code == ResponseCode::NoError,
@@ -440,7 +491,11 @@ fn representative_allow_answer(
         }
         if let Some(VoterOutcome::Responded(message)) = outcome {
             if matches!(
-                evaluate(entry.spec.block_signature, message),
+                evaluate(
+                    entry.spec.block_signature,
+                    message,
+                    sinkhole_nets_for(&entry.spec.id),
+                ),
                 Signal::NotBlocked
             ) && is_usable_answer(message)
             {
@@ -488,6 +543,7 @@ fn combine(
         if matches!(
             known_signal(
                 entry.spec.block_signature,
+                sinkhole_nets_for(&entry.spec.id),
                 outcome.as_ref(),
                 Some(baseline),
                 mode
@@ -688,6 +744,7 @@ pub async fn resolve<C: DohClient + Sync>(
                 && matches!(
                     known_signal(
                         entry.spec.block_signature,
+                        sinkhole_nets_for(&entry.spec.id),
                         outcomes[index].as_ref(),
                         baseline.as_ref(),
                         config.mode,
@@ -800,7 +857,7 @@ mod tests {
     use super::{is_blocked, requires_quorum, resolve, QuorumVerdict, VoterRecord, VoterVerdict};
     use crate::timeout::{TimeoutConfig, TimeoutMode, VoterOutcome};
     use crate::upstream::{
-        builtin_preset, BlockSignature, DohClient, ProviderEntry, UpstreamError,
+        builtin_preset, BlockSignature, DohClient, ProviderEntry, SinkholeNet, UpstreamError,
     };
 
     const QUAD9_URL: &str = "https://dns.quad9.net/dns-query";
@@ -982,14 +1039,16 @@ mod tests {
         assert_eq!(record.error_message, None);
     }
 
-    // T-61: is_blocked() per provider (unchanged behavior).
+    // T-61: is_blocked() per provider (unchanged behavior). `&[]` = no
+    // sinkhole prefixes, i.e. the pre-T-175 signature-only path.
 
     #[test]
     fn quad9_nxdomain_with_resolving_baseline_is_blocked() {
         assert!(is_blocked(
             BlockSignature::NxdomainVsBaseline,
             &nxdomain_message(),
-            &allow_message()
+            &allow_message(),
+            &[],
         ));
     }
 
@@ -998,7 +1057,8 @@ mod tests {
         assert!(!is_blocked(
             BlockSignature::NxdomainVsBaseline,
             &nxdomain_message(),
-            &nxdomain_message()
+            &nxdomain_message(),
+            &[],
         ));
     }
 
@@ -1007,7 +1067,8 @@ mod tests {
         assert!(!is_blocked(
             BlockSignature::NxdomainVsBaseline,
             &allow_message(),
-            &allow_message()
+            &allow_message(),
+            &[],
         ));
     }
 
@@ -1016,7 +1077,8 @@ mod tests {
         assert!(is_blocked(
             BlockSignature::NullIp,
             &null_ip_message(),
-            &allow_message()
+            &allow_message(),
+            &[],
         ));
     }
 
@@ -1025,7 +1087,112 @@ mod tests {
         assert!(!is_blocked(
             BlockSignature::NullIp,
             &allow_message(),
-            &allow_message()
+            &allow_message(),
+            &[],
+        ));
+    }
+
+    // --- T-175: sinkhole-IP detection through `is_blocked` / `evaluate` ---
+
+    /// `adguard`'s real sinkhole prefix, and an address inside it that the
+    /// probe never saw (proves prefix-match, not a `/32` list).
+    fn adguard_sinkhole_nets() -> &'static [SinkholeNet] {
+        crate::upstream::sinkhole_nets_for("adguard")
+    }
+
+    fn message_with_ip(ip: Ipv4Addr) -> Message {
+        allow_message_with_ip(ip)
+    }
+
+    #[test]
+    fn sinkhole_ip_with_resolving_baseline_is_blocked() {
+        // NullIp-signature preset (`adguard`) that answered with a sinkhole
+        // IP, not `0.0.0.0`; baseline resolved the domain for real.
+        assert!(is_blocked(
+            BlockSignature::NullIp,
+            &message_with_ip(Ipv4Addr::new(94, 140, 14, 200)),
+            &allow_message(),
+            adguard_sinkhole_nets(),
+        ));
+    }
+
+    #[test]
+    fn sinkhole_ip_with_servfail_baseline_is_not_blocked() {
+        // Baseline could not resolve it → the domain may genuinely be dead;
+        // do not count it as a block (safe side).
+        assert!(!is_blocked(
+            BlockSignature::NullIp,
+            &message_with_ip(Ipv4Addr::new(94, 140, 14, 35)),
+            &servfail_message(),
+            adguard_sinkhole_nets(),
+        ));
+    }
+
+    #[test]
+    fn sinkhole_ip_alongside_a_real_ip_still_blocks() {
+        let mut message = message_with_ip(Ipv4Addr::new(94, 140, 14, 33));
+        message.answers.push(Record::from_rdata(
+            Name::root(),
+            60,
+            RData::A(A(Ipv4Addr::new(93, 184, 216, 34))),
+        ));
+        assert!(is_blocked(
+            BlockSignature::NullIp,
+            &message,
+            &allow_message(),
+            adguard_sinkhole_nets(),
+        ));
+    }
+
+    #[test]
+    fn empty_sinkhole_nets_keeps_pre_t175_behaviour() {
+        // Same message as `sinkhole_ip_with_resolving_baseline_is_blocked`,
+        // but with no prefixes: a NullIp preset sees a plain real IP → allow.
+        assert!(!is_blocked(
+            BlockSignature::NullIp,
+            &message_with_ip(Ipv4Addr::new(94, 140, 14, 200)),
+            &allow_message(),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn sinkhole_composes_with_the_presets_own_null_ip_signature() {
+        // `adguard` keeps NullIp for its `0.0.0.0` ad-blocks *and* gains
+        // sinkhole detection — both must still register as a block.
+        assert!(is_blocked(
+            BlockSignature::NullIp,
+            &null_ip_message(),
+            &allow_message(),
+            adguard_sinkhole_nets(),
+        ));
+        assert!(is_blocked(
+            BlockSignature::NullIp,
+            &message_with_ip(Ipv4Addr::new(94, 140, 14, 33)),
+            &allow_message(),
+            adguard_sinkhole_nets(),
+        ));
+    }
+
+    #[test]
+    fn negative_control_provider_own_domain_is_not_a_sinkhole() {
+        // A preset carrying a populated sinkhole set that answers a normal
+        // query with a real IP *outside* its prefix must not block — this is
+        // the assertion that catches a prefix widened too far.
+        // `res.cloudinary.com` (unrelated host) and `adguard.com`
+        // (AdGuard's own site, on Cloudflare `104.18.188.9`) both resolve
+        // outside `94.140.14.0/24`.
+        assert!(!is_blocked(
+            BlockSignature::NullIp,
+            &message_with_ip(Ipv4Addr::new(140, 248, 137, 137)),
+            &allow_message(),
+            adguard_sinkhole_nets(),
+        ));
+        assert!(!is_blocked(
+            BlockSignature::NullIp,
+            &message_with_ip(Ipv4Addr::new(104, 18, 188, 9)),
+            &allow_message(),
+            adguard_sinkhole_nets(),
         ));
     }
 
@@ -1530,7 +1697,9 @@ mod tests {
         let baseline_ip = Ipv4Addr::new(1, 1, 1, 1);
         let client = MockDohClient {
             quad9: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(9, 9, 9, 9))),
-            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(94, 140, 14, 14))),
+            // TEST-NET-3, outside AdGuard's `94.140.14.0/24` sinkhole prefix
+            // (T-175) — a distinguishable answer that stays a plain Allow.
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(203, 0, 113, 14))),
             baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
         };
         let outcome = resolve(
@@ -1556,7 +1725,9 @@ mod tests {
         let quad9_ip = Ipv4Addr::new(9, 9, 9, 9);
         let client = MockDohClient {
             quad9: MockResponse::Instant(allow_message_with_ip(quad9_ip)),
-            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(94, 140, 14, 14))),
+            // TEST-NET-3, outside AdGuard's `94.140.14.0/24` sinkhole prefix
+            // (T-175) — a distinguishable answer that stays a plain Allow.
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(203, 0, 113, 14))),
             baseline: MockResponse::Pending,
         };
         let config = TimeoutConfig {
@@ -1587,7 +1758,9 @@ mod tests {
         let quad9_ip = Ipv4Addr::new(9, 9, 9, 9);
         let client = MockDohClient {
             quad9: MockResponse::Instant(allow_message_with_ip(quad9_ip)),
-            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(94, 140, 14, 14))),
+            // TEST-NET-3, outside AdGuard's `94.140.14.0/24` sinkhole prefix
+            // (T-175) — a distinguishable answer that stays a plain Allow.
+            adguard: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(203, 0, 113, 14))),
             baseline: MockResponse::Instant(servfail_message()),
         };
         let outcome = resolve(

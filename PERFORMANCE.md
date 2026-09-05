@@ -216,16 +216,24 @@ The design decision this feeds — a generous bounded-concurrency backstop again
 accumulation, sized from these server-side numbers rather than a throughput percentile —
 is in `SPEC.md` §1.1, and its implementation is a separate task (TASKS.md T-169).
 
-## Quorum coverage (T-66 / T-171 / T-174)
+## Quorum coverage (T-66 / T-171 / T-174 / T-175)
 
 Not a latency measurement — this is the efficacy question the whole OR-logic design rests on:
 **does querying several filtering providers and blocking on any one "block" vote catch more
 malicious domains than the best single provider would alone?**
 
-> **Current answer: yes, confirmed (T-174, 2026-09-05) — +17.0 pp over the best single Security
-> provider (n = 106, two independent unfiltered resolvers gating the sample).** The T-66 and T-171
-> measurements below read as "not confirmed" because a block-signature bug (fixed in T-174) hid two
-> of the four Security providers. Read the "Resolution — T-174" subsection at the end for the
+> **Current answer: yes, confirmed — the OR-quorum catches domains no single provider does.**
+> Latest measurement (T-175, 2026-09-06, sinkhole-IP detection enabled, n = 111): quorum
+> **99/111 (89.2 %)** vs the best single provider (`dns4eu-protective`, **92/111 = 82.9 %**) —
+> **+7 domains / +6.3 pp**. The margin is smaller than T-174's "+17.0 pp over Quad9" because
+> T-175's sinkhole detection revealed `dns4eu-protective` blocks ~83 % of the malware sample (it
+> counted as 0 in T-174 — it blocks by substituting a provider block-page IP, which
+> `is_blocked` did not decode). The best-single baseline is now much stronger; the quorum still
+> beats it. See "Resolution — T-175" at the end for that run; "Resolution — T-174" for the prior
+> one.
+>
+> The T-66 and T-171 measurements below read as "not confirmed" because a block-signature bug
+> (fixed in T-174) hid two of the four Security providers. Read the "Resolution — T-174" subsection for the
 > up-to-date result and how the resolver-view confound was tested; the T-171 material is kept for
 > the record of how it was found.
 
@@ -357,6 +365,44 @@ Other corpora (both n < 20 — indicative): **ads** — `adguard` and `adguard-f
 shipping it). **adult** — `cloudflare-family` and `cleanbrowsing-adult` each 9/9; but
 `adguard-family`, `opendns-familyshield`, `dns4eu-child` caught **0/9 with 0 NXDOMAIN** — they
 appear to block via a provider-specific sinkhole/redirect IP that no current `BlockSignature`
-(`NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`) recognises. Filed as **T-175** (needs a
-new `SinkholeIp` signature variant); lower priority — those are secondary Adult presets, not the
-shipped default.
+(`NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`) recognises. Filed as **T-175** —
+**resolved 2026-09-06, see the next subsection** (a `sinkhole_nets` prefix table, not a new
+signature variant).
+
+### Resolution — T-175 (sinkhole-IP detection, 2026-09-06)
+
+`quorum::evaluate` gained a `sinkhole_nets: &[SinkholeNet]` parameter — a per-preset table of the
+provider's own network prefix (RDAP-verified) into which it substitutes a block-page IP:
+`adguard`/`adguard-family` → `94.140.14.0/24`, `opendns-familyshield` → `146.112.61.104/29`,
+`dns4eu-protective`/`dns4eu-child` → `51.15.69.11/32`. An A answer inside the prefix →
+`Signal::NeedsBaseline` (block only if the baseline itself resolved `NoError`), the same guard a
+bare NXDOMAIN gets. Matched by prefix, not exact IP, so host-bit rotation inside the provider's
+netblock does not silently break detection (DECISIONS.md 2026-09-06). `examples/phase1_metrics.rs`
+now passes `sinkhole_nets_for(&spec.id)` for every preset.
+
+Definitive run (same two-unfiltered-`NoError` gate, malware corpus **n = 111**; 0 disagreements):
+
+| preset | rate | | preset | rate |
+|---|---|---|---|---|
+| **`dns4eu-protective`** | **92/111 (82.9 %)** | | `cloudflare-malware` | 39/111 (35.1 %) |
+| `dns4eu-child` | 92/111 (82.9 %) | | `adguard` / `adguard-family` | 45/111 (40.5 %) |
+| `quad9` | 66/111 (59.5 %) | | `cloudflare-family` | 40/111 (36.0 %) |
+| `cleanbrowsing-security` / `-adult` | 59/111 (53.2 %) | | `opendns-familyshield` | 10/111 (9.0 %) |
+
+- **Quorum (OR of all 10, and OR of the 4 Security-tier — identical here): 99/111 (89.2 %) —
+  +7 domains / +6.3 pp over the best single provider (`dns4eu-protective`, 82.9 %).**
+- `dns4eu-protective` was `0/106` in the T-174 run — it blocks by returning `51.15.69.11`, which
+  T-174's `is_blocked` did not decode. With sinkhole detection it is the strongest single feed,
+  so the "best single" bar rose from Quad9's ~55 % to ~83 % and the quorum margin shrank from
+  +17.0 pp to +6.3 pp. **The hypothesis still holds** (positive delta: 7 malware domains blocked
+  by no single provider) — this is a more honest number against a stronger baseline, not a
+  regression of the verdict.
+- Adult corpus (n = 8, indicative): `cloudflare-family` / `adguard-family` / `cleanbrowsing-adult`
+  / `dns4eu-child` all 8/8 now (`adguard-family` and `dns4eu-child` were 0/9 in T-174 —
+  sinkhole);  `opendns-familyshield` 7/8. Ads corpus (n = 14): `adguard` / `adguard-family` 10/14.
+- **Brittleness (Три Б):** the prefix table is hard-coded. If a provider moves its block IP to a
+  different prefix, detection silently under-counts that voter (false negative, never a wrong
+  block). Mitigation: `examples/sinkhole_probe.rs` is now a recalibrator — run it before a
+  release; it checks each preset's canary domain lands inside the declared prefix and the
+  provider's own site lands outside it.
+- Raw output: scratchpad `t175_phase1_metrics_2026-09-06.txt`.

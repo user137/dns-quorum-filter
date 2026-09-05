@@ -344,7 +344,7 @@ Concurrency/Recovery.
 
 **Порядок:** 3.0 → ~~T-101~~ → ~~3.1~~ → ~~3.2~~ → ~~3.3~~ → ~~3.4~~ → ~~3.5: T-146 + T-96~~ →
 ~~T-97~~ → ~~3.6~~ → ~~3.7: T-100/T-102/T-103~~ → ~~3.8: T-156/T-70~~ → ~~T-167~~ → ~~T-168~~ →
-~~T-169~~ → **3.9: ~~T-170~~/~~T-171~~/T-172** → **3.10: T-173**. Після 3.10 Фаза 3 закрита **повністю**
+~~T-169~~ → **3.9: ~~T-170~~/~~T-171~~/~~T-174~~/~~T-175~~/T-172** → **3.10: T-173**. Після 3.10 Фаза 3 закрита **повністю**
 (усі перенесені Ф1-гейти — закриті чесним записом, не проігноровані), із реліз-тегом `v0.3.0`.
 
 **План фінального закриття Ф3 (2026-09-05, збережено для наступних сесій).** Фаза 3 формально
@@ -363,6 +363,9 @@ T-170 2026-09-05: `quad9` + `cloudflare-malware` + `adguard`, DECISIONS.md**. Б
   повторює план. Порядок усередині: T-170 (визначити фінальний дефолтний набір) → T-171
   (переміряти кворум уже цим набором) → T-172 (живий браузерний прохід). Кожна задача — свій
   коміт; T-171/T-172 — manual-прогони (не CI), як `load_test`/`phase1_metrics`.
+  **Спінофи в батчі (за запитом користувача):** T-174 (фікс сигнатури CleanBrowsing → гіпотезу
+  ПІДТВЕРДЖЕНО) і T-175 (sinkhole-IP-детекція через network-префікс — plan+advisor kickoff+closing)
+  завершені 2026-09-05/06 (TASKS-DONE.md). Лишився тільки T-172 + closing-advisor батча.
 - **Батч 3.10 — фінальний реліз Фази 3 (T-173).** Бамп `0.2.0` → `0.3.0`, оновлення "Фаза 3
   повністю закрита" в TASKS.md/SPEC.md/README, тег `v0.3.0` → наявний `release.yml` (`repro` +
   build+sign + `msix`-job) → **чернетка** GitHub-релізу (3 `.exe` + `SHA256SUMS` + `.msix` + `.cer`),
@@ -417,8 +420,13 @@ TASKS-DONE.md. **T-168 (аналіз перфомансу) + T-169 (запобі
 сигнатуру (`NullIp`→`NullIpOrNxdomain`) + додав ads/adult-корпуси в harness + closing-advisor:
 гейт на два незалежні нефільтровані резолвери (0 розбіжностей) → перемір n=106: кворум OR
 Security-tier +17.0 pp над Quad9, 17 malware-доменів зловив лише CleanBrowsing — ГІПОТЕЗУ
-ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито. Заведено **T-175** (sinkhole-IP-сигнатура).
-DECISIONS.md / PERFORMANCE.md / SPEC.md / CLAUDE.md оновлено. **Наступне — Батч 3.9 (T-172 живий браузерний
+ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито. **T-175 завершено 2026-09-06** (plan+advisor
+kickoff+closing): sinkhole-IP-детекція через network-префікс власника (`upstream::SINKHOLE_NETS`
++ `sinkhole_nets_for`; `evaluate`/`is_blocked`/`known_signal` +`&[SinkholeNet]`), **не** новий
+`BlockSignature`-варіант. Перемір n=111: кворум 89.2 % проти найкращого одиночного
+(`dns4eu-protective` 82.9 %, у T-174 = 0) → +6.3 pp, гіпотеза лишається підтвердженою (менша маржа
+проти сильнішого baseline). `sinkhole_probe.rs` → постійний рекалібратор.
+DECISIONS.md / PERFORMANCE.md / SPEC.md / CONFIGURATION.md / CLAUDE.md оновлено. **Наступне — Батч 3.9 (T-172 живий браузерний
 прохід + closing-advisor на весь батч) → Батч 3.10 (T-173 — реліз `v0.3.0`), і Фаза 3 закрита
 повністю. План — вище, «План фінального закриття Ф3».**
 
@@ -555,8 +563,18 @@ resource-exhaustion — `admission::ConnectionGate` + `[limits]`-конфіг + 
 в `phase1_metrics.rs` + closing-advisor (гейт на два нефільтровані резолвери, 0 розбіжностей) →
 перемір n=106: кворум OR Security-tier 76/106, +18 доменів / +17.0 pp над Quad9, 17
 malware-доменів зловив лише CleanBrowsing — ГІПОТЕЗУ ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито.
-Заведено **T-175** (потрібен `BlockSignature::SinkholeIp` для adguard-family/opendns/dns4eu).
-DECISIONS.md / PERFORMANCE.md / SPEC.md / CLAUDE.md оновлено. Наступне — **Батч 3.9** (T-172 живий
+**T-175 завершено 2026-09-06** (plan+advisor kickoff+closing): sinkhole-IP-детекція через
+network-префікс власника мережі (`SinkholeNet` + `SINKHOLE_NETS` + `sinkhole_nets_for` в
+`upstream.rs`; `evaluate`/`is_blocked`/`known_signal` +`&[SinkholeNet]`) — **адитивний параметр,
+не** новий `BlockSignature`-варіант, композується з наявною сигнатурою. Match за префіксом
+(`94.140.14.0/24` AdGuard, `146.112.61.104/29` Cisco, `51.15.69.11/32` DNS4EU-Scaleway),
+RDAP-звірено; ротація хост-бітів у мережі провайдера ловиться без правок. `Signal::NeedsBaseline`
+(block лише коли baseline `NoError`). `sinkhole_probe.rs` → рекалібратор (звірка канаркою перед
+релізом). Перемір n=111: кворум 89.2 % проти `dns4eu-protective` 82.9 % (у T-174 = 0) → +6.3 pp,
+гіпотеза підтверджена (менша маржа проти сильнішого baseline). Пасивний аларм і per-user фоновий
+рекалібратор — відхилено (DECISIONS.md 2026-09-06). Також: opt-in `oisd:<n>` корпус у
+`phase1_metrics.rs` (окрема секція, не у вердикт).
+DECISIONS.md / PERFORMANCE.md / SPEC.md / CONFIGURATION.md / CLAUDE.md оновлено. Наступне — **Батч 3.9** (T-172 живий
 браузерний прохід + closing-advisor на весь батч) → **Батч 3.10** (T-173 бамп `v0.3.0` + тег +
 чернетка MSIX-релізу) → Фаза 3 закрита повністю.
 
@@ -998,16 +1016,3 @@ DECISIONS.md / PERFORMANCE.md / SPEC.md / CLAUDE.md оновлено. Насту
     тепер на `actions/checkout@v7`; `github/codeql-action/{init,analyze}@v4` уже актуальні).
   - `taiki-e/install-action@cargo-*` — окремий екосистемний pin, перевірити чи є свій warning.
   Одноразовий CI-only коміт, без plan/advisor; зробити разом з іншим CI-тюнінгом якщо трапиться.
-- [ ] T-175 — **Кілька пресетів схоже блокують через провайдер-специфічний sinkhole-IP, який
-  жодна `BlockSignature` не ловить** (виникло 2026-09-05 під час T-174 — adult-корпус у
-  `phase1_metrics.rs`). `adguard-family`, `opendns-familyshield`, `dns4eu-protective`,
-  `dns4eu-child` дали **0/10 на adult-корпусі при 0 NXDOMAIN**, тоді як `cloudflare-family` і
-  `cleanbrowsing-adult` — 10/10. Тобто якщо вони взагалі фільтрують, то відповіддю, яка **не**
-  `0.0.0.0` і **не** NXDOMAIN (типово — редирект на власну «заблоковано»-сторінку, напр. OpenDNS
-  `146.112.61.106`). Потрібен новий варіант `BlockSignature::SinkholeIp` із per-preset відомим IP
-  (або списком). **Кроки:** (1) зафіксувати справжні sinkhole-IP кожного провайдера живою пробою,
-  (2) додати варіант enum + гілку в `quorum::evaluate` (`has_answer_ip(known_sinkhole)` →
-  `Signal::Blocked`, self-sufficient як `NullIp`), (3) серде-рядок `SINKHOLE_IP`, CONFIGURATION.md,
-  (4) виставити правильну сигнатуру відповідним пресетам, (5) перепрогнати adult-корпус. Нижчий
-  пріоритет — вторинні Adult-пресети, не shipped-дефолт (де AdGuard-для-реклами вже підтверджено
-  робочим). Деталі — DECISIONS.md 2026-09-05 (T-174), PERFORMANCE.md «Resolution — T-174».

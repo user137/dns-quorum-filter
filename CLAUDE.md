@@ -133,7 +133,11 @@ and re-measured with the sample gated by **two independent unfiltered resolvers*
 mitigation — 0 disagreements, so a filtering voter's NXDOMAIN is a real block, not a resolver-view
 difference), n=106: **Security-tier OR-quorum 76/106, +18 domains / +17.0 pp over Quad9 alone; 17
 malware domains blocked only by CleanBrowsing.** Hypothesis confirmed (DECISIONS.md 2026-09-05,
-PERFORMANCE.md "Quorum coverage … / Resolution — T-174"). The live "browser → local DoH" pass is
+PERFORMANCE.md "Quorum coverage … / Resolution — T-174"). **T-175 (2026-09-06)** added sinkhole-IP
+detection (see the `quorum` module row + Known-limitations); re-measure n=111: quorum **89.2 %**
+vs the now-visible best single (`dns4eu-protective` 82.9 %) → **+6.3 pp**. Hypothesis still
+confirmed — smaller margin because the best-single baseline is stronger once `dns4eu-protective`'s
+block-page-IP blocks are counted (it was 0 in T-174). The live "browser → local DoH" pass is
 still T-172.
 **`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
 DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
@@ -165,7 +169,7 @@ Modules under `crates/dnsqb-service/src/`:
 |---|---|
 | `admission` | T-169 — `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()` (cumulative), `active()` (max − available, live). Lives on `AppState` (`connection_gate()`); `main.rs`'s accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling; `live_stats` reads both counters into `AdminStats` |
 | `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability }` — T-154/T-155/T-152 bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read (instant SERVFAIL, no fan-out/cache, mode-independent). `outcome.filters_unreachable` (T-155) → `filters_unreachable_outcome` → `DecisionSource::BaselineFallback` (toggle on = baseline answer mode-invariant; off = mode's own verdict, relabelled), never cached |
-| `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature)` (3 heuristics: `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`); early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
+| `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature, &Message, &[SinkholeNet])` (3 heuristics `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`, **+ T-175 sinkhole-prefix branch**: an A answer inside a preset's `upstream::sinkhole_nets_for(id)` prefix → `Signal::NeedsBaseline`, composes with the signature); `is_blocked` / `known_signal` also carry the `&[SinkholeNet]` param; early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
 | `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 30s only when both Online, else recheck 3s — so a building outage still probes fast); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
 | `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear`; T-97 added `snapshot()` (sync `moka::future::Cache::iter()`, best-effort) / `restore()` and `CacheKey::domain()`/`qtype()` accessors for `cache.enc` |
@@ -293,7 +297,10 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   NXDOMAIN — 2 of 4 Security presets weren't counting. T-174 fixed the signature and re-measured
   with a two-independent-unfiltered-resolver gate (closing-advisor; 0 disagreements), n=106:
   Security-tier OR-quorum **+17.0 pp over Quad9 alone**, 17 malware domains caught only by
-  CleanBrowsing. Hypothesis confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md).
+  CleanBrowsing. Hypothesis confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md). **T-175
+  (2026-09-06)** re-measured with sinkhole-IP detection on (n=111): quorum **89.2 %** vs the
+  best single (`dns4eu-protective` 82.9 %, was 0 in T-174 — block-page IP) → **+6.3 pp**. Still
+  confirmed; smaller margin against a stronger baseline.
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
@@ -358,12 +365,20 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   historical log rows become unfilterable by voter. Not worth a full log scan for the id.
 - ~~`cleanbrowsing-{security,adult}` have the wrong `block_signature`~~ — **fixed T-174**
   (2026-09-05): both were `NullIp` but block via NXDOMAIN; now `NullIpOrNxdomain`, live-verified.
-- **`adguard-family` / `opendns-familyshield` / `dns4eu-{protective,child}` may block via a
-  provider-specific sinkhole/redirect IP that no `BlockSignature` recognises (T-175, found
-  2026-09-05).** In the T-174 adult-corpus run these caught 0/10 with 0 NXDOMAIN while
-  `cloudflare-family` and `cleanbrowsing-adult` caught 10/10 — so if they enforce at all, it's via
-  a non-`0.0.0.0`, non-NXDOMAIN answer the quorum can't read. Needs a new `SinkholeIp` variant
-  (per-preset known IP). Lower priority — secondary Adult presets, not the shipped default.
+- ~~`adguard-family` / `opendns-familyshield` / `dns4eu-{protective,child}` may block via a
+  provider-specific sinkhole IP no `BlockSignature` recognises~~ — **resolved T-175 (2026-09-06)**.
+  `quorum::evaluate` / `is_blocked` / `known_signal` gained a `&[SinkholeNet]` param; `upstream::
+  sinkhole_nets_for(id)` returns a per-preset **network prefix** (RDAP-verified owner, not a
+  vendor block-page doc): `adguard`/`adguard-family` `94.140.14.0/24`, `opendns-familyshield`
+  `146.112.61.104/29`, `dns4eu-{protective,child}` `51.15.69.11/32` (exact — that IP is in
+  Scaleway general hosting, no widening). An A answer in the prefix → `Signal::NeedsBaseline`
+  (block only if baseline resolved `NoError`); composes with the existing signature. `adguard`
+  (shipped default) also blocks some malware this way — quorum now counts it.
+  **Residual brittleness (Три Б):** the table is hard-coded — a provider moving its block IP to a
+  different prefix silently under-counts that voter (false negative, never a wrong block). No
+  passive alarm (the "0-in-prefix" predicate isn't computable — CDN variance dominates). Mitigation
+  = `examples/sinkhole_probe.rs`, now a **recalibrator** (canary domain must land in the prefix,
+  provider's own site must not) — run before a release. DNS4EU's `/32` relies entirely on it.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
