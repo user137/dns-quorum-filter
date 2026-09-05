@@ -133,6 +133,7 @@ async fn main() {
         port: resolver_config.port,
         persist_query_log: resolver_config.persist_query_log,
         persist_cache: resolver_config.persist_cache,
+        limits: resolver_config.limits,
         paths: app_data.as_deref().map(|dir| PersistPaths {
             config: dir.join("resolver_config.toml"),
             overrides: dir.join("overrides.toml"),

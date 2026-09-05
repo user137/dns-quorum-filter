@@ -33,7 +33,9 @@ use crate::admin::{
 use crate::admin_ui;
 use crate::baseline_selector::BaselineSelector;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
-use crate::config::{validate_country_code, ConfigError, GeoipConfig, ResolverConfig};
+use crate::config::{
+    validate_country_code, ConfigError, GeoipConfig, LimitsConfig, ResolverConfig,
+};
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
 use crate::geoip_updater::{
@@ -304,6 +306,13 @@ pub struct PersistTarget {
     /// (SPEC.md §4). Same hand-edit-only, carried-through-every-rewrite
     /// treatment as `persist_query_log`.
     pub persist_cache: bool,
+    /// T-169 — the `[limits]` connection-admission table (SPEC.md §1.1). Not
+    /// admin-mutable (takes an `AppState` rebuild, like `port`), but every
+    /// route that re-serializes `resolver_config.toml` must carry its live
+    /// value or an unrelated toggle would blank the operator's hand-edited
+    /// `[limits]` table on save — the same cross-field-read requirement the
+    /// three fields above already have.
+    pub limits: LimitsConfig,
     /// Where `resolver_config.toml`/`overrides.toml` live, or `None` if no
     /// app-data directory was available at startup (same tolerance
     /// `main.rs` already applies to loading them) — an admin write with no
@@ -1098,10 +1107,12 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // alongside the timeout mode in one write.
                 serve_baseline_when_filters_unreachable: settings
                     .serve_baseline_when_filters_unreachable,
-                // T-146 cross-field read: not admin-mutable, but this write
-                // rewrites the whole file so it must carry the live value.
+                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
+                // this write rewrites the whole file so it must carry the
+                // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                limits: state.persist.limits,
             };
             match config.save(&paths.config) {
                 Ok(()) => true,
@@ -1616,10 +1627,12 @@ fn apply_cache_config<C: DohClient + Sync>(
                 timeout_ms: timeout_ms(runtime.timeout.duration),
                 serve_baseline_when_filters_unreachable: runtime
                     .serve_baseline_when_filters_unreachable,
-                // T-146 cross-field read: not admin-mutable, but this write
-                // rewrites the whole file so it must carry the live value.
+                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
+                // this write rewrites the whole file so it must carry the
+                // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                limits: state.persist.limits,
                 providers,
                 cache: new_config,
                 geoip: GeoipConfig { blocked_countries },
@@ -1761,10 +1774,12 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 timeout_ms: timeout_ms(runtime.timeout.duration),
                 serve_baseline_when_filters_unreachable: runtime
                     .serve_baseline_when_filters_unreachable,
-                // T-146 cross-field read: not admin-mutable, but this write
-                // rewrites the whole file so it must carry the live value.
+                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
+                // this write rewrites the whole file so it must carry the
+                // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                limits: state.persist.limits,
                 providers,
                 cache: cache_config,
                 geoip: GeoipConfig {
@@ -2134,10 +2149,12 @@ where
                 timeout_ms: timeout_ms(runtime.timeout.duration),
                 serve_baseline_when_filters_unreachable: runtime
                     .serve_baseline_when_filters_unreachable,
-                // T-146 cross-field read: not admin-mutable, but this write
-                // rewrites the whole file so it must carry the live value.
+                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
+                // this write rewrites the whole file so it must carry the
+                // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                limits: state.persist.limits,
                 providers: after.clone(),
                 cache: cache_config,
                 geoip: GeoipConfig { blocked_countries },
@@ -2721,7 +2738,7 @@ mod tests {
         OverrideListsResponse, OverrideRemoveRequest, WatchdogStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
-    use crate::config::ResolverConfig;
+    use crate::config::{LimitsConfig, ResolverConfig};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
@@ -3312,6 +3329,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: None,
             },
         )
@@ -3383,6 +3401,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: None,
             },
         ))
@@ -3639,6 +3658,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: true,
                 persist_cache: true,
+                limits: LimitsConfig::default(),
                 paths: None,
             },
         );
@@ -3954,6 +3974,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4001,6 +4022,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4050,6 +4072,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: true,
                 persist_cache: true,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4101,6 +4124,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4159,6 +4183,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -4319,6 +4344,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4377,6 +4403,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4432,6 +4459,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4544,6 +4572,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4626,6 +4655,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
                     overrides: overrides_path,
@@ -4728,6 +4758,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: None,
             },
         );
@@ -4834,6 +4865,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: None,
             },
         );
@@ -4898,6 +4930,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: overrides_path.clone(),
@@ -5006,6 +5039,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: overrides_path.clone(),
@@ -5203,6 +5237,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -5246,6 +5281,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -5383,6 +5419,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -5481,6 +5518,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
                     overrides: overrides_path,
@@ -5710,6 +5748,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: dir.path().join("overrides.toml"),
@@ -6169,6 +6208,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -6212,6 +6252,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
                     overrides: dir.path().join("overrides.toml"),
@@ -6825,6 +6866,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
                     overrides: dir.path().join("overrides.toml"),

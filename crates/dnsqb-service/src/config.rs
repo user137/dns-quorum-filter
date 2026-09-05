@@ -44,6 +44,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -83,6 +84,34 @@ pub enum ConfigError {
     /// looks down" with no indication why (Three safety legs, user safety).
     #[error("timeout_ms must not be 0 - every query would time out instantly")]
     ZeroTimeout,
+    /// `[limits] max_concurrent_connections` was `0` (T-169, SPEC.md §1.1) — a
+    /// zero cap rejects every connection, so the service would be reachable by
+    /// nothing and filtering silently stops working with no cause shown (Three
+    /// safety legs, user safety), the same discipline `ZeroPort`/`ZeroTimeout`
+    /// apply.
+    #[error(
+        "[limits] max_concurrent_connections must not be 0 - the service would reject every connection"
+    )]
+    ZeroMaxConnections,
+    /// `[limits] max_concurrent_connections` exceeded
+    /// [`MAX_CONCURRENT_CONNECTIONS_CEILING`] (T-169) — a multi-million cap is
+    /// effectively "no limit at all", which is not the backstop SPEC.md §1.1
+    /// asks for; rejected loudly rather than silently behaving as unbounded.
+    #[error(
+        "[limits] max_concurrent_connections must not exceed {MAX_CONCURRENT_CONNECTIONS_CEILING} - \
+         a value that large is effectively no cap at all"
+    )]
+    MaxConnectionsTooLarge,
+    /// `[limits] handshake_timeout_ms` was `0` (T-169) — every connection's
+    /// TLS handshake would time out instantly, so nothing could ever connect.
+    #[error("[limits] handshake_timeout_ms must not be 0 - every TLS handshake would time out instantly")]
+    ZeroHandshakeTimeout,
+    /// `[limits] idle_timeout_ms` was `0` (T-169) — every connection would be
+    /// dropped before it could send its first request.
+    #[error(
+        "[limits] idle_timeout_ms must not be 0 - every connection would be dropped before its first request"
+    )]
+    ZeroIdleTimeout,
     /// The file exceeds [`MAX_CONFIG_FILE_SIZE`] — rejected before being read
     /// into memory (SPEC.md §8.1: "ліміт розміру, не необмежена алокація"),
     /// not after.
@@ -151,6 +180,66 @@ pub enum ConfigError {
 /// heavily hand-commented file.
 pub(crate) const MAX_CONFIG_FILE_SIZE: u64 = 64 * 1024;
 
+/// Upper bound on `[limits] max_concurrent_connections` (T-169). Sits far
+/// below `tokio::sync::Semaphore::MAX_PERMITS` (`usize::MAX >> 3`), so
+/// `admission::ConnectionGate::new` can never panic on a value that passed
+/// [`ResolverConfig::load`]; the real reason for the check is that a
+/// multi-million cap is silently indistinguishable from "no cap at all", and
+/// SPEC.md §1.1's backstop only means something as a bounded number.
+pub(crate) const MAX_CONCURRENT_CONNECTIONS_CEILING: u32 = 1_000_000;
+
+/// The `[limits]` table (T-169, SPEC.md §1.1) — the connection-admission
+/// backstop and the two deadlines that stop a bare cap from itself becoming a
+/// slow-loris `DoS`. Every field is `Copy`, so this type is `Copy` too (like
+/// [`crate::cache::CacheConfig`]); [`ResolverConfig`] stays `Clone`-only
+/// because of `geoip.blocked_countries`, never this table. The live type
+/// holds real [`Duration`]s; [`LimitsConfigFile`] is the `_ms`-integer
+/// on-disk shape, the same split `timeout_ms` ↔ the live `TimeoutConfig`
+/// already uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LimitsConfig {
+    /// Ceiling on concurrently-served connections
+    /// (`admission::ConnectionGate`). A connection past this is closed at the
+    /// TCP layer *before* TLS, never queued (SPEC.md §1.1). A generous
+    /// backstop against pathological accumulation, not a throughput throttle
+    /// — the load test held 3000 fresh connections with linear latency and
+    /// zero failures (PERFORMANCE.md). `0` and anything above
+    /// [`MAX_CONCURRENT_CONNECTIONS_CEILING`] are rejected at load.
+    pub max_concurrent_connections: u32,
+    /// Deadline for a connection to finish its TLS handshake after being
+    /// accepted (`tokio::time::timeout` around `acceptor.accept`). A peer that
+    /// opens TCP and never sends a `ClientHello` is dropped here instead of
+    /// holding an admission permit indefinitely.
+    pub handshake_timeout: Duration,
+    /// Idle/read deadline on a served connection — the HTTP/1 header-read
+    /// timeout and the base for the HTTP/2 keep-alive PING interval. A peer
+    /// that completes the handshake but never sends a request is dropped here.
+    pub idle_timeout: Duration,
+}
+
+impl Default for LimitsConfig {
+    /// Deliberately generous (SPEC.md §1.1 — "щедро"): the cap is a backstop,
+    /// and on a loopback link a real TLS handshake is milliseconds, so the
+    /// deadlines only ever fire on a genuinely stalled peer.
+    fn default() -> Self {
+        Self {
+            max_concurrent_connections: 4096,
+            handshake_timeout: Duration::from_secs(10),
+            idle_timeout: Duration::from_secs(30),
+        }
+    }
+}
+
+/// `Duration` → whole milliseconds as `u32`, saturating (T-169). Only ever
+/// applied to values that originated as a `u32` millisecond count in
+/// [`LimitsConfig`] (from [`ResolverConfig::load`] or [`LimitsConfig::default`]),
+/// so the saturation branch is unreachable in practice — it exists because
+/// `Duration::as_millis` returns `u128` and `#![deny(clippy::unwrap_used)]`
+/// forbids the obvious cast.
+fn duration_as_millis_u32(value: Duration) -> u32 {
+    u32::try_from(value.as_millis()).unwrap_or(u32::MAX)
+}
+
 /// The `[geoip]` table's live-relevant contents (T-76 — SPEC.md §3.5):
 /// which countries a resolved IP must never match. `Vec<String>`, not
 /// `Copy` (unlike `EnabledProviders`/`CacheConfig`) — that's why
@@ -198,6 +287,12 @@ pub struct ResolverConfig {
     pub cache: CacheConfig,
     /// `GeoIP` blocked-country list (T-76, SPEC.md §3.5).
     pub geoip: GeoipConfig,
+    /// Connection-admission limits (T-169, SPEC.md §1.1) — the concurrency
+    /// backstop plus handshake/idle deadlines. Not admin-mutable (takes an
+    /// `AppState` rebuild), so `dispatch.rs`'s config-rewrite routes carry
+    /// its live value the same way they carry `port` — see
+    /// [`crate::dispatch::PersistTarget`].
+    pub limits: LimitsConfig,
     /// T-155 — when **every** enabled filtering voter fails to answer, may
     /// the unfiltered baseline resolver's answer be served? `false` (default)
     /// keeps today's behaviour: the timeout mode decides
@@ -237,6 +332,7 @@ impl Default for ResolverConfig {
             providers: ProviderEntry::default_active_set(),
             cache: CacheConfig::default(),
             geoip: GeoipConfig::default(),
+            limits: LimitsConfig::default(),
             serve_baseline_when_filters_unreachable: false,
             persist_query_log: false,
             persist_cache: false,
@@ -266,7 +362,10 @@ impl ResolverConfig {
     /// found", [`ConfigError::TooLarge`] if the file exceeds
     /// [`MAX_CONFIG_FILE_SIZE`], [`ConfigError::Toml`] if the file's TOML
     /// doesn't match the expected shape, [`ConfigError::ZeroPort`] if `port`
-    /// is `0`, or [`ConfigError::ZeroTimeout`] if `timeout_ms` is `0`.
+    /// is `0`, [`ConfigError::ZeroTimeout`] if `timeout_ms` is `0`, or one of
+    /// [`ConfigError::ZeroMaxConnections`] / [`ConfigError::MaxConnectionsTooLarge`]
+    /// / [`ConfigError::ZeroHandshakeTimeout`] / [`ConfigError::ZeroIdleTimeout`]
+    /// for an out-of-range `[limits]` field.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
         let mut handle = match File::open(path) {
             Ok(handle) => handle,
@@ -303,6 +402,18 @@ impl ResolverConfig {
         if file.timeout_ms == 0 {
             return Err(ConfigError::ZeroTimeout);
         }
+        if file.limits.max_concurrent_connections == 0 {
+            return Err(ConfigError::ZeroMaxConnections);
+        }
+        if file.limits.max_concurrent_connections > MAX_CONCURRENT_CONNECTIONS_CEILING {
+            return Err(ConfigError::MaxConnectionsTooLarge);
+        }
+        if file.limits.handshake_timeout_ms == 0 {
+            return Err(ConfigError::ZeroHandshakeTimeout);
+        }
+        if file.limits.idle_timeout_ms == 0 {
+            return Err(ConfigError::ZeroIdleTimeout);
+        }
         let cache = match CacheConfig::from_secs(
             file.cache.clamp_min_secs,
             file.cache.clamp_max_secs,
@@ -327,6 +438,13 @@ impl ResolverConfig {
             providers: resolve_providers(&file.providers)?,
             cache,
             geoip: GeoipConfig { blocked_countries },
+            limits: LimitsConfig {
+                max_concurrent_connections: file.limits.max_concurrent_connections,
+                handshake_timeout: Duration::from_millis(u64::from(
+                    file.limits.handshake_timeout_ms,
+                )),
+                idle_timeout: Duration::from_millis(u64::from(file.limits.idle_timeout_ms)),
+            },
             serve_baseline_when_filters_unreachable: file.serve_baseline_when_filters_unreachable,
             persist_query_log: file.persist_query_log,
             persist_cache: file.persist_cache,
@@ -370,6 +488,11 @@ impl ResolverConfig {
             },
             geoip: GeoipConfigFile {
                 blocked_countries: self.geoip.blocked_countries.clone(),
+            },
+            limits: LimitsConfigFile {
+                max_concurrent_connections: self.limits.max_concurrent_connections,
+                handshake_timeout_ms: duration_as_millis_u32(self.limits.handshake_timeout),
+                idle_timeout_ms: duration_as_millis_u32(self.limits.idle_timeout),
             },
         };
         let toml = toml::to_string(&file).map_err(ConfigError::TomlSerialize)?;
@@ -467,6 +590,8 @@ struct ResolverConfigFile {
     providers: Vec<ProviderFileEntry>,
     cache: CacheConfigFile,
     geoip: GeoipConfigFile,
+    /// T-169 — see [`ResolverConfig::limits`].
+    limits: LimitsConfigFile,
 }
 
 /// One `[[providers]]` array-of-tables entry (T-72/T-73). For a built-in
@@ -546,6 +671,33 @@ impl Default for ResolverConfigFile {
             geoip: GeoipConfigFile {
                 blocked_countries: defaults.geoip.blocked_countries,
             },
+            limits: LimitsConfigFile::default(),
+        }
+    }
+}
+
+/// TOML-facing shape for [`LimitsConfig`] (T-169) — milliseconds as `u32`,
+/// mirroring how `timeout_ms` is a plain integer while the live type holds a
+/// `Duration`. Same struct-level `#[serde(default, deny_unknown_fields)]`
+/// "graceful partial, loud typo" split every other nested table here uses.
+/// Range validation (`0`, and the `max_concurrent_connections` ceiling)
+/// happens in [`ResolverConfig::load`], not here — this struct only
+/// round-trips the raw integers.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct LimitsConfigFile {
+    max_concurrent_connections: u32,
+    handshake_timeout_ms: u32,
+    idle_timeout_ms: u32,
+}
+
+impl Default for LimitsConfigFile {
+    fn default() -> Self {
+        let defaults = LimitsConfig::default();
+        Self {
+            max_concurrent_connections: defaults.max_concurrent_connections,
+            handshake_timeout_ms: duration_as_millis_u32(defaults.handshake_timeout),
+            idle_timeout_ms: duration_as_millis_u32(defaults.idle_timeout),
         }
     }
 }
@@ -593,10 +745,11 @@ impl Default for CacheConfigFile {
 
 #[cfg(test)]
 mod tests {
-    use super::{CacheConfig, ConfigError, GeoipConfig, ResolverConfig};
+    use super::{CacheConfig, ConfigError, GeoipConfig, LimitsConfig, ResolverConfig};
     use crate::timeout::TimeoutMode;
     use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
     use std::fs;
+    use std::time::Duration;
 
     /// One built-in-preset voter entry with the given `enabled` flag.
     fn preset_entry(id: &str, enabled: bool) -> ProviderEntry {
@@ -649,6 +802,7 @@ mod tests {
                 providers: vec![preset_entry("quad9", false), preset_entry("adguard", false)],
                 cache: CacheConfig::default(),
                 geoip: GeoipConfig::default(),
+                limits: LimitsConfig::default(),
                 serve_baseline_when_filters_unreachable: false,
                 persist_query_log: false,
                 persist_cache: false,
@@ -893,6 +1047,11 @@ mod tests {
             cache,
             geoip: GeoipConfig {
                 blocked_countries: vec!["SE".to_string(), "DE".to_string()],
+            },
+            limits: LimitsConfig {
+                max_concurrent_connections: 1234,
+                handshake_timeout: Duration::from_millis(7_500),
+                idle_timeout: Duration::from_millis(45_500),
             },
             serve_baseline_when_filters_unreachable: true,
             persist_query_log: true,
@@ -1149,5 +1308,122 @@ mod tests {
             Err(err) => panic!("must be able to load what was just saved: {err}"),
         };
         assert_eq!(loaded, config);
+    }
+
+    // T-169: [limits] follows the same nested-table conventions [cache]/
+    // [providers] already established - a partial table fills the rest from
+    // default, a typo'd key is a loud error, `0` in any field is rejected at
+    // load, and an absurdly large connection cap is rejected too (a value
+    // that big is "no cap", not the SPEC.md §1.1 backstop).
+
+    #[test]
+    fn load_of_a_missing_limits_table_defaults() {
+        let (_dir, path) = temp_config_path();
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a missing file must still load: {err}"),
+        };
+        assert_eq!(config.limits, LimitsConfig::default());
+    }
+
+    #[test]
+    fn load_of_a_partial_limits_table_fills_the_rest_from_default() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[limits]\nmax_concurrent_connections = 512\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a partial [limits] table must still load: {err}"),
+        };
+        let defaults = LimitsConfig::default();
+        assert_eq!(config.limits.max_concurrent_connections, 512);
+        assert_eq!(config.limits.handshake_timeout, defaults.handshake_timeout);
+        assert_eq!(config.limits.idle_timeout, defaults.idle_timeout);
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_key_inside_the_limits_table() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[limits]\nmax_concurent_connections = 512\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_zero_max_concurrent_connections() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[limits]\nmax_concurrent_connections = 0\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::ZeroMaxConnections)
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_max_concurrent_connections_over_the_ceiling() {
+        let (_dir, path) = temp_config_path();
+        let over = super::MAX_CONCURRENT_CONNECTIONS_CEILING + 1;
+        if let Err(err) = fs::write(
+            &path,
+            format!("[limits]\nmax_concurrent_connections = {over}\n"),
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::MaxConnectionsTooLarge)
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_zero_handshake_timeout() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[limits]\nhandshake_timeout_ms = 0\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::ZeroHandshakeTimeout)
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_zero_idle_timeout() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[limits]\nidle_timeout_ms = 0\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::ZeroIdleTimeout)
+        ));
+    }
+
+    #[test]
+    fn save_then_load_round_trips_a_non_default_limits_config() {
+        let (_dir, path) = temp_config_path();
+        let config = ResolverConfig {
+            limits: LimitsConfig {
+                max_concurrent_connections: 777,
+                handshake_timeout: Duration::from_millis(6_500),
+                idle_timeout: Duration::from_millis(21_500),
+            },
+            ..ResolverConfig::default()
+        };
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to load what was just saved: {err}"),
+        };
+        assert_eq!(loaded.limits, config.limits);
     }
 }

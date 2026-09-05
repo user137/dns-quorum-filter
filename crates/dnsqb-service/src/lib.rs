@@ -171,7 +171,7 @@ pub use cache::{
 pub use cache_persist::{load_persisted_cache, run_cache_persister, CacheInit};
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use cert_rotation::{rotate_certificate, RotationError, RotationReport};
-pub use config::{ConfigError, GeoipConfig, ResolverConfig};
+pub use config::{ConfigError, GeoipConfig, LimitsConfig, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
     PersistTarget, RuntimeInit, RuntimeSettings,
