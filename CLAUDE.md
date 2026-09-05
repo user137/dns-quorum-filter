@@ -100,10 +100,19 @@ location/accepted-risk fact checked to survive, none dropped). **T-168 done 2026
 linear, zero failures** up to 3000 concurrent fresh connections / 2000 multiplexed streams;
 `overrides::decision`'s O(n) at ~10k entries is +17% p50, not a risk. Design decision in
 SPEC.md §1.1: bounded concurrency with **immediate reject** (not a deep queue), a generous
-backstop sized from server-side numbers; the reject-vs-SERVFAIL Три Б tradeoff left as an open
-question. Implementation split out to **T-169**. **Next** — T-169 (build the safeguard) or the
-carried-forward Ф1 gates (T-66 metrics, live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`) — user
-picks, no more numbered Ф3 batches.
+backstop sized from server-side numbers. **T-169 done 2026-09-05** (plan+advisor kickoff+closing,
+5 commits): new `admission::ConnectionGate` (`tokio::sync::Semaphore` + `AtomicU64`, no
+`Mutex`/`Arc<Mutex>`) — `main.rs`'s accept loop takes an `OwnedSemaphorePermit` before
+`tokio::spawn`, and at the ceiling closes the TCP stream **before TLS** (`drop(stream)`, the
+kickoff-AskUserQuestion decision). Paired with `tokio::time::timeout` around `acceptor.accept` +
+`auto::Builder` http1 `header_read_timeout` / http2 keep-alive (a bare cap without those is
+itself a slow-loris DoS). New `[limits]` table in `resolver_config.toml`
+(`max_concurrent_connections` def 4096, `handshake_timeout_ms` 10000, `idle_timeout_ms` 30000;
+`0` or `> 1_000_000` is a fatal load error). `AdminStats.rejected_connections` (live counter,
+like `in_flight`) on `GET /admin/status`. `[limits]` is not admin-mutable and `apply_admin_reset`
+does **not** rebuild the gate — a `[limits]` change needs a service restart (like `port`).
+**Next** — the carried-forward Ф1 gates (T-66 metrics, live Chrome-DoH pass,
+`DEFAULT_PROVIDER_IDS`) — user picks, no more numbered Ф3 batches.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -138,6 +147,7 @@ Modules under `crates/dnsqb-service/src/`:
 
 | Module | Responsibility |
 |---|---|
+| `admission` | T-169 — `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()`, `active()`. Lives on `AppState` (`connection_gate()`); `main.rs`'s accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling |
 | `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability }` — T-154/T-155/T-152 bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read (instant SERVFAIL, no fan-out/cache, mode-independent). `outcome.filters_unreachable` (T-155) → `filters_unreachable_outcome` → `DecisionSource::BaselineFallback` (toggle on = baseline answer mode-invariant; off = mode's own verdict, relabelled), never cached |
 | `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature)` (3 heuristics: `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`); early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
 | `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
@@ -148,7 +158,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
-| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
+| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (T-169 — `LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
 | `encrypted_file` | T-146 pure AEAD codec: `seal`/`open` over `XChaCha20Poly1305`; 6-byte cleartext header (`DQF1` / `FileKind` / version) is the AAD, validated **before** the AEAD open (`UnsupportedVersion` distinct from `Decrypt`); `EncryptedFileError` payload-free |
 | `persist_dto` | T-146 serde mirrors of `LogEntry` (`SystemTime`↔u64 millis, `RecordType`↔u16, `error_kind` `&'static str` re-interned through a closed set); `PersistedFileV1` wrapper (struct, additive); `to_json`/`from_json` |
 | `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed). `rename_orphan` is `pub(crate)`, reused by `cache_persist` |
@@ -158,7 +168,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
-| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>`; `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
+| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
 | `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
@@ -331,14 +341,15 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
-- **T-168 / T-169** — `main.rs`'s accept loop `tokio::spawn`s per connection with **no cap** on
-  concurrent connections / tasks / in-flight requests, and `acceptor.accept(stream).await` has
-  **no handshake timeout** (hyper imposes no idle read-timeout either). Measured (PERFORMANCE.md):
-  degrades smoothly, no failures, up to 3000 concurrent connections — but a slow-loris client
-  (TCP opened, ClientHello never sent, or connection held idle) accumulates tasks without bound,
-  and a bare connection cap without a handshake deadline would itself become the DoS. The
-  backstop (cap + handshake deadline + idle timeout together) is designed in SPEC.md §1.1, not
-  yet built — that's T-169.
+- **T-169** — the accept-loop backstop is built: `admission::ConnectionGate` cap +
+  `handshake_timeout` (`tokio::time::timeout` around `acceptor.accept`) + `idle_timeout` (http1
+  `header_read_timeout` / http2 keep-alive), all from the `[limits]` table. **Residual, filed not
+  fixed:** there is **no separate, smaller cap on concurrent in-flight *quorum* resolutions** —
+  the inbound-connection cap covers the primary vector, and the outbound fan-out ceiling
+  (`concurrent queries × providers ≤ 10`) is bounded in time by `query_with_timeout` (2 s) +
+  `UPSTREAM_CONNECT_TIMEOUT` (500 ms) but has no ceiling of its own (PERFORMANCE.md "Fan-out
+  ceiling"). Also: `[limits]` is not admin-mutable and `apply_admin_reset` does not rebuild the
+  gate, so a `[limits]` change needs a full service restart (same as `port`).
 - **`refresh_health: AUTH_REJECTED` (T-163) only appears on the next `/admin/ui` load / operator
   action** — the `#geoip-maxmind` card has its own fetch cycle (so a key field being typed isn't
   wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
@@ -604,6 +615,23 @@ reasoning (search by section number rather than re-deriving a decision from scra
   waiting) needs the default current-thread runtime — never add `flavor = "multi_thread"` to a
   paused-time test, it panics at runtime (`rt-multi-thread` being enabled for `main.rs`'s own needs
   doesn't carry over to test attributes, which pick their flavor independently).
+- **A borrowed `tokio::sync::SemaphorePermit<'_>` cannot cross into `tokio::spawn` (T-169)** — it's
+  tied to the `&Semaphore`, the spawned task needs `'static`. Use `Arc<Semaphore>` +
+  `try_acquire_owned()` → `OwnedSemaphorePermit` (owned, `'static`, `add_permits(1)` on `Drop` —
+  verified in vendored tokio 1.53.1). Put the `Arc` *inside* the wrapper type around the
+  `Semaphore`, not a second `Arc` around the wrapper. `Semaphore::new` panics above
+  `MAX_PERMITS` (`usize::MAX >> 3`) — unreachable from a `u32` on 64-bit, so a `u32`-typed cap
+  makes `new` provably panic-free; a "huge value doesn't panic" test would be vacuous, put the
+  loud upper bound in the config loader instead.
+- **`hyper_util::server::conn::auto::Builder` has no top-level `.timer()` (verified vendored
+  hyper-util 0.1.20)** — set it per protocol: `.http1().timer(TokioTimer::new())` and
+  `.http2().timer(TokioTimer::new())` separately. `.http1().header_read_timeout(d)` **panics** if
+  no http1 timer is set; the h2 idle equivalent is `.http2().keep_alive_interval(d)` +
+  `.keep_alive_timeout(d)` (`header_read_timeout` "does not affect HTTP/2"). A panic on the
+  connection-serving path = a watchdog restart loop, so check this API before writing, not after.
+  hyper 1.11.0 h2 server defaults (also vendored-verified): conn/stream flow-control windows
+  1 MiB each (advertised *credit*, not resident memory — `adaptive_window` off), `max_send_buffer_size`
+  400 KiB, `max_concurrent_streams` `Some(200)`; rustls 0.23.43 `DEFAULT_BUFFER_LIMIT` 64 KiB.
 - **Proving an async cancellation/early-return actually happened, not just that the final verdict
   matches:** a mock future that never resolves on its own (`std::future::pending()`) only proves
   the caller didn't *need* the answer — it doesn't prove the caller *dropped* the future instead of

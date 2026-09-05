@@ -3316,3 +3316,82 @@ T-169, «Known limitations» рядок про необмежений accept-loo
 Non-blocking: CodeQL на `b8a5386` (Коміт 2) — харнес не кличе `load_secret`/`store_secret`, не
 тримає фіксованих ключів, тож чисто (звірено). Scratch-інстанс намінтив власний Credential
 Manager запис TLS-ключа — benign, за конвенцією; згадано в preconditions харнеса.
+
+### T-169 — імплементація запобіжника resource-exhaustion (зроблено 2026-09-05, plan+advisor kickoff+closing, 5 комітів)
+
+**Тригер.** Винесено з T-168: SPEC.md §1.1 зафіксувала дизайн (обмежена одночасність + негайна
+відмова + хендшейк/idle-дедлайни), ця задача — код.
+
+**Kickoff (plan+advisor, 2 AskUserQuestion).** (1) Сигнал відмови = **TCP-close до TLS**
+(`drop(stream)` — нуль байтів/CPU; наслідок для stub-резолвера — failover на наступний сервер —
+прийнятний, бо стеля = вже патологія). (2) Межа + таймаути = **конфіг-поля** (`[limits]` в
+`resolver_config.toml`), не хардкод-константи. Користувач додав до обсягу: аналіз складності по
+пам'яті; свідомий вибір zero-overhead примітивів.
+
+**Advisor kickoff зловив 5 (усі враховані до Коміту 1):**
+1. `SemaphorePermit<'_>` **позичений** — не переходить у `tokio::spawn`. → `Arc<Semaphore>` +
+   `try_acquire_owned()` → `OwnedSemaphorePermit` (`'static`). `Arc` **усередині** `ConnectionGate`,
+   не другий шар навколо нього.
+2. `Semaphore::new` панікує вище `MAX_PERMITS` (`usize::MAX >> 3`) — з `u32` недосяжно, тож тест
+   «величезне MAX не панікує» був би vacuous. Замість нього: гучна верхня межа в `load`
+   (`MAX_CONCURRENT_CONNECTIONS_CEILING` = 1_000_000, `ConfigError::MaxConnectionsTooLarge`) — бо
+   мільйонна стеля = тихо «стелі нема».
+3. `header_read_timeout` панікує без `timer`; `auto::Builder` не має top-level `timer()` — кожен
+   протокол (`.http1()` / `.http2()`) потребує свого. Звірено з vendored `hyper-util-0.1.20` **до**
+   написання Коміту 4 (паніка на serve-шляху = watchdog-restart-loop).
+4. Коміт 2 лишає «мертве» конфіг-поле (`[limits]` завантажується, але accept-loop його ще не
+   читає до Коміту 4) — зафіксовано як **навмисний** config-surface-перший порядок у повідомленні
+   коміту, не «unused field» smell.
+5. Permit звільняється на handshake-timeout лише якщо взятий **до** `spawn` і `move`-нутий у
+   задачу (не взятий усередині) — явно в дизайні й коментарі коду.
+Плюс: T-168-івська per-level RSS-дельта **не** може дати байт/з'єднання (з'єднання відкриваються
+й закриваються всередині рівня) — реальний нахил лишено на held-connection slow-loris-семпл.
+
+**Коміти.**
+1. `a749559` — PERFORMANCE.md «Memory per connection» cost-model (rustls `DEFAULT_BUFFER_LIMIT`
+   64 КіБ, hyper h2 server `max_send_buffer_size` 400 КіБ, conn/stream flow-control вікна 1 МіБ =
+   **рекламований кредит, не резидентна пам'ять** — звірено з vendored джерелами). SPEC.md §1.1
+   методологія розміру — дві незалежні перевірки (латентнісна крива + бюджет пам'яті). Docs-only.
+2. `2863b50` — `config` `[limits]`-таблиця: `LimitsConfig` (live, `Copy`, `Duration`-поля) +
+   `LimitsConfigFile` (`_ms`-int on-disk) + `impl Default` + `load`-валідація (`0` кожне поле →
+   `ConfigError::{ZeroMaxConnections,ZeroHandshakeTimeout,ZeroIdleTimeout}`; понад стелю →
+   `MaxConnectionsTooLarge`) + `save` + `CONFIGURATION.md`. Cross-field-read: `PersistTarget` +
+   `limits`, 4 admin-save-сайти несуть `state.persist.limits` (bug-клас T-57/T-139/T-149/T-47/T-77).
+   ~15 тестів (дзеркало `[cache]`). Дефолти: `max_concurrent_connections = 4096`,
+   `handshake_timeout_ms = 10000`, `idle_timeout_ms = 30000`.
+3. `eacb39f` — новий модуль `admission::ConnectionGate`: `tokio::sync::Semaphore` (lock-free
+   permit-accounting) + `AtomicU64` (`Relaxed`, як `in_flight`) — **без** `Mutex`/`Arc<Mutex>`.
+   `try_admit() -> Option<OwnedSemaphorePermit>`, `rejected_count()`, `active()`. 4 категорії
+   тестів, у т.ч. Concurrency (`multi_thread` + `Barrier`: ніколи більше permit'ів за стелю,
+   reject-count точний під контенцією). Stand-alone, без `main.rs`.
+4. `4e80ddd` — wiring: `main.rs` accept-loop бере permit до `spawn`, на стелі `drop(stream);
+   continue;`; `tokio::time::timeout(handshake_timeout, acceptor.accept)`; `auto::Builder`
+   `.http1().timer(TokioTimer).header_read_timeout(idle)` + `.http2().timer(TokioTimer)
+   .keep_alive_interval(idle).keep_alive_timeout(handshake)`. `AppState.gate` (будується в
+   `AppState::new` з `persist.limits`), `pub fn connection_gate()`. `AdminStats
+   .rejected_connections` (live, заповнює `live_stats` з `gate.rejected_count()`) →
+   `AdminStatusResponse.stats`. UI-SPEC.md §3.1 — DTO-готово, картка відкладена
+   (Backend-before-UI). Dispatch-тест: стеля 2 → 3 відмови → `GET /admin/status`
+   `stats.rejected_connections == 3`.
+5. (цей коміт) — TASKS/TASKS-DONE/CLAUDE.md.
+
+**Slow-loris smoke (`examples/load_test.rs` новий режим, manual, не CI).** Scratch-сервіс з
+`[limits] max_concurrent_connections = 48, handshake_timeout_ms = 3000`, 2 прогони на Windows 11
+dev-боксі:
+- (а) normal-клієнт обслуговується поки 24/48 слотів утримуються stalled-сокетами;
+- (б) на стелі (52 held ≥ 48) normal-клієнт дістає connection-refused за **~15–17 мс** — швидко,
+  TCP-close, **не** таймаут;
+- (в) stalled-сокети лишаються **відкритими**; після 3-с `handshake_timeout` сервіс відновлюється
+  — доводить, що permit'и звільняє **таймаут**, а не наш FIN.
+Held-connection RSS: **~4–10 КіБ** на stalled pre-handshake з'єднання (на/нижче Коміт-1-оцінки —
+rustls-буфери ще не алоковані). PERFORMANCE.md «Memory per connection» + SPEC.md §1.1 оновлено.
+
+**Не в обсязі (свідомо).** Окрема менша стеля на одночасні quorum-резолюції «у польоті» —
+backstop на вхідні з'єднання закриває основний вектор; fan-out ceiling лишається арифметичним
+(PERFORMANCE.md). `tower` не додано (плоский `Semaphore` покриває). Per-client fairness відхилено
+ще в T-168. UI-картка для `rejected_connections` — окремо. `apply_admin_reset` **не** перебудовує
+`gate` (як і `port` — зміна `[limits]` потребує рестарту сервісу; задокументовано в CONFIGURATION.md).
+
+**Non-blocking.** Scratch slow-loris-інстанс намінтив власний Credential Manager TLS-key запис
+(`doh-tls-private-key:<hash>` для scratch app-data) — benign, за конвенцією (як T-168); не видаляю
+(ризик стерти не той hash-keyed запис). CodeQL — `admission` не торкається secret-shape.
