@@ -332,10 +332,13 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
 - **T-168 / T-169** — `main.rs`'s accept loop `tokio::spawn`s per connection with **no cap** on
-  concurrent connections / tasks / in-flight requests. Measured (PERFORMANCE.md): degrades
-  smoothly, no failures, up to 3000 concurrent connections — but a slow-loris-style client
-  (connections opened and held) can still accumulate without bound. Bounded-concurrency backstop
-  designed in SPEC.md §1.1, not yet built — that's T-169.
+  concurrent connections / tasks / in-flight requests, and `acceptor.accept(stream).await` has
+  **no handshake timeout** (hyper imposes no idle read-timeout either). Measured (PERFORMANCE.md):
+  degrades smoothly, no failures, up to 3000 concurrent connections — but a slow-loris client
+  (TCP opened, ClientHello never sent, or connection held idle) accumulates tasks without bound,
+  and a bare connection cap without a handshake deadline would itself become the DoS. The
+  backstop (cap + handshake deadline + idle timeout together) is designed in SPEC.md §1.1, not
+  yet built — that's T-169.
 - **`refresh_health: AUTH_REJECTED` (T-163) only appears on the next `/admin/ui` load / operator
   action** — the `#geoip-maxmind` card has its own fetch cycle (so a key field being typed isn't
   wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows

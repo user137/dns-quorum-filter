@@ -90,52 +90,63 @@ linearly with concurrent in-flight queries and has no ceiling of its own today.
 Methodology and harness: `examples/load_test.rs` (`cargo run --example load_test`, not run in
 CI — a manual tool, same category as `examples/phase1_metrics.rs`). Every query in the run hits a
 synthetic blocklisted domain, so **no upstream call ever fires** — this measures the
-accept-loop / TLS / hyper / `overrides::decision` layer only, not quorum fan-out.
+accept-loop / TLS / hyper / `overrides::decision` layer only, not quorum fan-out. Before the
+ramps the harness decodes one response and asserts it is an actual `0.0.0.0` NULL-block (a bare
+HTTP 200 isn't enough — a DoH SERVFAIL is also 200), so the numbers provably belong to the
+blocklist path, not to a failing quorum or T-152's offline fast path.
 
-Run on this Windows 11 dev box (debug build, single scratch `dnsqb-service` instance,
-2026-09-05):
+Two runs on this Windows 11 dev box (debug build, scratch `dnsqb-service` instance, 2026-09-05).
+The two shapes:
 
-**Curve 1 — one blocklist entry (`n=1`), the connection/TLS/hyper ceiling.**
+- **Many connections × 1 request** — a fresh `reqwest::Client` (fresh TLS handshake) per
+  request, modeling N independent local DoH clients.
+- **One shared client × many requests** — one `reqwest::Client` reused, relying on reqwest/hyper
+  HTTP/2 connection reuse. How many TCP connections its pool actually opens is not observed from
+  the client side — past the 200-streams-per-connection cap it may open more rather than queue.
+  So this is a shared-client path, not "one connection".
 
-| shape | concurrency | success | p50 | p99 | wall |
-|---|---|---|---|---|---|
-| many connections × 1 request (fresh TLS handshake each) | 50 | 50/50 | 115 ms | 189 ms | 226 ms |
-| | 200 | 200/200 | 466 ms | 693 ms | 834 ms |
-| | 1000 | 1000/1000 | 2.42 s | 4.07 s | 4.80 s |
-| | 3000 | 3000/3000 | 7.68 s | 10.95 s | 14.18 s |
-| few connections × many multiplexed streams (one shared client) | 200 | 200/200 | 67 ms | 104 ms | 113 ms |
-| | 500 | 500/500 | 149 ms | 272 ms | 292 ms |
-| | 2000 | 2000/2000 | 518 ms | 901 ms | 993 ms |
+**Curve 1 — one blocklist entry (`n=1`).**
+
+| shape | concurrency | success | p50 (run 1 / run 2) |
+|---|---|---|---|
+| many connections × 1 request | 50 | 50/50 | 115 ms / 109 ms |
+| | 200 | 200/200 | 466 ms / 480 ms |
+| | 1000 | 1000/1000 | 2.42 s / 2.29 s |
+| | 3000 | 3000/3000 | 7.68 s / 7.15 s |
+| one shared client × many requests | 200 | 200/200 | 67 ms / 54 ms |
+| | 500 | 500/500 | 149 ms / 144 ms |
+| | 2000 | 2000/2000 | 518 ms / 433 ms |
 
 **Curve 2 — `n≈10 000` blocklist entries, fixed concurrency 200, same target and path.**
 
-| shape | p50 (n=1 → n≈10 000) | p99 (n=1 → n≈10 000) |
-|---|---|---|
-| many connections × 1 request | 466 ms → 544 ms (+17 %) | 693 ms → 850 ms |
-| few connections × many streams | 67 ms → 285 ms | 104 ms → 336 ms |
+| shape | p50 at n=1 → n≈10 000 (run 1 / run 2) |
+|---|---|
+| many connections × 1 request | 466→544 ms (+17 %) / 480→470 ms (≈0) |
+| one shared client × many requests | 67→285 ms (~4×) / 54→225 ms (~4×) |
 
 ### What the numbers say
 
 - **Degradation is smooth and predictable, not a cliff.** Latency rises roughly linearly with
-  concurrency (~2.5 ms of p50 per concurrent fresh connection; ~0.25 ms per multiplexed stream).
-  **Zero failed requests** at any level — 3000 concurrent fresh TLS handshakes and 2000
-  concurrent multiplexed streams all completed. No errors, no timeouts, no crash. RSS stayed
-  bounded (tens of MB transient at the 3000 peak, released after).
+  concurrency (~2.4 ms of p50 per concurrent fresh connection; ~0.25 ms per shared-client
+  request). **Zero failed requests** at any level, both runs — 3000 concurrent fresh TLS
+  handshakes and 2000 concurrent shared-client requests all completed. No errors, no timeouts, no
+  crash. RSS stayed bounded (tens of MB transient at the 3000 peak, released after).
 - The unbounded `tokio::spawn`-per-connection accept loop **did not fall over** at any level a
   busy-but-well-behaved local client reaches. The practical ceiling on this machine is throughput
   (one accept loop, serialized TLS handshake cost), which just makes requests slower — it is not
   a resource wall that produces failure.
-- **`overrides::decision`'s O(n) scan is real but modest**: ~17 % p50 increase on the
-  connection-bound path at a pathological ~10 000 entries; larger in relative terms on the cheap
-  multiplexed path (67 → 285 ms) but still sub-second and still 100 % success. A realistic list
-  (hundreds to low thousands) makes this negligible. Not a stability risk at any size the file
-  cap (`MAX_OVERRIDES_FILE_SIZE`) permits.
+- **`overrides::decision`'s O(n) scan is only visible on the cheap path.** On the shared-client
+  shape (no per-request handshake cost) a pathological ~10 000-entry list roughly quadruples p50
+  (~55 ms → ~225 ms), consistently across both runs. On the many-connections shape the same scan
+  is lost in TLS-handshake noise — one run showed +17 %, the other ≈0. Either way it stays
+  sub-second and 100 % success. A realistic list (hundreds to low thousands) makes it negligible;
+  it is not a stability risk at any size `MAX_OVERRIDES_FILE_SIZE` permits.
 - **This run does not exercise**: connections opened and held without completing a request
-  (slow-loris shape), the outbound-socket amplification (no upstream calls by design), or
-  concurrency far beyond 3000. So "will it eventually exhaust resources" is: yes in principle —
-  nothing caps connections, tasks, or in-flight requests — but not at any level a single
-  well-behaved client produces. It takes a deliberately abusive client (many idle-held
-  connections) or a fundamentally higher scale.
+  (slow-loris shape — the residual risk SPEC.md §1.1 calls out), the outbound-socket
+  amplification (no upstream calls by design), or concurrency far beyond 3000. So "will it
+  eventually exhaust resources" is: yes in principle — nothing caps connections, tasks, or
+  in-flight requests, and nothing time-bounds a stalled TLS handshake — but not at any level a
+  single well-behaved client produces.
 
 The design decision this feeds — a generous bounded-concurrency backstop against pathological
 accumulation, sized from these server-side numbers rather than a throughput percentile —

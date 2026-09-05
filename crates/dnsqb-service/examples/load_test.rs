@@ -32,15 +32,15 @@
 //! **Two concurrency shapes** at each curve (they measure different things):
 //! - *Many connections, one request each* — a fresh `reqwest::Client` per
 //!   request (no connection reuse), modeling N independent local DoH clients.
-//! - *Few connections, many concurrent streams* — one shared `reqwest::Client`
+//! - *One shared client, many concurrent requests* — one `reqwest::Client`
 //!   reused across all concurrent requests, relying on `reqwest`/`hyper`'s own
 //!   HTTP/2 connection reuse, modeling one client multiplexing many queries
-//!   over one connection (a browser or stub resolver's typical shape). This
-//!   directly probes the verified 200-streams-per-connection default
-//!   (`hyper` 1.11.0's own server h2 config, not h2's — see PERFORMANCE.md).
-//!   Caveat: the exact number of TCP connections `reqwest`'s pool opens
-//!   isn't independently observed from the client side here, only
-//!   approximated by construction (one shared client instance).
+//!   (a browser or stub resolver's typical shape). The exact number of TCP
+//!   connections `reqwest`'s pool opens is **not** observed from the client
+//!   side — past the 200-streams-per-connection cap (`hyper` 1.11.0's own
+//!   server h2 default, see PERFORMANCE.md) it may open more connections
+//!   rather than queue, and this harness can't tell which. So this shape
+//!   measures a shared-client path, not "one connection" specifically.
 //!
 //! Every result is bucketed into success / connect-error (the client
 //! couldn't even establish the connection — `reqwest::Error::is_connect`) /
@@ -73,9 +73,22 @@
 //! reported as a Windows working-set number, not "file descriptors" (that
 //! framing doesn't apply on this platform).
 //!
+//! Before the ramps, one response is decoded and checked to be an actual
+//! `0.0.0.0` NULL-block — a bare HTTP 200 is not enough (a DoH SERVFAIL is
+//! also 200, rcode inside), and the whole point is that these numbers belong
+//! to the blocklist path, not a failing quorum or an offline fast-path.
+//!
+//! The scratch instance mints its own Windows Credential Manager TLS-key
+//! entry (`doh-tls-private-key:<hash>` for the scratch app-data dir) — benign
+//! and per convention, but it stays after the run; remove it with a
+//! `keyring` probe or `cmdkey` if you care.
+//!
 //! Output is a report to stdout only.
 
-use dnsqb_service::{app_data_dir, doh_get_url, encode_wire_message, read_pid_file, InstanceRole};
+use dnsqb_service::{
+    app_data_dir, decode_wire_message, doh_get_url, encode_wire_message, read_pid_file,
+    InstanceRole,
+};
 use hickory_proto::op::{Message, Query};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
 use reqwest::Certificate;
@@ -119,6 +132,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("=== curve 1: n=1 override entry ===");
     write_overrides_blocklist(&app_data, vec![TARGET_DOMAIN.to_string()])?;
     reset_service(&cert_pem, &admin_base).await?;
+    verify_block_response(&cert_pem, &url).await?;
     run_ramp(
         "many connections x 1 request",
         &cert_pem,
@@ -128,7 +142,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await?;
     run_ramp(
-        "few connections x many streams",
+        "one shared client x many requests",
         &cert_pem,
         &url,
         MANY_STREAMS_LEVELS,
@@ -152,7 +166,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await?;
     run_ramp(
-        "few connections x many streams",
+        "one shared client x many requests",
         &cert_pem,
         &url,
         &[FIXED_COMPARISON_LEVEL],
@@ -215,6 +229,35 @@ async fn reset_service(cert_pem: &[u8], admin_base: &str) -> Result<(), Box<dyn 
         .send()
         .await?
         .error_for_status()?;
+    Ok(())
+}
+
+/// Decodes one response and asserts it is an actual `0.0.0.0` NULL-block, not
+/// just an HTTP 200 (a DoH SERVFAIL — from a failed quorum or T-152's offline
+/// fast path — is also 200, with the rcode inside). Bails loudly: every
+/// number the ramps produce is meaningless if the path under load isn't the
+/// blocklist path.
+async fn verify_block_response(cert_pem: &[u8], url: &str) -> Result<(), Box<dyn Error>> {
+    let client = build_pinned_client_builder(cert_pem)?.build()?;
+    let body = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/dns-message")
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    let message = decode_wire_message(&body)?;
+    let is_null_block =
+        !message.answers.is_empty() && format!("{:?}", message.answers).contains("0.0.0.0");
+    if !is_null_block {
+        return Err(format!(
+            "target domain did not return a 0.0.0.0 NULL-block — the ramp would measure the \
+             wrong path. Decoded response: {message:?}"
+        )
+        .into());
+    }
+    println!("(verified: target resolves to a 0.0.0.0 NULL-block — blocklist path confirmed)");
     Ok(())
 }
 
