@@ -4,15 +4,22 @@
 //! 1. Local cache-miss vs cache-hit latency against a running
 //!    `dnsqb-service` instance (SPEC.md §4 — the cache's own contribution,
 //!    not upstream latency).
-//! 2. Quorum detection rate vs each individual provider, against a live
-//!    URLhaus malicious-domain sample — validates or refutes the "OR-logic
-//!    across providers beats a single provider" hypothesis this whole
-//!    project rests on. Measured over **every built-in preset**
-//!    (`all_builtin_presets()` — the 10 §3.4 entries across Security /
-//!    AdsTrackers / AdultContent), reporting each provider's own rate, the
-//!    OR of all of them, the OR of the Security tier only, and each OR's
-//!    delta over the single best provider. T-66 measured 2 providers on
-//!    n=38; T-171 the 3 shipped defaults on n=122; this run all 10.
+//! 2. Quorum detection rate vs each individual provider, measured over
+//!    **every built-in preset** (`all_builtin_presets()` — the 10 §3.4
+//!    entries across Security / AdsTrackers / AdultContent) against three
+//!    corpora: `malware` (a live abuse.ch URLhaus sample — the
+//!    quorum-hypothesis question T-66/T-171 asked), `ads` (a small fixed
+//!    list of well-known ad/tracker infrastructure hostnames, which a
+//!    malware feed never exercises), and `adult` (a small fixed list of the
+//!    highest-traffic adult sites). The ads/adult lists are hardcoded on
+//!    purpose: unlike churning malware domains they are stable, and there is
+//!    no clean public "ad domain" / "adult domain" feed to pull the way
+//!    URLhaus is pulled. This tool only ever does a DNS lookup for any host
+//!    — it never opens an HTTP connection to one. The per-corpus breakdown
+//!    doubles as a block-signature check (T-174): a preset whose declared
+//!    signature cannot see the rcode it actually returns shows up as
+//!    `0 blocked` with a high raw-NXDOMAIN count. T-66 measured 2 providers
+//!    on n=38; T-171 the 3 shipped defaults on n=122; this runs all 10.
 //!
 //! **Preconditions** (run with `cargo run --example phase1_metrics [port]`,
 //! default port 8443 — a plain HTTP client, it does not manage the service's
@@ -94,11 +101,73 @@ const PER_DOMAIN_DELAY: Duration = Duration::from_millis(150);
 const DEFAULT_LOCAL_PORT: u16 = 8443;
 const SMALL_SAMPLE_WARNING_THRESHOLD: usize = 20;
 
+/// Well-known ad / tracker infrastructure hostnames — the kind of entry that
+/// appears in every published ad-blocking DNS filter list. Fixed, not
+/// fetched: these are stable (unlike churning malware domains) and there is
+/// no clean public "ad domain" feed. Used only for DNS resolution.
+const ADS_DOMAINS: &[&str] = &[
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "adnxs.com",
+    "criteo.com",
+    "scorecardresearch.com",
+    "taboola.com",
+    "outbrain.com",
+    "pubmatic.com",
+    "rubiconproject.com",
+    "casalemedia.com",
+    "moatads.com",
+    "adsafeprotected.com",
+    "serving-sys.com",
+    "amazon-adsystem.com",
+    "adform.net",
+];
+
+/// Highest-traffic adult sites — the standard reference set for checking
+/// that an AdultContent DNS filter actually blocks (these appear as examples
+/// in CleanBrowsing / OpenDNS / AdGuard filter documentation). Fixed for the
+/// same reason as [`ADS_DOMAINS`]. Used only for DNS resolution — this tool
+/// never opens an HTTP connection to any host.
+const ADULT_DOMAINS: &[&str] = &[
+    "pornhub.com",
+    "xvideos.com",
+    "xnxx.com",
+    "xhamster.com",
+    "redtube.com",
+    "youporn.com",
+    "onlyfans.com",
+    "chaturbate.com",
+    "stripchat.com",
+    "brazzers.com",
+];
+
+/// Which fixed list (or the live feed) a sampled domain came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Corpus {
+    Malware,
+    Ads,
+    Adult,
+}
+
+impl Corpus {
+    fn label(self) -> &'static str {
+        match self {
+            Corpus::Malware => "malware",
+            Corpus::Ads => "ads",
+            Corpus::Adult => "adult",
+        }
+    }
+}
+
 /// One sampled domain's per-voter outcome. `voter_rcode` / `voter_blocked`
 /// are parallel to `presets` (`all_builtin_presets()` order), so index `i`
 /// in either belongs to `presets[i]`.
 struct DomainResult {
     domain: String,
+    corpus: Corpus,
     baseline_rcode: ResponseCode,
     voter_rcode: Vec<ResponseCode>,
     voter_blocked: Vec<bool>,
@@ -109,8 +178,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let port = local_port_from_args()?;
 
     let feed_client = reqwest::Client::new();
-    let sample = fetch_urlhaus_domains(&feed_client, SAMPLE_CAP).await?;
-    println!("fetched {} candidate domains from URLhaus", sample.len());
+    let malware = fetch_urlhaus_domains(&feed_client, SAMPLE_CAP).await?;
+    println!(
+        "fetched {} candidate malware domains from URLhaus",
+        malware.len()
+    );
+
+    let mut sample: Vec<(String, Corpus)> = Vec::new();
+    sample.extend(malware.into_iter().map(|d| (d, Corpus::Malware)));
+    sample.extend(ADS_DOMAINS.iter().map(|d| ((*d).to_string(), Corpus::Ads)));
+    sample.extend(
+        ADULT_DOMAINS
+            .iter()
+            .map(|d| ((*d).to_string(), Corpus::Adult)),
+    );
+    println!(
+        "corpora: {} malware + {} ads + {} adult",
+        sample.iter().filter(|(_, c)| *c == Corpus::Malware).count(),
+        ADS_DOMAINS.len(),
+        ADULT_DOMAINS.len()
+    );
 
     let presets = all_builtin_presets();
     println!(
@@ -125,8 +212,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let doh_client = ReqwestDohClient::new()?;
     let mut results = Vec::new();
-    for domain in &sample {
-        match resolve_all_voters(&doh_client, domain, &presets).await {
+    for (domain, corpus) in &sample {
+        match resolve_all_voters(&doh_client, domain, *corpus, &presets).await {
             Ok(Some(result)) => results.push(result),
             Ok(None) => {}
             Err(err) => eprintln!("  (skipped one domain, query failed: {err})"),
@@ -148,7 +235,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let local_base = format!("https://127.0.0.1:{port}/dns-query");
     let mut cache_miss = Vec::new();
     let mut cache_hit = Vec::new();
-    for result in &results {
+    // Latency reuses only the malware sample — well-known ad/adult domains
+    // are heavily cached upstream, exactly the "uninterpretable cold/warm"
+    // problem the module doc warns about.
+    for result in results.iter().filter(|r| r.corpus == Corpus::Malware) {
         match measure_local_latency(&local_client, &local_base, &result.domain).await {
             Ok((miss, hit)) => {
                 cache_miss.push(miss);
@@ -249,6 +339,7 @@ fn build_a_query(domain: &str) -> Result<Message, Box<dyn Error>> {
 async fn resolve_all_voters(
     client: &ReqwestDohClient,
     domain: &str,
+    corpus: Corpus,
     presets: &[ProviderSpec],
 ) -> Result<Option<DomainResult>, Box<dyn Error>> {
     let query = build_a_query(domain)?;
@@ -265,6 +356,7 @@ async fn resolve_all_voters(
     }
     Ok(Some(DomainResult {
         domain: domain.to_string(),
+        corpus,
         baseline_rcode: baseline.metadata.response_code,
         voter_rcode,
         voter_blocked,
@@ -272,99 +364,25 @@ async fn resolve_all_voters(
 }
 
 fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
-    let n = results.len();
-    println!("\n=== Detection rate (n = {n} resolvable, baseline NoError) ===");
-    if n == 0 {
-        println!("no resolvable domains in this sample - nothing to report");
+    if results.is_empty() {
+        println!("\nno resolvable domains in any corpus - nothing to report");
         return;
     }
-    if n < SMALL_SAMPLE_WARNING_THRESHOLD {
-        println!(
-            "(sample under {SMALL_SAMPLE_WARNING_THRESHOLD} - treat as indicative, not measured)"
-        );
+
+    for corpus in [Corpus::Malware, Corpus::Ads, Corpus::Adult] {
+        report_corpus(results, presets, corpus);
     }
 
-    let per_provider: Vec<usize> = (0..presets.len())
-        .map(|i| results.iter().filter(|r| r.voter_blocked[i]).count())
-        .collect();
-    // Raw NXDOMAIN response count per preset, independent of its declared
-    // block signature. A preset whose signature is `NullIp` (which cannot
-    // see NXDOMAIN) but which returns NXDOMAIN for a large slice of a live
-    // malware feed is almost certainly blocking via NXDOMAIN — its declared
-    // signature is wrong and its real blocks are invisible to the quorum.
-    // (T-171 follow-up: this is how the CleanBrowsing presets were caught.)
-    let per_provider_nxdomain: Vec<usize> = (0..presets.len())
-        .map(|i| {
-            results
-                .iter()
-                .filter(|r| r.voter_rcode[i] == ResponseCode::NXDomain)
-                .count()
-        })
-        .collect();
-
-    for (i, (spec, &blocked)) in presets.iter().zip(&per_provider).enumerate() {
-        let nx = per_provider_nxdomain[i];
-        let suspect = spec.block_signature == BlockSignature::NullIp && nx * 20 > n;
-        println!(
-            "  {:<24} [{:>13}] {blocked}/{n} ({:.1}%){}",
-            spec.id,
-            category_label(spec.category),
-            pct(blocked, n),
-            if suspect {
-                format!(
-                    "   [!] signature=NullIp but returned NXDOMAIN {nx}/{n} times \
-                     - likely blocks via NXDOMAIN, uncounted"
-                )
-            } else {
-                String::new()
-            }
-        );
-    }
-
-    let security_idx: Vec<usize> = (0..presets.len())
-        .filter(|&i| presets[i].category == Category::Security)
-        .collect();
-
-    let quorum_all = results
-        .iter()
-        .filter(|r| r.voter_blocked.iter().any(|&b| b))
-        .count();
-    let quorum_security = results
-        .iter()
-        .filter(|r| security_idx.iter().any(|&i| r.voter_blocked[i]))
-        .count();
-    let best_single = per_provider.iter().copied().max().unwrap_or(0);
-    let best_single_security = security_idx
-        .iter()
-        .map(|&i| per_provider[i])
-        .max()
-        .unwrap_or(0);
+    report_quorum_hypothesis(results, presets);
 
     println!(
-        "\n  Quorum (OR of all {} presets):   {quorum_all}/{n} ({:.1}%)  |  delta over best single: \
-         +{}/{n} ({:+.1} pp)",
-        presets.len(),
-        pct(quorum_all, n),
-        quorum_all - best_single,
-        pct(quorum_all, n) - pct(best_single, n)
+        "\nper-domain trace, malware corpus only (index: baseline rcode -> ids that blocked):"
     );
-    println!(
-        "  Quorum (OR of Security tier, {}):   {quorum_security}/{n} ({:.1}%)  |  delta over best \
-         single Security: +{}/{n} ({:+.1} pp)",
-        security_idx.len(),
-        pct(quorum_security, n),
-        quorum_security - best_single_security,
-        pct(quorum_security, n) - pct(best_single_security, n)
-    );
-    println!(
-        "\n  The hypothesis: a delta >0 means OR-logic caught domains no single provider did on \
-         this sample; 0 means it added nothing. Quad9's rate is an upper bound (NeedsBaseline \
-         path - see module doc); AdultContent presets are included for completeness but a live \
-         malware feed is not the corpus they filter."
-    );
-
-    println!("\nper-domain trace (index: baseline rcode -> ids that blocked):");
-    for (i, r) in results.iter().enumerate() {
+    for (i, r) in results
+        .iter()
+        .filter(|r| r.corpus == Corpus::Malware)
+        .enumerate()
+    {
         let blocked_ids: Vec<&str> = presets
             .iter()
             .zip(&r.voter_blocked)
@@ -378,6 +396,102 @@ fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
             rcodes.join("/")
         );
     }
+}
+
+/// Per-preset block rate and raw-NXDOMAIN count for one corpus. The NXDOMAIN
+/// column is the T-174 signature check: a preset whose declared signature is
+/// `NullIp` (blind to NXDOMAIN) but which returns NXDOMAIN for a large slice
+/// of a corpus it is meant to filter is almost certainly blocking via
+/// NXDOMAIN, and every one of those blocks is invisible to `quorum::resolve`.
+fn report_corpus(results: &[DomainResult], presets: &[ProviderSpec], corpus: Corpus) {
+    let rows: Vec<&DomainResult> = results.iter().filter(|r| r.corpus == corpus).collect();
+    let n = rows.len();
+    println!(
+        "\n=== {} corpus (n = {n} resolvable, baseline NoError) ===",
+        corpus.label()
+    );
+    if n == 0 {
+        println!("  (no resolvable domains)");
+        return;
+    }
+    if n < SMALL_SAMPLE_WARNING_THRESHOLD {
+        println!("  (n < {SMALL_SAMPLE_WARNING_THRESHOLD} - indicative, not measured)");
+    }
+    for (i, spec) in presets.iter().enumerate() {
+        let blocked = rows.iter().filter(|r| r.voter_blocked[i]).count();
+        let nx = rows
+            .iter()
+            .filter(|r| r.voter_rcode[i] == ResponseCode::NXDomain)
+            .count();
+        let suspect = spec.block_signature == BlockSignature::NullIp && nx * 10 > n;
+        println!(
+            "  {:<24} [{:>12}] blocked {blocked:>3}/{n} ({:>5.1}%)  NXDOMAIN {nx:>3}/{n}{}",
+            spec.id,
+            category_label(spec.category),
+            pct(blocked, n),
+            if suspect {
+                "   [!] signature=NullIp cannot see these NXDOMAIN blocks - likely wrong"
+            } else {
+                ""
+            }
+        );
+    }
+}
+
+/// The T-66/T-171 question, on the malware corpus only: does the OR-quorum
+/// catch domains no single provider does?
+fn report_quorum_hypothesis(results: &[DomainResult], presets: &[ProviderSpec]) {
+    let rows: Vec<&DomainResult> = results
+        .iter()
+        .filter(|r| r.corpus == Corpus::Malware)
+        .collect();
+    let n = rows.len();
+    println!("\n=== Quorum hypothesis (malware corpus, n = {n}) ===");
+    if n == 0 {
+        return;
+    }
+    let per_provider: Vec<usize> = (0..presets.len())
+        .map(|i| rows.iter().filter(|r| r.voter_blocked[i]).count())
+        .collect();
+    let security_idx: Vec<usize> = (0..presets.len())
+        .filter(|&i| presets[i].category == Category::Security)
+        .collect();
+    let quorum_all = rows
+        .iter()
+        .filter(|r| r.voter_blocked.iter().any(|&b| b))
+        .count();
+    let quorum_security = rows
+        .iter()
+        .filter(|r| security_idx.iter().any(|&i| r.voter_blocked[i]))
+        .count();
+    let best_single = per_provider.iter().copied().max().unwrap_or(0);
+    let best_single_security = security_idx
+        .iter()
+        .map(|&i| per_provider[i])
+        .max()
+        .unwrap_or(0);
+
+    println!(
+        "  Quorum (OR of all {} presets):     {quorum_all}/{n} ({:.1}%)  |  delta over best single: \
+         +{}/{n} ({:+.1} pp)",
+        presets.len(),
+        pct(quorum_all, n),
+        quorum_all - best_single,
+        pct(quorum_all, n) - pct(best_single, n)
+    );
+    println!(
+        "  Quorum (OR of Security tier, {}):    {quorum_security}/{n} ({:.1}%)  |  delta over best \
+         single Security: +{}/{n} ({:+.1} pp)",
+        security_idx.len(),
+        pct(quorum_security, n),
+        quorum_security - best_single_security,
+        pct(quorum_security, n) - pct(best_single_security, n)
+    );
+    println!(
+        "  A delta >0 means OR-logic caught domains no single provider did. Quad9's rate is an \
+         upper bound (NeedsBaseline path - module doc). A preset flagged [!] above is not \
+         contributing its real blocks here."
+    );
 }
 
 fn category_label(category: Category) -> &'static str {

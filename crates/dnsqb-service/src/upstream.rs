@@ -72,14 +72,16 @@ pub enum Category {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BlockSignature {
     /// An `A`/`AAAA` answer containing `0.0.0.0` / `::` (`AdGuard`,
-    /// `Cloudflare` Malware/Family, `CleanBrowsing`).
+    /// `Cloudflare` Malware/Family).
     NullIp,
     /// `NXDOMAIN`, undecidable on its own — needs the baseline resolver to
     /// tell a filter block from genuine non-existence (Quad9, `OpenDNS`
     /// `FamilyShield`). SPEC.md §3.1.
     NxdomainVsBaseline,
     /// Either of the above — the permissive default for a custom endpoint
-    /// whose block shape isn't known ahead of time.
+    /// whose block shape isn't known ahead of time, and (T-174) the
+    /// `CleanBrowsing` presets, whose published `0.0.0.0` behaviour was
+    /// observed to actually be `NXDOMAIN`.
     NullIpOrNxdomain,
 }
 
@@ -165,7 +167,12 @@ const BUILTIN_PRESETS: &[(&str, &str, &str, Category, BlockSignature)] = &[
         "CleanBrowsing Security",
         "https://doh.cleanbrowsing.org/doh/security-filter/",
         Category::Security,
-        BlockSignature::NullIp,
+        // T-174 (2026-09-05): CleanBrowsing's published behaviour is
+        // `0.0.0.0`, but `examples/phase1_metrics.rs` observed it return
+        // NXDOMAIN for every domain it blocks (66/126 malware, 10/10 adult;
+        // baseline resolved all of them). `NullIpOrNxdomain` accepts both so
+        // a region/qtype that does answer `0.0.0.0` is still covered.
+        BlockSignature::NullIpOrNxdomain,
     ),
     (
         "dns4eu-protective",
@@ -200,7 +207,9 @@ const BUILTIN_PRESETS: &[(&str, &str, &str, Category, BlockSignature)] = &[
         "CleanBrowsing Adult",
         "https://doh.cleanbrowsing.org/doh/adult-filter/",
         Category::AdultContent,
-        BlockSignature::NullIp,
+        // T-174: same as `cleanbrowsing-security` — observed NXDOMAIN, not
+        // `0.0.0.0` (10/10 adult sample blocked via NXDOMAIN).
+        BlockSignature::NullIpOrNxdomain,
     ),
     (
         "opendns-familyshield",

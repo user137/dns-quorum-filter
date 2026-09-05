@@ -125,13 +125,14 @@ Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); 
 
 Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstaller must call
 `trust_store::uninstall()` + `key_store::delete_secret`, blocked on T-156 MSIX packaging); the
-**Ф1 metrics gate** — **metrics half closed T-171** (2026-09-05): re-measured on n=122 with the
-T-170 default set, quorum gain over the best single provider (Quad9) was +1 domain / +0.8 pp —
-hypothesis not confirmed, recorded, raised as a Ф4+ design question (DECISIONS.md, PERFORMANCE.md
-"Quorum coverage"). **Verdict is provisional**: a same-day all-10-presets follow-up run found
-`cleanbrowsing-{security,adult}` block via NXDOMAIN but are declared `NullIp` in `BUILTIN_PRESETS`
-(66/124 NXDOMAIN, 18 Quad9 missed) → their blocks are uncounted; **T-174** fixes the signature
-and re-measures. The live "browser → local DoH" pass is T-172.
+**Ф1 metrics gate** — **metrics half closed by confirmation, T-174** (2026-09-05). T-171's first
+re-measure gave +0.8 pp ("not confirmed"), but that was an artifact of a block-signature bug:
+`cleanbrowsing-{security,adult}` block via NXDOMAIN while `BUILTIN_PRESETS` declared `NullIp`, so
+2 of the 4 Security presets contributed nothing. T-174 fixed the signature (`NullIpOrNxdomain`)
+and re-measured (n=126): **Security-tier OR-quorum 93/126, +20 domains / +15.9 pp over Quad9
+alone; 19 malware domains blocked only by CleanBrowsing.** Hypothesis confirmed (DECISIONS.md
+2026-09-05, PERFORMANCE.md "Quorum coverage … / Resolution — T-174"). The live "browser → local
+DoH" pass is still T-172.
 **`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
 DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
 voters plus AdGuard for ads out of the box.
@@ -284,12 +285,12 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - No test anywhere exercises the real "browser → local DoH" leg — every existing confirmation is
   either DoH-client-level (`Invoke-WebRequest`) or Chrome automation against `/admin/ui`.
   **T-172 closes this** (Батч 3.9).
-- ~~T-66's metrics did not confirm the quorum hypothesis (AdGuard 0/38, n=1)~~ — **T-171
-  (2026-09-05) closed this gate with an honest record**: re-measured on n=122 with the T-170
-  default set (`quad9` + `cloudflare-malware` + `adguard`), quorum caught +1 domain / +0.8 pp
-  over the best single provider (Quad9). Hypothesis still not confirmed; Cloudflare Malware's
-  blocks were near a subset of Quad9's (correlated feeds). Not a blocker — raised as a Ф4+ design
-  question (DECISIONS.md 2026-09-05, PERFORMANCE.md "Quorum coverage (T-66 / T-171)").
+- ~~T-66's metrics did not confirm the quorum hypothesis (AdGuard 0/38, n=1)~~ — **closed by
+  confirmation, T-174 (2026-09-05).** T-171 first re-measured (n=122, +0.8 pp, "not confirmed"),
+  then a follow-up found `cleanbrowsing-{security,adult}` were declared `NullIp` but block via
+  NXDOMAIN — 2 of 4 Security presets weren't counting. T-174 fixed the signature and re-measured
+  (n=126): Security-tier OR-quorum **+15.9 pp over Quad9 alone**, 19 malware domains caught only
+  by CleanBrowsing. Hypothesis confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md).
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
@@ -352,13 +353,14 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
   so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's
   historical log rows become unfilterable by voter. Not worth a full log scan for the id.
-- **`cleanbrowsing-security` / `cleanbrowsing-adult` presets have the wrong `block_signature`
-  (T-174, found 2026-09-05).** Both are declared `BlockSignature::NullIp` in `BUILTIN_PRESETS`,
-  but from this vantage point both block via **NXDOMAIN** (T-171 all-presets run: 66/124 NXDOMAIN
-  each, 18 not caught by Quad9). `is_blocked(NullIp, …)` can't see an NXDOMAIN block, so a user
-  who enables either preset gets **none** of its blocks counted in `quorum::resolve`. Only
-  Quad9/AdGuard were ever live-verified (DECISIONS.md 2026-08-25); the rest came from published
-  provider docs. T-174 = live-verify + fix + re-measure T-171.
+- ~~`cleanbrowsing-{security,adult}` have the wrong `block_signature`~~ — **fixed T-174**
+  (2026-09-05): both were `NullIp` but block via NXDOMAIN; now `NullIpOrNxdomain`, live-verified.
+- **`adguard-family` / `opendns-familyshield` / `dns4eu-{protective,child}` may block via a
+  provider-specific sinkhole/redirect IP that no `BlockSignature` recognises (T-175, found
+  2026-09-05).** In the T-174 adult-corpus run these caught 0/10 with 0 NXDOMAIN while
+  `cloudflare-family` and `cleanbrowsing-adult` caught 10/10 — so if they enforce at all, it's via
+  a non-`0.0.0.0`, non-NXDOMAIN answer the quorum can't read. Needs a new `SinkholeIp` variant
+  (per-preset known IP). Lower priority — secondary Adult presets, not the shipped default.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.

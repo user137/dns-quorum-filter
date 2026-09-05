@@ -3523,3 +3523,55 @@ OR усіх 10: 75/124 (+2/+1.6 pp над Quad9). OR Security-tier (4): 74/124 (
 Файли доповнення: `phase1_metrics.rs` (усі пресети + sanity-маркер), PERFORMANCE.md
 («Follow-up run — all 10 built-in presets»), DECISIONS.md (доповнення до T-171-запису),
 TASKS.md (T-174 заведено). Raw-вихід прогону — scratchpad `t171_allpresets_run_2026-09-05.txt`.
+
+### T-174 — фікс сигнатури CleanBrowsing → кворум-гіпотезу підтверджено (зроблено 2026-09-05, 1 коміт)
+
+- [x] T-174 — CleanBrowsing-пресети мали неправильний `block_signature` (SPEC.md §3.4) —
+  `NullIp` → `NullIpOrNxdomain` для `cleanbrowsing-security` і `cleanbrowsing-adult`; вердикт T-171
+  переглянуто на **підтверджено**.
+
+**Запит користувача:** «174, але додай до тесту рекламні домени та дорослого контенту».
+
+**Зроблено:**
+1. **`phase1_metrics.rs` → 3 корпуси.** `Corpus` enum (Malware/Ads/Adult); `ADS_DOMAINS`
+   (18 well-known ad/tracker-хостів), `ADULT_DOMAINS` (10 найтрафіковіших adult-сайтів) —
+   хардкоджені свідомо (стабільні; нема чистого публічного фіда; коментар це пояснює). Інструмент
+   робить лише DNS-резолв, ніколи HTTP. Звіт: per-corpus-таблиця (blocked + raw NXDOMAIN + `[!]`
+   sanity-маркер), quorum-гіпотеза рахується лише на malware-корпусі; latency-половина — теж лише
+   malware (well-known ad/adult-домени важко-кешовані, той самий «uninterpretable»-бар'єр).
+2. **`upstream::BUILTIN_PRESETS`:** `cleanbrowsing-security` + `cleanbrowsing-adult`
+   `BlockSignature::NullIp` → `NullIpOrNxdomain` (не `NxdomainVsBaseline` — щоб регіон/qtype, який
+   усе ж дає `0.0.0.0`, лишався покритим). `BlockSignature` doc-коментар + SPEC.md §3.4 узгоджено;
+   CleanBrowsing позначено live-звіреним (через harness, як Quad9/AdGuard).
+3. **Live-verify + перемір (n=126 malware).** До фіксу: `cleanbrowsing-{security,adult}` 0/126
+   пораховано при 66/126 NXDOMAIN; adult-корпус 0/10 при 10/10 NXDOMAIN — однозначний блок (baseline
+   зарезолвив усі). Після фіксу:
+
+   | | rate | | | rate |
+   |---|---|---|---|---|
+   | quad9 | 73/126 (57.9 %) | | cloudflare-family | 45/126 (35.7 %) |
+   | cloudflare-malware | 43/126 (34.1 %) | | cleanbrowsing-adult | 67/126 (53.2 %) |
+   | **cleanbrowsing-security** | **67/126 (53.2 %)** | | решта (5) | 0/126 |
+
+   **Кворум OR Security-tier (4): 93/126 (73.8 %) — +20 доменів / +15.9 pp над найкращим одиночним
+   (Quad9). Кворум OR усіх 10: 94/126 (74.6 %), +21 / +16.7 pp. 19 malware-доменів заблокував
+   _лише_ CleanBrowsing.** → **гіпотезу підтверджено**, Ф1-метрик-гейт #1 закрито (не «чесним
+   записом», а підтвердженням). T-171-висновок «фіди корельовані, кворум нічого не додає» був
+   артефактом бага, що ховав CleanBrowsing.
+
+**Побічні спостереження (корпуси ads/adult, n<20 — індикативні):**
+- **ads:** `adguard` і `adguard-family` кожен 9/14 (64 %) через `0.0.0.0` — AdGuard реально блокує
+  рекламу (підтверджує сенс T-170 — AdGuard у дефолті саме для реклами).
+- **adult:** `cloudflare-family` + `cleanbrowsing-adult` кожен 10/10. Але `adguard-family`,
+  `opendns-familyshield`, `dns4eu-child` — **0/10 при 0 NXDOMAIN** → блокують (якщо взагалі)
+  провайдер-специфічним sinkhole-IP, який жодна поточна `BlockSignature` не ловить. **Заведено
+  T-175** (`BlockSignature::SinkholeIp`). Нижчий пріоритет — вторинні Adult-пресети.
+
+**Гейти:** 624 lib+bins, clippy, fmt, doc — зелені (сигнатурна зміна тестів не зачепила: жоден
+тест не асертив CleanBrowsing-сигнатуру). Harness build/clippy/fmt окремо зелені.
+
+**Файли:** `upstream.rs` (2 сигнатури + doc), `phase1_metrics.rs` (3 корпуси), SPEC.md (§3.4 +
+`## Фаза 1`/`## Фаза 2` closure + «Відкриті питання» п.4), PERFORMANCE.md («Quorum coverage» —
+header-нота + «Resolution — T-174»), DECISIONS.md (T-174-запис), CLAUDE.md (Ф1-closure +
+Known-limitations: CleanBrowsing→fixed, +T-175-рядок), TASKS.md (T-175 заведено). Raw-виходи —
+scratchpad `t174_3corpus_run_prefix_2026-09-05.txt` (до), `t174_remeasure_fixed_2026-09-05.txt` (після).

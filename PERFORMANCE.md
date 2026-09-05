@@ -216,11 +216,17 @@ The design decision this feeds — a generous bounded-concurrency backstop again
 accumulation, sized from these server-side numbers rather than a throughput percentile —
 is in `SPEC.md` §1.1, and its implementation is a separate task (TASKS.md T-169).
 
-## Quorum coverage (T-66 / T-171)
+## Quorum coverage (T-66 / T-171 / T-174)
 
 Not a latency measurement — this is the efficacy question the whole OR-logic design rests on:
 **does querying several filtering providers and blocking on any one "block" vote catch more
 malicious domains than the best single provider would alone?**
+
+> **Current answer: yes, confirmed (T-174, 2026-09-05) — +15.9 pp over the best single Security
+> provider on n = 126.** The T-66 and T-171 measurements below read as "not confirmed" because a
+> block-signature bug (fixed in T-174) hid two of the four Security providers. Read the "Resolution
+> — T-174" subsection at the end for the up-to-date result; the T-171 material is kept for the
+> record of how it was found.
 
 Harness: `examples/phase1_metrics.rs` (`cargo run --example phase1_metrics`, manual, not CI).
 It pulls the live abuse.ch URLhaus `csv_recent` feed, keeps the domain-name hosts whose baseline
@@ -258,18 +264,14 @@ answer through that preset's own `BlockSignature`.
 
 ### Verdict and disposition
 
-**One run, one record** (T-171 rule — no re-measuring with a different sample/set until it
-"confirms"). This does **not** block Phase 3: Phases 2–3 started by explicit user decision *in
-spite of* this open gate, and T-171's job was to close it with an honest number, not to gate on
-the result. The number is honest and it is negative.
+**One run, one record** (T-171 rule — no re-measuring with a different sample/set to chase a
+confirming number). The T-171 run's number was honest and negative: **+0.8 pp**.
 
-The OR-quorum's actual value over a good single Security provider is **not demonstrated** by
-either measurement. That is a live design question for **Phase 4+** (see `SPEC.md` "Відкриті
-питання") — candidate directions: measure against a broader threat corpus than one live feed;
-weight the design toward provider *independence* (feeds with genuinely different intelligence
-sources) rather than provider *count*; or reframe the value proposition as resilience/redundancy
-(any one provider being down or wrong) rather than additive coverage. Recorded, not acted on
-here.
+**That number was wrong-for-a-reason, not wrong-by-noise.** The follow-up and T-174 (below)
+established that two of the four Security presets had a broken block signature, so T-171 measured
+a two-provider quorum, not a four-provider one. With the signature fixed, the same measurement
+methodology on a comparable sample gives **+15.9 pp** — the OR-quorum hypothesis holds. See
+"Resolution — T-174" below; the up-to-date verdict lives there.
 
 ### Follow-up run — all 10 built-in presets (2026-09-05, user-requested)
 
@@ -306,9 +308,41 @@ class of gap CLAUDE.md's own note anticipates — "лише Quad9/AdGuard live-�
 signatures). The harness now prints a `[!] signature=NullIp but returned NXDOMAIN …` marker so
 this can't hide on a future run.
 
-**Effect on the T-171 verdict: it is now provisional.** With `cleanbrowsing-security` correctly
-detecting, it alone would be a ~53 % detector (66/124) and would add 18 domains the current quorum
-misses — the Security-tier OR would then sit meaningfully above Quad9 alone, not +0.8 pp. Whether
-the OR-quorum hypothesis holds cannot be settled until T-174 fixes the signatures and the
-measurement is redone with all four Security presets actually working. **Not re-run again here**
-(one-run discipline; the fix belongs in T-174, not another measurement pass).
+**Effect on the T-171 verdict: it was provisional — and T-174 overturned it (below).**
+
+### Resolution — T-174 (CleanBrowsing signature fixed, hypothesis CONFIRMED)
+
+T-174 changed `cleanbrowsing-security` / `cleanbrowsing-adult` from `BlockSignature::NullIp` to
+`NullIpOrNxdomain` (live-verified via this harness: 67/126 malware + 10/10 adult blocked via
+NXDOMAIN, baseline resolved all). `phase1_metrics.rs` also gained an `ads` corpus (18 fixed
+ad/tracker hosts) and an `adult` corpus (10 fixed high-traffic adult sites) so the AdsTrackers
+and AdultContent presets get exercised at all.
+
+Re-run with the fix, malware corpus n = 126:
+
+| preset | rate | | preset | rate |
+|---|---|---|---|---|
+| `quad9` | 73/126 (57.9 %) | | `cloudflare-family` | 45/126 (35.7 %) |
+| `cloudflare-malware` | 43/126 (34.1 %) | | `cleanbrowsing-adult` | 67/126 (53.2 %) |
+| **`cleanbrowsing-security`** | **67/126 (53.2 %)** | | others (5) | 0/126 |
+
+- **Quorum (OR of the 4 Security-tier): 93/126 (73.8 %) — +20 domains / +15.9 pp over the best
+  single provider (Quad9).**
+- Quorum (OR of all 10): 94/126 (74.6 %) — +21 / +16.7 pp.
+- **19 malware domains were blocked *only* by CleanBrowsing** (neither Quad9 nor Cloudflare
+  Malware) — that is the OR-quorum's gain, made of real independent coverage. The T-171
+  "correlated feeds, quorum adds nothing" reading was an artifact of the signature bug hiding
+  CleanBrowsing entirely.
+
+**Verdict: the OR-quorum hypothesis is confirmed on n = 126** — a good single Security provider
+(Quad9, ~58 %) is beaten by ~16 pp when the OR runs over all four working Security feeds. Ф1
+metrics gate #1 is now closed *by confirmation*, not just by an honest negative record.
+
+Other corpora (both n < 20 — indicative): **ads** — `adguard` and `adguard-family` each 9/14
+(64 %) via `0.0.0.0`, confirming AdGuard delivers ad blocking (the T-170 default's reason for
+shipping it). **adult** — `cloudflare-family` and `cleanbrowsing-adult` each 10/10; but
+`adguard-family`, `opendns-familyshield`, `dns4eu-child` caught **0/10 with 0 NXDOMAIN** — they
+appear to block via a provider-specific sinkhole/redirect IP that no current `BlockSignature`
+(`NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`) recognises. Filed as **T-175** (needs a
+new `SinkholeIp` signature variant); lower priority — those are secondary Adult presets, not the
+shipped default.

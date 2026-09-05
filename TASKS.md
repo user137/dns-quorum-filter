@@ -411,14 +411,15 @@ GitHub-релізу; rust-cache/concurrency/paths-ignore на CI. Нова за�
 
 **Батч 3.8 (T-156 + T-70) завершено 2026-09-04 — Фаза 3 формально закрита.** Деталі —
 TASKS-DONE.md. **T-168 (аналіз перфомансу) + T-169 (запобіжник resource-exhaustion) завершено
-2026-09-05. T-170 + T-171 завершено 2026-09-05** (T-170: дефолтний набір = `quad9` +
-`cloudflare-malware` + `adguard`, DECISIONS.md. T-171: перемір quorum-coverage на n=122 — гіпотезу
-не підтверджено (+0.8 pp над Quad9), Ф1-метрик-гейт закрито чесним записом, підняте як Ф4+ питання —
-DECISIONS.md / PERFORMANCE.md. **T-171-доповнення (за запитом користувача — усі 10 пресетів, n=124):**
-виявлено баг — `cleanbrowsing-{security,adult}` блокують через NXDOMAIN, а `BUILTIN_PRESETS` каже
-`NullIp` → блоки не рахуються; заведено **T-174**, вердикт T-171 тепер провізорний). **Наступне — Батч
-3.9 (T-172 живий браузерний прохід + closing-advisor на весь батч) → Батч 3.10 (T-173 — реліз
-`v0.3.0`), і Фаза 3 закрита повністю. План — вище, «План фінального закриття Ф3».**
+2026-09-05. T-170 + T-171 + T-174 завершено 2026-09-05** (T-170: дефолтний набір = `quad9` +
+`cloudflare-malware` + `adguard`, DECISIONS.md. T-171: перемір quorum-coverage — спершу +0.8 pp
+(«не підтверджено»), але це був артефакт сигнатурного бага CleanBrowsing. **T-174: виправив
+сигнатуру (`NullIp`→`NullIpOrNxdomain`) + додав ads/adult-корпуси в harness → перемір n=126:
+кворум OR Security-tier +15.9 pp над Quad9, 19 malware-доменів зловив лише CleanBrowsing —
+ГІПОТЕЗУ ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито. Заведено **T-175** (sinkhole-IP-сигнатура).
+DECISIONS.md / PERFORMANCE.md / SPEC.md оновлено. **Наступне — Батч 3.9 (T-172 живий браузерний
+прохід + closing-advisor на весь батч) → Батч 3.10 (T-173 — реліз `v0.3.0`), і Фаза 3 закрита
+повністю. План — вище, «План фінального закриття Ф3».**
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -546,15 +547,16 @@ liveness-примітиви як бібліотечний код у `crates/dnsq
 3 коміти) — розділено: імплементація запобіжника винесена в **T-169**. **T-169 (запобіжник
 resource-exhaustion — `admission::ConnectionGate` + `[limits]`-конфіг + хендшейк/idle-таймаути)
 завершено 2026-09-05** (plan+advisor kickoff+closing, 6 комітів, включно з closing-advisor).
-**T-170 + T-171 завершено 2026-09-05.** T-170 — дефолтний набір `DEFAULT_PROVIDER_IDS` = `quad9`
-+ `cloudflare-malware` + `adguard` (DECISIONS.md; kickoff-AskUserQuestion як gate). T-171 —
-перемір T-66 quorum-coverage на n=122 фінальним набором: гіпотезу **не підтверджено** (+1 домен /
-+0.8 pp над Quad9; Cloudflare-блоки майже підмножина Quad9), Ф1-метрик-гейт закрито чесним
-записом, підняте як Ф4+ дизайн-питання (DECISIONS.md / PERFORMANCE.md «Quorum coverage»).
-**T-171-доповнення (усі 10 пресетів, n=124):** баг — `cleanbrowsing-{security,adult}` блокують
-через NXDOMAIN, `BUILTIN_PRESETS` каже `NullIp` → блоки не рахуються; **T-174** заведено, вердикт
-T-171 провізорний. Наступне — **Батч 3.9** (T-172 живий браузерний прохід + closing-advisor на весь батч) →
-**Батч 3.10** (T-173 бамп `v0.3.0` + тег + чернетка MSIX-релізу) → Фаза 3 закрита повністю.
+**T-170 + T-171 + T-174 завершено 2026-09-05.** T-170 — дефолтний набір `DEFAULT_PROVIDER_IDS` =
+`quad9` + `cloudflare-malware` + `adguard` (DECISIONS.md; kickoff-AskUserQuestion як gate). T-171 —
+перемір quorum-coverage: спершу +0.8 pp («не підтверджено»), але артефакт сигнатурного бага.
+**T-174 — виправив сигнатуру CleanBrowsing (`NullIp`→`NullIpOrNxdomain`) + додав ads/adult-корпуси
+в `phase1_metrics.rs` → перемір n=126: кворум OR Security-tier 93/126, +20 доменів / +15.9 pp над
+Quad9, 19 malware-доменів зловив лише CleanBrowsing — ГІПОТЕЗУ ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт
+закрито. Заведено **T-175** (потрібен `BlockSignature::SinkholeIp` для adguard-family/opendns/
+dns4eu). DECISIONS.md / PERFORMANCE.md / SPEC.md оновлено. Наступне — **Батч 3.9** (T-172 живий
+браузерний прохід + closing-advisor на весь батч) → **Батч 3.10** (T-173 бамп `v0.3.0` + тег +
+чернетка MSIX-релізу) → Фаза 3 закрита повністю.
 
 - [x] T-70 — (Батч 3.8) **Windows-половина — зроблено 2026-09-04**: MSIX (T-156) не має хука на
   видалення взагалі, тож замість «деінсталятор кличе» — новий `local_state::remove_all`
@@ -994,20 +996,16 @@ T-171 провізорний. Наступне — **Батч 3.9** (T-172 жи�
     тепер на `actions/checkout@v7`; `github/codeql-action/{init,analyze}@v4` уже актуальні).
   - `taiki-e/install-action@cargo-*` — окремий екосистемний pin, перевірити чи є свій warning.
   Одноразовий CI-only коміт, без plan/advisor; зробити разом з іншим CI-тюнінгом якщо трапиться.
-- [ ] T-174 — **CleanBrowsing-пресети мають неправильний `block_signature`** (виникло 2026-09-05
-  під час T-171-доповнення — прогін `phase1_metrics.rs` по всіх 10 пресетах). `cleanbrowsing-security`
-  і `cleanbrowsing-adult` у `upstream::BUILTIN_PRESETS` оголошені `BlockSignature::NullIp`, але з
-  цієї точки огляду **обидва блокують через NXDOMAIN** — кожен повернув NXDOMAIN на 66/124
-  URLhaus-доменів (baseline зарезолвив усі 124), з них **18 не зловив Quad9**. `is_blocked(NullIp, …)`
-  NXDOMAIN-блок не бачить → усі блоки CleanBrowsing **не рахуються** в `quorum::resolve`, якщо
-  користувач увімкне ці пресети. **Кроки:** (1) live-verify справжню блок-поведінку CleanBrowsing
-  (`#[ignore]`d-тест у стилі решти пресетів — власна проба проти відомого malware-домену + звірка
-  з baseline; можливо їхня опублікована «`0.0.0.0`»-поведінка регіональна або застаріла), (2)
-  виправити сигнатуру на `NxdomainVsBaseline` або `NullIpOrNxdomain` (останнє — якщо вони віддають
-  обидва залежно від запиту), (3) DECISIONS.md-запис (сигнатура пресета — shipped-поведінка,
-  реверс через журнал), (4) **перепрогнати T-171-вимір усіма 4 працюючими Security-пресетами** —
-  вердикт T-171 («гіпотезу не підтверджено») наразі провізорний саме через цей баг: із
-  `cleanbrowsing-security` ~53 % (+18 доменів понад поточний кворум) Security-tier OR був би
-  помітно вищим за Quad9. Harness уже друкує `[!] signature=NullIp but returned NXDOMAIN …`-маркер.
-  Малий фікс + вимір; **не** блокує Ф3-реліз (T-171-гейт закрито чесним записом, це доуточнення).
-  Деталі — DECISIONS.md 2026-09-05 (T-171-доповнення), PERFORMANCE.md «Follow-up run — all 10».
+- [ ] T-175 — **Кілька пресетів схоже блокують через провайдер-специфічний sinkhole-IP, який
+  жодна `BlockSignature` не ловить** (виникло 2026-09-05 під час T-174 — adult-корпус у
+  `phase1_metrics.rs`). `adguard-family`, `opendns-familyshield`, `dns4eu-protective`,
+  `dns4eu-child` дали **0/10 на adult-корпусі при 0 NXDOMAIN**, тоді як `cloudflare-family` і
+  `cleanbrowsing-adult` — 10/10. Тобто якщо вони взагалі фільтрують, то відповіддю, яка **не**
+  `0.0.0.0` і **не** NXDOMAIN (типово — редирект на власну «заблоковано»-сторінку, напр. OpenDNS
+  `146.112.61.106`). Потрібен новий варіант `BlockSignature::SinkholeIp` із per-preset відомим IP
+  (або списком). **Кроки:** (1) зафіксувати справжні sinkhole-IP кожного провайдера живою пробою,
+  (2) додати варіант enum + гілку в `quorum::evaluate` (`has_answer_ip(known_sinkhole)` →
+  `Signal::Blocked`, self-sufficient як `NullIp`), (3) серде-рядок `SINKHOLE_IP`, CONFIGURATION.md,
+  (4) виставити правильну сигнатуру відповідним пресетам, (5) перепрогнати adult-корпус. Нижчий
+  пріоритет — вторинні Adult-пресети, не shipped-дефолт (де AdGuard-для-реклами вже підтверджено
+  робочим). Деталі — DECISIONS.md 2026-09-05 (T-174), PERFORMANCE.md «Resolution — T-174».
