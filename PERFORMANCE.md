@@ -396,7 +396,16 @@ Definitive run (same two-unfiltered-`NoError` gate, malware corpus **n = 111**; 
   so the "best single" bar rose from Quad9's ~55 % to ~83 % and the quorum margin shrank from
   +17.0 pp to +6.3 pp. **The hypothesis still holds** (positive delta: 7 malware domains blocked
   by no single provider) — this is a more honest number against a stronger baseline, not a
-  regression of the verdict.
+  regression of the verdict. A first run the same day, on an independently-sampled URLhaus feed,
+  gave **+5.4 pp** — the delta is stable in the +5–6 pp band across samples; a future run landing
+  at +4 pp is not a regression.
+- **AAAA:** `is_sinkhole_ip` matches A *and* AAAA. `opendns-familyshield` sinkholes AAAA to an
+  IPv4-mapped form of its v4 block IP (unwrapped and matched against the v4 prefix);
+  `dns4eu-protective` / `dns4eu-child` sinkhole AAAA to a shared native-v6 address
+  (`2001:bc8:1640:3ffd:dc00:ff:fe4a:3ec9`, pinned `/128`). `adguard` / `adguard-family` returned
+  NODATA on AAAA — no v6 sinkhole observed. The malware numbers above are A-record only (the
+  harness queries A); the AAAA paths were established by the recalibrator, not measured for a
+  rate.
 - Adult corpus (n = 8, indicative): `cloudflare-family` / `adguard-family` / `cleanbrowsing-adult`
   / `dns4eu-child` all 8/8 now (`adguard-family` and `dns4eu-child` were 0/9 in T-174 —
   sinkhole);  `opendns-familyshield` 7/8. Ads corpus (n = 14): `adguard` / `adguard-family` 10/14.

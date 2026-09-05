@@ -810,17 +810,35 @@ malware. Дві AskUserQuestion: (1) детектувати гібридно (х
 - `adguard` shipped-дефолт: sinkhole-детекція підняла його malware-rate (частина через
   `94.140.14.x`); кворум тепер рахує ці блоки.
 
+**`representative_allow_answer` — латентний баг заодно закрито** (closing-advisor). До T-175
+`NullIp`-сигнатурний voter, що віддав sinkhole-IP (напр. `94.140.14.33`), класифікувався як
+`Signal::NotBlocked` — тобто цей block-page IP **міг піти клієнту як «справжня» відповідь**
+(браузер відкрив би сторінку-заглушку провайдера, вважаючи її сайтом). Тепер sinkhole-відповідь
+→ `NeedsBaseline`, тож не є кандидатом у `representative_allow_answer`; випадок «sinkhole-only +
+baseline SERVFAIL → Allow» маршрутизується в наявний `answer: None`-шлях (той самий, що
+deeply-degraded fail-open), не нову необроблену гілку. Звірено читанням fallback'а.
+
+**AAAA-доповнення** (closing-advisor катч — `is_sinkhole_ip` спершу читав лише `RData::A`, а
+`requires_quorum` пускає й AAAA). Проба AAAA (2026-09-06): `opendns-familyshield` sinkholить AAAA
+на `::ffff:146.112.61.108` (IPv4-mapped — розгортається в v4-префікс, окремий запис не потрібен);
+`dns4eu-protective` **і** `dns4eu-child` — на спільний native-v6 `2001:bc8:1640:3ffd:dc00:ff:fe4a:3ec9`
+(Scaleway, стабільний по ≥3 доменах кожен, `joindns4.eu`-контроль чистий) → доданий `/128`, та
+сама «no widening»-логіка. `adguard`/`adguard-family` — NODATA на AAAA, v6-sinkhole не
+спостережено. `SinkholeNet.addr` став `IpAddr` (v4 `1..=32`, v6 `1..=128`).
+
 **Наслідки:**
-- `upstream.rs` — `SinkholeNet` + `SINKHOLE_NETS` + `sinkhole_nets_for` + тести (маска, межі,
-  invariant, negative-control на власних доменах провайдерів).
+- `upstream.rs` — `SinkholeNet { addr: IpAddr, prefix: u8 }` (`v4()`/`v6()` конструктори, без
+  `Default`) + `SINKHOLE_NETS` + `DNS4EU_SINKHOLE_NETS` + `sinkhole_nets_for` + тести (маска обох
+  сімейств, межі, invariant, negative-control на власних доменах провайдерів, v6-точність).
 - `quorum.rs` — `evaluate`/`is_blocked`/`known_signal` +param; 3 внутрішні виклики
-  (`voter_record`/`combine`/`resolve`-early-block) + `representative_allow_answer`; ~8 нових
-  тестів. 3 `resolve`-тести: фікстура `94.140.14.14` (реальний AdGuard-резолвер, тепер у sinkhole
-  `/24`) → TEST-NET-3 `203.0.113.14`.
+  (`voter_record`/`combine`/`resolve`-early-block) + `representative_allow_answer`; `is_sinkhole_ip`
+  читає A + AAAA (IPv4-mapped розгортається); ~10 нових тестів. 3 `resolve`-тести: фікстура
+  `94.140.14.14` (реальний AdGuard-резолвер, тепер у sinkhole `/24`) → TEST-NET-3 `203.0.113.14`.
 - `phase1_metrics.rs` — `sinkhole_nets_for(&spec.id)` для **кожного** пресета (ніколи `&[]`);
   opt-in `oisd:<n>` корпус (детермінований stride-семпл `big.oisd.nl`; **окрема секція, НЕ у
   кворум-вердикт** — oisd це блоклист, не known-bad, Security-резолвер коректно не блокує ad/tracker).
-- `sinkhole_probe.rs` — з orientation-проби на постійний рекалібратор.
-- SPEC.md §3.4, CONFIGURATION.md, PERFORMANCE.md, CLAUDE.md.
+- `sinkhole_probe.rs` — з orientation-проби на постійний рекалібратор; питає A + AAAA.
+- SPEC.md §3.4, CONFIGURATION.md, PERFORMANCE.md, CLAUDE.md, TASKS.md, TASKS-DONE.md.
 - Raw-виходи: scratchpad `t175_sinkhole_probe_2026-09-05.txt` (орієнтація),
-  `t175_phase1_metrics_2026-09-06.txt` (фінальний перемір).
+  `t175_phase1_metrics_2026-09-06.txt` (фінальний перемір, `+6.3 pp`; перший прогін того ж дня
+  дав `+5.4 pp` на іншому URLhaus-семплі — дельта стабільна).

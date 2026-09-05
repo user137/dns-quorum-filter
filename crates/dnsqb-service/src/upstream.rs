@@ -10,7 +10,7 @@ use hickory_proto::op::Message;
 use hickory_proto::ProtoError;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 /// SPEC.md §3.6 (T-31): idle HTTP/2 connections to an upstream are dropped
@@ -276,39 +276,60 @@ pub fn all_builtin_presets() -> Vec<ProviderSpec> {
 }
 
 /// A network prefix that a built-in provider substitutes into DNS answers as
-/// its "blocked" response — a sinkhole / block-page address, not `0.0.0.0` and
-/// not NXDOMAIN (T-175, SPEC.md §3.4). `quorum::evaluate` matches an answer's
-/// A record against this **by network prefix**, not by exact address, so a
-/// provider rotating the host bits of its block IP inside its own netblock
-/// (which one might do specifically to defeat third parties keying off a fixed
-/// `/32`) does not silently break detection — the failure mode is a false
-/// *negative* (a real block goes uncounted), never a wrong block of the user's
-/// traffic. Builtin-only: a custom provider has no known sinkhole, so
-/// [`sinkhole_nets_for`] returns `&[]` for it.
+/// its "blocked" response — a sinkhole / block-page address, not `0.0.0.0` /
+/// `::` and not NXDOMAIN (T-175, SPEC.md §3.4). `quorum::evaluate` matches an
+/// A or AAAA answer against this **by network prefix**, not by exact address,
+/// so a provider rotating the host bits of its block IP inside its own
+/// netblock (which one might do specifically to defeat third parties keying
+/// off a fixed `/32`) does not silently break detection — the failure mode is
+/// a false *negative* (a real block goes uncounted), never a wrong block of
+/// the user's traffic. An IPv4-mapped AAAA answer (`::ffff:a.b.c.d`, e.g.
+/// `OpenDNS` `FamilyShield`) is matched against the v4 prefixes. Builtin-only:
+/// a custom provider has no known sinkhole, so [`sinkhole_nets_for`] returns
+/// `&[]` for it.
 #[derive(Debug, Clone, Copy)]
 pub struct SinkholeNet {
     /// The network address (host bits within `prefix` are zero for every
     /// entry in [`SINKHOLE_NETS`] — a test enforces it).
-    addr: Ipv4Addr,
-    /// Prefix length, `1..=32`. `32` matches one exact address; a `0` prefix
-    /// (match everything) is deliberately unrepresentable — the table test
-    /// rejects it, so `SinkholeNet` intentionally derives no `Default`.
+    addr: IpAddr,
+    /// Prefix length — `1..=32` for a v4 `addr`, `1..=128` for v6. The
+    /// max value matches one exact address; a `0` prefix (match everything)
+    /// is deliberately unrepresentable — the table test rejects it, so
+    /// `SinkholeNet` intentionally derives no `Default`.
     prefix: u8,
 }
 
 impl SinkholeNet {
-    const fn new(addr: Ipv4Addr, prefix: u8) -> Self {
-        Self { addr, prefix }
+    const fn v4(addr: Ipv4Addr, prefix: u8) -> Self {
+        Self {
+            addr: IpAddr::V4(addr),
+            prefix,
+        }
     }
 
-    /// Whether `ip` falls inside this prefix. XOR then count leading equal
-    /// bits — no shift, so there is no `<< 32` overflow path and nothing about
-    /// `32 - prefix` to prove safe from the line (a panic on the
-    /// query-serving path would be a watchdog restart loop). `prefix == 32`
-    /// ⇒ exact-address match only.
+    const fn v6(addr: Ipv6Addr, prefix: u8) -> Self {
+        Self {
+            addr: IpAddr::V6(addr),
+            prefix,
+        }
+    }
+
+    /// Whether `ip` falls inside this prefix (only same-family addresses can
+    /// match). XOR then count leading equal bits — no shift, so there is no
+    /// `<< 32` / `<< 128` overflow path and nothing about `WIDTH - prefix` to
+    /// prove safe from the line (a panic on the query-serving path would be a
+    /// watchdog restart loop). Max `prefix` ⇒ exact-address match only.
     #[must_use]
-    pub fn contains(&self, ip: Ipv4Addr) -> bool {
-        (ip.to_bits() ^ self.addr.to_bits()).leading_zeros() >= u32::from(self.prefix)
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        match (self.addr, ip) {
+            (IpAddr::V4(net), IpAddr::V4(ip)) => {
+                (ip.to_bits() ^ net.to_bits()).leading_zeros() >= u32::from(self.prefix)
+            }
+            (IpAddr::V6(net), IpAddr::V6(ip)) => {
+                (ip.to_bits() ^ net.to_bits()).leading_zeros() >= u32::from(self.prefix)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -331,29 +352,45 @@ impl SinkholeNet {
 ///   `51.15.0.0/17` (`SCALEWAY-AMS`), a general cloud-hosting range, so
 ///   **no** prefix widening here — an exact address only; rotation resilience
 ///   for `DNS4EU` rests on the `sinkhole_probe` recalibrator (SPEC.md §3.4).
+/// - `dns4eu-protective` and `dns4eu-child` also sinkhole **AAAA** to the same
+///   native v6 address `2001:bc8:1640:3ffd:dc00:ff:fe4a:3ec9` (`Scaleway`
+///   `2001:bc8::/29` general hosting) — pinned `/128`, same "no widening"
+///   reasoning as the v4. Stable across ≥3 blocked domains for each preset,
+///   `joindns4.eu` / `example.com` controls clean (2026-09-06).
+///   `opendns-familyshield` sinkholes AAAA to `::ffff:146.112.61.108`, an
+///   IPv4-mapped form of its v4 block IP — [`SinkholeNet::contains`]'s caller
+///   unwraps that, so no separate v6 entry is needed. `adguard` /
+///   `adguard-family` returned NODATA on AAAA for their canaries (2026-09-06)
+///   — no v6 sinkhole observed; if one appears, add it here (see the
+///   recalibrator).
 ///
 /// **Widen a provider's prefix only on registry/`RDAP` evidence of
 /// ownership**, never by "completing" a documented block-page range.
 const SINKHOLE_NETS: &[(&str, &[SinkholeNet])] = &[
     (
         "adguard",
-        &[SinkholeNet::new(Ipv4Addr::new(94, 140, 14, 0), 24)],
+        &[SinkholeNet::v4(Ipv4Addr::new(94, 140, 14, 0), 24)],
     ),
     (
         "adguard-family",
-        &[SinkholeNet::new(Ipv4Addr::new(94, 140, 14, 0), 24)],
+        &[SinkholeNet::v4(Ipv4Addr::new(94, 140, 14, 0), 24)],
     ),
     (
         "opendns-familyshield",
-        &[SinkholeNet::new(Ipv4Addr::new(146, 112, 61, 104), 29)],
+        &[SinkholeNet::v4(Ipv4Addr::new(146, 112, 61, 104), 29)],
     ),
-    (
-        "dns4eu-protective",
-        &[SinkholeNet::new(Ipv4Addr::new(51, 15, 69, 11), 32)],
-    ),
-    (
-        "dns4eu-child",
-        &[SinkholeNet::new(Ipv4Addr::new(51, 15, 69, 11), 32)],
+    ("dns4eu-protective", DNS4EU_SINKHOLE_NETS),
+    ("dns4eu-child", DNS4EU_SINKHOLE_NETS),
+];
+
+/// Both DNS4EU presets substitute the same v4 and v6 block addresses.
+const DNS4EU_SINKHOLE_NETS: &[SinkholeNet] = &[
+    SinkholeNet::v4(Ipv4Addr::new(51, 15, 69, 11), 32),
+    SinkholeNet::v6(
+        Ipv6Addr::new(
+            0x2001, 0x0bc8, 0x1640, 0x3ffd, 0xdc00, 0x00ff, 0xfe4a, 0x3ec9,
+        ),
+        128,
     ),
 ];
 
@@ -534,7 +571,7 @@ mod tests {
     };
     use hickory_proto::op::{Message, Query};
     use hickory_proto::rr::{DNSClass, Name, RecordType};
-    use std::net::Ipv4Addr;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use std::str::FromStr;
 
     // T-72/T-73: the two live-verified Phase-1 signatures must survive the
@@ -705,26 +742,31 @@ mod tests {
     fn every_sinkhole_net_is_a_well_formed_prefix() {
         for (id, nets) in super::SINKHOLE_NETS {
             for net in *nets {
+                let (max, host_bits, is_network_addr) = match net.addr {
+                    IpAddr::V4(a) => {
+                        let hb = 32 - u32::from(net.prefix);
+                        let mask = if hb == 32 { 0 } else { u32::MAX << hb };
+                        (32u8, hb, a.to_bits() & mask == a.to_bits())
+                    }
+                    IpAddr::V6(a) => {
+                        let hb = 128 - u32::from(net.prefix);
+                        let mask = if hb == 128 { 0 } else { u128::MAX << hb };
+                        (128u8, hb, a.to_bits() & mask == a.to_bits())
+                    }
+                };
                 assert!(
-                    (1..=32).contains(&net.prefix),
-                    "{id}: prefix {} outside 1..=32",
+                    (1..=max).contains(&net.prefix),
+                    "{id}: prefix /{} outside 1..={max}",
                     net.prefix
                 );
-                // The stored address must already be the network address:
-                // it must contain itself, and (for a non-/32) the broadcast
-                // address of the block too — i.e. no host bits set.
                 assert!(
                     net.contains(net.addr),
                     "{id}: net does not contain its own addr"
                 );
-                let host_bits = 32 - u32::from(net.prefix);
-                let masked = net.addr.to_bits() & !((1u32 << host_bits).wrapping_sub(1));
-                assert_eq!(
-                    net.addr.to_bits(),
-                    masked,
-                    "{id}: addr {} has host bits set for /{}",
-                    net.addr,
-                    net.prefix
+                assert!(
+                    is_network_addr,
+                    "{id}: addr {} has host bits set for /{} ({host_bits} host bits)",
+                    net.addr, net.prefix
                 );
             }
         }
@@ -732,16 +774,22 @@ mod tests {
 
     #[test]
     fn observed_block_ips_lie_inside_their_declared_prefix() {
-        // The addresses `examples/sinkhole_probe.rs` actually saw on
-        // 2026-09-05 — the invariant that keeps the table honest.
-        let cases: &[(&str, Ipv4Addr)] = &[
-            ("adguard", Ipv4Addr::new(94, 140, 14, 33)),
-            ("adguard", Ipv4Addr::new(94, 140, 14, 35)),
-            ("adguard-family", Ipv4Addr::new(94, 140, 14, 33)),
-            ("opendns-familyshield", Ipv4Addr::new(146, 112, 61, 106)),
-            ("opendns-familyshield", Ipv4Addr::new(146, 112, 61, 108)),
-            ("dns4eu-protective", Ipv4Addr::new(51, 15, 69, 11)),
-            ("dns4eu-child", Ipv4Addr::new(51, 15, 69, 11)),
+        // The addresses `examples/sinkhole_probe.rs` actually saw — the
+        // invariant that keeps the table honest.
+        let v4 = |a, b, c, d| IpAddr::V4(Ipv4Addr::new(a, b, c, d));
+        let dns4eu_v6 = IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0x0bc8, 0x1640, 0x3ffd, 0xdc00, 0x00ff, 0xfe4a, 0x3ec9,
+        ));
+        let cases: &[(&str, IpAddr)] = &[
+            ("adguard", v4(94, 140, 14, 33)),
+            ("adguard", v4(94, 140, 14, 35)),
+            ("adguard-family", v4(94, 140, 14, 33)),
+            ("opendns-familyshield", v4(146, 112, 61, 106)),
+            ("opendns-familyshield", v4(146, 112, 61, 108)),
+            ("dns4eu-protective", v4(51, 15, 69, 11)),
+            ("dns4eu-protective", dns4eu_v6),
+            ("dns4eu-child", v4(51, 15, 69, 11)),
+            ("dns4eu-child", dns4eu_v6),
         ];
         for (id, ip) in cases {
             assert!(
@@ -754,27 +802,43 @@ mod tests {
     }
 
     #[test]
-    fn contains_matches_by_prefix_and_rejects_neighbours() {
-        let ag = SinkholeNet::new(Ipv4Addr::new(94, 140, 14, 0), 24);
+    fn contains_matches_by_prefix_family_and_rejects_neighbours() {
+        let ag = SinkholeNet::v4(Ipv4Addr::new(94, 140, 14, 0), 24);
+        let v4 = |a, b, c, d| IpAddr::V4(Ipv4Addr::new(a, b, c, d));
         // Host-bit rotation inside the /24 still matches (the whole point).
-        assert!(ag.contains(Ipv4Addr::new(94, 140, 14, 200)));
-        assert!(ag.contains(Ipv4Addr::new(94, 140, 14, 33)));
+        assert!(ag.contains(v4(94, 140, 14, 200)));
+        assert!(ag.contains(v4(94, 140, 14, 33)));
         // One octet outside → no match.
-        assert!(!ag.contains(Ipv4Addr::new(94, 140, 15, 1)));
-        assert!(!ag.contains(Ipv4Addr::new(94, 141, 14, 33)));
-        // A real host that happens to be AdGuard's public resolver *is*
-        // inside the /24 — acceptable, that range is theirs (see the const
-        // doc). A legitimate third-party host like Cloudflare is not.
-        assert!(!ag.contains(Ipv4Addr::new(104, 18, 188, 9))); // adguard.com (Cloudflare)
+        assert!(!ag.contains(v4(94, 140, 15, 1)));
+        assert!(!ag.contains(v4(94, 141, 14, 33)));
+        // adguard.com (Cloudflare) is a legitimate host outside the /24.
+        assert!(!ag.contains(v4(104, 18, 188, 9)));
+        // A v6 address never matches a v4 prefix.
+        assert!(!ag.contains(IpAddr::V6(Ipv6Addr::LOCALHOST)));
 
-        let dns4eu = SinkholeNet::new(Ipv4Addr::new(51, 15, 69, 11), 32);
-        assert!(dns4eu.contains(Ipv4Addr::new(51, 15, 69, 11)));
-        assert!(!dns4eu.contains(Ipv4Addr::new(51, 15, 69, 12)));
+        let dns4eu = SinkholeNet::v4(Ipv4Addr::new(51, 15, 69, 11), 32);
+        assert!(dns4eu.contains(v4(51, 15, 69, 11)));
+        assert!(!dns4eu.contains(v4(51, 15, 69, 12)));
 
-        let cisco = SinkholeNet::new(Ipv4Addr::new(146, 112, 61, 104), 29);
-        assert!(cisco.contains(Ipv4Addr::new(146, 112, 61, 110)));
-        assert!(!cisco.contains(Ipv4Addr::new(146, 112, 61, 112))); // just past the /29
-        assert!(!cisco.contains(Ipv4Addr::new(146, 112, 62, 105))); // opendns.com
+        let cisco = SinkholeNet::v4(Ipv4Addr::new(146, 112, 61, 104), 29);
+        assert!(cisco.contains(v4(146, 112, 61, 110)));
+        assert!(!cisco.contains(v4(146, 112, 61, 112))); // just past the /29
+        assert!(!cisco.contains(v4(146, 112, 62, 105))); // opendns.com
+
+        // dns4eu-child's native-v6 /128 — exact match only.
+        let child6 = SinkholeNet::v6(
+            Ipv6Addr::new(
+                0x2001, 0x0bc8, 0x1640, 0x3ffd, 0xdc00, 0x00ff, 0xfe4a, 0x3ec9,
+            ),
+            128,
+        );
+        assert!(child6.contains(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0x0bc8, 0x1640, 0x3ffd, 0xdc00, 0x00ff, 0xfe4a, 0x3ec9
+        ))));
+        assert!(!child6.contains(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0x0bc8, 0x1640, 0x3ffd, 0xdc00, 0x00ff, 0xfe4a, 0x3eca
+        ))));
+        assert!(!child6.contains(v4(51, 15, 69, 11)));
     }
 
     // Live network check - not run in CI (Відкрите питання п.2, ToS on

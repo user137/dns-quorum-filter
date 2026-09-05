@@ -27,7 +27,7 @@ use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{DNSClass, Name, RData, RecordType};
 use std::error::Error;
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::time::Duration;
 
 const PER_DOMAIN_DELAY: Duration = Duration::from_millis(150);
@@ -177,43 +177,49 @@ fn describe_nets(nets: &[SinkholeNet]) -> String {
         .join(", ")
 }
 
-fn in_any(ip: Ipv4Addr, nets: &[SinkholeNet]) -> bool {
+fn in_any(ip: IpAddr, nets: &[SinkholeNet]) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        v4 => v4,
+    };
     nets.iter().any(|net| net.contains(ip))
 }
 
-/// Resolve `domain`'s A records via `url` (or the baseline if `url` is empty),
-/// returning the answer IPs. A non-`NoError` rcode returns an empty vec — the
-/// caller reads "no IP inside the prefix" from that, which is the point.
+/// Resolve `domain`'s A **and** AAAA records via `url` (or the baseline if
+/// `url` is empty), returning every answer IP. A non-`NoError` rcode
+/// contributes nothing — the caller reads "no IP inside the prefix" from
+/// that, which is the point.
 async fn observe(
     client: &ReqwestDohClient,
     url: &str,
     domain: &str,
-) -> Result<Vec<Ipv4Addr>, Box<dyn Error>> {
+) -> Result<Vec<IpAddr>, Box<dyn Error>> {
     let endpoint = if url.is_empty() {
         BASELINE_DOH_URL
     } else {
         url
     };
-    let query = build_query(domain)?;
-    let response = client.query(endpoint, &query).await?;
-    if response.metadata.response_code != ResponseCode::NoError {
-        return Ok(Vec::new());
+    let mut ips = Vec::new();
+    for qtype in [RecordType::A, RecordType::AAAA] {
+        let response = client.query(endpoint, &build_query(domain, qtype)?).await?;
+        if response.metadata.response_code != ResponseCode::NoError {
+            continue;
+        }
+        for record in &response.answers {
+            match &record.data {
+                RData::A(A(ip)) => ips.push(IpAddr::V4(*ip)),
+                RData::AAAA(AAAA(ip)) => ips.push(IpAddr::V6(*ip)),
+                _ => {}
+            }
+        }
     }
-    Ok(response
-        .answers
-        .iter()
-        .filter_map(|record| match &record.data {
-            RData::A(A(ip)) => Some(*ip),
-            RData::AAAA(AAAA(_)) => None,
-            _ => None,
-        })
-        .collect())
+    Ok(ips)
 }
 
-fn build_query(domain: &str) -> Result<Message, Box<dyn Error>> {
+fn build_query(domain: &str, qtype: RecordType) -> Result<Message, Box<dyn Error>> {
     let mut question = Query::new();
     question.set_name(Name::from_utf8(domain)?);
-    question.set_query_type(RecordType::A);
+    question.set_query_type(qtype);
     question.set_query_class(DNSClass::IN);
     let mut message = Message::query();
     message.add_query(question);
@@ -259,7 +265,7 @@ async fn fetch_urlhaus_domains(
         // Keep only hosts the baseline resolves (so "not in prefix" means the
         // preset didn't sinkhole it, not that the domain is dead).
         let host = host.to_ascii_lowercase();
-        let Ok(query) = build_query(&host) else {
+        let Ok(query) = build_query(&host, RecordType::A) else {
             continue;
         };
         let Ok(base) = client.query(BASELINE_DOH_URL, &query).await else {

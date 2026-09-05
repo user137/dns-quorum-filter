@@ -3589,7 +3589,7 @@ header-нота + «Resolution — T-174»), DECISIONS.md (T-174-запис), CL
 Known-limitations: CleanBrowsing→fixed, +T-175-рядок), TASKS.md (T-175 заведено). Raw-виходи —
 scratchpad `t174_3corpus_run_prefix_2026-09-05.txt` (до), `t174_remeasure_fixed_2026-09-05.txt` (після).
 
-### T-175 — sinkhole-IP-детекція через network-префікс (зроблено 2026-09-06, plan+advisor kickoff+closing, 1 коміт)
+### T-175 — sinkhole-IP-детекція через network-префікс (зроблено 2026-09-06, plan+advisor kickoff+closing, 2 коміти)
 
 - [x] T-175 — 5 пресетів (`adguard`, `adguard-family`, `opendns-familyshield`,
   `dns4eu-protective`, `dns4eu-child`) блокують, підмінюючи відповідь сталим провайдер-специфічним
@@ -3614,7 +3614,16 @@ scratchpad `t174_3corpus_run_prefix_2026-09-05.txt` (до), `t174_remeasure_fixe
 - Наслідок під `fail_closed`: baseline-timeout → sinkhole-відповідь `Blocked` через
   `unresponsive_signal` (безпечний бік, консистентно з voter-таймаутом — задокументовано).
 
-**Тести** (~12 нових): `evaluate`/`is_blocked` — sinkhole+baseline-NoError→block,
+**Closing-advisor катчі (2-й коміт):** (1) `is_sinkhole_ip` спершу читав лише `RData::A`, а
+`requires_quorum` пускає й AAAA — проба AAAA виявила `opendns-familyshield` sinkholить
+`::ffff:146.112.61.108` (IPv4-mapped → розгортається в v4-префікс), а `dns4eu-{protective,child}`
+— спільний native-v6 `2001:bc8:…:3ec9` (стабільний, контроль чистий) → `SinkholeNet.addr` став
+`IpAddr`, доданий `/128`, `is_sinkhole_ip` читає A+AAAA, рекалібратор питає обидва.
+(2) `representative_allow_answer`: до T-175 sinkhole-IP міг піти клієнту як «справжня» відповідь
+(`NotBlocked`) — тепер виключений, маршрут у наявний `answer: None`-шлях (звірено читанням).
+(3) Дельта +6.3 pp стабільна: перший прогін того ж дня дав +5.4 pp на іншому URLhaus-семплі.
+
+**Тести** (~14 нових): `evaluate`/`is_blocked` — sinkhole+baseline-NoError→block,
 sinkhole+SERVFAIL→не-block, sinkhole+реальний IP разом→block, порожній набір→стара поведінка,
 композиція з `NullIp`; **negative-control** — `adguard` набір + `adguard.com` (реальний IP поза
 `/24`) → NotBlocked (ловить занадто широкий префікс); `SinkholeNet::contains` — маска, сусіди,

@@ -169,7 +169,7 @@ Modules under `crates/dnsqb-service/src/`:
 |---|---|
 | `admission` | T-169 — `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()` (cumulative), `active()` (max − available, live). Lives on `AppState` (`connection_gate()`); `main.rs`'s accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling; `live_stats` reads both counters into `AdminStats` |
 | `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability }` — T-154/T-155/T-152 bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read (instant SERVFAIL, no fan-out/cache, mode-independent). `outcome.filters_unreachable` (T-155) → `filters_unreachable_outcome` → `DecisionSource::BaselineFallback` (toggle on = baseline answer mode-invariant; off = mode's own verdict, relabelled), never cached |
-| `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature, &Message, &[SinkholeNet])` (3 heuristics `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`, **+ T-175 sinkhole-prefix branch**: an A answer inside a preset's `upstream::sinkhole_nets_for(id)` prefix → `Signal::NeedsBaseline`, composes with the signature); `is_blocked` / `known_signal` also carry the `&[SinkholeNet]` param; early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
+| `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature, &Message, &[SinkholeNet])` (3 heuristics `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`, **+ T-175 sinkhole-prefix branch**: an A/AAAA answer inside a preset's `upstream::sinkhole_nets_for(id)` prefix (v4 or v6; IPv4-mapped AAAA unwrapped) → `Signal::NeedsBaseline`, composes with the signature); `is_blocked` / `known_signal` also carry the `&[SinkholeNet]` param; early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
 | `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 30s only when both Online, else recheck 3s — so a building outage still probes fast); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
 | `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear`; T-97 added `snapshot()` (sync `moka::future::Cache::iter()`, best-effort) / `restore()` and `CacheKey::domain()`/`qtype()` accessors for `cache.enc` |
@@ -370,15 +370,21 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   `quorum::evaluate` / `is_blocked` / `known_signal` gained a `&[SinkholeNet]` param; `upstream::
   sinkhole_nets_for(id)` returns a per-preset **network prefix** (RDAP-verified owner, not a
   vendor block-page doc): `adguard`/`adguard-family` `94.140.14.0/24`, `opendns-familyshield`
-  `146.112.61.104/29`, `dns4eu-{protective,child}` `51.15.69.11/32` (exact — that IP is in
-  Scaleway general hosting, no widening). An A answer in the prefix → `Signal::NeedsBaseline`
-  (block only if baseline resolved `NoError`); composes with the existing signature. `adguard`
-  (shipped default) also blocks some malware this way — quorum now counts it.
+  `146.112.61.104/29`, `dns4eu-{protective,child}` `51.15.69.11/32` + native-v6
+  `2001:bc8:…:3ec9/128` (both exact — Scaleway general hosting, no widening). `is_sinkhole_ip`
+  matches **A and AAAA** (IPv4-mapped `::ffff:a.b.c.d` unwrapped to the v4 prefix — OpenDNS does
+  this; `adguard*` returned NODATA on AAAA, no v6 entry). An answer in the prefix →
+  `Signal::NeedsBaseline` (block only if baseline resolved `NoError`); composes with the existing
+  signature. `adguard` (shipped default) also blocks some malware this way — quorum now counts it.
+  Latent bug fixed en route: pre-T-175 a `NullIp`-signature voter returning a sinkhole IP was
+  `NotBlocked`, so `representative_allow_answer` could forward the block-page IP to the browser as
+  a real answer; now excluded (routes to the existing Allow/`answer: None` path).
   **Residual brittleness (Три Б):** the table is hard-coded — a provider moving its block IP to a
   different prefix silently under-counts that voter (false negative, never a wrong block). No
   passive alarm (the "0-in-prefix" predicate isn't computable — CDN variance dominates). Mitigation
   = `examples/sinkhole_probe.rs`, now a **recalibrator** (canary domain must land in the prefix,
-  provider's own site must not) — run before a release. DNS4EU's `/32` relies entirely on it.
+  provider's own site must not; queries A + AAAA) — run before a release. DNS4EU's `/32` /
+  `/128` rely entirely on it.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.

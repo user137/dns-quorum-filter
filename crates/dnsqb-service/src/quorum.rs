@@ -19,7 +19,7 @@ use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{RData, Record, RecordType};
 use std::future::Future;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 
 /// SPEC.md §6 `voters` column, per-voter value — five variants, matching
@@ -97,15 +97,17 @@ fn is_null_ip(record: &Record) -> bool {
     }
 }
 
-/// Whether `record` is an A record inside one of `nets` — a provider-specific
-/// sinkhole / block-page address (T-175). Same `RData::A` read shape as
-/// [`is_null_ip`]; AAAA is not covered (no observed provider sinkholes an
-/// AAAA answer, and the prefixes are IPv4).
+/// Whether `record`'s A/AAAA address falls inside one of `nets` — a
+/// provider-specific sinkhole / block-page address (T-175). An IPv4-mapped
+/// AAAA answer (`::ffff:a.b.c.d`, e.g. `OpenDNS` `FamilyShield`) is matched
+/// against the v4 prefixes, not treated as a distinct v6 address.
 fn is_sinkhole_ip(record: &Record, nets: &[SinkholeNet]) -> bool {
-    let RData::A(A(ip)) = &record.data else {
-        return false;
+    let ip = match &record.data {
+        RData::A(A(ip)) => IpAddr::V4(*ip),
+        RData::AAAA(AAAA(ip)) => ip.to_ipv4_mapped().map_or(IpAddr::V6(*ip), IpAddr::V4),
+        _ => return false,
     };
-    nets.iter().any(|net| net.contains(*ip))
+    nets.iter().any(|net| net.contains(ip))
 }
 
 /// A single voter's contribution to the OR-decision, once any
@@ -916,9 +918,9 @@ mod tests {
         super::voter_record(&preset_entry(id, enabled), outcome, baseline, mode)
     }
     use hickory_proto::op::{Message, Query, ResponseCode};
-    use hickory_proto::rr::rdata::A;
+    use hickory_proto::rr::rdata::{A, AAAA};
     use hickory_proto::rr::{Name, RData, Record, RecordType};
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use std::time::Duration;
 
     fn query_of_type(qtype: RecordType) -> Message {
@@ -1104,6 +1106,15 @@ mod tests {
         allow_message_with_ip(ip)
     }
 
+    fn message_with_aaaa(ip: Ipv6Addr) -> Message {
+        let mut message = Message::query();
+        message.metadata.response_code = ResponseCode::NoError;
+        message
+            .answers
+            .push(Record::from_rdata(Name::root(), 60, RData::AAAA(AAAA(ip))));
+        message
+    }
+
     #[test]
     fn sinkhole_ip_with_resolving_baseline_is_blocked() {
         // NullIp-signature preset (`adguard`) that answered with a sinkhole
@@ -1193,6 +1204,44 @@ mod tests {
             &message_with_ip(Ipv4Addr::new(104, 18, 188, 9)),
             &allow_message(),
             adguard_sinkhole_nets(),
+        ));
+    }
+
+    #[test]
+    fn ipv4_mapped_aaaa_sinkhole_answer_is_blocked() {
+        // OpenDNS FamilyShield's AAAA block is `::ffff:146.112.61.108` — an
+        // IPv4-mapped form of its v4 block IP, matched against the v4 prefix.
+        let nets = crate::upstream::sinkhole_nets_for("opendns-familyshield");
+        let mapped = Ipv4Addr::new(146, 112, 61, 108).to_ipv6_mapped();
+        assert!(is_blocked(
+            BlockSignature::NxdomainVsBaseline,
+            &message_with_aaaa(mapped),
+            &allow_message(),
+            nets,
+        ));
+    }
+
+    #[test]
+    fn native_v6_sinkhole_answer_is_blocked_and_a_real_v6_is_not() {
+        // dns4eu-child sinkholes AAAA to a native Scaleway v6 address
+        // (observed stable across domains, control clean).
+        let nets = crate::upstream::sinkhole_nets_for("dns4eu-child");
+        let sinkhole = Ipv6Addr::new(
+            0x2001, 0x0bc8, 0x1640, 0x3ffd, 0xdc00, 0x00ff, 0xfe4a, 0x3ec9,
+        );
+        assert!(is_blocked(
+            BlockSignature::NullIpOrNxdomain,
+            &message_with_aaaa(sinkhole),
+            &allow_message(),
+            nets,
+        ));
+        // A genuine Cloudflare v6 answer is not a block.
+        let real = Ipv6Addr::new(0x2606, 0x4700, 0x10, 0, 0, 0, 0xac42, 0x93f3);
+        assert!(!is_blocked(
+            BlockSignature::NullIpOrNxdomain,
+            &message_with_aaaa(real),
+            &allow_message(),
+            nets,
         ));
     }
 
