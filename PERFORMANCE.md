@@ -70,6 +70,55 @@ concurrent outbound sockets:
 count, and outbound socket count** — that is the actual resource-exhaustion risk this file is
 about, not per-query memory.
 
+### Memory per connection (cost model — first-order, for sizing the cap)
+
+The concurrency cap (SPEC.md §1.1, T-169) is a backstop against pathological *accumulation* of
+held connections, so its size wants a second check alongside the T-168 latency curve: **how much
+resident memory does one held connection actually cost?** The per-connection heap cost, from the
+locked dependency versions:
+
+| Layer | What it holds | Size (verified from vendored source) |
+|---|---|---|
+| `rustls` 0.23.43 `ServerConnection` | `sendable_tls` (outgoing encrypted queue) + `sendable_plaintext` (decrypted, awaiting app read), each `ChunkVecBuffer` capped at `DEFAULT_BUFFER_LIMIT`; plus the record deframer input | ≤ 64 KiB + ≤ 64 KiB cap (only fills under backpressure); deframer ≈ one TLS record, ≤ ~18 KiB |
+| `hyper` 1.11.0 h2 server conn | HPACK tables, framing bookkeeping, `max_send_buffer_size` | send buffer ≤ 400 KiB (fills only if the client stalls reads); tables/bookkeeping ~tens of KiB |
+| h2 flow-control windows | `initial_conn_window_size` / `initial_stream_window_size` = **1 MiB each** (`adaptive_window` off) | **advertised credit, not resident memory** — h2 holds only bytes actually received and not yet drained |
+| tokio task | the spawned `serve_connection` future state machine | ~a few KiB heap |
+| `TcpStream` + fd | kernel socket buffers (not process heap) + 1 fd | ~1 KiB process-side |
+
+The 1 MiB h2 windows are the scary-looking number and the misleading one: they are the *credit*
+the client may spend, not memory the server pre-allocates. What actually caps a stream's resident
+receive buffer is the app draining it — `dispatch::serve` wraps every request body in
+`Limited::new(_, MAX_MESSAGE_SIZE)` (65 535) and `.collect()`s it promptly, so a single in-flight
+stream holds at most ~64 KiB of body regardless of the window advertisement.
+
+**First-order estimate:**
+
+- **Idle held connection** (TCP open, mid-handshake or connected-idle, no request in flight — the
+  slow-loris shape): rustls deframer + partial handshake state + the tokio task future + socket
+  bookkeeping ≈ **~10–30 KiB**. The 64 KiB rustls buffers and 400 KiB h2 send buffer are empty in
+  this state.
+- **Connection actively serving one DoH request**: **+ ~64–150 KiB transient** (the collected
+  body up to `MAX_MESSAGE_SIZE`, plus rustls plaintext/TLS buffers if the peer backpressures),
+  released as soon as the response is flushed.
+
+**Budget check (the second sizing input):**
+
+```
+max_concurrent_connections  ≲  connection_memory_budget / per_idle_connection_cost
+```
+
+At a deliberately generous 256 MiB budget for held-connection memory and ~32 KiB per idle
+connection, that is on the order of **~8 000**; at ~64 KiB, ~4 000. This is the same order of
+magnitude the T-168 latency curve points to (smooth to 3 000, no failures, "tens of MB transient
+at the 3 000 peak, released after") — the two checks agree, which is what a backstop cap wants.
+
+**This is an estimate, not a measurement.** The T-168 harness samples RSS *before/after each
+ramp level*, but connections open and complete *within* a level, so that delta measures allocator
+high-water residue, not the cost of N *simultaneously* held connections (two of T-168's recorded
+deltas are negative). The real held-connection slope is measured in T-169 by holding
+`max_concurrent_connections` sockets open in the load harness's slow-loris mode and sampling RSS
+while they are held — that number replaces this estimate here when it lands.
+
 ### Fan-out ceiling (computed, not measured)
 
 Deliberately **not** exercised with real concurrent traffic against live upstreams — Quad9/
