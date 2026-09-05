@@ -3414,3 +3414,39 @@ backstop на вхідні з'єднання закриває основний �
 **Non-blocking.** Scratch slow-loris-інстанс намінтив власний Credential Manager TLS-key запис
 (`doh-tls-private-key:<hash>` для scratch app-data) — benign, за конвенцією (як T-168); не видаляю
 (ризик стерти не той hash-keyed запис). CodeQL — `admission` не торкається secret-shape.
+
+### T-170 — дефолтний набір провайдерів першого запуску (зроблено 2026-09-05, kickoff-AskUserQuestion як gate, 1 коміт)
+
+- [x] T-170 — `DEFAULT_PROVIDER_IDS` — рішення + зміна (SPEC.md §3.4/§3.5) — з `["quad9", "adguard"]`
+  на `["quad9", "cloudflare-malware", "adguard"]`; DECISIONS.md 2026-09-05.
+
+**Gate.** Kickoff-AskUserQuestion (Три Б: змінює те, що фільтрується при першому запуску). Без
+окремого advisor-проходу на T-170 — за планом Батча 3.9 його покриває батч-closing після T-172.
+
+**Рішення користувача.** Не запропонований варіант (а)/(б)/(в), а власний: **`quad9` +
+`cloudflare-malware` + `adguard` — «quad9 + cloudflare + adguard як фільтр реклами»**. Два
+Security-tier voter'и §3.4 (справжній OR-кворум двох незалежних threat-feed'ів, а не сам Quad9 —
+прямо адресує Ф1-гейт #1, T-66 AdGuard 0/38 n=1) плюс AdGuard для реклами з коробки. Adult
+лишається opt-in category-перемикачем. Повне обґрунтування — DECISIONS.md.
+
+**Blast radius був більший за «малий, один коміт».** `dispatch.rs` мав хардкоджені асерти
+`["quad9", "adguard"]` / `third_party_count` / `health.active_providers` (фікстури будуються з
+`default_active_set()`, тож продакшн-шлях слідує сам — правились лише числа/списки в асертах).
+`pipeline.rs` + `quorum.rs` тестові хелпери `default_voters()` **відв'язано** від
+`DEFAULT_PROVIDER_IDS` на фіксовану пару `quad9`+`adguard` — це тести механіки
+`handle_query`/`resolve`, їхні `MockClient`/`MockDohClient` мокають рівно двох voter'ів + baseline;
+без відв'язки третій voter отримував би baseline-відповідь (або panic на `MockResponse::Panic`).
+3 quorum-тести (`adguard_self_sufficient_block_records_...`, два `filters_unreachable_...`) впали
+саме так до відв'язки. Реальний трипровайдерний дефолт лишається покритим на рівні `dispatch.rs`
++ новий `upstream.rs`-тест `the_fresh_install_default_is_two_security_voters_plus_adguard` (пінить
+склад: 2×Security + 1×AdsTrackers, щоб тиха зміна набору була гучною).
+
+**Не торкнуто.** `examples/phase1_metrics.rs` (T-66/T-171 harness) усе ще міряє
+baseline/quad9/adguard — оновлення на фінальний набір робить T-171.
+
+**Файли.** `upstream.rs` (константа + doc-коментарі + новий тест), `dispatch.rs` (7 асерт-сайтів +
+2 коментарі), `pipeline.rs` + `quorum.rs` (`default_voters()` хелпер), SPEC.md §3.4/§3.5,
+DECISIONS.md, CONFIGURATION.md (рядок таблиці + приклад TOML + «відсутність `[[providers]]`»),
+README.md, UI-SPEC.md, CLAUDE.md (Project State + «Known limitations» рядок знято + «Key
+non-obvious decisions»). Гейти зелені локально (624 lib+bins, 18 conformance, clippy, fmt, doc,
+doctest).

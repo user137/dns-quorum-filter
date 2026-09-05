@@ -117,8 +117,9 @@ pub struct ProviderEntry {
 }
 
 impl ProviderEntry {
-    /// The two Phase-1 voters, both enabled — the fresh-install default when
-    /// `resolver_config.toml` has no `[[providers]]` (unchanged behaviour).
+    /// The fresh-install default voter set — [`DEFAULT_PROVIDER_IDS`]
+    /// (`quad9` + `cloudflare-malware` + `adguard`), all enabled — used when
+    /// `resolver_config.toml` has no `[[providers]]`.
     #[must_use]
     pub fn default_active_set() -> Vec<Self> {
         DEFAULT_PROVIDER_IDS
@@ -218,10 +219,14 @@ const BUILTIN_PRESETS: &[(&str, &str, &str, Category, BlockSignature)] = &[
 ];
 
 /// The `id`s of the presets enabled on a fresh install with no
-/// `[[providers]]` in `resolver_config.toml` — the two Phase-1 voters,
-/// unchanged. SPEC.md §3.4/§3.5's "Security category only" first-run default
-/// is a separate, still-open decision (see `TASKS.md`).
-pub const DEFAULT_PROVIDER_IDS: &[&str] = &["quad9", "adguard"];
+/// `[[providers]]` in `resolver_config.toml`: two Security-tier voters
+/// (`quad9` + `cloudflare-malware`, matching SPEC.md §3.4/§3.5's "Security
+/// category only" first-run default) **plus** `adguard` for ads/trackers —
+/// a deliberate divergence from the SPEC default, decided 2026-09-05
+/// (T-170, `DECISIONS.md`): `adguard` filters ads out of the box rather
+/// than as an opt-in category. Was `quad9` + `adguard` (the Phase-1
+/// voters) up to that decision.
+pub const DEFAULT_PROVIDER_IDS: &[&str] = &["quad9", "cloudflare-malware", "adguard"];
 
 /// Resolve a built-in preset `id` to its full [`ProviderSpec`], or `None` if
 /// `id` names no preset (i.e. it must be a custom entry carrying its own
@@ -451,6 +456,27 @@ mod tests {
         assert_eq!(set.len(), DEFAULT_PROVIDER_IDS.len());
         assert!(!set.is_empty(), "a fresh install must have voters");
         assert!(set.iter().all(|entry| entry.enabled));
+    }
+
+    // T-170 (DECISIONS.md 2026-09-05): the shipped first-run default is
+    // pinned deliberately — two Security-tier voters plus AdGuard for ads.
+    // A silent edit of `DEFAULT_PROVIDER_IDS` that drops the malware feed or
+    // the ads feed changes what a fresh install blocks; make it loud.
+    #[test]
+    fn the_fresh_install_default_is_two_security_voters_plus_adguard() {
+        let set = ProviderEntry::default_active_set();
+        let ids: Vec<&str> = set.iter().map(|entry| entry.spec.id.as_str()).collect();
+        assert_eq!(ids, ["quad9", "cloudflare-malware", "adguard"]);
+        let security = set
+            .iter()
+            .filter(|entry| entry.spec.category == Category::Security)
+            .count();
+        assert_eq!(security, 2, "SPEC §3.4/§3.5 Security-tier core");
+        assert!(
+            set.iter()
+                .any(|entry| entry.spec.category == Category::AdsTrackers),
+            "T-170: AdGuard ships for ads out of the box"
+        );
     }
 
     #[test]

@@ -816,8 +816,11 @@ mod tests {
     }
 
     /// Both Phase-1 voters enabled — the old `EnabledProviders::default()`.
+    /// A fixed `quad9` + `adguard` pair for these `resolve` mechanics tests,
+    /// deliberately independent of the shipped `DEFAULT_PROVIDER_IDS` (T-170
+    /// widened that to three); `MockDohClient` only mocks these two.
     fn default_voters() -> Vec<ProviderEntry> {
-        ProviderEntry::default_active_set()
+        voters(true, true)
     }
 
     /// Named built-in presets with per-voter `enabled` flags — the old

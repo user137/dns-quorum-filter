@@ -3455,8 +3455,8 @@ mod tests {
     }
 
     // T-86: `/health` runs the local pipeline prefix and reports assembled
-    // state; the default provider set (quad9 + adguard) is 2 enabled voters,
-    // and the test state has no GeoIP database.
+    // state; the default provider set (quad9 + cloudflare-malware + adguard,
+    // T-170) is 3 enabled voters, and the test state has no GeoIP database.
     #[tokio::test]
     async fn serve_health_returns_200_with_pipeline_status() {
         let req = match Request::builder()
@@ -3478,7 +3478,7 @@ mod tests {
             Ok(health) => health,
             Err(err) => panic!("/health body must decode: {err}"),
         };
-        assert_eq!(health.active_providers, 2);
+        assert_eq!(health.active_providers, 3);
         assert_eq!(health.geoip, crate::admin::HealthGeoip::Absent);
     }
 
@@ -3653,7 +3653,7 @@ mod tests {
             .iter()
             .map(|p| p.id.as_str())
             .collect();
-        assert_eq!(active_ids, vec!["quad9", "adguard"]);
+        assert_eq!(active_ids, vec!["quad9", "cloudflare-malware", "adguard"]);
         assert!(status.persisted);
         assert!(
             !status.encrypted_persistence.query_log,
@@ -4002,7 +4002,7 @@ mod tests {
             Err(err) => match err {},
         };
         assert_eq!(config_response.status(), StatusCode::OK);
-        for id in ["quad9", "adguard"] {
+        for id in ["quad9", "cloudflare-malware", "adguard"] {
             let response = match serve(
                 admin_post_json(
                     "/admin/providers/set-enabled",
@@ -5420,9 +5420,10 @@ mod tests {
     // resolve_doh_request/handle_query path against a MockClient whose
     // `calls` counter (already used elsewhere in this file to prove
     // cancellation/pass-through) increments once per upstream query: the
-    // second identical query must re-query upstream (quad9+adguard+baseline,
-    // 3 calls) after a cache-config apply, not silently hit a cache entry
-    // that survived the swap.
+    // second identical query must re-query upstream
+    // (quad9+cloudflare-malware+adguard+baseline, 4 calls) after a
+    // cache-config apply, not silently hit a cache entry that survived the
+    // swap.
     #[tokio::test]
     async fn serve_admin_cache_config_apply_forces_a_fresh_upstream_query_not_a_stale_cache_hit() {
         let ip = Ipv4Addr::new(5, 6, 7, 8);
@@ -7000,14 +7001,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serve_admin_providers_lists_the_default_two_and_every_preset() {
+    async fn serve_admin_providers_lists_the_default_three_and_every_preset() {
         let (_dir, state) = providers_state();
         let body = providers_json(state).await;
         let active_ids: Vec<&str> = body.active.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(active_ids, vec!["quad9", "adguard"]);
+        assert_eq!(active_ids, vec!["quad9", "cloudflare-malware", "adguard"]);
         assert!(body.active.iter().all(|p| p.is_builtin && p.enabled));
         assert!(body.available_presets.len() >= 10);
-        assert_eq!(body.third_party_count, 3, "2 voters + baseline");
+        assert_eq!(body.third_party_count, 4, "3 voters + baseline");
     }
 
     #[tokio::test]
@@ -7031,7 +7032,10 @@ mod tests {
             .active
             .iter()
             .any(|p| p.id == "cloudflare-family" && p.enabled));
-        assert_eq!(body.third_party_count, 4);
+        assert_eq!(
+            body.third_party_count, 5,
+            "3 default voters + 1 added + baseline"
+        );
         let Ok(loaded) = ResolverConfig::load(&dir.path().join("resolver_config.toml")) else {
             panic!("saved config must load");
         };
@@ -7157,7 +7161,10 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = providers_json(Arc::clone(&state)).await;
         assert!(body.active.iter().any(|p| p.id == "quad9" && !p.enabled));
-        assert_eq!(body.third_party_count, 2, "only adguard + baseline now");
+        assert_eq!(
+            body.third_party_count, 3,
+            "cloudflare-malware + adguard + baseline now"
+        );
 
         let status_response = match serve(admin_get("/admin/status"), state).await {
             Ok(response) => response,
@@ -7172,7 +7179,7 @@ mod tests {
             .iter()
             .map(|p| p.id.as_str())
             .collect();
-        assert_eq!(active, vec!["adguard"]);
+        assert_eq!(active, vec!["cloudflare-malware", "adguard"]);
     }
 
     #[tokio::test]

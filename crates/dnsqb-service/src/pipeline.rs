@@ -954,10 +954,21 @@ mod tests {
     const ADGUARD_URL: &str = "https://dns.adguard-dns.com/dns-query";
     const BASELINE_URL: &str = crate::baseline_selector::BASELINE_CHAIN[0];
 
-    /// Both Phase-1 voters enabled — the common `handle_query` voter set (the
-    /// old `EnabledProviders::default()`).
+    /// Both Phase-1 voters enabled — the common `handle_query` voter set for
+    /// these mechanics tests (the old `EnabledProviders::default()`). A fixed
+    /// `quad9` + `adguard` pair, deliberately independent of the shipped
+    /// `DEFAULT_PROVIDER_IDS` (T-170 widened that to three); `MockClient`
+    /// only mocks these two plus baseline, and the assertions below count on
+    /// exactly two voter records.
     fn default_voters() -> Vec<ProviderEntry> {
-        ProviderEntry::default_active_set()
+        ["quad9", "adguard"]
+            .into_iter()
+            .filter_map(builtin_preset)
+            .map(|spec| ProviderEntry {
+                spec,
+                enabled: true,
+            })
+            .collect()
     }
 
     /// A configured voter list with every entry disabled — SPEC.md §3/§8.1's

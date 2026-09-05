@@ -553,3 +553,46 @@ advisor. Механізм (`encrypted_file` / `XChaCha20Poly1305` / `persistence
   / тести оновлено.
 - CodeQL `hard-coded-cryptographic-value` на нових фіксованих тестових ключах — очікувано
   dismiss «used in tests» (той самий клас, що T-146/T-165).
+
+---
+
+## 2026-09-05 — T-170: дефолтний набір провайдерів першого запуску
+
+**Контекст:** `DEFAULT_PROVIDER_IDS` (`upstream.rs`) — набір voter'ів, увімкнених при першому
+запуску, коли в `resolver_config.toml` немає `[[providers]]`. З Ф1 це були `quad9` + `adguard`
+(два PoC-провайдери). SPEC.md §3.4/§3.5 наказує дефолт «тільки Security-категорія» (Quad9
+Filtered + Cloudflare Malware). Розбіжність несена як відкрите рішення без номера через
+T-72/T-73 (не змінювали поведінку першого запуску всередині великого рефактора) аж до Ф1
+closure-плану, де стала гейтом Батча 3.9. Kickoff-AskUserQuestion (Три Б: це зміна того, що
+фільтрується при першому запуску).
+
+**Рішення:** `DEFAULT_PROVIDER_IDS = ["quad9", "cloudflare-malware", "adguard"]` — **два
+Security-tier voter'и §3.4 (Quad9 Filtered + Cloudflare Malware) плюс AdGuard для реклами**.
+Не чистий SPEC-варіант «тільки Security» і не старий `quad9` + `adguard`.
+
+**Причина:** SPEC-й аргумент проти змішування категорій (сайт блокується з несподіваної для
+користувача причини) слушний для Adult, але блокування **реклами** — очікувана з коробки
+поведінка DNS-фільтра; лишати ads суто opt-in суперечило б інтуїції користувача про те, що
+робить продукт. Cloudflare Malware додано, щоб security-ядро було справжнім OR-кворумом двох
+незалежних threat-feed'ів, а не одним Quad9 (прямо адресує Ф1-гейт #1 — T-66 показав AdGuard
+0/38, n=1, коли security-сигнал фактично давав лише Quad9). Adult лишається окремим
+category-перемикачем, вимкненим за замовчуванням.
+
+**Наслідки:**
+- `upstream.rs`: константа + doc-коментарі `DEFAULT_PROVIDER_IDS` / `default_active_set`; новий
+  тест `the_fresh_install_default_is_two_security_voters_plus_adguard` пінить склад (2 Security +
+  1 ads), щоб тиха зміна набору була гучною.
+- `dispatch.rs`: тестові асерти, що хардкодили `["quad9", "adguard"]` / `third_party_count` /
+  `health.active_providers`, оновлено на набір із трьох (фікстури будуються з
+  `default_active_set()`, тож продакшн-шлях слідує автоматично).
+- `pipeline.rs` / `quorum.rs`: тестові хелпери `default_voters()` **відв'язано** від
+  `DEFAULT_PROVIDER_IDS` — це тести механіки `handle_query`/`resolve` з фіксованою парою
+  `quad9`+`adguard` (їхні `MockClient`/`MockDohClient` мокають рівно цих двох + baseline), не
+  тести «що постачається». Реальний трипровайдерний дефолт покрито на рівні `dispatch.rs` +
+  новий `upstream.rs`-тест.
+- SPEC.md §3.4 (абзац «Дефолтний активний набір») і §3.5 (абзац «Дефолтний preset при першому
+  запуску») — цей запис їх override.
+- CONFIGURATION.md (`[[providers]]`-дефолт + приклад TOML), README (опис «з коробки»),
+  UI-SPEC.md §Провайдери, CLAUDE.md — узгоджено.
+- **Не** торкається `phase1_metrics.rs` (T-66/T-171 harness усе ще міряє baseline/quad9/adguard) —
+  його оновлення на фінальний набір — робота T-171.

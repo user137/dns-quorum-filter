@@ -126,8 +126,9 @@ Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); 
 Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstaller must call
 `trust_store::uninstall()` + `key_store::delete_secret`, blocked on T-156 MSIX packaging); the
 **Ф1 metrics gate** (T-66 showed no quorum gain over the best single provider; no recorded live
-"browser → local DoH" run); **`DEFAULT_PROVIDER_IDS`** still `quad9`+`adguard`, not §3.4/§3.5's
-"Security only" — an open no-number decision.
+"browser → local DoH" run). **`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
+DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
+voters plus AdGuard for ads out of the box.
 
 Per-task history — design rationale, advisor catches, verification notes — is recorded in
 `TASKS-DONE.md` (one line + implementation note per task), `DECISIONS.md` (reversals of shipped
@@ -340,10 +341,6 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
   so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's
   historical log rows become unfilterable by voter. Not worth a full log scan for the id.
-- **Shipped default provider set (`quad9` + `adguard`) still differs from SPEC.md §3.4/§3.5's
-  first-run "Security category only"** (Quad9 Filtered + Cloudflare Malware). T-72/T-73 kept the
-  shipped default rather than change what gets filtered inside a large refactor — open decision,
-  `DEFAULT_PROVIDER_IDS` in `upstream.rs`.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
@@ -1205,8 +1202,9 @@ earlier ones in §3.5/§5 as superseded context, not conflicting truth.
   it. This is a common implementation mistake per the spec's own regression-test note.
 - Timeout handling is one of three configurable modes — `fail-open` (default), `fail-closed`,
   `degraded` — not a single hardcoded policy (SPEC.md §3.3).
-- Default upstream preset on first run is **Security category only** (Quad9 Filtered + Cloudflare
-  Malware); Ads/Adult are opt-in category toggles, not enabled by default.
+- Default upstream set on first run (`DEFAULT_PROVIDER_IDS`, decided T-170 / DECISIONS.md
+  2026-09-05) is **`quad9` + `cloudflare-malware` + `adguard`** — the two §3.4/§3.5 Security-tier
+  voters plus AdGuard for ads out of the box. Adult stays an opt-in category toggle.
 
 ### RFC conformance is step 0 of implementation
 

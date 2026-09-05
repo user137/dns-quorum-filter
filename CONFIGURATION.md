@@ -52,7 +52,7 @@
 | `serve_baseline_when_filters_unreachable` | `bool` | `false` | T-155 (SPEC.md §3.7). Коли **кожен** увімкнений filtering-voter не відповів (timeout/error), чи можна віддати нефільтровану відповідь baseline-резолвера? `false` (дефолт) — режим таймауту вирішує як раніше (`fail_open`/`degraded` → Allow через baseline, `fail_closed` → Block), єдина зміна — рядок логу тепер `BASELINE_FALLBACK`, а не схований у `QUORUM`. `true` — віддавати baseline-відповідь незалежно від режиму. Незалежний від `timeout_mode`. Живо редагується через `POST /admin/config` / галочку на `/admin/ui`. |
 | `persist_query_log` | `bool` | `false` | T-146 (SPEC.md §6). Чи зберігати лог запитів (= історію переглядів) на диск між перезапусками. `false` (дефолт) — лог лише в пам'яті, зникає при рестарті. `true` — лог пишеться в `%LOCALAPPDATA%\dns-quorum-filter\query-log.enc` (`XChaCha20Poly1305`; повний перезапис кожні 60 с + фінальний на graceful shutdown), на старті відновлюється звідти з тим самим bounded-window (1000 записів / 24 год). **Ключ шифрування — у Windows Credential Manager** (запис `dns-quorum-filter` / `persistence-key:<hash app-data теки>`), не у файлі; той самий механізм, що TLS-ключ (T-67). **Немає адмін-маршруту й галочки — тільки правка цього файлу**: `/admin/ui` показує пасивний рядок-попередження, поки прапорець активний. Якщо ключ зник (Credential Manager очищено / теку скопійовано в інший акаунт), а `query-log.enc` є — файл перейменовується в `query-log.enc.orphaned-<unix_ts>` (не розшифровується, не відновлюється), мінтиться новий ключ, лог стартує порожній. Пошкоджений/несумісний файл — так само. |
 | `persist_cache` | `bool` | `false` | T-97 (SPEC.md §4). Чи зберігати кеш вердиктів на диск між перезапусками (прогрів холодного старту). Незалежний другий прапорець — не пов'язаний із `persist_query_log`. `false` (дефолт) — кеш лише в пам'яті. `true` — кеш пишеться в `%LOCALAPPDATA%\dns-quorum-filter\cache.enc` (той самий `XChaCha20Poly1305` / повний перезапис кожні 60 с + фінальний на shutdown / **той самий** запис `persistence-key:<hash>` у Credential Manager, що й `query-log.enc`). **Зберігаються лише `Allow`-вердикти** (`Block` відкидається при знятті snapshot — інакше `fail_closed`-таймаут міг би зафіксувати 24-год блок, що переживе рестарт); запис, чий TTL сплив за час простою, відкидається при відновленні (RFC 8767 stale-if-error не підключено). Немає адмін-маршруту — тільки правка цього файлу; `/admin/ui` показує окремий пасивний рядок-попередження. Зниклий ключ / пошкоджений файл → `cache.enc.orphaned-<unix_ts>`, новий ключ, кеш стартує порожній. |
-| `[[providers]]` | масив таблиць | `quad9` + `adguard`, обидва enabled | Список quorum-voter'ів (T-72/T-73) — див. нижче. |
+| `[[providers]]` | масив таблиць | `quad9` + `cloudflare-malware` + `adguard`, усі enabled (T-170) | Список quorum-voter'ів (T-72/T-73) — див. нижче. |
 | `[cache]` | вкладена таблиця | див. нижче | TTL-межі та ємність кешу вердиктів (SPEC.md §4.1, T-153) — див. нижче. |
 | `[geoip]` | вкладена таблиця | порожній список | Список заблокованих країн для GeoIP-фільтра (SPEC.md §3.5, T-76) — див. нижче. |
 | `[limits]` | вкладена таблиця | див. нижче | Стеля одночасних з'єднань + дедлайни хендшейку/простою (SPEC.md §1.1, T-169) — див. нижче. |
@@ -66,6 +66,10 @@
 # вбудований preset
 [[providers]]
 id = "quad9"
+enabled = true
+
+[[providers]]
+id = "cloudflare-malware"
 enabled = true
 
 [[providers]]
@@ -96,9 +100,10 @@ block_signature = "NULL_IP_OR_NXDOMAIN"  # опційно; NULL_IP | NXDOMAIN_VS
 baseline-резолвер (SPEC.md §3/§8.1), не fail-closed і не тихий no-op. Дозволи/блоклист діють
 незалежно.
 
-Відсутність `[[providers]]` узагалі → дефолт `quad9` + `adguard`, обидва увімкнені (незмінна
-поведінка). Порожнє поле-одруківка всередині запису провалює завантаження цілком
-(`ConfigError::Toml`), не ігнорується.
+Відсутність `[[providers]]` узагалі → дефолт `quad9` + `cloudflare-malware` + `adguard`, усі
+увімкнені (T-170, DECISIONS.md 2026-09-05 — два Security-tier voter'и §3.4 плюс AdGuard для
+реклами; раніше було `quad9` + `adguard`). Порожнє поле-одруківка всередині запису провалює
+завантаження цілком (`ConfigError::Toml`), не ігнорується.
 
 > **Міграція**: до T-72 це була таблиця `[providers]` із двома `bool` (`quad9`/`adguard`). Жорсткий
 > перехід: файл зі старим `[providers]` тепер провалює завантаження з `ConfigError::LegacyProvidersTable`
