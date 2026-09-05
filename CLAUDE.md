@@ -1013,6 +1013,7 @@ reasoning (search by section number rather than re-deriving a decision from scra
 | `README.md` | human-facing project description | repo structure changes, or the project's phase/status badge changes |
 | `CONFIGURATION.md` | operator-facing reference for both TOML config files (`resolver_config.toml`, `overrides.toml`) — fields, defaults, validation, examples | a config field is added, changed, or removed |
 | `SERVICES.md` | what each binary does, how to run it, its logs and startup behavior | a binary's runtime behavior, ports, or file I/O changes |
+| `PERFORMANCE.md` | critical-path complexity analysis, load-test methodology and measured results — not design reasoning (that's SPEC.md) | a hot-path complexity fact changes, or a load-test run produces new numbers |
 
 Don't duplicate a fact across files — link to the owner instead. `SPEC.md` stays the deep source of
 truth; the other files summarize or track state, they don't re-derive it.
