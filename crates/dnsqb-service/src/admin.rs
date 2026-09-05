@@ -283,6 +283,13 @@ pub struct AdminStats {
     /// `live_stats` fills the real value. `0` here after uptime means the
     /// backstop has never fired (the healthy case), not "no signal".
     pub rejected_connections: u64,
+    /// Connections **currently** admitted by `admission::ConnectionGate` —
+    /// permits handed out and not yet dropped (T-169), i.e. how close the
+    /// service is to its `[limits].max_concurrent_connections` ceiling right
+    /// now. The live counterpart of `rejected_connections`; same live-not-
+    /// log-derived treatment (`compute_stats` sets `0`, `live_stats` fills
+    /// it from `ConnectionGate::active`).
+    pub active_connections: u64,
 }
 
 /// `POST /admin/config`'s body — always a full replace of every field, never
@@ -1084,6 +1091,7 @@ pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
         // which this pure, log-only function has no access to.
         in_flight: 0,
         rejected_connections: 0,
+        active_connections: 0,
     }
 }
 
@@ -1515,6 +1523,7 @@ mod tests {
                 degraded_events: 0,
                 in_flight: 0,
                 rejected_connections: 0,
+                active_connections: 0,
             }
         );
     }
@@ -1530,6 +1539,7 @@ mod tests {
                 degraded_events: 0,
                 in_flight: 0,
                 rejected_connections: 0,
+                active_connections: 0,
             }
         );
     }

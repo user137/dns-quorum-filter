@@ -250,6 +250,7 @@ mod tests {
             degraded_events,
             in_flight: 0,
             rejected_connections: 0,
+            active_connections: 0,
         }
     }
 

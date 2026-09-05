@@ -3367,13 +3367,13 @@ Manager запис TLS-ключа — benign, за конвенцією; зга�
 4. `4e80ddd` — wiring: `main.rs` accept-loop бере permit до `spawn`, на стелі `drop(stream);
    continue;`; `tokio::time::timeout(handshake_timeout, acceptor.accept)`; `auto::Builder`
    `.http1().timer(TokioTimer).header_read_timeout(idle)` + `.http2().timer(TokioTimer)
-   .keep_alive_interval(idle).keep_alive_timeout(handshake)`. `AppState.gate` (будується в
-   `AppState::new` з `persist.limits`), `pub fn connection_gate()`. `AdminStats
-   .rejected_connections` (live, заповнює `live_stats` з `gate.rejected_count()`) →
-   `AdminStatusResponse.stats`. UI-SPEC.md §3.1 — DTO-готово, картка відкладена
-   (Backend-before-UI). Dispatch-тест: стеля 2 → 3 відмови → `GET /admin/status`
+   .keep_alive_interval(idle)`. `AppState.gate` (будується в `AppState::new` з `persist.limits`),
+   `pub fn connection_gate()`. `AdminStats.rejected_connections` (live, `live_stats` з
+   `gate.rejected_count()`) → `AdminStatusResponse.stats`. UI-SPEC.md §3.1 — DTO-готово, картка
+   відкладена (Backend-before-UI). Dispatch-тест: стеля 2 → 3 відмови → `GET /admin/status`
    `stats.rejected_connections == 3`.
-5. (цей коміт) — TASKS/TASKS-DONE/CLAUDE.md.
+5. `8afb413` — TASKS/TASKS-DONE/CLAUDE.md.
+6. (цей коміт) `closing-advisor fixes` — див. нижче.
 
 **Slow-loris smoke (`examples/load_test.rs` новий режим, manual, не CI).** Scratch-сервіс з
 `[limits] max_concurrent_connections = 48, handshake_timeout_ms = 3000`, 2 прогони на Windows 11
@@ -3383,14 +3383,33 @@ dev-боксі:
   TCP-close, **не** таймаут;
 - (в) stalled-сокети лишаються **відкритими**; після 3-с `handshake_timeout` сервіс відновлюється
   — доводить, що permit'и звільняє **таймаут**, а не наш FIN.
-Held-connection RSS: **~4–10 КіБ** на stalled pre-handshake з'єднання (на/нижче Коміт-1-оцінки —
+Held-connection RSS: **~4–10 КіБ** на stalled **pre-handshake** з'єднання (на/нижче Коміт-1-оцінки —
 rustls-буфери ще не алоковані). PERFORMANCE.md «Memory per connection» + SPEC.md §1.1 оновлено.
+**Post-handshake idle-reaper** (`header_read_timeout` http1 / `keep_alive_interval` http2 — пір
+завершив TLS і мовчить) — з того самого `idle_timeout_ms`, звірено з vendored `hyper-util` 0.1.20
+API (панікує без per-protocol `timer`; обидва встановлені), але його **runtime-поведінку цей
+smoke окремо не спостерігає** — чесно зафіксовано в PERFORMANCE.md/тут, не переоцінено.
 
 **Не в обсязі (свідомо).** Окрема менша стеля на одночасні quorum-резолюції «у польоті» —
 backstop на вхідні з'єднання закриває основний вектор; fan-out ceiling лишається арифметичним
 (PERFORMANCE.md). `tower` не додано (плоский `Semaphore` покриває). Per-client fairness відхилено
-ще в T-168. UI-картка для `rejected_connections` — окремо. `apply_admin_reset` **не** перебудовує
-`gate` (як і `port` — зміна `[limits]` потребує рестарту сервісу; задокументовано в CONFIGURATION.md).
+ще в T-168. UI-картка для `rejected_connections`/`active_connections` — окремо. `apply_admin_reset`
+**не** перебудовує `gate` (як і `port` — зміна `[limits]` потребує рестарту сервісу; задокументовано
+в CONFIGURATION.md).
+
+**Closing-advisor зловив 4 (Коміт 6):**
+1. Post-handshake idle-reaper не спостережено smoke'ом (лише pre-handshake) — формулювання в
+   TASKS-DONE/PERFORMANCE.md зроблено точним (proven vs vendored-API-verified), не переоцінено.
+2. `ConnectionGate::active()` не мав production-кличущого — той самий shape, що `should_serve_stale`
+   (recorded limitation). → `AdminStats.active_connections` (live-знімок, живий двійник кумулятивного
+   `rejected_connections`), `live_stats` з `gate.active()`, dispatch-тест +assert.
+3. `handshake_timeout` мав другу нероздокументовану роль (`.keep_alive_timeout(handshake)` = h2
+   PING-ACK-дедлайн) — оператор, що зменшує його заради хендшейку, тихо зменшив би й PING-ACK
+   (на 500 мс — ризик рвати здорові з'єднання). → `.keep_alive_timeout` **прибрано**, лишається
+   hyper-дефолт 20 с; `handshake_timeout` знову має рівно одну роль.
+4. Коміт `4e80ddd` (єдиний, що чіпає `main.rs` = release-build зміна) — його CI, у т.ч. `repro`,
+   мусив зазеленіти до пауза-звіту (двічі скасовувався власними пушами). Дочекано: `4e80ddd` CI
+   completed success.
 
 **Non-blocking.** Scratch slow-loris-інстанс намінтив власний Credential Manager TLS-key запис
 (`doh-tls-private-key:<hash>` для scratch app-data) — benign, за конвенцією (як T-168); не видаляю

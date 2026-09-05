@@ -548,8 +548,8 @@ fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
 /// stream is dropped before TLS (reject, not queue). The permit is held for
 /// the connection's whole life and released on drop, so `limits`'
 /// handshake/idle deadlines (the `tokio::time::timeout` around
-/// `acceptor.accept`, and the `auto::Builder` HTTP/1 header-read + HTTP/2
-/// keep-alive timeouts) also free the slot: a bare cap without those
+/// `acceptor.accept`, and the `auto::Builder` HTTP/1 `header_read_timeout` +
+/// HTTP/2 `keep_alive_interval`) also free the slot: a bare cap without those
 /// deadlines is itself a slow-loris `DoS`.
 async fn serve_until_shutdown(
     listener: tokio::net::TcpListener,
@@ -615,6 +615,9 @@ async fn serve_until_shutdown(
                     // (the h2 equivalent; `header_read_timeout` "does not
                     // affect HTTP/2"). Each protocol needs its own `timer`
                     // set or the builder panics on this serve path.
+                    // `keep_alive_timeout` (the PING-ACK deadline) is left at
+                    // hyper's own 20s default rather than tied to a `[limits]`
+                    // field, so neither knob silently changes the other.
                     let mut builder = auto::Builder::new(TokioExecutor::new());
                     builder
                         .http1()
@@ -622,8 +625,7 @@ async fn serve_until_shutdown(
                         .header_read_timeout(limits.idle_timeout)
                         .http2()
                         .timer(TokioTimer::new())
-                        .keep_alive_interval(limits.idle_timeout)
-                        .keep_alive_timeout(limits.handshake_timeout);
+                        .keep_alive_interval(limits.idle_timeout);
                     let conn = builder.serve_connection(io, service);
                     if let Err(err) = watcher.watch(conn).await {
                         tracing::warn!("connection error: {err}");

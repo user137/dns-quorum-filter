@@ -115,14 +115,24 @@ at the 3 000 peak, released after") — the two checks agree, which is what a ba
 **Measured (T-169 slow-loris mode).** The T-168 per-ramp RSS delta can't isolate this (its
 connections open and close *within* a level — allocator high-water, not concurrent-connection
 cost; two of its deltas are negative). T-169's `examples/load_test.rs` slow-loris mode instead
-holds ~50 stalled pre-handshake sockets open and samples RSS with the gate full: across two runs
-on the Windows 11 dev box the RSS rise per held connection was **~4–10 KiB** — at or below the
-low end of the estimate above, as expected for a connection stalled *before* the TLS handshake
-(rustls hasn't allocated its 64 KiB buffers and h2 hasn't started). The RSS-delta method is
-noisy (the probe requests allocate too), so treat this as "single-digit KiB per idle stalled
-connection", not a precise figure. Either way the budget check and the T-168 latency curve agree
-on the order of magnitude: a few thousand held connections is a comfortable backstop, not a
-memory wall.
+holds ~50 stalled **pre-handshake** sockets open (TCP established, no ClientHello) and samples
+RSS with the gate full: across two runs on the Windows 11 dev box the RSS rise per held
+connection was **~4–10 KiB** — at or below the low end of the estimate above, as expected for a
+connection stalled *before* the TLS handshake (rustls hasn't allocated its 64 KiB buffers and h2
+hasn't started). The RSS-delta method is noisy (the probe requests allocate too), so treat this
+as "single-digit KiB per idle stalled connection", not a precise figure. Either way the budget
+check and the T-168 latency curve agree on the order of magnitude: a few thousand held
+connections is a comfortable backstop, not a memory wall.
+
+The same smoke also proves the **pre-handshake reaper** end to end: a normal client is served
+while stalled sockets are held below the ceiling; at the ceiling it is refused in ~15–17 ms
+(fast TCP close, not a timeout); and with the stalled sockets still held open it recovers once
+the server's `handshake_timeout` elapses (so the `tokio::time::timeout` around `acceptor.accept`,
+not our FIN, freed the permits). The **post-handshake idle reaper** (`header_read_timeout` for
+HTTP/1, `keep_alive_interval` for HTTP/2 — the peer that completes TLS then sends nothing) is
+wired from the same `[limits].idle_timeout_ms` and verified against the vendored `hyper-util`
+0.1.20 API (`header_read_timeout` panics without a per-protocol timer; both are set), but its
+runtime behaviour is not separately observed by this smoke.
 
 ### Fan-out ceiling (computed, not measured)
 

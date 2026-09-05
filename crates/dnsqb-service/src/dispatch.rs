@@ -1059,6 +1059,7 @@ fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) ->
     AdminStats {
         in_flight: state.in_flight.load(Ordering::Relaxed),
         rejected_connections: state.gate.rejected_count(),
+        active_connections: u64::from(state.gate.active()),
         ..compute_stats(entries)
     }
 }
@@ -3667,6 +3668,10 @@ mod tests {
             status.stats.rejected_connections, 0,
             "T-169: a fresh gate has rejected nothing"
         );
+        assert_eq!(
+            status.stats.active_connections, 0,
+            "T-169: no connection permits are held in a unit test"
+        );
         // `state_with` uses `paths: None`, so there is nowhere to read a
         // watchdog state file from (T-95).
         assert_eq!(status.watchdog, None);
@@ -3692,11 +3697,16 @@ mod tests {
         );
 
         // Fill the ceiling of 2, then push three connections past it.
-        let _p1 = state.connection_gate().try_admit();
+        let p1 = state.connection_gate().try_admit();
         let _p2 = state.connection_gate().try_admit();
         for _ in 0..3 {
             assert!(state.connection_gate().try_admit().is_none());
         }
+        assert_eq!(state.connection_gate().active(), 2);
+        drop(p1);
+        assert_eq!(state.connection_gate().active(), 1);
+        // Re-fill so the status call sees a full gate again.
+        let _p3 = state.connection_gate().try_admit();
 
         let Ok(req) = Request::builder()
             .method(Method::GET)
@@ -3715,6 +3725,10 @@ mod tests {
             panic!("response body must decode as AdminStatusResponse");
         };
         assert_eq!(status.stats.rejected_connections, 3);
+        assert_eq!(
+            status.stats.active_connections, 2,
+            "two permits are held (p2 + p3) against a ceiling of 2"
+        );
     }
 
     // T-96 / T-97: `GET /admin/status` echoes both persistence flags from the
