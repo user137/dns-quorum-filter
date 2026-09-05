@@ -127,8 +127,11 @@ Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstall
 `trust_store::uninstall()` + `key_store::delete_secret`, blocked on T-156 MSIX packaging); the
 **Ф1 metrics gate** — **metrics half closed T-171** (2026-09-05): re-measured on n=122 with the
 T-170 default set, quorum gain over the best single provider (Quad9) was +1 domain / +0.8 pp —
-hypothesis still not confirmed, recorded, raised as a Ф4+ design question (DECISIONS.md,
-PERFORMANCE.md "Quorum coverage"). The live "browser → local DoH" pass is T-172.
+hypothesis not confirmed, recorded, raised as a Ф4+ design question (DECISIONS.md, PERFORMANCE.md
+"Quorum coverage"). **Verdict is provisional**: a same-day all-10-presets follow-up run found
+`cleanbrowsing-{security,adult}` block via NXDOMAIN but are declared `NullIp` in `BUILTIN_PRESETS`
+(66/124 NXDOMAIN, 18 Quad9 missed) → their blocks are uncounted; **T-174** fixes the signature
+and re-measures. The live "browser → local DoH" pass is T-172.
 **`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
 DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
 voters plus AdGuard for ads out of the box.
@@ -349,6 +352,13 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
   so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's
   historical log rows become unfilterable by voter. Not worth a full log scan for the id.
+- **`cleanbrowsing-security` / `cleanbrowsing-adult` presets have the wrong `block_signature`
+  (T-174, found 2026-09-05).** Both are declared `BlockSignature::NullIp` in `BUILTIN_PRESETS`,
+  but from this vantage point both block via **NXDOMAIN** (T-171 all-presets run: 66/124 NXDOMAIN
+  each, 18 not caught by Quad9). `is_blocked(NullIp, …)` can't see an NXDOMAIN block, so a user
+  who enables either preset gets **none** of its blocks counted in `quorum::resolve`. Only
+  Quad9/AdGuard were ever live-verified (DECISIONS.md 2026-08-25); the rest came from published
+  provider docs. T-174 = live-verify + fix + re-measure T-171.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.

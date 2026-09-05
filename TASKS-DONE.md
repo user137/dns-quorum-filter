@@ -3495,3 +3495,31 @@ threat-корпус; вага на незалежність джерел intelli
 + `## Фаза 2` closure-абзаци — гейт #1 позначено закритим; «Відкриті питання» п.4 — підпункт про
 Ф4+), CLAUDE.md (Project State carried-note + «Фаза 1 closure» секція). Docs + manual-harness —
 код-гейти не зачеплені (harness build/clippy/fmt зелені окремо).
+
+**Доповнення того ж дня (за запитом користувача — «додай усі DNS-фільтри й прожени знову»).**
+Harness розширено з фіксованих 3 провайдерів на **всі 10** `all_builtin_presets()` (Security /
+AdsTrackers / Adult); звіт тепер: rate кожного, OR усіх 10, OR лише Security-tier, дельта кожного
+OR над найкращим одиночним, + маркер `[!] signature=NullIp but returned NXDOMAIN …` для виявлення
+неправильних сигнатур. Перепрогнано, **n = 124**:
+
+| preset | cat | blocked | | preset | cat | blocked |
+|---|---|---|---|---|---|---|
+| `quad9` | Sec | 73/124 (58.9 %) | | `cloudflare-family` | Adult | 45/124 (36.3 %) |
+| `cloudflare-malware` | Sec | 43/124 (34.7 %) | | `adguard-family` | Adult | 0/124 |
+| `cleanbrowsing-security` | Sec | **0 (баг ↓)** | | `cleanbrowsing-adult` | Adult | **0 (баг ↓)** |
+| `dns4eu-protective` | Sec | 0/124 | | `opendns-familyshield` | Adult | 0/124 |
+| `adguard` | Ads | 0/124 | | `dns4eu-child` | Adult | 0/124 |
+
+OR усіх 10: 75/124 (+2/+1.6 pp над Quad9). OR Security-tier (4): 74/124 (+1/+0.8 pp).
+
+**Баг знайдено (→ T-174):** `cleanbrowsing-security` і `cleanbrowsing-adult` оголошені
+`BlockSignature::NullIp` у `BUILTIN_PRESETS`, але **обидва блокують через NXDOMAIN** — кожен
+повернув NXDOMAIN на 66/124 доменів (baseline зарезолвив усі), **18 із них Quad9 не зловив**.
+`is_blocked(NullIp, …)` цього не бачить → блоки CleanBrowsing невидимі для `quorum::resolve`.
+**Вердикт T-171 стає провізорним:** із правильно працюючим `cleanbrowsing-security` (~53 %,
++18 доменів понад поточний кворум) Security-tier OR був би помітно вищим за Quad9 — гіпотеза
+може підтвердитись після T-174. **Не переганяв ще раз** (one-run; фікс — у T-174).
+
+Файли доповнення: `phase1_metrics.rs` (усі пресети + sanity-маркер), PERFORMANCE.md
+(«Follow-up run — all 10 built-in presets»), DECISIONS.md (доповнення до T-171-запису),
+TASKS.md (T-174 заведено). Raw-вихід прогону — scratchpad `t171_allpresets_run_2026-09-05.txt`.

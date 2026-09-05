@@ -270,3 +270,45 @@ weight the design toward provider *independence* (feeds with genuinely different
 sources) rather than provider *count*; or reframe the value proposition as resilience/redundancy
 (any one provider being down or wrong) rather than additive coverage. Recorded, not acted on
 here.
+
+### Follow-up run — all 10 built-in presets (2026-09-05, user-requested)
+
+`phase1_metrics.rs` was extended to measure **every** preset in `all_builtin_presets()`, not
+just the shipped default set, and re-run (n = 124 after the baseline-`NoError` filter + 4
+transient Quad9 skips):
+
+| preset | category | blocked | note |
+|---|---|---|---|
+| `quad9` | Security | 73/124 (58.9 %) | NXDOMAIN vs baseline (upper bound) |
+| `cloudflare-malware` | Security | 43/124 (34.7 %) | `0.0.0.0` answer |
+| `cleanbrowsing-security` | Security | **0/124 counted** | **returned NXDOMAIN 66/124 — see below** |
+| `dns4eu-protective` | Security | 0/124 | genuine `NoError` — did not block these |
+| `adguard` | AdsTrackers | 0/124 | genuine `NoError` (ads list, not a malware feed) |
+| `cloudflare-family` | AdultContent | 45/124 (36.3 %) | `0.0.0.0` answer — Cloudflare Family (1.1.1.3) also filters malware |
+| `adguard-family` | AdultContent | 0/124 | genuine `NoError` |
+| `cleanbrowsing-adult` | AdultContent | **0/124 counted** | **returned NXDOMAIN 66/124 — see below** |
+| `opendns-familyshield` | AdultContent | 0/124 | genuine `NoError` (signature is `NxdomainVsBaseline` — a real 0, not a mismatch) |
+| `dns4eu-child` | AdultContent | 0/124 | genuine `NoError` |
+
+- **Quorum (OR of all 10):** 75/124 (60.5 %) — **+2 domains / +1.6 pp** over the best single (Quad9).
+- **Quorum (OR of the 4 Security-tier):** 74/124 (59.7 %) — **+1 / +0.8 pp** over Quad9.
+- The one domain OR-of-10 gains over OR-of-Security is `cloudflare-family` (an adult filter that
+  also does malware). Every other Adult preset added nothing to a malware feed, as expected.
+
+**Bug found: the CleanBrowsing presets have the wrong `block_signature`.**
+`cleanbrowsing-security` and `cleanbrowsing-adult` are declared `BlockSignature::NullIp` in
+`upstream::BUILTIN_PRESETS`, but from this vantage point both **block via NXDOMAIN** — each
+returned NXDOMAIN for 66 of 124 domains (baseline resolved all 124 fine), including **18 that
+Quad9 did not flag**. `is_blocked(NullIp, …)` cannot see an NXDOMAIN block, so a user who enables
+either preset today gets **none** of its blocks counted in `quorum::resolve`. This is exactly the
+class of gap CLAUDE.md's own note anticipates — "лише Quad9/AdGuard live-звірені; решта — з
+опублікованої поведінки провайдера". Filed as **T-174** (live-verify + fix the CleanBrowsing
+signatures). The harness now prints a `[!] signature=NullIp but returned NXDOMAIN …` marker so
+this can't hide on a future run.
+
+**Effect on the T-171 verdict: it is now provisional.** With `cleanbrowsing-security` correctly
+detecting, it alone would be a ~53 % detector (66/124) and would add 18 domains the current quorum
+misses — the Security-tier OR would then sit meaningfully above Quad9 alone, not +0.8 pp. Whether
+the OR-quorum hypothesis holds cannot be settled until T-174 fixes the signatures and the
+measurement is redone with all four Security presets actually working. **Not re-run again here**
+(one-run discipline; the fix belongs in T-174, not another measurement pass).

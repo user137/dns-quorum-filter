@@ -7,8 +7,12 @@
 //! 2. Quorum detection rate vs each individual provider, against a live
 //!    URLhaus malicious-domain sample — validates or refutes the "OR-logic
 //!    across providers beats a single provider" hypothesis this whole
-//!    project rests on. Re-run for T-171 with the T-170 shipped default set
-//!    (`quad9` + `cloudflare-malware` + `adguard`) on a larger sample.
+//!    project rests on. Measured over **every built-in preset**
+//!    (`all_builtin_presets()` — the 10 §3.4 entries across Security /
+//!    AdsTrackers / AdultContent), reporting each provider's own rate, the
+//!    OR of all of them, the OR of the Security tier only, and each OR's
+//!    delta over the single best provider. T-66 measured 2 providers on
+//!    n=38; T-171 the 3 shipped defaults on n=122; this run all 10.
 //!
 //! **Preconditions** (run with `cargo run --example phase1_metrics [port]`,
 //! default port 8443 — a plain HTTP client, it does not manage the service's
@@ -70,8 +74,9 @@
 //! threat feed, churns constantly, no reason to keep it here).
 
 use dnsqb_service::{
-    app_data_dir, builtin_preset, decode_wire_message, doh_get_url, encode_wire_message,
-    is_blocked, BlockSignature, DohClient, ReqwestDohClient, BASELINE_DOH_URL,
+    all_builtin_presets, app_data_dir, decode_wire_message, doh_get_url, encode_wire_message,
+    is_blocked, BlockSignature, Category, DohClient, ProviderSpec, ReqwestDohClient,
+    BASELINE_DOH_URL,
 };
 use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -89,15 +94,14 @@ const PER_DOMAIN_DELAY: Duration = Duration::from_millis(150);
 const DEFAULT_LOCAL_PORT: u16 = 8443;
 const SMALL_SAMPLE_WARNING_THRESHOLD: usize = 20;
 
+/// One sampled domain's per-voter outcome. `voter_rcode` / `voter_blocked`
+/// are parallel to `presets` (`all_builtin_presets()` order), so index `i`
+/// in either belongs to `presets[i]`.
 struct DomainResult {
     domain: String,
     baseline_rcode: ResponseCode,
-    quad9_rcode: ResponseCode,
-    cloudflare_rcode: ResponseCode,
-    adguard_rcode: ResponseCode,
-    quad9_blocked: bool,
-    cloudflare_blocked: bool,
-    adguard_blocked: bool,
+    voter_rcode: Vec<ResponseCode>,
+    voter_blocked: Vec<bool>,
 }
 
 #[tokio::main]
@@ -108,10 +112,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sample = fetch_urlhaus_domains(&feed_client, SAMPLE_CAP).await?;
     println!("fetched {} candidate domains from URLhaus", sample.len());
 
+    let presets = all_builtin_presets();
+    println!(
+        "measuring {} built-in presets: {}",
+        presets.len(),
+        presets
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     let doh_client = ReqwestDohClient::new()?;
     let mut results = Vec::new();
     for domain in &sample {
-        match resolve_all_voters(&doh_client, domain).await {
+        match resolve_all_voters(&doh_client, domain, &presets).await {
             Ok(Some(result)) => results.push(result),
             Ok(None) => {}
             Err(err) => eprintln!("  (skipped one domain, query failed: {err})"),
@@ -119,7 +134,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         tokio::time::sleep(PER_DOMAIN_DELAY).await;
     }
 
-    report_detection_rate(&results);
+    report_detection_rate(&results, &presets);
 
     // Pinned to this instance's own self-signed leaf, same construction as
     // `admin::AdminClient::new` — never `danger_accept_invalid_certs` (CLAUDE.md,
@@ -227,41 +242,36 @@ fn build_a_query(domain: &str) -> Result<Message, Box<dyn Error>> {
 /// (dead/sinkholed/NXDOMAIN) — excluded from the detection-rate denominator,
 /// URLhaus churn rather than a provider miss.
 ///
-/// Queries the T-170 shipped default voter set — `quad9`
-/// (`NxdomainVsBaseline`), `cloudflare-malware` (`NullIp`) and `adguard`
-/// (`NullIp`) — each with its preset's own block signature.
+/// Queries every preset in `presets` (`all_builtin_presets()`), each with
+/// its own block signature. A single query failure to any one preset
+/// propagates as `Err` (the whole domain is skipped) — a partial per-voter
+/// record would silently understate that voter's rate.
 async fn resolve_all_voters(
     client: &ReqwestDohClient,
     domain: &str,
+    presets: &[ProviderSpec],
 ) -> Result<Option<DomainResult>, Box<dyn Error>> {
     let query = build_a_query(domain)?;
     let baseline = client.query(BASELINE_DOH_URL, &query).await?;
     if baseline.metadata.response_code != ResponseCode::NoError {
         return Ok(None);
     }
-    let quad9_spec = builtin_preset("quad9").ok_or("quad9 preset must exist")?;
-    let cloudflare_spec =
-        builtin_preset("cloudflare-malware").ok_or("cloudflare-malware preset must exist")?;
-    let adguard_spec = builtin_preset("adguard").ok_or("adguard preset must exist")?;
-    let quad9 = client.query(&quad9_spec.doh_url, &query).await?;
-    let cloudflare = client.query(&cloudflare_spec.doh_url, &query).await?;
-    let adguard = client.query(&adguard_spec.doh_url, &query).await?;
-    let quad9_blocked = is_blocked(BlockSignature::NxdomainVsBaseline, &quad9, &baseline);
-    let cloudflare_blocked = is_blocked(BlockSignature::NullIp, &cloudflare, &baseline);
-    let adguard_blocked = is_blocked(BlockSignature::NullIp, &adguard, &baseline);
+    let mut voter_rcode = Vec::with_capacity(presets.len());
+    let mut voter_blocked = Vec::with_capacity(presets.len());
+    for spec in presets {
+        let response = client.query(&spec.doh_url, &query).await?;
+        voter_blocked.push(is_blocked(spec.block_signature, &response, &baseline));
+        voter_rcode.push(response.metadata.response_code);
+    }
     Ok(Some(DomainResult {
         domain: domain.to_string(),
         baseline_rcode: baseline.metadata.response_code,
-        quad9_rcode: quad9.metadata.response_code,
-        cloudflare_rcode: cloudflare.metadata.response_code,
-        adguard_rcode: adguard.metadata.response_code,
-        quad9_blocked,
-        cloudflare_blocked,
-        adguard_blocked,
+        voter_rcode,
+        voter_blocked,
     }))
 }
 
-fn report_detection_rate(results: &[DomainResult]) {
+fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
     let n = results.len();
     println!("\n=== Detection rate (n = {n} resolvable, baseline NoError) ===");
     if n == 0 {
@@ -274,54 +284,107 @@ fn report_detection_rate(results: &[DomainResult]) {
         );
     }
 
-    let quad9_blocked = results.iter().filter(|r| r.quad9_blocked).count();
-    let cloudflare_blocked = results.iter().filter(|r| r.cloudflare_blocked).count();
-    let adguard_blocked = results.iter().filter(|r| r.adguard_blocked).count();
-    let quorum_blocked = results
-        .iter()
-        .filter(|r| r.quad9_blocked || r.cloudflare_blocked || r.adguard_blocked)
-        .count();
-    let best_single = quad9_blocked.max(cloudflare_blocked).max(adguard_blocked);
-    let quorum_over_best_single = quorum_blocked - best_single;
+    let per_provider: Vec<usize> = (0..presets.len())
+        .map(|i| results.iter().filter(|r| r.voter_blocked[i]).count())
+        .collect();
+    // Raw NXDOMAIN response count per preset, independent of its declared
+    // block signature. A preset whose signature is `NullIp` (which cannot
+    // see NXDOMAIN) but which returns NXDOMAIN for a large slice of a live
+    // malware feed is almost certainly blocking via NXDOMAIN — its declared
+    // signature is wrong and its real blocks are invisible to the quorum.
+    // (T-171 follow-up: this is how the CleanBrowsing presets were caught.)
+    let per_provider_nxdomain: Vec<usize> = (0..presets.len())
+        .map(|i| {
+            results
+                .iter()
+                .filter(|r| r.voter_rcode[i] == ResponseCode::NXDomain)
+                .count()
+        })
+        .collect();
 
-    println!(
-        "Quad9 alone:              {quad9_blocked}/{n} ({:.1}%) - via NXDOMAIN+baseline-NoError \
-         (NeedsBaseline path, an upper bound under that semantic - see module doc)",
-        pct(quad9_blocked, n)
-    );
-    println!(
-        "Cloudflare Malware alone: {cloudflare_blocked}/{n} ({:.1}%) - explicit 0.0.0.0/:: signal",
-        pct(cloudflare_blocked, n)
-    );
-    println!(
-        "AdGuard alone:            {adguard_blocked}/{n} ({:.1}%) - explicit 0.0.0.0/:: signal \
-         (T-66: a run discriminating raw answer IPs confirmed a 0/38 AdGuard rate meant genuine \
-         routable IPs for every domain, not an unrecognized null-IP - see module doc)",
-        pct(adguard_blocked, n)
-    );
-    println!(
-        "Quorum (OR of all three): {quorum_blocked}/{n} ({:.1}%)",
-        pct(quorum_blocked, n)
-    );
-    println!(
-        "Quorum delta over the best single provider (the hypothesis: >0 means OR-logic \
-         caught domains no single provider did on this sample; 0 means it added nothing): \
-         +{quorum_over_best_single}/{n} ({:.1} pp)",
-        pct(quorum_blocked, n) - pct(best_single, n)
-    );
-
-    println!("\nper-domain trace (index: baseline/quad9/cloudflare/adguard rcode -> verdict):");
-    for (i, r) in results.iter().enumerate() {
+    for (i, (spec, &blocked)) in presets.iter().zip(&per_provider).enumerate() {
+        let nx = per_provider_nxdomain[i];
+        let suspect = spec.block_signature == BlockSignature::NullIp && nx * 20 > n;
         println!(
-            "  #{i}: {:?}/{:?}/{:?}/{:?} -> quad9={} cloudflare={} adguard={}",
-            r.baseline_rcode,
-            r.quad9_rcode,
-            r.cloudflare_rcode,
-            r.adguard_rcode,
-            r.quad9_blocked,
-            r.cloudflare_blocked,
-            r.adguard_blocked
+            "  {:<24} [{:>13}] {blocked}/{n} ({:.1}%){}",
+            spec.id,
+            category_label(spec.category),
+            pct(blocked, n),
+            if suspect {
+                format!(
+                    "   [!] signature=NullIp but returned NXDOMAIN {nx}/{n} times \
+                     - likely blocks via NXDOMAIN, uncounted"
+                )
+            } else {
+                String::new()
+            }
         );
+    }
+
+    let security_idx: Vec<usize> = (0..presets.len())
+        .filter(|&i| presets[i].category == Category::Security)
+        .collect();
+
+    let quorum_all = results
+        .iter()
+        .filter(|r| r.voter_blocked.iter().any(|&b| b))
+        .count();
+    let quorum_security = results
+        .iter()
+        .filter(|r| security_idx.iter().any(|&i| r.voter_blocked[i]))
+        .count();
+    let best_single = per_provider.iter().copied().max().unwrap_or(0);
+    let best_single_security = security_idx
+        .iter()
+        .map(|&i| per_provider[i])
+        .max()
+        .unwrap_or(0);
+
+    println!(
+        "\n  Quorum (OR of all {} presets):   {quorum_all}/{n} ({:.1}%)  |  delta over best single: \
+         +{}/{n} ({:+.1} pp)",
+        presets.len(),
+        pct(quorum_all, n),
+        quorum_all - best_single,
+        pct(quorum_all, n) - pct(best_single, n)
+    );
+    println!(
+        "  Quorum (OR of Security tier, {}):   {quorum_security}/{n} ({:.1}%)  |  delta over best \
+         single Security: +{}/{n} ({:+.1} pp)",
+        security_idx.len(),
+        pct(quorum_security, n),
+        quorum_security - best_single_security,
+        pct(quorum_security, n) - pct(best_single_security, n)
+    );
+    println!(
+        "\n  The hypothesis: a delta >0 means OR-logic caught domains no single provider did on \
+         this sample; 0 means it added nothing. Quad9's rate is an upper bound (NeedsBaseline \
+         path - see module doc); AdultContent presets are included for completeness but a live \
+         malware feed is not the corpus they filter."
+    );
+
+    println!("\nper-domain trace (index: baseline rcode -> ids that blocked):");
+    for (i, r) in results.iter().enumerate() {
+        let blocked_ids: Vec<&str> = presets
+            .iter()
+            .zip(&r.voter_blocked)
+            .filter_map(|(spec, &b)| b.then_some(spec.id.as_str()))
+            .collect();
+        let rcodes: Vec<String> = r.voter_rcode.iter().map(|rc| format!("{rc:?}")).collect();
+        println!(
+            "  #{i}: {:?} -> [{}]   (rcodes: {})",
+            r.baseline_rcode,
+            blocked_ids.join(", "),
+            rcodes.join("/")
+        );
+    }
+}
+
+fn category_label(category: Category) -> &'static str {
+    match category {
+        Category::Security => "SECURITY",
+        Category::AdsTrackers => "ADS_TRACKERS",
+        Category::AdultContent => "ADULT",
     }
 }
 
