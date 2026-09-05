@@ -121,6 +121,7 @@
 
 mod admin;
 mod admin_ui;
+mod admission;
 mod baseline_selector;
 mod cache;
 mod cache_persist;
@@ -160,6 +161,7 @@ pub use admin::{
     ProviderSetEnabledRequest, ProviderStatusView, ProviderView, ProvidersResponse,
     WatchdogStatusView,
 };
+pub use admission::ConnectionGate;
 pub use baseline_selector::{
     BaselineEvent, BaselineHealth, BaselineSelector, BASELINE_CHAIN, RETRY_PRIMARY_AFTER,
     SWITCH_THRESHOLD,
