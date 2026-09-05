@@ -7,7 +7,8 @@
 //! 2. Quorum detection rate vs each individual provider, against a live
 //!    URLhaus malicious-domain sample — validates or refutes the "OR-logic
 //!    across providers beats a single provider" hypothesis this whole
-//!    project rests on.
+//!    project rests on. Re-run for T-171 with the T-170 shipped default set
+//!    (`quad9` + `cloudflare-malware` + `adguard`) on a larger sample.
 //!
 //! **Preconditions** (run with `cargo run --example phase1_metrics [port]`,
 //! default port 8443 — a plain HTTP client, it does not manage the service's
@@ -80,7 +81,10 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 const URLHAUS_RECENT_CSV: &str = "https://urlhaus.abuse.ch/downloads/csv_recent/";
-const SAMPLE_CAP: usize = 40;
+// T-171 widened this from 40 to a ~100-200 target (T-133 ToS: moderate
+// volume, no bulk abuse). The feed's `csv_recent` dump holds a few thousand
+// rows; the cap plus the baseline-NoError filter decides the final n.
+const SAMPLE_CAP: usize = 150;
 const PER_DOMAIN_DELAY: Duration = Duration::from_millis(150);
 const DEFAULT_LOCAL_PORT: u16 = 8443;
 const SMALL_SAMPLE_WARNING_THRESHOLD: usize = 20;
@@ -89,8 +93,10 @@ struct DomainResult {
     domain: String,
     baseline_rcode: ResponseCode,
     quad9_rcode: ResponseCode,
+    cloudflare_rcode: ResponseCode,
     adguard_rcode: ResponseCode,
     quad9_blocked: bool,
+    cloudflare_blocked: bool,
     adguard_blocked: bool,
 }
 
@@ -105,7 +111,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let doh_client = ReqwestDohClient::new()?;
     let mut results = Vec::new();
     for domain in &sample {
-        match resolve_all_three(&doh_client, domain).await {
+        match resolve_all_voters(&doh_client, domain).await {
             Ok(Some(result)) => results.push(result),
             Ok(None) => {}
             Err(err) => eprintln!("  (skipped one domain, query failed: {err})"),
@@ -220,7 +226,11 @@ fn build_a_query(domain: &str) -> Result<Message, Box<dyn Error>> {
 /// `Ok(None)` means the domain's baseline query didn't come back `NoError`
 /// (dead/sinkholed/NXDOMAIN) — excluded from the detection-rate denominator,
 /// URLhaus churn rather than a provider miss.
-async fn resolve_all_three(
+///
+/// Queries the T-170 shipped default voter set — `quad9`
+/// (`NxdomainVsBaseline`), `cloudflare-malware` (`NullIp`) and `adguard`
+/// (`NullIp`) — each with its preset's own block signature.
+async fn resolve_all_voters(
     client: &ReqwestDohClient,
     domain: &str,
 ) -> Result<Option<DomainResult>, Box<dyn Error>> {
@@ -230,17 +240,23 @@ async fn resolve_all_three(
         return Ok(None);
     }
     let quad9_spec = builtin_preset("quad9").ok_or("quad9 preset must exist")?;
+    let cloudflare_spec =
+        builtin_preset("cloudflare-malware").ok_or("cloudflare-malware preset must exist")?;
     let adguard_spec = builtin_preset("adguard").ok_or("adguard preset must exist")?;
     let quad9 = client.query(&quad9_spec.doh_url, &query).await?;
+    let cloudflare = client.query(&cloudflare_spec.doh_url, &query).await?;
     let adguard = client.query(&adguard_spec.doh_url, &query).await?;
     let quad9_blocked = is_blocked(BlockSignature::NxdomainVsBaseline, &quad9, &baseline);
+    let cloudflare_blocked = is_blocked(BlockSignature::NullIp, &cloudflare, &baseline);
     let adguard_blocked = is_blocked(BlockSignature::NullIp, &adguard, &baseline);
     Ok(Some(DomainResult {
         domain: domain.to_string(),
         baseline_rcode: baseline.metadata.response_code,
         quad9_rcode: quad9.metadata.response_code,
+        cloudflare_rcode: cloudflare.metadata.response_code,
         adguard_rcode: adguard.metadata.response_code,
         quad9_blocked,
+        cloudflare_blocked,
         adguard_blocked,
     }))
 }
@@ -259,43 +275,52 @@ fn report_detection_rate(results: &[DomainResult]) {
     }
 
     let quad9_blocked = results.iter().filter(|r| r.quad9_blocked).count();
+    let cloudflare_blocked = results.iter().filter(|r| r.cloudflare_blocked).count();
     let adguard_blocked = results.iter().filter(|r| r.adguard_blocked).count();
     let quorum_blocked = results
         .iter()
-        .filter(|r| r.quad9_blocked || r.adguard_blocked)
+        .filter(|r| r.quad9_blocked || r.cloudflare_blocked || r.adguard_blocked)
         .count();
-    let exactly_one = results
-        .iter()
-        .filter(|r| r.quad9_blocked != r.adguard_blocked)
-        .count();
+    let best_single = quad9_blocked.max(cloudflare_blocked).max(adguard_blocked);
+    let quorum_over_best_single = quorum_blocked - best_single;
 
     println!(
-        "Quad9 alone:   {quad9_blocked}/{n} ({:.1}%) - via NXDOMAIN+baseline-NoError \
+        "Quad9 alone:              {quad9_blocked}/{n} ({:.1}%) - via NXDOMAIN+baseline-NoError \
          (NeedsBaseline path, an upper bound under that semantic - see module doc)",
         pct(quad9_blocked, n)
     );
     println!(
-        "AdGuard alone: {adguard_blocked}/{n} ({:.1}%) - explicit 0.0.0.0/:: signal (verified, \
-         a run discriminating raw answer IPs confirmed a 0/38 AdGuard rate means genuine routable \
-         IPs came back for every domain, not an unrecognized null-IP - see module doc)",
+        "Cloudflare Malware alone: {cloudflare_blocked}/{n} ({:.1}%) - explicit 0.0.0.0/:: signal",
+        pct(cloudflare_blocked, n)
+    );
+    println!(
+        "AdGuard alone:            {adguard_blocked}/{n} ({:.1}%) - explicit 0.0.0.0/:: signal \
+         (T-66: a run discriminating raw answer IPs confirmed a 0/38 AdGuard rate meant genuine \
+         routable IPs for every domain, not an unrecognized null-IP - see module doc)",
         pct(adguard_blocked, n)
     );
     println!(
-        "Quorum (OR):   {quorum_blocked}/{n} ({:.1}%)",
+        "Quorum (OR of all three): {quorum_blocked}/{n} ({:.1}%)",
         pct(quorum_blocked, n)
     );
     println!(
-        "Exactly one provider blocked (validates the quorum hypothesis - zero here \
-         means quorum added nothing over either provider alone on this sample): \
-         {exactly_one}/{n} ({:.1}%)",
-        pct(exactly_one, n)
+        "Quorum delta over the best single provider (the hypothesis: >0 means OR-logic \
+         caught domains no single provider did on this sample; 0 means it added nothing): \
+         +{quorum_over_best_single}/{n} ({:.1} pp)",
+        pct(quorum_blocked, n) - pct(best_single, n)
     );
 
-    println!("\nper-domain trace (index: baseline/quad9/adguard rcode -> verdict):");
+    println!("\nper-domain trace (index: baseline/quad9/cloudflare/adguard rcode -> verdict):");
     for (i, r) in results.iter().enumerate() {
         println!(
-            "  #{i}: {:?}/{:?}/{:?} -> quad9={} adguard={}",
-            r.baseline_rcode, r.quad9_rcode, r.adguard_rcode, r.quad9_blocked, r.adguard_blocked
+            "  #{i}: {:?}/{:?}/{:?}/{:?} -> quad9={} cloudflare={} adguard={}",
+            r.baseline_rcode,
+            r.quad9_rcode,
+            r.cloudflare_rcode,
+            r.adguard_rcode,
+            r.quad9_blocked,
+            r.cloudflare_blocked,
+            r.adguard_blocked
         );
     }
 }

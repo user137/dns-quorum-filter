@@ -215,3 +215,58 @@ The two shapes:
 The design decision this feeds — a generous bounded-concurrency backstop against pathological
 accumulation, sized from these server-side numbers rather than a throughput percentile —
 is in `SPEC.md` §1.1, and its implementation is a separate task (TASKS.md T-169).
+
+## Quorum coverage (T-66 / T-171)
+
+Not a latency measurement — this is the efficacy question the whole OR-logic design rests on:
+**does querying several filtering providers and blocking on any one "block" vote catch more
+malicious domains than the best single provider would alone?**
+
+Harness: `examples/phase1_metrics.rs` (`cargo run --example phase1_metrics`, manual, not CI).
+It pulls the live abuse.ch URLhaus `csv_recent` feed, keeps the domain-name hosts whose baseline
+(Cloudflare `1.1.1.1`) lookup returns `NoError` (so a churned/dead URLhaus entry isn't counted as
+a provider miss), and asks each voter of the shipped default set for an A record, classifying the
+answer through that preset's own `BlockSignature`.
+
+**T-171 run — 2026-09-05, shipped T-170 default set (`quad9` + `cloudflare-malware` + `adguard`),
+`SAMPLE_CAP = 150`.** After the baseline-`NoError` filter and 4 transient Quad9 request failures,
+**n = 122**.
+
+| voter | blocked | rate | signal |
+|---|---|---|---|
+| Quad9 Filtered | 73/122 | 59.8 % | `NXDOMAIN` vs baseline-`NoError` (`NeedsBaseline` path — an **upper bound** under `is_blocked`'s semantic: some of these are genuine non-existence, not an active Quad9 block) |
+| Cloudflare Malware | 43/122 | 35.2 % | explicit `0.0.0.0`/`::` answer |
+| AdGuard Default | 0/122 | 0.0 % | explicit `0.0.0.0`/`::` answer — none seen |
+| **Quorum (OR of all three)** | **74/122** | **60.7 %** | — |
+| **delta over best single (Quad9)** | **+1/122** | **+0.8 pp** | one domain Cloudflare caught that Quad9 did not (`#84` in the run's per-domain trace) |
+
+### What the numbers say
+
+- **The quorum hypothesis is _not_ confirmed on this sample** — and now on a sample ~3× the size
+  of T-66's (n = 122 vs n = 38). The OR of three providers caught **exactly one** malicious
+  domain that simply running Quad9 alone would have missed. +0.8 pp is within sampling noise.
+- **Cloudflare Malware's blocks are very nearly a subset of Quad9's.** The per-domain trace shows
+  `quad9=true cloudflare=true` for almost every Cloudflare hit; `quad9=false cloudflare=true`
+  happens once in 122. Two Security-tier feeds here are highly correlated, not independent — which
+  is exactly what erodes an OR-quorum's value.
+- **AdGuard 0/122 again** (T-66 saw 0/38). Expected and not a defect: AdGuard is in the shipped
+  default for **ads/trackers** (T-170), and its ads blocklist does not overlap a live *malware*
+  URL feed. A one-off raw-answer check in T-66 confirmed AdGuard returned genuine routable IPs
+  for every domain, so this is a real 0 %, not an unrecognised null-IP.
+- **Quad9's 59.8 % is an upper bound**, not a floor — it counts every "baseline resolved,
+  Quad9 `NXDOMAIN`" as a block, and URLhaus domains churn fast.
+
+### Verdict and disposition
+
+**One run, one record** (T-171 rule — no re-measuring with a different sample/set until it
+"confirms"). This does **not** block Phase 3: Phases 2–3 started by explicit user decision *in
+spite of* this open gate, and T-171's job was to close it with an honest number, not to gate on
+the result. The number is honest and it is negative.
+
+The OR-quorum's actual value over a good single Security provider is **not demonstrated** by
+either measurement. That is a live design question for **Phase 4+** (see `SPEC.md` "Відкриті
+питання") — candidate directions: measure against a broader threat corpus than one live feed;
+weight the design toward provider *independence* (feeds with genuinely different intelligence
+sources) rather than provider *count*; or reframe the value proposition as resilience/redundancy
+(any one provider being down or wrong) rather than additive coverage. Recorded, not acted on
+here.

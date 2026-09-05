@@ -125,8 +125,11 @@ Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); 
 
 Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstaller must call
 `trust_store::uninstall()` + `key_store::delete_secret`, blocked on T-156 MSIX packaging); the
-**Ф1 metrics gate** (T-66 showed no quorum gain over the best single provider; no recorded live
-"browser → local DoH" run). **`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
+**Ф1 metrics gate** — **metrics half closed T-171** (2026-09-05): re-measured on n=122 with the
+T-170 default set, quorum gain over the best single provider (Quad9) was +1 domain / +0.8 pp —
+hypothesis still not confirmed, recorded, raised as a Ф4+ design question (DECISIONS.md,
+PERFORMANCE.md "Quorum coverage"). The live "browser → local DoH" pass is T-172.
+**`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
 DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
 voters plus AdGuard for ads out of the box.
 
@@ -273,12 +276,17 @@ does **not** — structurally incapable of becoming a filter later. The allowlis
 every-provider-disabled pass-through are exempt from GeoIP *filtering* but still get
 `resolved_ip_country` annotation.
 
-### Фаза 1 closure — two open gaps (not numbered tasks; see SPEC.md's closure paragraph)
+### Фаза 1 closure — open gaps (not numbered tasks; see SPEC.md's closure paragraph)
 
 - No test anywhere exercises the real "browser → local DoH" leg — every existing confirmation is
   either DoH-client-level (`Invoke-WebRequest`) or Chrome automation against `/admin/ui`.
-- T-66's metrics (the gate SPEC.md sets before investing in Фаза 2) did not confirm the quorum
-  hypothesis on their one sample (AdGuard caught 0/38).
+  **T-172 closes this** (Батч 3.9).
+- ~~T-66's metrics did not confirm the quorum hypothesis (AdGuard 0/38, n=1)~~ — **T-171
+  (2026-09-05) closed this gate with an honest record**: re-measured on n=122 with the T-170
+  default set (`quad9` + `cloudflare-malware` + `adguard`), quorum caught +1 domain / +0.8 pp
+  over the best single provider (Quad9). Hypothesis still not confirmed; Cloudflare Malware's
+  blocks were near a subset of Quad9's (correlated feeds). Not a blocker — raised as a Ф4+ design
+  question (DECISIONS.md 2026-09-05, PERFORMANCE.md "Quorum coverage (T-66 / T-171)").
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 

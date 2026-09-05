@@ -3450,3 +3450,48 @@ DECISIONS.md, CONFIGURATION.md (рядок таблиці + приклад TOML 
 README.md, UI-SPEC.md, CLAUDE.md (Project State + «Known limitations» рядок знято + «Key
 non-obvious decisions»). Гейти зелені локально (624 lib+bins, 18 conformance, clippy, fmt, doc,
 doctest).
+
+### T-171 — перемір quorum-coverage більшим зразком (зроблено 2026-09-05, manual-прогін, 1 коміт)
+
+- [x] T-171 — Переміряти T-66 quorum-coverage більшим зразком (SPEC.md `## Фаза 1` closure) —
+  `examples/phase1_metrics.rs` розширено на трипровайдерний T-170-набір; **n=122, гіпотезу не
+  підтверджено**; Ф1-метрик-гейт закрито чесним записом.
+
+**Харнес.** `examples/phase1_metrics.rs` (manual, не CI) — тепер міряє шиппед-набір T-170:
+`quad9` (`NxdomainVsBaseline`) + `cloudflare-malware` (`NullIp`) + `adguard` (`NullIp`) проти
+baseline. `SAMPLE_CAP` 40→150. Звіт рахує **дельту кворуму над найкращим одиночним провайдером**
+(замість колишнього «exactly one provider blocked»). Build/clippy/fmt зелені.
+
+**Прогін (2026-09-05, `SAMPLE_CAP=150`).** URLhaus `csv_recent` віддав 150 доменів; після
+baseline-`NoError`-фільтра + 4 транзієнтні збої запиту до Quad9 → **n = 122**:
+
+| voter | blocked | rate |
+|---|---|---|
+| Quad9 Filtered | 73/122 | 59.8 % (NeedsBaseline path — верхня межа) |
+| Cloudflare Malware | 43/122 | 35.2 % |
+| AdGuard Default | 0/122 | 0.0 % |
+| Кворум (OR трьох) | 74/122 | 60.7 % |
+| **дельта над Quad9** | **+1/122** | **+0.8 pp** |
+
+**Вердикт: гіпотезу не підтверджено** — уже на ~3× зразку T-66 (n=122 vs 38). Кворум зловив
+рівно один malware-домен, якого не зловив би сам Quad9 (`#84` — Cloudflare block, Quad9 miss).
+Cloudflare-блоки — майже підмножина Quad9-блоків (`quad9=true cloudflare=true` майже всюди в
+per-domain-трейсі; `quad9=false cloudflare=true` — 1/122): два Security-фіди сильно корельовані.
+AdGuard 0/122 — очікувано (у дефолті для реклами, ads-блоклист не перетинається з malware-URL-фідом;
+T-66 окремо звірив, що raw-відповіді — genuine routable IPs, не нерозпізнаний null-IP).
+
+**Один прогін — один запис** (правило T-171): 4 транзієнтні збої на боці клієнта — не
+методологічно порожній прогін (n=122 >> поріг попередження 20), перезапуск заради «кращих» цифр
+= саме та поведінка, яку правило забороняє. Записано як THE прогін.
+
+**Disposition.** Не блокує Ф3 (гейт закривався чесним числом, не гейтив на результаті; Ф2/Ф3
+стартували рішенням користувача). Цінність OR-кворуму над одним добрим Security-провайдером —
+**відкрите дизайн-питання для Ф4+** (SPEC.md «Відкриті питання» п.4 — додано підпункт): ширший
+threat-корпус; вага на незалежність джерел intelligence, не кількість провайдерів; або
+переформулювати цінність як стійкість/резервування.
+
+**Файли.** `examples/phase1_metrics.rs` (harness), PERFORMANCE.md (нова секція «Quorum coverage
+(T-66 / T-171)» — таблиця + reading + verdict), DECISIONS.md (запис-вердикт), SPEC.md (`## Фаза 1`
++ `## Фаза 2` closure-абзаци — гейт #1 позначено закритим; «Відкриті питання» п.4 — підпункт про
+Ф4+), CLAUDE.md (Project State carried-note + «Фаза 1 closure» секція). Docs + manual-harness —
+код-гейти не зачеплені (harness build/clippy/fmt зелені окремо).
