@@ -414,10 +414,11 @@ TASKS-DONE.md. **T-168 (аналіз перфомансу) + T-169 (запобі
 2026-09-05. T-170 + T-171 + T-174 завершено 2026-09-05** (T-170: дефолтний набір = `quad9` +
 `cloudflare-malware` + `adguard`, DECISIONS.md. T-171: перемір quorum-coverage — спершу +0.8 pp
 («не підтверджено»), але це був артефакт сигнатурного бага CleanBrowsing. **T-174: виправив
-сигнатуру (`NullIp`→`NullIpOrNxdomain`) + додав ads/adult-корпуси в harness → перемір n=126:
-кворум OR Security-tier +15.9 pp над Quad9, 19 malware-доменів зловив лише CleanBrowsing —
-ГІПОТЕЗУ ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито. Заведено **T-175** (sinkhole-IP-сигнатура).
-DECISIONS.md / PERFORMANCE.md / SPEC.md оновлено. **Наступне — Батч 3.9 (T-172 живий браузерний
+сигнатуру (`NullIp`→`NullIpOrNxdomain`) + додав ads/adult-корпуси в harness + closing-advisor:
+гейт на два незалежні нефільтровані резолвери (0 розбіжностей) → перемір n=106: кворум OR
+Security-tier +17.0 pp над Quad9, 17 malware-доменів зловив лише CleanBrowsing — ГІПОТЕЗУ
+ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито. Заведено **T-175** (sinkhole-IP-сигнатура).
+DECISIONS.md / PERFORMANCE.md / SPEC.md / CLAUDE.md оновлено. **Наступне — Батч 3.9 (T-172 живий браузерний
 прохід + closing-advisor на весь батч) → Батч 3.10 (T-173 — реліз `v0.3.0`), і Фаза 3 закрита
 повністю. План — вище, «План фінального закриття Ф3».**
 
@@ -551,10 +552,11 @@ resource-exhaustion — `admission::ConnectionGate` + `[limits]`-конфіг + 
 `quad9` + `cloudflare-malware` + `adguard` (DECISIONS.md; kickoff-AskUserQuestion як gate). T-171 —
 перемір quorum-coverage: спершу +0.8 pp («не підтверджено»), але артефакт сигнатурного бага.
 **T-174 — виправив сигнатуру CleanBrowsing (`NullIp`→`NullIpOrNxdomain`) + додав ads/adult-корпуси
-в `phase1_metrics.rs` → перемір n=126: кворум OR Security-tier 93/126, +20 доменів / +15.9 pp над
-Quad9, 19 malware-доменів зловив лише CleanBrowsing — ГІПОТЕЗУ ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт
-закрито. Заведено **T-175** (потрібен `BlockSignature::SinkholeIp` для adguard-family/opendns/
-dns4eu). DECISIONS.md / PERFORMANCE.md / SPEC.md оновлено. Наступне — **Батч 3.9** (T-172 живий
+в `phase1_metrics.rs` + closing-advisor (гейт на два нефільтровані резолвери, 0 розбіжностей) →
+перемір n=106: кворум OR Security-tier 76/106, +18 доменів / +17.0 pp над Quad9, 17
+malware-доменів зловив лише CleanBrowsing — ГІПОТЕЗУ ПІДТВЕРДЖЕНО**, Ф1-метрик-гейт закрито.
+Заведено **T-175** (потрібен `BlockSignature::SinkholeIp` для adguard-family/opendns/dns4eu).
+DECISIONS.md / PERFORMANCE.md / SPEC.md / CLAUDE.md оновлено. Наступне — **Батч 3.9** (T-172 живий
 браузерний прохід + closing-advisor на весь батч) → **Батч 3.10** (T-173 бамп `v0.3.0` + тег +
 чернетка MSIX-релізу) → Фаза 3 закрита повністю.
 

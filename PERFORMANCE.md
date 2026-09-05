@@ -222,11 +222,12 @@ Not a latency measurement — this is the efficacy question the whole OR-logic d
 **does querying several filtering providers and blocking on any one "block" vote catch more
 malicious domains than the best single provider would alone?**
 
-> **Current answer: yes, confirmed (T-174, 2026-09-05) — +15.9 pp over the best single Security
-> provider on n = 126.** The T-66 and T-171 measurements below read as "not confirmed" because a
-> block-signature bug (fixed in T-174) hid two of the four Security providers. Read the "Resolution
-> — T-174" subsection at the end for the up-to-date result; the T-171 material is kept for the
-> record of how it was found.
+> **Current answer: yes, confirmed (T-174, 2026-09-05) — +17.0 pp over the best single Security
+> provider (n = 106, two independent unfiltered resolvers gating the sample).** The T-66 and T-171
+> measurements below read as "not confirmed" because a block-signature bug (fixed in T-174) hid two
+> of the four Security providers. Read the "Resolution — T-174" subsection at the end for the
+> up-to-date result and how the resolver-view confound was tested; the T-171 material is kept for
+> the record of how it was found.
 
 Harness: `examples/phase1_metrics.rs` (`cargo run --example phase1_metrics`, manual, not CI).
 It pulls the live abuse.ch URLhaus `csv_recent` feed, keeps the domain-name hosts whose baseline
@@ -269,9 +270,9 @@ confirming number). The T-171 run's number was honest and negative: **+0.8 pp**.
 
 **That number was wrong-for-a-reason, not wrong-by-noise.** The follow-up and T-174 (below)
 established that two of the four Security presets had a broken block signature, so T-171 measured
-a two-provider quorum, not a four-provider one. With the signature fixed, the same measurement
-methodology on a comparable sample gives **+15.9 pp** — the OR-quorum hypothesis holds. See
-"Resolution — T-174" below; the up-to-date verdict lives there.
+a two-provider quorum, not a four-provider one. With the signature fixed and the sample gated by
+two independent unfiltered resolvers, the same methodology gives **+17.0 pp** — the OR-quorum
+hypothesis holds. See "Resolution — T-174" below; the up-to-date verdict lives there.
 
 ### Follow-up run — all 10 built-in presets (2026-09-05, user-requested)
 
@@ -313,35 +314,48 @@ this can't hide on a future run.
 ### Resolution — T-174 (CleanBrowsing signature fixed, hypothesis CONFIRMED)
 
 T-174 changed `cleanbrowsing-security` / `cleanbrowsing-adult` from `BlockSignature::NullIp` to
-`NullIpOrNxdomain` (live-verified via this harness: 67/126 malware + 10/10 adult blocked via
-NXDOMAIN, baseline resolved all). `phase1_metrics.rs` also gained an `ads` corpus (18 fixed
-ad/tracker hosts) and an `adult` corpus (10 fixed high-traffic adult sites) so the AdsTrackers
-and AdultContent presets get exercised at all.
+`NullIpOrNxdomain` (live-verified via this harness: they NXDOMAIN'd every domain they blocked,
+including 10/10 well-known adult sites that resolve everywhere). `phase1_metrics.rs` also gained
+an `ads` corpus (18 fixed ad/tracker hosts) and an `adult` corpus (10 fixed high-traffic adult
+sites) so the AdsTrackers / AdultContent presets get exercised at all.
 
-Re-run with the fix, malware corpus n = 126:
+**Two independent unfiltered resolvers (closing-advisor mitigation).** For an NXDOMAIN-signature
+voter, `is_blocked` counts a block whenever the primary baseline resolved and the voter said
+NXDOMAIN — so on a churning URLhaus feed a resolver-view difference (`NoError` on Cloudflare,
+`NXDOMAIN` on the voter's own recursive path) is indistinguishable from a filter decision. The
+harness now keeps a domain only if **both** Cloudflare `1.1.1.1` **and** Quad9 unsecured `dns10`
+(`BASELINE_CHAIN[1]`) return `NoError`. This means Quad9's and CleanBrowsing's rates below carry
+the *same* upper-bound caveat and the *same* mitigation — they are the same signal class.
+
+Definitive run (both-unfiltered-`NoError` gate, malware corpus **n = 106**; **0 domains** dropped
+for a Cloudflare-vs-Quad9-unsecured disagreement — the resolver-view confound did not
+materialise):
 
 | preset | rate | | preset | rate |
 |---|---|---|---|---|
-| `quad9` | 73/126 (57.9 %) | | `cloudflare-family` | 45/126 (35.7 %) |
-| `cloudflare-malware` | 43/126 (34.1 %) | | `cleanbrowsing-adult` | 67/126 (53.2 %) |
-| **`cleanbrowsing-security`** | **67/126 (53.2 %)** | | others (5) | 0/126 |
+| `quad9` | 58/106 (54.7 %) | | `cloudflare-family` | 36/106 (34.0 %) |
+| `cloudflare-malware` | 34/106 (32.1 %) | | `cleanbrowsing-adult` | 57/106 (53.8 %) |
+| **`cleanbrowsing-security`** | **57/106 (53.8 %)** | | others (5) | 0/106 |
 
-- **Quorum (OR of the 4 Security-tier): 93/126 (73.8 %) — +20 domains / +15.9 pp over the best
+- **Quorum (OR of the 4 Security-tier): 76/106 (71.7 %) — +18 domains / +17.0 pp over the best
   single provider (Quad9).**
-- Quorum (OR of all 10): 94/126 (74.6 %) — +21 / +16.7 pp.
-- **19 malware domains were blocked *only* by CleanBrowsing** (neither Quad9 nor Cloudflare
-  Malware) — that is the OR-quorum's gain, made of real independent coverage. The T-171
-  "correlated feeds, quorum adds nothing" reading was an artifact of the signature bug hiding
-  CleanBrowsing entirely.
+- Quorum (OR of all 10): 77/106 (72.6 %) — +19 / +17.9 pp.
+- **17 malware domains were blocked *only* by CleanBrowsing** (neither Quad9 nor Cloudflare
+  Malware, both unfiltered resolvers `NoError`) — real independent coverage. The first-pass
+  single-baseline run gave +15.9 pp; the tighter gate gave +17.0 pp — consistent, slightly
+  higher, not lower. The T-171 "correlated feeds, quorum adds nothing" reading was an artifact of
+  the signature bug hiding CleanBrowsing entirely.
 
-**Verdict: the OR-quorum hypothesis is confirmed on n = 126** — a good single Security provider
-(Quad9, ~58 %) is beaten by ~16 pp when the OR runs over all four working Security feeds. Ф1
-metrics gate #1 is now closed *by confirmation*, not just by an honest negative record.
+**Verdict: the OR-quorum hypothesis is confirmed** — a good single Security provider (Quad9,
+~55 %) is beaten by ~17 pp by the OR over all four working Security feeds, on a sample where the
+resolver-view confound was explicitly measured (0 disagreements between the two unfiltered
+resolvers) and ruled out. Ф1 metrics gate #1 is now closed *by confirmation*, not just by an
+honest negative record.
 
-Other corpora (both n < 20 — indicative): **ads** — `adguard` and `adguard-family` each 9/14
-(64 %) via `0.0.0.0`, confirming AdGuard delivers ad blocking (the T-170 default's reason for
-shipping it). **adult** — `cloudflare-family` and `cleanbrowsing-adult` each 10/10; but
-`adguard-family`, `opendns-familyshield`, `dns4eu-child` caught **0/10 with 0 NXDOMAIN** — they
+Other corpora (both n < 20 — indicative): **ads** — `adguard` and `adguard-family` each 13/16
+(81 %) via `0.0.0.0`, confirming AdGuard delivers ad blocking (the T-170 default's reason for
+shipping it). **adult** — `cloudflare-family` and `cleanbrowsing-adult` each 9/9; but
+`adguard-family`, `opendns-familyshield`, `dns4eu-child` caught **0/9 with 0 NXDOMAIN** — they
 appear to block via a provider-specific sinkhole/redirect IP that no current `BlockSignature`
 (`NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`) recognises. Filed as **T-175** (needs a
 new `SinkholeIp` signature variant); lower priority — those are secondary Adult presets, not the

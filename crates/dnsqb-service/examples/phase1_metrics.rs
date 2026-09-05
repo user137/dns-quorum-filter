@@ -60,9 +60,14 @@
 //! block below goes through that fallback path, not an unambiguous explicit
 //! signal — unlike AdGuard, whose block signal is an explicit `0.0.0.0`/`::`
 //! answer. This is `is_blocked`'s actual shipped semantic, not a bug in this
-//! tool, but Quad9's rate here is an upper bound under that semantic, not an
-//! unconditional measurement — the per-domain rcode trace this tool prints
-//! makes that checkable rather than just asserted.
+//! tool, but any single NXDOMAIN-signature voter's rate is an upper bound
+//! under that semantic. **T-174 closing-advisor mitigation**: a domain is
+//! kept only if the primary baseline (Cloudflare) *and* a second
+//! independent unfiltered resolver (Quad9 unsecured `dns10`, `SECOND_BASELINE_URL`)
+//! both return `NoError` — so an NXDOMAIN-signature voter's block is against
+//! a domain two unfiltered resolvers agree resolves, not a
+//! propagation/view difference. The count dropped by that second gate is
+//! reported ("baseline gating: … dropped").
 //!
 //! **An AdGuard 0% rate is ambiguous by rcode alone and was separately
 //! checked, not assumed** — advisor review of a real run pointed out that
@@ -83,7 +88,7 @@
 use dnsqb_service::{
     all_builtin_presets, app_data_dir, decode_wire_message, doh_get_url, encode_wire_message,
     is_blocked, BlockSignature, Category, DohClient, ProviderSpec, ReqwestDohClient,
-    BASELINE_DOH_URL,
+    BASELINE_CHAIN, BASELINE_DOH_URL,
 };
 use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -91,6 +96,17 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
+
+/// A second, independent *unfiltered* resolver (`BASELINE_CHAIN[1]` — Quad9
+/// unsecured `dns10`). T-174 closing-advisor: for an `NxdomainVsBaseline` /
+/// `NullIpOrNxdomain` voter, `is_blocked` counts a block whenever the
+/// primary baseline resolved and the voter said `NXDOMAIN` — but on a live
+/// URLhaus feed a fresh domain can be `NoError` on one recursive resolver
+/// and `NXDOMAIN` on another purely from propagation/view differences, not a
+/// filter decision. A domain is kept only if **both** unfiltered resolvers
+/// return `NoError`, so a filtering voter's `NXDOMAIN` is a real block, not
+/// a resolver-view artifact.
+const SECOND_BASELINE_URL: &str = BASELINE_CHAIN[1];
 
 const URLHAUS_RECENT_CSV: &str = "https://urlhaus.abuse.ch/downloads/csv_recent/";
 // T-171 widened this from 40 to a ~100-200 target (T-133 ToS: moderate
@@ -169,8 +185,22 @@ struct DomainResult {
     domain: String,
     corpus: Corpus,
     baseline_rcode: ResponseCode,
+    second_baseline_rcode: ResponseCode,
     voter_rcode: Vec<ResponseCode>,
     voter_blocked: Vec<bool>,
+}
+
+/// Outcome of sampling one domain — kept, or dropped with the reason (so the
+/// reasons can be tallied rather than silently swallowed).
+enum Sampled {
+    Kept(Box<DomainResult>),
+    /// Primary baseline (Cloudflare) did not return `NoError`.
+    SkippedPrimaryBaseline,
+    /// Primary baseline said `NoError` but the second unfiltered resolver
+    /// (Quad9 unsecured) did not — the two disagree, so any filtering
+    /// voter's `NXDOMAIN` here is not distinguishable from a resolver-view
+    /// difference. Dropped. (T-174 closing-advisor.)
+    SkippedBaselineDisagree,
 }
 
 #[tokio::main]
@@ -212,14 +242,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let doh_client = ReqwestDohClient::new()?;
     let mut results = Vec::new();
+    let mut skipped_primary = 0usize;
+    let mut skipped_disagree = 0usize;
     for (domain, corpus) in &sample {
         match resolve_all_voters(&doh_client, domain, *corpus, &presets).await {
-            Ok(Some(result)) => results.push(result),
-            Ok(None) => {}
+            Ok(Sampled::Kept(result)) => results.push(*result),
+            Ok(Sampled::SkippedPrimaryBaseline) => skipped_primary += 1,
+            Ok(Sampled::SkippedBaselineDisagree) => skipped_disagree += 1,
             Err(err) => eprintln!("  (skipped one domain, query failed: {err})"),
         }
         tokio::time::sleep(PER_DOMAIN_DELAY).await;
     }
+
+    println!(
+        "\nbaseline gating: {skipped_primary} dropped (primary baseline not NoError), \
+         {skipped_disagree} dropped (unfiltered resolvers disagree - Cloudflare NoError but \
+         Quad9-unsecured did not; an NXDOMAIN-signature voter's block on these would be \
+         indistinguishable from a resolver-view difference)"
+    );
 
     report_detection_rate(&results, &presets);
 
@@ -328,12 +368,14 @@ fn build_a_query(domain: &str) -> Result<Message, Box<dyn Error>> {
     Ok(message)
 }
 
-/// `Ok(None)` means the domain's baseline query didn't come back `NoError`
-/// (dead/sinkholed/NXDOMAIN) — excluded from the detection-rate denominator,
-/// URLhaus churn rather than a provider miss.
+/// A domain is kept only if **both** unfiltered resolvers (Cloudflare
+/// `1.1.1.1` primary + Quad9 unsecured `dns10` second) return `NoError` —
+/// see [`SECOND_BASELINE_URL`]. Otherwise it's dropped with a reason
+/// ([`Sampled::SkippedPrimaryBaseline`] / [`Sampled::SkippedBaselineDisagree`]).
 ///
 /// Queries every preset in `presets` (`all_builtin_presets()`), each with
-/// its own block signature. A single query failure to any one preset
+/// its own block signature, against the **primary** baseline (the shipped
+/// `is_blocked` contract). A single query failure to any one preset
 /// propagates as `Err` (the whole domain is skipped) — a partial per-voter
 /// record would silently understate that voter's rate.
 async fn resolve_all_voters(
@@ -341,11 +383,15 @@ async fn resolve_all_voters(
     domain: &str,
     corpus: Corpus,
     presets: &[ProviderSpec],
-) -> Result<Option<DomainResult>, Box<dyn Error>> {
+) -> Result<Sampled, Box<dyn Error>> {
     let query = build_a_query(domain)?;
     let baseline = client.query(BASELINE_DOH_URL, &query).await?;
     if baseline.metadata.response_code != ResponseCode::NoError {
-        return Ok(None);
+        return Ok(Sampled::SkippedPrimaryBaseline);
+    }
+    let second = client.query(SECOND_BASELINE_URL, &query).await?;
+    if second.metadata.response_code != ResponseCode::NoError {
+        return Ok(Sampled::SkippedBaselineDisagree);
     }
     let mut voter_rcode = Vec::with_capacity(presets.len());
     let mut voter_blocked = Vec::with_capacity(presets.len());
@@ -354,13 +400,14 @@ async fn resolve_all_voters(
         voter_blocked.push(is_blocked(spec.block_signature, &response, &baseline));
         voter_rcode.push(response.metadata.response_code);
     }
-    Ok(Some(DomainResult {
+    Ok(Sampled::Kept(Box::new(DomainResult {
         domain: domain.to_string(),
         corpus,
         baseline_rcode: baseline.metadata.response_code,
+        second_baseline_rcode: second.metadata.response_code,
         voter_rcode,
         voter_blocked,
-    }))
+    })))
 }
 
 fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
@@ -376,7 +423,8 @@ fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
     report_quorum_hypothesis(results, presets);
 
     println!(
-        "\nper-domain trace, malware corpus only (index: baseline rcode -> ids that blocked):"
+        "\nper-domain trace, malware corpus only \
+         (index: cloudflare/quad9-unsec baseline rcodes -> ids that blocked):"
     );
     for (i, r) in results
         .iter()
@@ -390,8 +438,9 @@ fn report_detection_rate(results: &[DomainResult], presets: &[ProviderSpec]) {
             .collect();
         let rcodes: Vec<String> = r.voter_rcode.iter().map(|rc| format!("{rc:?}")).collect();
         println!(
-            "  #{i}: {:?} -> [{}]   (rcodes: {})",
+            "  #{i}: {:?}/{:?} -> [{}]   (rcodes: {})",
             r.baseline_rcode,
+            r.second_baseline_rcode,
             blocked_ids.join(", "),
             rcodes.join("/")
         );

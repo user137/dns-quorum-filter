@@ -129,10 +129,12 @@ Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstall
 re-measure gave +0.8 pp ("not confirmed"), but that was an artifact of a block-signature bug:
 `cleanbrowsing-{security,adult}` block via NXDOMAIN while `BUILTIN_PRESETS` declared `NullIp`, so
 2 of the 4 Security presets contributed nothing. T-174 fixed the signature (`NullIpOrNxdomain`)
-and re-measured (n=126): **Security-tier OR-quorum 93/126, +20 domains / +15.9 pp over Quad9
-alone; 19 malware domains blocked only by CleanBrowsing.** Hypothesis confirmed (DECISIONS.md
-2026-09-05, PERFORMANCE.md "Quorum coverage … / Resolution — T-174"). The live "browser → local
-DoH" pass is still T-172.
+and re-measured with the sample gated by **two independent unfiltered resolvers** (closing-advisor
+mitigation — 0 disagreements, so a filtering voter's NXDOMAIN is a real block, not a resolver-view
+difference), n=106: **Security-tier OR-quorum 76/106, +18 domains / +17.0 pp over Quad9 alone; 17
+malware domains blocked only by CleanBrowsing.** Hypothesis confirmed (DECISIONS.md 2026-09-05,
+PERFORMANCE.md "Quorum coverage … / Resolution — T-174"). The live "browser → local DoH" pass is
+still T-172.
 **`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
 DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
 voters plus AdGuard for ads out of the box.
@@ -289,8 +291,9 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   confirmation, T-174 (2026-09-05).** T-171 first re-measured (n=122, +0.8 pp, "not confirmed"),
   then a follow-up found `cleanbrowsing-{security,adult}` were declared `NullIp` but block via
   NXDOMAIN — 2 of 4 Security presets weren't counting. T-174 fixed the signature and re-measured
-  (n=126): Security-tier OR-quorum **+15.9 pp over Quad9 alone**, 19 malware domains caught only
-  by CleanBrowsing. Hypothesis confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md).
+  with a two-independent-unfiltered-resolver gate (closing-advisor; 0 disagreements), n=106:
+  Security-tier OR-quorum **+17.0 pp over Quad9 alone**, 17 malware domains caught only by
+  CleanBrowsing. Hypothesis confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md).
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
