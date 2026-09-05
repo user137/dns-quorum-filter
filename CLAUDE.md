@@ -94,12 +94,16 @@ SPEC.md §5.3 pipeline + a lightweight `mermaid` flowchart, embedded directly ra
 `diagrams/` file since it's a lay illustration, not a synced dev artifact); SECURITY.md's
 dependency table compressed to a current-state snapshot (57065→19099 chars, ~66%, same
 principle as this file's own Project State compression — every row's why-this-crate/`unsafe`-
-location/accepted-risk fact checked to survive, none dropped). **T-168 queued 2026-09-05**
-(user request): performance/complexity analysis of critical pipeline paths, a load test against
-a mocked `DohClient`, and a resource-exhaustion-safeguard design (bounded concurrency vs. a
-waiting queue, sizing methodology) for the local-client-misbehavior threat model — TASKS.md has
-the full scope, not yet started. **Next** — T-168 or the carried-forward Ф1 gates (T-66 metrics,
-live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`) — user picks, no more numbered Ф3 batches.
+location/accepted-risk fact checked to survive, none dropped). **T-168 done 2026-09-05**
+(plan+advisor, 3 docs commits): `PERFORMANCE.md` (new) — critical-path complexity table +
+`examples/load_test.rs` (new manual harness, not CI) run showing degradation is **smooth and
+linear, zero failures** up to 3000 concurrent fresh connections / 2000 multiplexed streams;
+`overrides::decision`'s O(n) at ~10k entries is +17% p50, not a risk. Design decision in
+SPEC.md §1.1: bounded concurrency with **immediate reject** (not a deep queue), a generous
+backstop sized from server-side numbers; the reject-vs-SERVFAIL Три Б tradeoff left as an open
+question. Implementation split out to **T-169**. **Next** — T-169 (build the safeguard) or the
+carried-forward Ф1 gates (T-66 metrics, live Chrome-DoH pass, `DEFAULT_PROVIDER_IDS`) — user
+picks, no more numbered Ф3 batches.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -327,6 +331,11 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.
+- **T-168 / T-169** — `main.rs`'s accept loop `tokio::spawn`s per connection with **no cap** on
+  concurrent connections / tasks / in-flight requests. Measured (PERFORMANCE.md): degrades
+  smoothly, no failures, up to 3000 concurrent connections — but a slow-loris-style client
+  (connections opened and held) can still accumulate without bound. Bounded-concurrency backstop
+  designed in SPEC.md §1.1, not yet built — that's T-169.
 - **`refresh_health: AUTH_REJECTED` (T-163) only appears on the next `/admin/ui` load / operator
   action** — the `#geoip-maxmind` card has its own fetch cycle (so a key field being typed isn't
   wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
