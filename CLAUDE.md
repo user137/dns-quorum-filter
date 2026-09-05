@@ -384,7 +384,10 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   passive alarm (the "0-in-prefix" predicate isn't computable — CDN variance dominates). Mitigation
   = `examples/sinkhole_probe.rs`, now a **recalibrator** (canary domain must land in the prefix,
   provider's own site must not; queries A + AAAA) — run before a release. DNS4EU's `/32` /
-  `/128` rely entirely on it.
+  `/128` rely entirely on it. Plus two `#[ignore]`d live smoke tests in `quorum.rs`
+  (`live_sinkhole_presets_block_their_canary_through_the_prefix` /
+  `..._do_not_block_a_normal_domain`) covering the 3 presets with a stable public canary
+  (`internetbadguys.com`, `pornhub.com`) — `cargo test --lib -- --ignored`.
 - **T-160** — `main.rs`'s `load_geoip_state` reads the ~8.3 MB `geoip.mmdb` synchronously at
   startup, unconditionally (even with an empty `blocked_countries`) — a one-time startup-latency
   cost, filed not fixed.

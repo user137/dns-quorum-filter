@@ -1245,6 +1245,117 @@ mod tests {
         ));
     }
 
+    // --- T-175: live smoke tests (not CI) — cover what the `phase1_metrics`
+    // full run across every built-in preset revealed: the sinkhole presets do
+    // enforce, via a provider block-page IP, and `is_blocked` + the prefix
+    // table now recognise it. `#[ignore]`d, same as `upstream.rs`'s live-Quad9
+    // test. Canaries are stable, publicly-documented "filtering works?" domains
+    // — not churning URLhaus hosts (those are what `examples/sinkhole_probe.rs`
+    // pulls live for `adguard` / `dns4eu-protective`, which have no stable
+    // public canary).
+
+    async fn live_a(url: &str, domain: &str) -> Message {
+        let client = match crate::upstream::ReqwestDohClient::new() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        let name = match Name::from_utf8(domain) {
+            Ok(name) => name,
+            Err(err) => panic!("valid fixture domain {domain}: {err}"),
+        };
+        let mut question = Query::new();
+        question.set_name(name);
+        question.set_query_type(RecordType::A);
+        question.set_query_class(hickory_proto::rr::DNSClass::IN);
+        let mut query = Message::query();
+        query.add_query(question);
+        query.metadata.recursion_desired = true;
+        match client.query(url, &query).await {
+            Ok(response) => response,
+            Err(err) => panic!("live query to {url} for {domain}: {err}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "live network calls to filtering resolvers — run manually, not in CI"]
+    async fn live_sinkhole_presets_block_their_canary_through_the_prefix() {
+        // (preset id, DoH URL, block signature, a domain that preset is
+        // documented to block).
+        let cases = [
+            (
+                "opendns-familyshield",
+                "https://doh.familyshield.opendns.com/dns-query",
+                BlockSignature::NxdomainVsBaseline,
+                "internetbadguys.com", // Cisco's own phishing test domain
+            ),
+            (
+                "adguard-family",
+                "https://family.adguard-dns.com/dns-query",
+                BlockSignature::NullIp,
+                "pornhub.com",
+            ),
+            (
+                "dns4eu-child",
+                "https://child.joindns4.eu/dns-query",
+                BlockSignature::NullIpOrNxdomain,
+                "pornhub.com",
+            ),
+        ];
+        let baseline = live_a(BASELINE_URL, "example.com").await;
+        for (id, url, signature, canary) in cases {
+            let response = live_a(url, canary).await;
+            assert!(
+                is_blocked(
+                    signature,
+                    &response,
+                    &baseline,
+                    crate::upstream::sinkhole_nets_for(id),
+                ),
+                "{id} should block {canary} (rcode {:?}, answers {:?}) — has its sinkhole \
+                 prefix rotated? re-run examples/sinkhole_probe",
+                response.metadata.response_code,
+                response.answers,
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "live network calls to filtering resolvers — run manually, not in CI"]
+    async fn live_sinkhole_presets_do_not_block_a_normal_domain() {
+        // No false positive: a benign domain is not caught by any sinkhole
+        // prefix (would fire if a prefix were widened too far).
+        let baseline = live_a(BASELINE_URL, "example.com").await;
+        for (id, url, signature) in [
+            (
+                "opendns-familyshield",
+                "https://doh.familyshield.opendns.com/dns-query",
+                BlockSignature::NxdomainVsBaseline,
+            ),
+            (
+                "adguard-family",
+                "https://family.adguard-dns.com/dns-query",
+                BlockSignature::NullIp,
+            ),
+            (
+                "dns4eu-child",
+                "https://child.joindns4.eu/dns-query",
+                BlockSignature::NullIpOrNxdomain,
+            ),
+        ] {
+            let response = live_a(url, "wikipedia.org").await;
+            assert!(
+                !is_blocked(
+                    signature,
+                    &response,
+                    &baseline,
+                    crate::upstream::sinkhole_nets_for(id),
+                ),
+                "{id} unexpectedly blocked wikipedia.org (answers {:?}) — sinkhole prefix too wide",
+                response.answers,
+            );
+        }
+    }
+
     #[test]
     fn requires_quorum_limits_to_a_and_aaaa() {
         assert!(requires_quorum(RecordType::A));

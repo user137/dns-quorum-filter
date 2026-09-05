@@ -3589,7 +3589,7 @@ header-нота + «Resolution — T-174»), DECISIONS.md (T-174-запис), CL
 Known-limitations: CleanBrowsing→fixed, +T-175-рядок), TASKS.md (T-175 заведено). Raw-виходи —
 scratchpad `t174_3corpus_run_prefix_2026-09-05.txt` (до), `t174_remeasure_fixed_2026-09-05.txt` (після).
 
-### T-175 — sinkhole-IP-детекція через network-префікс (зроблено 2026-09-06, plan+advisor kickoff+closing, 2 коміти)
+### T-175 — sinkhole-IP-детекція через network-префікс (зроблено 2026-09-06, plan+advisor kickoff+closing, 3 коміти)
 
 - [x] T-175 — 5 пресетів (`adguard`, `adguard-family`, `opendns-familyshield`,
   `dns4eu-protective`, `dns4eu-child`) блокують, підмінюючи відповідь сталим провайдер-специфічним
@@ -3627,9 +3627,19 @@ scratchpad `t174_3corpus_run_prefix_2026-09-05.txt` (до), `t174_remeasure_fixe
 sinkhole+SERVFAIL→не-block, sinkhole+реальний IP разом→block, порожній набір→стара поведінка,
 композиція з `NullIp`; **negative-control** — `adguard` набір + `adguard.com` (реальний IP поза
 `/24`) → NotBlocked (ловить занадто широкий префікс); `SinkholeNet::contains` — маска, сусіди,
-`/32`-точність; `SINKHOLE_NETS` invariant — `prefix ∈ 1..=32`, addr = network-адреса, спостережені
-пробою IP всередині свого префікса. 3 `resolve`-тести: фікстура `94.140.14.14` (реальний
-AdGuard-резолвер, тепер у sinkhole `/24`) → TEST-NET-3 `203.0.113.14`.
+`/32`-точність, v6-точність, крос-сімейний no-match; `SINKHOLE_NETS` invariant — `prefix` у
+`1..=32`(v4)/`1..=128`(v6), addr = network-адреса, спостережені пробою IP всередині свого
+префікса. 3 `resolve`-тести: фікстура `94.140.14.14` (реальний AdGuard-резолвер, тепер у sinkhole
+`/24`) → TEST-NET-3 `203.0.113.14`.
+
+**Живі смоук-тести (3-й коміт, `#[ignore]`, не CI — за запитом користувача, покривають те, що
+виявив повний прогін `phase1_metrics`):** `live_sinkhole_presets_block_their_canary_through_the_prefix`
+(3 пресети зі стабільною публічною канаркою — `opendns-familyshield`/`internetbadguys.com`,
+`adguard-family`/`pornhub.com`, `dns4eu-child`/`pornhub.com` — реальний DoH-запит →
+`is_blocked` == true через префікс) + `live_sinkhole_presets_do_not_block_a_normal_domain`
+(`wikipedia.org` не блокується жодним — no-false-positive). `adguard`/`dns4eu-protective`
+(pure-malware, без стабільної публічної канарки) покриті рекалібратором `sinkhole_probe`, що тягне
+живий URLhaus-фід. Обидва прогнані вручну проти живих резолверів — зелені.
 
 **Стійкість до ротації — 2 шари** (пасивний аларм і per-user фоновий рекалібратор — **відхилено**,
 DECISIONS.md): (1) префікс поглинає ротацію хост-бітів у мережі провайдера; (2)
