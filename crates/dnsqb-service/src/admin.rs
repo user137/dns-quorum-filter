@@ -272,9 +272,17 @@ pub struct AdminStats {
     /// [`crate::QueryLog`] like `total`/`blocked` above: a `LogEntry` is only
     /// written after a query finishes, so the log alone can never answer
     /// "how many are in flight." `compute_stats` itself can't fill this in
-    /// (it only ever sees the log) — both call sites in `dispatch.rs`
-    /// overwrite it with the live counter via struct-update syntax.
+    /// (it only ever sees the log) — `dispatch.rs`'s `live_stats` overwrites
+    /// it with the live counter via struct-update syntax.
     pub in_flight: u64,
+    /// Cumulative count of inbound connections rejected at the concurrency
+    /// ceiling since startup (T-169, `admission::ConnectionGate`) — never
+    /// resets. Like `in_flight` it is a live counter, not a log-derived one:
+    /// a rejected connection is closed before TLS and never produces a
+    /// `LogEntry`, so `compute_stats` sets it to `0` and `dispatch.rs`'s
+    /// `live_stats` fills the real value. `0` here after uptime means the
+    /// backstop has never fired (the healthy case), not "no signal".
+    pub rejected_connections: u64,
 }
 
 /// `POST /admin/config`'s body — always a full replace of every field, never
@@ -1072,9 +1080,10 @@ pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
         blocked: u64::try_from(blocked).unwrap_or(u64::MAX),
         degraded_window,
         degraded_events,
-        // Filled in by the caller (`dispatch.rs`) from the live in-flight
-        // counter, which this pure, log-only function has no access to.
+        // Filled in by `dispatch.rs`'s `live_stats` from the live counters,
+        // which this pure, log-only function has no access to.
         in_flight: 0,
+        rejected_connections: 0,
     }
 }
 
@@ -1505,6 +1514,7 @@ mod tests {
                 degraded_window: 4,
                 degraded_events: 0,
                 in_flight: 0,
+                rejected_connections: 0,
             }
         );
     }
@@ -1519,6 +1529,7 @@ mod tests {
                 degraded_window: 0,
                 degraded_events: 0,
                 in_flight: 0,
+                rejected_connections: 0,
             }
         );
     }

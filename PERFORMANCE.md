@@ -112,12 +112,17 @@ connection, that is on the order of **~8 000**; at ~64 KiB, ~4 000. This is the 
 magnitude the T-168 latency curve points to (smooth to 3 000, no failures, "tens of MB transient
 at the 3 000 peak, released after") — the two checks agree, which is what a backstop cap wants.
 
-**This is an estimate, not a measurement.** The T-168 harness samples RSS *before/after each
-ramp level*, but connections open and complete *within* a level, so that delta measures allocator
-high-water residue, not the cost of N *simultaneously* held connections (two of T-168's recorded
-deltas are negative). The real held-connection slope is measured in T-169 by holding
-`max_concurrent_connections` sockets open in the load harness's slow-loris mode and sampling RSS
-while they are held — that number replaces this estimate here when it lands.
+**Measured (T-169 slow-loris mode).** The T-168 per-ramp RSS delta can't isolate this (its
+connections open and close *within* a level — allocator high-water, not concurrent-connection
+cost; two of its deltas are negative). T-169's `examples/load_test.rs` slow-loris mode instead
+holds ~50 stalled pre-handshake sockets open and samples RSS with the gate full: across two runs
+on the Windows 11 dev box the RSS rise per held connection was **~4–10 KiB** — at or below the
+low end of the estimate above, as expected for a connection stalled *before* the TLS handshake
+(rustls hasn't allocated its 64 KiB buffers and h2 hasn't started). The RSS-delta method is
+noisy (the probe requests allocate too), so treat this as "single-digit KiB per idle stalled
+connection", not a precise figure. Either way the budget check and the T-168 latency curve agree
+on the order of magnitude: a few thousand held connections is a comfortable backstop, not a
+memory wall.
 
 ### Fan-out ceiling (computed, not measured)
 

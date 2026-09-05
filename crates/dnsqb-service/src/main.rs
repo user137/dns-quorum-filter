@@ -28,11 +28,12 @@ use dnsqb_service::{
     migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater,
     run_query_log_persister, run_reachability_prober, serve, write_pid_file, AppState, BindError,
     Cache, CacheInit, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError,
-    InstanceGuard, InstanceRole, InvalidEntry, OverrideLists, OverridesState, PersistPaths,
-    PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit, TimeoutConfig,
+    InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig, OverrideLists, OverridesState,
+    PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit,
+    TimeoutConfig,
 };
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use hyper_util::server::graceful::GracefulShutdown;
 use std::path::{Path, PathBuf};
@@ -214,7 +215,7 @@ async fn main() {
     // persists.
     spawn_watchdog_tasks(app_data.as_deref());
 
-    serve_until_shutdown(listener, acceptor, state).await;
+    serve_until_shutdown(listener, acceptor, state, resolver_config.limits).await;
 }
 
 /// The shared heartbeat tick for both watchdog directions (SPEC.md §7.1 #8).
@@ -541,10 +542,20 @@ fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
 /// `GracefulShutdown` itself - it's deliberately not `Clone`, see its own doc
 /// comment) so a connection accepted just before shutdown still gets watched
 /// and drained rather than dropped mid-response.
+///
+/// T-169 (SPEC.md §1.1): each accepted connection must take a permit from
+/// `state.connection_gate()` before it is spawned — at the ceiling the TCP
+/// stream is dropped before TLS (reject, not queue). The permit is held for
+/// the connection's whole life and released on drop, so `limits`'
+/// handshake/idle deadlines (the `tokio::time::timeout` around
+/// `acceptor.accept`, and the `auto::Builder` HTTP/1 header-read + HTTP/2
+/// keep-alive timeouts) also free the slot: a bare cap without those
+/// deadlines is itself a slow-loris `DoS`.
 async fn serve_until_shutdown(
     listener: tokio::net::TcpListener,
     acceptor: TlsAcceptor,
     state: Arc<AppState<ReqwestDohClient>>,
+    limits: LimitsConfig,
 ) {
     let mut shutdown_rx = state.shutdown_handle();
     let graceful = GracefulShutdown::new();
@@ -559,20 +570,60 @@ async fn serve_until_shutdown(
                         continue;
                     }
                 };
+                // T-169 / SPEC.md §1.1: the concurrency backstop. At the
+                // ceiling, close the TCP connection before TLS — zero bytes,
+                // zero CPU on a rejected connection, no deep queue.
+                let Some(permit) = state.connection_gate().try_admit() else {
+                    drop(stream);
+                    continue;
+                };
                 let acceptor = acceptor.clone();
                 let state = Arc::clone(&state);
                 let watcher = graceful.watcher();
                 tokio::spawn(async move {
-                    let tls_stream = match acceptor.accept(stream).await {
-                        Ok(stream) => stream,
-                        Err(err) => {
+                    // Permit acquired before the spawn (above) and moved in
+                    // here: held for the whole connection, released on drop
+                    // (RAII) — including on the handshake timeout below, so a
+                    // stalled peer can't pin a slot. Acquiring it inside the
+                    // task would re-open that hole.
+                    let _permit = permit;
+
+                    // T-169: a peer that opens TCP but never completes the
+                    // TLS handshake would otherwise hold this task (and its
+                    // permit) forever.
+                    let tls_stream = match tokio::time::timeout(
+                        limits.handshake_timeout,
+                        acceptor.accept(stream),
+                    )
+                    .await
+                    {
+                        Ok(Ok(stream)) => stream,
+                        Ok(Err(err)) => {
                             tracing::warn!("TLS handshake failed: {err}");
+                            return;
+                        }
+                        Err(_elapsed) => {
+                            tracing::warn!("TLS handshake timed out");
                             return;
                         }
                     };
                     let io = TokioIo::new(tls_stream);
                     let service = service_fn(move |req| serve(req, Arc::clone(&state)));
-                    let builder = auto::Builder::new(TokioExecutor::new());
+                    // T-169: idle/read deadlines so a peer that finishes the
+                    // handshake but never sends a request is reaped too —
+                    // HTTP/1 header-read timeout, plus HTTP/2 keep-alive PINGs
+                    // (the h2 equivalent; `header_read_timeout` "does not
+                    // affect HTTP/2"). Each protocol needs its own `timer`
+                    // set or the builder panics on this serve path.
+                    let mut builder = auto::Builder::new(TokioExecutor::new());
+                    builder
+                        .http1()
+                        .timer(TokioTimer::new())
+                        .header_read_timeout(limits.idle_timeout)
+                        .http2()
+                        .timer(TokioTimer::new())
+                        .keep_alive_interval(limits.idle_timeout)
+                        .keep_alive_timeout(limits.handshake_timeout);
                     let conn = builder.serve_connection(io, service);
                     if let Err(err) = watcher.watch(conn).await {
                         tracing::warn!("connection error: {err}");

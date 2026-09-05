@@ -73,6 +73,30 @@
 //! reported as a Windows working-set number, not "file descriptors" (that
 //! framing doesn't apply on this platform).
 //!
+//! ## Slow-loris mode (T-169)
+//!
+//! `cargo run --example load_test -- <port> slow-loris <ceiling> <handshake_timeout_ms>`
+//!
+//! Exercises the SPEC.md §1.1 backstop end to end: opens raw TCP connections
+//! and **never sends a ClientHello**, so each one sits in the server's
+//! `tokio::time::timeout(handshake_timeout, acceptor.accept(..))` holding one
+//! `ConnectionGate` permit. It then checks: (a) a normal pinned DoH client is
+//! still served while stalled connections are held **below** the ceiling;
+//! (b) at the ceiling a normal client is refused **fast** (TCP close before
+//! TLS, not a hang); (c) after the server's `handshake_timeout` elapses — with
+//! our stalled sockets still open — the permits are freed and the service
+//! recovers. It also samples RSS with the gate full to get a real
+//! held-connection byte/connection figure (T-168's per-level delta can't:
+//! its connections open and close within one level).
+//!
+//! **`[limits]` is not admin-mutable**, so this mode needs the scratch
+//! `dnsqb-service` started with a small ceiling in `resolver_config.toml`
+//! (e.g. `[limits]` `max_concurrent_connections = 64`,
+//! `handshake_timeout_ms = 3000`) — a few dozen stalled sockets, not 4096 —
+//! and **restarted** for the change to take effect (`/admin/reset` reloads
+//! the file but the gate is built once in `AppState::new`). Pass the same
+//! `<ceiling>` and `<handshake_timeout_ms>` you configured as the two args.
+//!
 //! Before the ramps, one response is decoded and checked to be an actual
 //! `0.0.0.0` NULL-block — a bare HTTP 200 is not enough (a DoH SERVFAIL is
 //! also 200, rcode inside), and the whole point is that these numbers belong
@@ -122,6 +146,21 @@ struct OverridesFile {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let port = local_port_from_args()?;
+    if std::env::args().nth(2).as_deref() == Some("slow-loris") {
+        let ceiling: usize = match std::env::args().nth(3) {
+            Some(arg) => arg.parse()?,
+            None => 64,
+        };
+        let handshake_timeout_ms: u64 = match std::env::args().nth(4) {
+            Some(arg) => arg.parse()?,
+            None => 3000,
+        };
+        return slow_loris_mode(port, ceiling, handshake_timeout_ms).await;
+    }
+    run_load_curves(port).await
+}
+
+async fn run_load_curves(port: u16) -> Result<(), Box<dyn Error>> {
     let base_url = format!("https://127.0.0.1:{port}/dns-query");
     let admin_base = format!("https://127.0.0.1:{port}");
     let app_data = app_data_dir()?;
@@ -179,6 +218,137 @@ async fn main() -> Result<(), Box<dyn Error>> {
     write_overrides_blocklist(&app_data, Vec::new())?;
     reset_service(&cert_pem, &admin_base).await?;
 
+    Ok(())
+}
+
+/// T-169 slow-loris smoke — see the module doc comment for the preconditions
+/// (small `[limits]` ceiling in the scratch `resolver_config.toml`, service
+/// restarted, `<ceiling>` / `<handshake_timeout_ms>` passed to match).
+async fn slow_loris_mode(
+    port: u16,
+    ceiling: usize,
+    handshake_timeout_ms: u64,
+) -> Result<(), Box<dyn Error>> {
+    let base_url = format!("https://127.0.0.1:{port}/dns-query");
+    let admin_base = format!("https://127.0.0.1:{port}");
+    let app_data = app_data_dir()?;
+    let cert_pem = std::fs::read(app_data.join("cert.pem"))?;
+    let query_bytes = build_query_bytes(TARGET_DOMAIN)?;
+    let url = doh_get_url(&base_url, &query_bytes);
+    let pid = read_pid_file(&app_data, InstanceRole::Service)
+        .ok()
+        .map(|f| f.pid);
+
+    println!(
+        "=== slow-loris mode: ceiling={ceiling}, handshake_timeout_ms={handshake_timeout_ms} ==="
+    );
+    write_overrides_blocklist(&app_data, vec![TARGET_DOMAIN.to_string()])?;
+    reset_service(&cert_pem, &admin_base).await?;
+    verify_block_response(&cert_pem, &url).await?;
+
+    let rss_idle = pid.and_then(sample_rss_bytes);
+    println!("RSS idle (0 held connections): {rss_idle:?} bytes");
+
+    // (a) below the ceiling — a normal client must still be served.
+    let half = (ceiling / 2).max(1);
+    let mut held = hold_stalled_connections(port, half).await;
+    println!(
+        "held {} stalled TCP connections (below the ceiling)",
+        held.len()
+    );
+    match probe_block(&cert_pem, &url).await {
+        Ok(()) => println!(
+            "(a) OK   — normal client served while {} slots are held",
+            held.len()
+        ),
+        Err(err) => println!("(a) FAIL — normal client rejected below the ceiling: {err}"),
+    }
+
+    // (b) at (and just past) the ceiling — a normal client must be refused
+    //     FAST (TCP close before TLS), not left hanging.
+    let more = ceiling.saturating_sub(held.len()) + 4;
+    held.append(&mut hold_stalled_connections(port, more).await);
+    tokio::time::sleep(Duration::from_millis(750)).await; // let the server accept them all
+    let rss_full = pid.and_then(sample_rss_bytes);
+    let per_conn = match (rss_idle, rss_full) {
+        (Some(idle), Some(full)) if !held.is_empty() && full > idle => {
+            let held_u64 = u64::try_from(held.len()).unwrap_or(1);
+            Some((full - idle) / held_u64)
+        }
+        _ => None,
+    };
+    println!(
+        "held {} stalled connections total (>= ceiling); RSS full: {rss_full:?} bytes; \
+         per-held-connection ~= {per_conn:?} bytes",
+        held.len()
+    );
+    let probe_start = Instant::now();
+    match probe_block(&cert_pem, &url).await {
+        Ok(()) => println!("(b) UNEXPECTED — normal client served with the gate full"),
+        Err(err) => println!(
+            "(b) OK   — normal client refused in {:?} (fast => TCP close, not a timeout): {err}",
+            probe_start.elapsed()
+        ),
+    }
+
+    // (c) recovery via the server-side handshake timeout — our stalled sockets
+    //     stay OPEN (dropping them would free the permits by FIN, masking the
+    //     timeout path). Wait past `handshake_timeout`, then probe.
+    let wait = Duration::from_millis(handshake_timeout_ms + 3000);
+    println!("holding sockets open; waiting {wait:?} for the server handshake timeout to fire...");
+    tokio::time::sleep(wait).await;
+    match probe_block(&cert_pem, &url).await {
+        Ok(()) => {
+            println!("(c) OK   — handshake_timeout freed the stalled permits, service recovered")
+        }
+        Err(err) => println!("(c) FAIL — still refused after the timeout window: {err}"),
+    }
+
+    drop(held);
+    write_overrides_blocklist(&app_data, Vec::new())?;
+    reset_service(&cert_pem, &admin_base).await?;
+    Ok(())
+}
+
+/// Opens up to `count` raw TCP connections to the local listener and returns
+/// them **without** writing a single byte — each one parks in the server's
+/// TLS-handshake read, holding one admission permit. Stops early (with a
+/// note) if the client side runs out of sockets.
+async fn hold_stalled_connections(port: u16, count: usize) -> Vec<tokio::net::TcpStream> {
+    let mut held = Vec::with_capacity(count);
+    for _ in 0..count {
+        match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+            Ok(stream) => held.push(stream),
+            Err(err) => {
+                eprintln!(
+                    "  (client opened only {} of {count} sockets: {err})",
+                    held.len()
+                );
+                break;
+            }
+        }
+    }
+    held
+}
+
+/// One pinned DoH GET, asserting a real `0.0.0.0` NULL-block answer, with a
+/// short client timeout so a full-gate refusal fails fast instead of hanging.
+async fn probe_block(cert_pem: &[u8], url: &str) -> Result<(), Box<dyn Error>> {
+    let client = build_pinned_client_builder(cert_pem)?
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let body = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "application/dns-message")
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?;
+    let message = decode_wire_message(&body)?;
+    if message.answers.is_empty() || !format!("{:?}", message.answers).contains("0.0.0.0") {
+        return Err(format!("not a 0.0.0.0 NULL-block: {message:?}").into());
+    }
     Ok(())
 }
 

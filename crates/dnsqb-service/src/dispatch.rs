@@ -31,6 +31,7 @@ use crate::admin::{
     UninstallLocalStateResponse, WatchdogStatusView,
 };
 use crate::admin_ui;
+use crate::admission::ConnectionGate;
 use crate::baseline_selector::BaselineSelector;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
@@ -638,6 +639,15 @@ pub struct AppState<C: DohClient + Sync> {
     /// [`resolve_doh_request`]/[`admin_status`]/[`apply_admin_config`]/
     /// [`apply_admin_reset`].
     in_flight: AtomicU64,
+    /// T-169 — the connection-admission backstop (SPEC.md §1.1). Built once
+    /// in [`AppState::new`] from `persist.limits.max_concurrent_connections`.
+    /// `main.rs`'s accept loop calls [`ConnectionGate::try_admit`] before
+    /// spawning each connection task ([`AppState::connection_gate`]);
+    /// `live_stats` reads [`ConnectionGate::rejected_count`] for
+    /// [`AdminStats::rejected_connections`]. A plain field — the `Arc` it
+    /// needs is internal to the gate (around its `Semaphore`), not a second
+    /// wrapper here.
+    gate: ConnectionGate,
     /// The shutdown signal `POST /admin/shutdown` sends (T-149) — `false`
     /// until that route fires `send(true)`. `main.rs`'s accept loop holds
     /// the one long-lived [`watch::Receiver`] it `tokio::select!`s against
@@ -769,6 +779,8 @@ impl<C: DohClient + Sync> AppState<C> {
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             reachability: RwLock::new(NetworkReachability::default()),
             query_log,
+            // Read the `Copy` cap out of `persist` before it moves on the next line.
+            gate: ConnectionGate::new(persist.limits.max_concurrent_connections),
             persist,
             in_flight: AtomicU64::new(0),
             shutdown_tx,
@@ -902,6 +914,14 @@ impl<C: DohClient + Sync> AppState<C> {
     #[must_use]
     pub fn shutdown_handle(&self) -> watch::Receiver<bool> {
         self.shutdown_tx.subscribe()
+    }
+
+    /// The connection-admission gate (T-169, SPEC.md §1.1). `main.rs`'s accept
+    /// loop calls [`ConnectionGate::try_admit`] on it before spawning each
+    /// per-connection task, so the field itself stays private to this module.
+    #[must_use]
+    pub fn connection_gate(&self) -> &ConnectionGate {
+        &self.gate
     }
 
     /// The current query-log contents, age-bounded to `now` (T-146) — the
@@ -1038,6 +1058,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
 fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) -> AdminStats {
     AdminStats {
         in_flight: state.in_flight.load(Ordering::Relaxed),
+        rejected_connections: state.gate.rejected_count(),
         ..compute_stats(entries)
     }
 }
@@ -3642,9 +3663,58 @@ mod tests {
             "T-97: the default fixture has persist_cache off"
         );
         assert_eq!(status.stats.total, 0);
+        assert_eq!(
+            status.stats.rejected_connections, 0,
+            "T-169: a fresh gate has rejected nothing"
+        );
         // `state_with` uses `paths: None`, so there is nowhere to read a
         // watchdog state file from (T-95).
         assert_eq!(status.watchdog, None);
+    }
+
+    // T-169: `GET /admin/status` surfaces the live `ConnectionGate` reject
+    // count through `AdminStats.rejected_connections` (not a log-derived
+    // value — a rejected connection never produces a `LogEntry`).
+    #[tokio::test]
+    async fn serve_admin_status_reports_the_connection_reject_count_from_the_live_gate() {
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                limits: LimitsConfig {
+                    max_concurrent_connections: 2,
+                    ..LimitsConfig::default()
+                },
+                paths: None,
+            },
+        );
+
+        // Fill the ceiling of 2, then push three connections past it.
+        let _p1 = state.connection_gate().try_admit();
+        let _p2 = state.connection_gate().try_admit();
+        for _ in 0..3 {
+            assert!(state.connection_gate().try_admit().is_none());
+        }
+
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/status")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert_eq!(status.stats.rejected_connections, 3);
     }
 
     // T-96 / T-97: `GET /admin/status` echoes both persistence flags from the

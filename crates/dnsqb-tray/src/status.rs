@@ -249,6 +249,7 @@ mod tests {
             degraded_window,
             degraded_events,
             in_flight: 0,
+            rejected_connections: 0,
         }
     }
 
