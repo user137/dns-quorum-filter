@@ -3773,3 +3773,75 @@ left alone») — тобто T-177 не регресує репродукова�
 **Файли:** `build/win_resource.rs` (новий), `crates/dnsqb-{service,tray,watcher}/build.rs` (нові)
 + їх `Cargo.toml` (build-dep), `Cargo.lock`, `assets/gen-icon.py`, `assets/icon/app.ico` (новий),
 `SECURITY.md`, `TASKS.md`.
+
+### T-176 — UX-ревізія `/admin/ui` для нетехнічного користувача (зроблено 2026-09-06, plan+advisor kickoff+closing, макет затверджено користувачем, 4 коміти + docs-коміт)
+
+**Мотив (запит користувача 2026-09-06):** «програма висить як сервіс, звичайній домогосподарці
+це не зрозуміло … скувати складні налаштування у випадаючі підменю». Поточний `/admin/ui` —
+сім рівнозначних технічних карток, жодного «я захищений?» одним поглядом.
+
+**Дизайн-фаза.** Skill `frontend-design` (не «Claude Design canvas» — такого skill в оточенні
+немає; формулювання батч-плану застаріле). 4 артборди зібрано як одну HTML-сторінку в
+`mockups/gui-dashboard.html`, опубліковано як Artifact для огляду з іншого пристрою —
+затверджено користувачем без правок 2026-09-06.
+
+**Структура.** `/admin/ui` тепер два рівні на одній сторінці:
+- **Базовий вигляд** — `#protection-hero` (обчислюваний із `AdminStatusResponse.{network,
+  watchdog}` + `active_providers` + чи сервіс відповідає; ті самі умови й порядок пріоритету,
+  що `diagrams/ui-status-indicator.md` — просто піднято в hero); `#filter-controls-body`
+  (головний перемикач + 3 категорійні: шкідливе / реклама / дорослий вміст); рядок «N сторін
+  бачать запити» і попередження pass-through — **у базовому вигляді**, не в розкритті
+  (CLAUDE.md «не ховати» / SPEC.md §8.1); статистика; прев'ю логу; `#browser-setup-body`
+  (copy DoH-URL з живим портом, кроки, авто-розгортання при першому візиті через localStorage,
+  вказівник на `ERR_ADDRESS_INVALID`-перевірку README).
+- **`<details id="advanced-settings">`** (нативний, згорнуто, без JS-стану — сумісний зі
+  строгим CSP) — `#timeout-config-body` (режим таймауту + baseline-fallback, переїхали з
+  `#app-body`), `#providers-body`, `#cache-config-body`, `#geoip-body`, `#geoip-maxmind-body`,
+  `#danger-zone-body`. ID карток і їхні `main.js`-fetch/render-цикли без змін.
+
+**Бекенд (Крок 0, окремий коміт).** Новий `POST /admin/providers/set-category-enabled`
+`{ category, enabled }` — вмикає/вимикає всіх voter'ів однієї `Category` за **один** запис
+`resolver_config.toml` (все-або-нічого, через наявний `apply_provider_change` + `persist_lock` +
+cross-field-read). N окремих `set-enabled` могли б persist'нути напівстан на збої — recurring
+user-safety-баг проєкту (T-57/T-139/T-149/T-47/T-77). Порожня `ADULT_CONTENT` при `enabled=true`
+додає `opendns-familyshield` у тій самій транзакції (`EMPTY_ADULT_CATEGORY_DEFAULT_PRESET`,
+`upstream.rs`; вибір із трьох кандидатів — рішення користувача, DECISIONS.md 2026-09-06; блокує
+через sinkhole-префікс, який кворум рахує з T-175). `enabled=false` вимикає, не видаляє.
+Невідома категорія / non-JSON → payload-free 400/415. `AdminConfigUpdate` не чіпано. Головний
+перемикач у клієнті = 3 послідовні виклики цього маршруту (не `Promise.all`, не
+`/admin/shutdown`), проміжний збій повідомляється. `AdminClient::set_category_enabled`,
+`ROUTES` +1 + snapshot; 5 тестів (4 категорії).
+
+**`main.js`.** `computeProtectionState` (чиста) + `renderProtectionHero`; `renderFilterControls`
+(на тому самому `GET /admin/providers`-fetch'і, що `#providers-body` — один fetch, обидва види в
+синхроні); `renderTimeoutConfig` (винесено з `render()`); `initBrowserSetup` +
+`syncDohUrl`. Неоднорідна категорія → неінтерактивний «частковий» перемикач, клік/Enter вмикає
+всіх. Користувацький текст (домени, назви провайдерів) — через `textContent`/`createElement`,
+не `innerHTML` (admin_ui.rs module-doc).
+
+**Трей.** `dnsqb-tray/src/status.rs` — тексти tooltip'а переписано для нетех-читача (без
+«резолвінг», «апстрім», без застарілого «обидва провайдери»; префікс `dns-quorum-filter:` →
+`DNS Quorum Filter:`; `Filtering` → «захищає — N/M заблоковано»). Набір станів і логіка
+розрізнення без змін; сирі degraded-числа збережено.
+
+**Тести.** `dispatch.rs` +5 (set-category-enabled: disable-цілу-категорію-один-запис,
+add-adult-дефолт-у-порожню, on/off/on без дублювання, off-порожньої = no-op, unknown-category +
+non-JSON). `admin_ui.rs` +9 (T-59-стиль: явний список секцій по кожен бік `<details>`-межі,
+collapsed-by-default, browser-setup несе DoH-поле + `ERR_ADDRESS_INVALID`-вказівник,
+category-toggle → атомарний маршрут + не `/admin/shutdown`, hero-входи, fanout/pass-through
+лишились у `renderFilterControls`). Наявні CSP / attribution / danger-zone / persistence
+інваріантні тести — без послаблення. `dnsqb-tray` tooltip-тести зелені (збережено «тайм-аут» +
+`N/M`-формат).
+
+**Верифікація.** `cargo fmt --check` / `clippy --all-targets -D warnings` / `test
+--workspace --lib --bins` (648+11) / `doc -D warnings` / doctest — зелені. **chrome-devtools MCP
+smoke** проти живого сервісу (automation-профіль, порт 8443): hero «Захищено», головний + усі 3
+категорійні перемикачі (on/off), атомарний persist + empty-adult add (`opendns-familyshield` у
+`resolver_config.toml` + fan-out 3→4 перевірки) + disable, `<details>` розкриття (timeout-card
+всередині), інʼєкція порту в `#doh-url`, авто-розгортання кроків — **0 помилок консолі**.
+Скриншот: scratchpad `t176_admin_ui_smoke_2026-09-06.png`. CI зелений на кожен із 4 комітів.
+
+**Файли:** `crates/dnsqb-service/src/{upstream,admin,dispatch,lib,admin_ui}.rs`,
+`crates/dnsqb-service/ui/{index.html,main.js,style.css}`, `crates/dnsqb-tray/src/status.rs`,
+`DECISIONS.md`, `UI-SPEC.md`, `diagrams/ui-navigation.md`, `diagrams/ui-status-indicator.md`,
+`mockups/gui-dashboard.html`, `README.md`, `SERVICES.md`, `TASKS.md`.

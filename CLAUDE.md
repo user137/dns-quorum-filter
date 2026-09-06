@@ -112,13 +112,15 @@ itself a slow-loris DoS). New `[limits]` table in `resolver_config.toml`
 `active_connections` (live snapshot) on `GET /admin/status`. `[limits]` is not admin-mutable and
 `apply_admin_reset` does **not** rebuild the gate — a `[limits]` change needs a service restart
 (like `port`).
-**Next** — Batches 3.9 + 3.10 close Phase 3 completely (plan in TASKS.md §"Фаза 3", "План
-фінального закриття Ф3"): **3.9** = the three carried-forward Ф1 gates as honest verification, not
-new features (T-170 `DEFAULT_PROVIDER_IDS` decision + change, T-171 re-measure T-66 quorum
-coverage on a bigger sample, T-172 live "browser → local DoH" pass); **3.10** = T-173 version bump
-`0.2.0` → `0.3.0` + `v0.3.0` tag → the existing `release.yml` produces a draft MSIX release for a
-human to publish. T-51 / T-56 stay carried-forward backlog (blocked on out-of-MVP T-132 / T-134),
-not part of the Phase 3 close.
+**Батч 3.9 done 2026-09-06** (carried-forward Ф1 gates as honest verification, not new features):
+T-170 `DEFAULT_PROVIDER_IDS` decision, T-171/T-174/T-175 quorum re-measure (hypothesis confirmed,
++6.3 pp), T-172 live "browser → local DoH" pass. **Батч 3.10 done 2026-09-06:** T-177 (app icon +
+`VERSIONINFO` in the three `.exe`) + T-176 (basic/advanced `/admin/ui` split + atomic
+`POST /admin/providers/set-category-enabled` + reworded tray tooltips; mockup user-approved).
+**Next — Батч 3.11** (plan in TASKS.md §"Фаза 3", "План фінального закриття Ф3"): T-173 version
+bump `0.2.0` → `0.3.0` + `v0.3.0` tag → the existing `release.yml` produces a draft MSIX release
+for a human to publish; carries T-176/T-177. After 3.11 Phase 3 is fully closed. T-51 / T-56 stay
+carried-forward backlog (blocked on out-of-MVP T-132 / T-134), not part of the Phase 3 close.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.
@@ -189,7 +191,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
-| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`) |
+| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). **T-176:** the page is now basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, danger-zone) — IDs unchanged, `main.js` cycles untouched. Mockup: `mockups/gui-dashboard.html` (user-approved); UI-SPEC.md §2.1 |
 | `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
@@ -201,8 +203,12 @@ never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset
 (T-162/T-163, MaxMind creds → OS secret store; POST stores then runs a save-time probe → `check`,
 and updates the live `GeoipSource` + wakes the updater; `refresh_health` on the view flags a key
 that started failing later), `GET /admin/providers`
-+ `POST /admin/providers/{add,remove,set-enabled}` (T-72/T-73; provider list edited here, **not**
-`/admin/config` — which carries `timeout_mode` + `serve_baseline_when_filters_unreachable` (T-155)),
++ `POST /admin/providers/{add,remove,set-enabled,set-category-enabled}` (T-72/T-73; provider list
+edited here, **not** `/admin/config` — which carries `timeout_mode` +
+`serve_baseline_when_filters_unreachable` (T-155). `set-category-enabled` T-176 — flips every
+voter in one `Category` atomically, one `resolver_config.toml` write; turning on an empty
+`ADULT_CONTENT` adds `opendns-familyshield` in the same txn, `EMPTY_ADULT_CATEGORY_DEFAULT_PRESET`,
+DECISIONS.md 2026-09-06),
 `/admin/log[/clear]`; `POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
 `resolver_config.toml`);
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
@@ -230,7 +236,9 @@ DECISIONS.md 2026-09-02) / `Offline` (T-152 — `from_response` returns it befor
 when `AdminStatusResponse.network == OFFLINE`; ranked below the watchdog states, above 0-voters —
 DECISIONS.md 2026-09-03) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
 suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK`
-log entries — T-56, narrowed; T-155 added `BASELINE_FALLBACK`).
+log entries — T-56, narrowed; T-155 added `BASELINE_FALLBACK`). **T-176:** the tooltip *strings*
+were reworded for a lay reader (`DNS Quorum Filter:` prefix, `Filtering` → "захищає — N/M
+заблоковано", no "резолвінг"/"апстрім") — the state set and priority logic are unchanged.
 
 `dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main` since Батч 3.3.
 `#[tokio::main(flavor = "current_thread")]` (§7.1 #9 — flavor, not features, keeps it
