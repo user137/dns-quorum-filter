@@ -242,6 +242,7 @@ mod tests {
     /// `<details id="advanced-settings">` disclosure.
     const BASIC_SECTION_IDS: &[&str] = &[
         "protection-hero",
+        "filter-controls-body",
         "app-body",
         "browser-setup-body",
         "overrides-body",
@@ -249,6 +250,7 @@ mod tests {
     ];
     /// Section ids that must render **inside** the advanced disclosure.
     const ADVANCED_SECTION_IDS: &[&str] = &[
+        "timeout-config-body",
         "providers-body",
         "cache-config-body",
         "geoip-body",
@@ -327,6 +329,73 @@ mod tests {
         assert!(
             INDEX_HTML.contains("id=\"protection-hero\""),
             "main.js renders the computed protection status into this container"
+        );
+    }
+
+    // T-176 — the basic-view master + category toggles must call the new
+    // atomic route, cover all three categories, and the master switch must
+    // never reach for /admin/shutdown (which would kill the admin channel and
+    // the tray poll too).
+    #[test]
+    fn main_js_wires_the_category_toggles_to_the_atomic_route() {
+        assert!(
+            MAIN_JS.contains("/admin/providers/set-category-enabled"),
+            "the category toggles must use the atomic backend route"
+        );
+        for category in ["SECURITY", "ADS_TRACKERS", "ADULT_CONTENT"] {
+            assert!(
+                MAIN_JS.contains(category),
+                "a basic-view toggle for {category} must be wired"
+            );
+        }
+        assert!(
+            MAIN_JS.contains("flipAllCategories"),
+            "the master switch flips every category, sequentially"
+        );
+        assert!(
+            !MAIN_JS.contains("/admin/shutdown"),
+            "the master switch must not shut the service down - only disable voters"
+        );
+    }
+
+    // T-176 — the hero status is computed from the same conditions
+    // diagrams/ui-status-indicator.md defines (the subset this page sees):
+    // watchdog, network, and whether any provider is active.
+    #[test]
+    fn main_js_computes_the_hero_from_watchdog_network_and_provider_state() {
+        for token in [
+            "computeProtectionState",
+            "GAVE_UP",
+            "RESTARTING",
+            "OFFLINE",
+            "active_providers",
+        ] {
+            assert!(
+                MAIN_JS.contains(token),
+                "the hero state computation must consider {token}"
+            );
+        }
+    }
+
+    // T-176 — the fan-out privacy line and the pass-through warning moved into
+    // the basic view (renderFilterControls), so they render even when the
+    // advanced disclosure is collapsed (CLAUDE.md "not buried" / SPEC.md §8.1).
+    #[test]
+    fn main_js_keeps_the_fanout_and_passthrough_notices_in_the_basic_view() {
+        let Some((_, filter_controls)) = MAIN_JS.split_once("function renderFilterControls(")
+        else {
+            panic!("renderFilterControls must exist");
+        };
+        let Some((body, _)) = filter_controls.split_once("\nfunction ") else {
+            panic!("renderFilterControls must be a bounded function");
+        };
+        assert!(
+            body.contains("third_party_count"),
+            "the fan-out privacy line must render in the basic view"
+        );
+        assert!(
+            body.contains("filtering_active"),
+            "the pass-through warning must render in the basic view"
         );
     }
 }

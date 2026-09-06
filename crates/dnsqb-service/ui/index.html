@@ -18,10 +18,20 @@
        render; carries no layout of its own when empty. -->
   <div id="protection-hero"></div>
 
-  <!-- T-176: basic-view controls (master + per-category toggles) and the
-       quick stats. The 2s status poll fully replaces this subtree, so it
-       holds no free-text input (the timeout-mode radios and the
-       baseline-fallback checkbox it also renders are click-only). -->
+  <!-- T-176: master filter switch + the three category toggles (malware /
+       ads / adult). Its own fetch/render cycle off GET /admin/providers (not
+       the 2s status poll) so a toggle click never races a poll - same
+       pattern as #providers-body. The fan-out privacy line and the
+       "filtering not active" warning render here, in the basic view, not
+       hidden in the advanced disclosure (CLAUDE.md / SPEC.md §8.1). -->
+  <div id="filter-controls-body" class="card">
+    <p>Завантаження…</p>
+  </div>
+
+  <!-- T-176: quick stats. The 2s status poll fully replaces this subtree, so
+       it holds no free-text input (the timeout-mode radios and the
+       baseline-fallback checkbox it also renders live in the advanced
+       disclosure's own card). -->
   <div id="app-body">
     <p>Завантаження…</p>
   </div>
@@ -89,6 +99,15 @@
       <span class="summary-chevron" aria-hidden="true">›</span>
     </summary>
     <div class="advanced-inner">
+      <!-- T-176: timeout mode (fail_open / fail_closed / degraded) + the
+           baseline-fallback checkbox. Moved here from the basic view - it is
+           an advanced failure-behaviour choice. Driven by the 2s status poll
+           (click-only, no free-text), same as the stats card. -->
+      <div id="timeout-config-body" class="card">
+        <h3>Поведінка при збої</h3>
+        <p>Завантаження…</p>
+      </div>
+
       <!-- T-72/T-73: the voter (provider) list. Own fetch/render cycle, not on
            the 2s status poll - the "add custom provider" sub-form has free-text
            inputs (id / URL / display name) that must not be wiped mid-typing,

@@ -15,10 +15,92 @@ const cacheConfigBody = document.getElementById("cache-config-body");
 const geoipBody = document.getElementById("geoip-body");
 const geoipMaxmindBody = document.getElementById("geoip-maxmind-body");
 const logBody = document.getElementById("log-body");
+// T-176:
+const protectionHero = document.getElementById("protection-hero");
+const filterControlsBody = document.getElementById("filter-controls-body");
+const timeoutConfigBody = document.getElementById("timeout-config-body");
 
 function setPill(ok, text) {
   statusPill.classList.toggle("is-bad", !ok);
   statusText.textContent = text;
+}
+
+// T-176: the basic view's one large element. Computed from the conditions
+// diagrams/ui-status-indicator.md defines (the subset this page can see) in
+// that same priority order - a failed fetch (`reachable=false`) is the worst
+// case and outranks everything, then watchdog, then network, then "no
+// provider active", then healthy. Pure - takes the status object, returns
+// {cls,state,detail}.
+function computeProtectionState(status, reachable) {
+  if (!reachable) {
+    return {
+      cls: "is-bad",
+      state: "Не захищено",
+      detail: "Служба фільтрації не відповідає. Перевірте, чи вона запущена.",
+    };
+  }
+  if (status.watchdog === "GAVE_UP") {
+    return {
+      cls: "is-bad",
+      state: "Служба зупинилась",
+      detail: "Автоматичний перезапуск не вдався. Перезапустіть застосунок вручну.",
+    };
+  }
+  if (status.watchdog === "RESTARTING") {
+    return {
+      cls: "is-warn",
+      state: "Відновлення…",
+      detail: "Службу фільтрації перезапускають. Зачекайте кілька секунд.",
+    };
+  }
+  if (status.network === "OFFLINE") {
+    return {
+      cls: "is-warn",
+      state: "Немає інтернету",
+      detail: "Резолвінг призупинено, доки не відновиться зв'язок.",
+    };
+  }
+  if (!status.active_providers || status.active_providers.length === 0) {
+    return {
+      cls: "is-bad",
+      state: "Не захищено",
+      detail: "Фільтрація вимкнена — жоден провайдер не активний.",
+    };
+  }
+  const blocked = status.stats ? status.stats.blocked : 0;
+  return {
+    cls: "is-ok",
+    state: "Захищено",
+    detail:
+      blocked > 0
+        ? `Фільтрація працює. За поточний журнал заблоковано ${blocked}.`
+        : "Фільтрація працює.",
+  };
+}
+
+const HERO_MARK = { "is-ok": "✓", "is-bad": "✕", "is-warn": "↺" };
+
+function renderProtectionHero(state) {
+  protectionHero.textContent = "";
+  const box = document.createElement("div");
+  box.className = `hero ${state.cls}`;
+  const head = document.createElement("div");
+  head.className = "hero-headline";
+  const mark = document.createElement("span");
+  mark.className = "hero-mark";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = HERO_MARK[state.cls] || "";
+  const label = document.createElement("span");
+  label.className = "hero-state";
+  label.textContent = state.state;
+  head.appendChild(mark);
+  head.appendChild(label);
+  box.appendChild(head);
+  const detail = document.createElement("p");
+  detail.className = "hero-detail";
+  detail.textContent = state.detail;
+  box.appendChild(detail);
+  protectionHero.appendChild(box);
 }
 
 async function getStatus() {
@@ -86,14 +168,47 @@ function blockedPercentLabel(stats) {
   return `${Math.round(pct)}%`;
 }
 
-function render(status) {
-  setPill(true, "Сервіс доступний");
-  // The voter (provider) list moved to its own #providers-body card
-  // (T-72/T-73) - it is no longer part of the 2s status poll's DOM.
+// T-176: the timeout-mode radios + baseline-fallback checkbox. Moved out of
+// #app-body into its own card inside the advanced disclosure. Still driven by
+// the 2s status poll (click-only, no free-text), same as the stats below.
+function renderTimeoutConfig(status) {
   const configWarning =
     configPersistFailed || status.persisted === false
       ? `<div class="notice warn">Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.</div>`
       : "";
+  timeoutConfigBody.innerHTML = `
+    <h3>Поведінка при збої</h3>
+    ${configWarning}
+    <div class="radio-group">
+      ${["fail_open", "fail_closed", "degraded"]
+        .map(
+          (mode) => `
+        <label class="radio-opt">
+          <input type="radio" name="timeout-mode" value="${mode}" ${status.timeout_mode === mode ? "checked" : ""} />
+          <span>${mode}</span>
+        </label>`
+        )
+        .join("")}
+    </div>
+    <label class="radio-opt baseline-fallback-opt">
+      <input type="checkbox" id="baseline-fallback-toggle" ${status.serve_baseline_when_filters_unreachable ? "checked" : ""} />
+      <span>Консультувати baseline-резолвер, коли жоден фільтр не відповів (незалежно від режиму таймауту; типово вимкнено — тоді запит просто не фільтрується у цьому вузькому випадку)</span>
+    </label>
+  `;
+  document
+    .querySelectorAll('input[name="timeout-mode"]')
+    .forEach((el) => el.addEventListener("change", onConfigChanged));
+  const baselineFallback = document.getElementById("baseline-fallback-toggle");
+  if (baselineFallback) {
+    baselineFallback.addEventListener("change", onConfigChanged);
+  }
+}
+
+function render(status) {
+  setPill(true, "Сервіс доступний");
+  renderProtectionHero(computeProtectionState(status, true));
+  renderTimeoutConfig(status);
+  syncDohUrl(status);
   // T-96: passive indicator that the query log (i.e. browsing history) is
   // being written to disk. Enabling this is a hand-edit of resolver_config.toml
   // by design (no toggle here), so this is a plain always-visible line, not a
@@ -109,25 +224,6 @@ function render(status) {
   appBody.innerHTML = `
     ${persistWarning}
     ${cachePersistWarning}
-    <div class="card">
-      <h3>Режим таймауту</h3>
-      ${configWarning}
-      <div class="radio-group">
-        ${["fail_open", "fail_closed", "degraded"]
-          .map(
-            (mode) => `
-          <label class="radio-opt">
-            <input type="radio" name="timeout-mode" value="${mode}" ${status.timeout_mode === mode ? "checked" : ""} />
-            <span>${mode}</span>
-          </label>`
-          )
-          .join("")}
-      </div>
-      <label class="radio-opt baseline-fallback-opt">
-        <input type="checkbox" id="baseline-fallback-toggle" ${status.serve_baseline_when_filters_unreachable ? "checked" : ""} />
-        <span>Консультувати baseline-резолвер, коли жоден фільтр не відповів (незалежно від режиму таймауту; типово вимкнено — тоді запит просто не фільтрується у цьому вузькому випадку)</span>
-      </label>
-    </div>
     <div class="card">
       <h3>Статистика (у поточному вікні логу)</h3>
       <div class="stat-row">
@@ -150,18 +246,11 @@ function render(status) {
       </div>
     </div>
   `;
-
-  document
-    .querySelectorAll('input[name="timeout-mode"]')
-    .forEach((el) => el.addEventListener("change", onConfigChanged));
-  const baselineFallback = document.getElementById("baseline-fallback-toggle");
-  if (baselineFallback) {
-    baselineFallback.addEventListener("change", onConfigChanged);
-  }
 }
 
 function renderError(err) {
   setPill(false, "Сервіс недоступний");
+  renderProtectionHero(computeProtectionState(null, false));
   appBody.textContent = "";
   const panel = document.createElement("div");
   panel.className = "error-panel";
@@ -1623,30 +1712,11 @@ function renderProviders(data) {
   heading.textContent = "Провайдери-voter'и";
   providersBody.appendChild(heading);
 
-  // SPEC.md / CLAUDE.md: the fan-out privacy tradeoff (more third parties
-  // see uncached browsing history) must stay user-visible, not buried.
-  const fanout = document.createElement("p");
-  fanout.className = "geoip-database-status";
-  const parties = data.third_party_count;
-  const voterCount = parties - 1;
-  fanout.textContent =
-    `Кожен запит поза кешем ${pluralUk(parties, "бачить", "бачать", "бачать")} ${parties} ` +
-    `${pluralUk(parties, "третю сторону", "треті сторони", "третіх сторін")}: ` +
-    `${voterCount} ${pluralUk(voterCount, "увімкнений voter", "увімкнені voter'и", "увімкнених voter'ів")} ` +
-    `+ baseline-резолвер.`;
-  providersBody.appendChild(fanout);
-
-  // T-72/T-73 closing review: the all-disabled state is a legitimate
-  // user choice (SPEC.md §3/§8.1 pass-through), but it must be shown, not
-  // silently in effect - filtering_active is the backend's explicit signal.
-  if (!data.filtering_active) {
-    const off = document.createElement("div");
-    off.className = "notice warn";
-    off.textContent =
-      "Жоден voter не увімкнено - фільтрація не активна. Запити йдуть напряму через " +
-      "baseline-резолвер, який усе одно бачить кожен домен, який ви відвідуєте.";
-    providersBody.appendChild(off);
-  }
+  // T-176: this same ProvidersResponse also drives the basic-view master +
+  // category toggles, the fan-out privacy line and the pass-through warning
+  // (which moved up into the basic view - CLAUDE.md "not buried" / SPEC.md
+  // §8.1). One fetch, both views stay in sync.
+  renderFilterControls(data);
 
   // Same "silent data loss" concern as #overrides-body / #geoip-body (T-47).
   if (!data.persisted) {
@@ -1712,14 +1782,22 @@ function renderProviders(data) {
 }
 
 function renderProvidersError(err) {
+  const message = `Помилка: ${(err && err.message) || String(err)}`;
   providersBody.textContent = "";
   const heading = document.createElement("h3");
   heading.textContent = "Провайдери-voter'и";
   providersBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = message;
   providersBody.appendChild(panel);
+  // T-176: the basic-view toggles ride on this same fetch - if it failed,
+  // don't leave stale switches sitting there implying a known state.
+  filterControlsBody.textContent = "";
+  const basicPanel = document.createElement("div");
+  basicPanel.className = "error-panel";
+  basicPanel.textContent = message;
+  filterControlsBody.appendChild(basicPanel);
 }
 
 async function refreshProviders() {
@@ -1731,6 +1809,315 @@ async function refreshProviders() {
 }
 
 refreshProviders();
+
+// ===================================================================
+// T-176: basic-view filter controls (master + category toggles) and the
+// browser-setup card. The toggles ride on the same GET /admin/providers
+// fetch as #providers-body (renderProviders calls renderFilterControls),
+// so a click never races the 2s status poll - same isolation reasoning as
+// every other card that owns its own cycle.
+// ===================================================================
+
+const CATEGORY_META = [
+  {
+    key: "SECURITY",
+    name: "Захист від шкідливого",
+    sub: "Віруси, фішинг, шахрайські сайти",
+  },
+  {
+    key: "ADS_TRACKERS",
+    name: "Блокування реклами",
+    sub: "Рекламні й стежні домени",
+  },
+  {
+    key: "ADULT_CONTENT",
+    name: "Дорослий вміст",
+    sub: "Порнографія та подібні сайти",
+  },
+];
+
+async function setCategoryEnabled(category, enabled) {
+  const response = await fetch("/admin/providers/set-category-enabled", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category, enabled }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// "on" | "off" | "partial" for one category, from the live voter list.
+function categoryState(providers, key) {
+  const inCat = providers.filter((entry) => entry.category === key);
+  if (inCat.length === 0) {
+    return "off";
+  }
+  const on = inCat.filter((entry) => entry.enabled).length;
+  if (on === 0) {
+    return "off";
+  }
+  return on === inCat.length ? "on" : "partial";
+}
+
+// Built via DOM methods, no user text - but kept construction-style for
+// consistency with the rest of this file (admin_ui.rs's module doc). A
+// "partial" state is a non-interactive visual whose click/Enter turns the
+// whole category on; "on"/"off" is a real checkbox.
+function toggleControl(checked, partial, onFlip, ariaLabel) {
+  if (partial) {
+    const span = document.createElement("span");
+    span.className = "switch is-partial";
+    span.setAttribute("role", "switch");
+    span.setAttribute("aria-checked", "mixed");
+    span.setAttribute("aria-label", ariaLabel);
+    span.tabIndex = 0;
+    const track = document.createElement("span");
+    track.className = "track";
+    const thumb = document.createElement("span");
+    thumb.className = "thumb";
+    span.appendChild(track);
+    span.appendChild(thumb);
+    const activate = () => onFlip(true);
+    span.addEventListener("click", activate);
+    span.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    });
+    return span;
+  }
+  const label = document.createElement("label");
+  label.className = "switch";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = checked;
+  cb.setAttribute("aria-label", ariaLabel);
+  cb.addEventListener("change", () => onFlip(cb.checked));
+  const track = document.createElement("span");
+  track.className = "track";
+  const thumb = document.createElement("span");
+  thumb.className = "thumb";
+  label.appendChild(cb);
+  label.appendChild(track);
+  label.appendChild(thumb);
+  return label;
+}
+
+function toggleRow(name, sub, control, isMaster) {
+  const row = document.createElement("div");
+  row.className = isMaster ? "toggle-row is-master" : "toggle-row";
+  const meta = document.createElement("div");
+  meta.className = "toggle-meta";
+  const nameEl = document.createElement("div");
+  nameEl.className = "toggle-name";
+  nameEl.textContent = name;
+  const subEl = document.createElement("div");
+  subEl.className = "toggle-sub";
+  subEl.textContent = sub;
+  meta.appendChild(nameEl);
+  meta.appendChild(subEl);
+  row.appendChild(meta);
+  row.appendChild(control);
+  return row;
+}
+
+function showFilterControlsError(message) {
+  const el = document.getElementById("filter-controls-error");
+  if (el) {
+    el.textContent = message;
+  }
+}
+
+async function flipCategory(category, enabled) {
+  try {
+    renderProviders(await setCategoryEnabled(category, enabled));
+  } catch (err) {
+    showFilterControlsError(
+      `Не вдалося змінити категорію: ${(err && err.message) || String(err)}`,
+    );
+    refreshProviders();
+  }
+}
+
+// The master switch flips all three categories to the same target. Sequential
+// (not Promise.all): each POST rewrites resolver_config.toml under
+// persist_lock, and a partial failure must be reported, not swallowed.
+async function flipAllCategories(enabled) {
+  const failed = [];
+  for (const cat of CATEGORY_META) {
+    try {
+      await setCategoryEnabled(cat.key, enabled);
+    } catch (_err) {
+      failed.push(cat.name);
+    }
+  }
+  await refreshProviders();
+  if (failed.length > 0) {
+    showFilterControlsError(
+      `Не перемкнулись: ${failed.join(", ")}. Спробуйте ще раз.`,
+    );
+  }
+}
+
+function renderFilterControls(data) {
+  filterControlsBody.textContent = "";
+  const providers = data.active || [];
+  const anyOn = providers.some((entry) => entry.enabled);
+
+  filterControlsBody.appendChild(
+    toggleRow(
+      "Фільтрація",
+      "Головний вимикач — вмикає й вимикає всі перевірки",
+      toggleControl(anyOn, false, (want) => flipAllCategories(want), "Фільтрація"),
+      true,
+    ),
+  );
+
+  CATEGORY_META.forEach((cat) => {
+    const state = categoryState(providers, cat.key);
+    const sub =
+      state === "partial"
+        ? `${cat.sub}. Увімкнено частково — натисніть, щоб увімкнути всі`
+        : cat.sub;
+    filterControlsBody.appendChild(
+      toggleRow(
+        cat.name,
+        sub,
+        toggleControl(
+          state === "on",
+          state === "partial",
+          (want) => flipCategory(cat.key, want),
+          cat.name,
+        ),
+        false,
+      ),
+    );
+  });
+
+  // T-72/T-73 closing review: the all-disabled pass-through is a legitimate
+  // user choice, but it must be shown - and in the BASIC view (T-176), since
+  // that is exactly when the user is least likely to open "Розширені".
+  if (!data.filtering_active) {
+    const off = document.createElement("div");
+    off.className = "notice warn";
+    off.textContent =
+      "Жоден фільтр не активний. Запити все одно бачить резервний резолвер — " +
+      "він знає кожен домен, який ви відвідуєте.";
+    filterControlsBody.appendChild(off);
+  }
+
+  // Same "silent data loss" concern as every other card (T-47) - a category
+  // toggle that live-applied but failed to persist must be visible here too.
+  if (!data.persisted) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    filterControlsBody.appendChild(notPersisted);
+  }
+
+  // SPEC.md / CLAUDE.md: the fan-out privacy tradeoff must stay user-visible,
+  // not buried - so it lives in the basic view now, not the providers card.
+  const parties = data.third_party_count;
+  const voterCount = parties - 1;
+  const fanout = document.createElement("p");
+  fanout.className = "fanout-note";
+  fanout.textContent =
+    `Кожен запит поза кешем ${pluralUk(parties, "бачить", "бачать", "бачать")} ${parties} ` +
+    `${pluralUk(parties, "сторону", "сторони", "сторін")}: ` +
+    `${voterCount} ${pluralUk(voterCount, "увімкнена перевірка", "увімкнені перевірки", "увімкнених перевірок")} ` +
+    `+ резервний резолвер.`;
+  filterControlsBody.appendChild(fanout);
+
+  const errLine = document.createElement("div");
+  errLine.className = "override-error";
+  errLine.id = "filter-controls-error";
+  filterControlsBody.appendChild(errLine);
+}
+
+// --- browser DoH setup / onboarding (#browser-setup-body) ---
+// Wired once at load: the buttons, and the first-visit auto-open of the
+// steps, must not be re-run by the 2s status poll. The #doh-url value is
+// refreshed from status.port on every render() call (harmless - readonly).
+
+const BROWSER_SETUP_SEEN_KEY = "dnsqb-browser-setup-seen";
+
+function syncDohUrl(status) {
+  const field = document.getElementById("doh-url");
+  if (field && status && status.port) {
+    field.value = `https://127.0.0.1:${status.port}/dns-query`;
+  }
+}
+
+function initBrowserSetup() {
+  const steps = document.getElementById("browser-setup-steps");
+  const toggle = document.getElementById("browser-setup-toggle");
+  const copy = document.getElementById("doh-url-copy");
+  const field = document.getElementById("doh-url");
+  const result = document.getElementById("browser-setup-result");
+
+  if (toggle && steps) {
+    toggle.addEventListener("click", () => {
+      steps.hidden = !steps.hidden;
+      toggle.setAttribute("aria-expanded", String(!steps.hidden));
+      toggle.textContent = steps.hidden
+        ? "Показати покрокову інструкцію"
+        : "Сховати інструкцію";
+    });
+  }
+
+  if (copy && field) {
+    copy.addEventListener("click", async () => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(field.value);
+        } else {
+          field.select();
+          document.execCommand("copy");
+        }
+        if (result) {
+          result.textContent = "Скопійовано.";
+          setTimeout(() => {
+            if (result) {
+              result.textContent = "";
+            }
+          }, 2000);
+        }
+      } catch (_err) {
+        field.select();
+        if (result) {
+          result.textContent = "Скопіюйте адресу вручну (Ctrl+C).";
+        }
+      }
+    });
+  }
+
+  // First visit: open the steps so a new user is walked through setup. The
+  // flag is per-viewer convenience only (localStorage), never anything the
+  // service needs back - and every read/write is guarded (private windows,
+  // blocked site data).
+  let seen = false;
+  try {
+    seen = localStorage.getItem(BROWSER_SETUP_SEEN_KEY) === "1";
+  } catch (_err) {
+    seen = false;
+  }
+  if (!seen && steps && toggle) {
+    steps.hidden = false;
+    toggle.setAttribute("aria-expanded", "true");
+    toggle.textContent = "Сховати інструкцію";
+    try {
+      localStorage.setItem(BROWSER_SETUP_SEEN_KEY, "1");
+    } catch (_err) {
+      /* best-effort: the steps just stay open again next visit */
+    }
+  }
+}
+
+initBrowserSetup();
 
 // T-70: "Повністю видалити" - no fetch/render cycle, no 2s poll (there is
 // nothing persisted to show, only the one-shot result of the last click).

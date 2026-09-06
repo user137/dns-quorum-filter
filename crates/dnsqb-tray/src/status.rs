@@ -96,24 +96,25 @@ impl TrayStatus {
         }
     }
 
-    /// The text shown as the tray icon's hover tooltip.
+    /// The text shown as the tray icon's hover tooltip. T-176 reworded these
+    /// for a non-technical reader (no "резолвінг", no "апстрім", no stale
+    /// "обидва провайдери") while keeping the raw counts intact.
     #[must_use]
     pub fn tooltip(&self) -> String {
         match self {
-            Self::Unreachable => "dns-quorum-filter: сервіс недоступний".to_string(),
+            Self::Unreachable => "DNS Quorum Filter: служба недоступна".to_string(),
             Self::ServiceRestarting => {
-                "dns-quorum-filter: сервіс перезапускається".to_string()
+                "DNS Quorum Filter: служба перезапускається\u{2026}".to_string()
             }
             Self::ServiceGaveUp => {
-                "dns-quorum-filter: сервіс зупинено \u{2014} перевищено ліміт спроб перезапуску"
+                "DNS Quorum Filter: служба зупинилася \u{2014} відкрийте вікно, щоб перезапустити"
                     .to_string()
             }
             Self::Offline => {
-                "dns-quorum-filter: немає підключення до інтернету \u{2014} резолвінг призупинено"
-                    .to_string()
+                "DNS Quorum Filter: немає інтернету \u{2014} перевірки призупинено".to_string()
             }
             Self::NoActiveProvider { in_flight } => format!(
-                "dns-quorum-filter: фільтрація вимкнена (обидва провайдери вимкнено) \u{2014} {in_flight} запит(ів) зараз"
+                "DNS Quorum Filter: фільтрація вимкнена \u{2014} жоден провайдер не активний ({in_flight} запит(ів) зараз)"
             ),
             Self::Filtering {
                 in_flight,
@@ -123,7 +124,7 @@ impl TrayStatus {
                 degraded_window,
             } => {
                 let base = format!(
-                    "dns-quorum-filter: {blocked}/{total} заблоковано \u{2014} {in_flight} запит(ів) зараз"
+                    "DNS Quorum Filter: захищає \u{2014} {blocked}/{total} заблоковано ({in_flight} запит(ів) зараз)"
                 );
                 // Raw counts, not a collapsed bool/percentage (admin.rs's
                 // own degraded_counts doc comment) — any nonzero count is
@@ -133,7 +134,7 @@ impl TrayStatus {
                 // permanently true under routine fail-open timeouts).
                 if *degraded_events > 0 {
                     format!(
-                        "{base} \u{2014} {degraded_events}/{degraded_window} останніх апстрім-запитів мали тайм-аут/помилку"
+                        "{base} \u{2014} деякі перевірки не відповідають ({degraded_events}/{degraded_window} останніх запитів мали тайм-аут)"
                     )
                 } else {
                     base
