@@ -231,4 +231,102 @@ mod tests {
             StatusCode::METHOD_NOT_ALLOWED
         );
     }
+
+    // T-176 — the basic/advanced split is a structural property, so (per the
+    // T-59 lesson) the test reads it as data: an explicit expected list of
+    // top-level section ids, and which side of the <details> boundary each
+    // one sits on. A card silently moved between levels, added, or dropped
+    // fails here.
+
+    /// Section ids that must render in the **basic** view — before the
+    /// `<details id="advanced-settings">` disclosure.
+    const BASIC_SECTION_IDS: &[&str] = &[
+        "protection-hero",
+        "app-body",
+        "browser-setup-body",
+        "overrides-body",
+        "log-body",
+    ];
+    /// Section ids that must render **inside** the advanced disclosure.
+    const ADVANCED_SECTION_IDS: &[&str] = &[
+        "providers-body",
+        "cache-config-body",
+        "geoip-body",
+        "geoip-maxmind-body",
+        "danger-zone-body",
+    ];
+
+    #[test]
+    fn index_html_places_every_section_on_the_expected_side_of_the_advanced_disclosure() {
+        let Some((before_details, rest)) =
+            INDEX_HTML.split_once("<details id=\"advanced-settings\">")
+        else {
+            panic!("the advanced-settings <details> disclosure is missing");
+        };
+        let Some((inside_details, after_details)) = rest.split_once("</details>") else {
+            panic!("the advanced-settings <details> is not closed");
+        };
+
+        for id in BASIC_SECTION_IDS {
+            let marker = format!("id=\"{id}\"");
+            assert!(
+                before_details.contains(&marker),
+                "basic section {id} must render before the advanced disclosure"
+            );
+            assert!(
+                !inside_details.contains(&marker),
+                "basic section {id} must not be inside the advanced disclosure"
+            );
+        }
+        for id in ADVANCED_SECTION_IDS {
+            let marker = format!("id=\"{id}\"");
+            assert!(
+                inside_details.contains(&marker),
+                "advanced section {id} must render inside the advanced disclosure"
+            );
+        }
+        // The credits footer stays outside both levels, on every render.
+        assert!(
+            after_details.contains("<footer id=\"credits\">"),
+            "the attribution footer must sit outside the advanced disclosure"
+        );
+    }
+
+    #[test]
+    fn advanced_disclosure_is_collapsed_by_default() {
+        assert!(
+            INDEX_HTML.contains("<details id=\"advanced-settings\">"),
+            "the disclosure must exist"
+        );
+        assert!(
+            !INDEX_HTML.contains("<details id=\"advanced-settings\" open"),
+            "the disclosure must be collapsed by default - a non-technical user \
+             should never land on the engineering controls"
+        );
+    }
+
+    #[test]
+    fn browser_setup_card_carries_the_doh_url_field_and_the_verification_pointer() {
+        assert!(INDEX_HTML.contains("id=\"browser-setup-body\""));
+        assert!(
+            INDEX_HTML.contains("id=\"doh-url\""),
+            "the card must show the DoH URL in a copyable field"
+        );
+        assert!(
+            INDEX_HTML.contains("id=\"doh-url-copy\""),
+            "the DoH URL must have a copy button (main.js wires it)"
+        );
+        assert!(
+            INDEX_HTML.contains("ERR_ADDRESS_INVALID"),
+            "the steps must point at the real browser-uses-local-DoH check, not just \"the site opened\""
+        );
+    }
+
+    #[test]
+    fn protection_hero_container_exists_for_main_js_to_fill() {
+        assert!(
+            INDEX_HTML.contains("id=\"protection-hero\""),
+            "main.js renders the computed protection status into this container"
+        );
+    }
 }

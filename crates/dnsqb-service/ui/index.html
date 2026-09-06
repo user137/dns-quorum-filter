@@ -9,17 +9,54 @@
 <body>
   <h1>DNS Quorum Filter</h1>
   <div id="status-pill" class="status-pill"><span class="dot"></span><span id="status-text">…</span></div>
+
+  <!-- T-176: the one big element of the basic view - a computed
+       "protected / not protected" status. Filled by main.js from
+       AdminStatusResponse.{network,watchdog} + ProvidersResponse.filtering_active
+       (the same condition set as diagrams/ui-status-indicator.md, just
+       surfaced as a hero instead of a header pill). Empty until the first
+       render; carries no layout of its own when empty. -->
+  <div id="protection-hero"></div>
+
+  <!-- T-176: basic-view controls (master + per-category toggles) and the
+       quick stats. The 2s status poll fully replaces this subtree, so it
+       holds no free-text input (the timeout-mode radios and the
+       baseline-fallback checkbox it also renders are click-only). -->
   <div id="app-body">
     <p>Завантаження…</p>
   </div>
-  <!-- T-72/T-73: the voter (provider) list. Own fetch/render cycle, not on
-       the 2s status poll - the "add custom provider" sub-form has free-text
-       inputs (id / URL / display name) that must not be wiped mid-typing,
-       same reasoning as #overrides-body below. -->
-  <div id="providers-body" class="card">
-    <h3>Провайдери-voter'и</h3>
-    <p>Завантаження…</p>
+
+  <!-- T-176: browser DoH setup / onboarding. Always available; on a first
+       visit main.js auto-opens it (a localStorage flag on the admin origin,
+       no backend "first run" signal). The copy button and the "run the
+       check" action are wired in main.js; the steps below are static so the
+       section is useful even before the script runs. -->
+  <div id="browser-setup-body" class="card">
+    <h3>Підключення браузера</h3>
+    <p class="setup-intro">
+      Вкажіть цю адресу як «власний DNS-провайдер» у налаштуваннях браузера:
+    </p>
+    <div class="setup-url-row">
+      <input type="text" id="doh-url" readonly value="https://127.0.0.1/dns-query"
+             aria-label="Адреса локального DoH" />
+      <button type="button" id="doh-url-copy">Копіювати</button>
+    </div>
+    <button type="button" id="browser-setup-toggle" class="link-button" aria-expanded="false">
+      Показати покрокову інструкцію
+    </button>
+    <ol id="browser-setup-steps" class="setup-steps" hidden>
+      <li>Chrome → Налаштування → Конфіденційність і безпека → Безпека.</li>
+      <li>«Використовувати безпечний DNS» → «Власний», вставити адресу вище.</li>
+      <li>
+        Відкрити будь-який сайт — у логу нижче має з'явитися рядок <code>ALLOWED</code>.
+        Що браузер справді резолвить саме через цю службу — перевіряється окремо
+        (заблокувати домен і побачити <code>ERR_ADDRESS_INVALID</code>); повна
+        процедура — у README, секція «Перевірка: браузер → локальний DoH».
+      </li>
+    </ol>
+    <div id="browser-setup-result"></div>
   </div>
+
   <!-- T-47: kept outside #app-body, which the 2s status poll fully
        replaces - a free-text "add domain" input living inside that
        container would lose in-progress typing every refresh. This section
@@ -28,56 +65,84 @@
     <h3>Списки виключень</h3>
     <p>Завантаження…</p>
   </div>
-  <!-- T-153: same reasoning as #overrides-body above - number inputs the
-       user is actively editing must not lose their in-progress value to the
-       unrelated 2s status poll. -->
-  <div id="cache-config-body" class="card">
-    <h3>Кеш</h3>
-    <p>Завантаження…</p>
-  </div>
-  <!-- T-77: same reasoning as #overrides-body/#cache-config-body above - a
-       country-code input the user is actively typing into must not lose its
-       value to the unrelated 2s status poll. -->
-  <div id="geoip-body" class="card">
-    <h3>GeoIP-блокування</h3>
-    <p>Завантаження…</p>
-  </div>
-  <!-- T-162: MaxMind GeoLite2 credentials (opt-in advanced GeoIP source).
-       Same reasoning as the cards above - a license-key field the operator
-       is typing into must not be wiped by the 2s status poll, so this has
-       its own independent fetch/render cycle (see main.js). -->
-  <div id="geoip-maxmind-body" class="card">
-    <h3>Джерело GeoIP: MaxMind GeoLite2</h3>
-    <p>Завантаження…</p>
-  </div>
-  <!-- T-46/T-54: same reasoning as #overrides-body/#cache-config-body above
-       - a search box the user is actively typing into must not lose its
-       value to the unrelated 2s status poll. Unlike those two, this section
-       also doesn't auto-refresh on its own timer (see main.js) - a log
-       table re-rendering under a reader every few seconds would be
-       disruptive, not helpful. -->
+
+  <!-- T-46/T-54: same reasoning as #overrides-body above - a search box the
+       user is actively typing into must not lose its value to the unrelated
+       2s status poll. Unlike that one, this section also doesn't auto-refresh
+       on its own timer (see main.js) - a log table re-rendering under a
+       reader every few seconds would be disruptive, not helpful. -->
   <div id="log-body" class="card">
     <h3>Лог запитів</h3>
     <p>Завантаження…</p>
   </div>
-  <!-- T-70: MSIX (T-156) has no uninstall-time code hook - the OS just
-       deletes the package's files, nothing runs afterward - so the trusted
-       certificate and Credential Manager secrets have to be cleared from
-       *inside* the running app, before the user removes it. Static markup
-       (no fetch/render cycle - there is no persisted state to show, only a
-       button and its one-shot result), kept as its own card at the bottom
-       of the page rather than folded into any status card above. -->
-  <div id="danger-zone-body" class="card">
-    <h3>Повне видалення</h3>
-    <p class="notice warn">
-      Видаляє локальний довірений сертифікат dns-quorum-filter і всі збережені ключі/креденшели
-      (TLS-ключ, ключ шифрування журналу й кешу, креденшели MaxMind, якщо є) зі сховища
-      облікових даних Windows. Це <strong>не</strong> видаляє сам застосунок — після цього кроку
-      видаліть dns-quorum-filter у Параметрах Windows окремо.
-    </p>
-    <button type="button" id="uninstall-local-state-btn">Повністю видалити</button>
-    <div id="uninstall-local-state-result"></div>
-  </div>
+
+  <!-- T-176: everything an engineer touches, folded into a native <details>
+       so a non-technical user never has to see it. Collapsed by default; no
+       JS state, so it needs no script and can't break the page between
+       commits. The five cards below keep their ids - main.js's existing
+       fetch/render cycles find them by getElementById regardless of DOM
+       position or visibility. -->
+  <details id="advanced-settings">
+    <summary>
+      <span class="summary-label">Розширені налаштування</span>
+      <span class="summary-hint">для досвідчених користувачів</span>
+      <span class="summary-chevron" aria-hidden="true">›</span>
+    </summary>
+    <div class="advanced-inner">
+      <!-- T-72/T-73: the voter (provider) list. Own fetch/render cycle, not on
+           the 2s status poll - the "add custom provider" sub-form has free-text
+           inputs (id / URL / display name) that must not be wiped mid-typing,
+           same reasoning as #overrides-body above. -->
+      <div id="providers-body" class="card">
+        <h3>Провайдери-voter'и</h3>
+        <p>Завантаження…</p>
+      </div>
+
+      <!-- T-153: same reasoning as #overrides-body above - number inputs the
+           user is actively editing must not lose their in-progress value to the
+           unrelated 2s status poll. -->
+      <div id="cache-config-body" class="card">
+        <h3>Кеш</h3>
+        <p>Завантаження…</p>
+      </div>
+
+      <!-- T-77: same reasoning as #overrides-body/#cache-config-body above - a
+           country-code input the user is actively typing into must not lose its
+           value to the unrelated 2s status poll. -->
+      <div id="geoip-body" class="card">
+        <h3>GeoIP-блокування</h3>
+        <p>Завантаження…</p>
+      </div>
+
+      <!-- T-162: MaxMind GeoLite2 credentials (opt-in advanced GeoIP source).
+           Same reasoning as the cards above - a license-key field the operator
+           is typing into must not be wiped by the 2s status poll, so this has
+           its own independent fetch/render cycle (see main.js). -->
+      <div id="geoip-maxmind-body" class="card">
+        <h3>Джерело GeoIP: MaxMind GeoLite2</h3>
+        <p>Завантаження…</p>
+      </div>
+
+      <!-- T-70: MSIX (T-156) has no uninstall-time code hook - the OS just
+           deletes the package's files, nothing runs afterward - so the trusted
+           certificate and Credential Manager secrets have to be cleared from
+           *inside* the running app, before the user removes it. Static markup
+           (no fetch/render cycle - there is no persisted state to show, only a
+           button and its one-shot result). -->
+      <div id="danger-zone-body" class="card danger-zone">
+        <h3>Повне видалення</h3>
+        <p class="notice warn">
+          Видаляє локальний довірений сертифікат dns-quorum-filter і всі збережені ключі/креденшели
+          (TLS-ключ, ключ шифрування журналу й кешу, креденшели MaxMind, якщо є) зі сховища
+          облікових даних Windows. Це <strong>не</strong> видаляє сам застосунок — після цього кроку
+          видаліть dns-quorum-filter у Параметрах Windows окремо.
+        </p>
+        <button type="button" id="uninstall-local-state-btn">Повністю видалити</button>
+        <div id="uninstall-local-state-result"></div>
+      </div>
+    </div>
+  </details>
+
   <!-- T-81: attribution / credits. Static markup, no JS and no DTO - it must
        be present on every render because this page displays GeoIP-derived
        country data (the log's resolved_ip_country column, the GeoIP card),
@@ -86,8 +151,8 @@
        2026-08-30 against db-ip.com's own download page - the required
        snippet is exactly the "IP Geolocation by DB-IP" link below). The
        MaxMind line is scoped to "advanced mode" because GeoLite2 data is
-       only in use when the operator has opted in (T-80). Kept outside
-       #app-body so the 2s status poll never touches it. -->
+       only in use when the operator has opted in (T-80). Kept outside both
+       levels so it renders on every state. -->
   <footer id="credits">
     <p>DNS Quorum Filter — <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache License 2.0</a>.</p>
     <p>
