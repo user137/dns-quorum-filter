@@ -294,9 +294,12 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   system-resolver fallback), `neverssl.com` blocklisted mid-session → Chrome `ERR_ADDRESS_INVALID`
   (resolved to `0.0.0.0`, not `ERR_NAME_NOT_RESOLVED`) **and** time-correlated `BLOCKLIST` rows
   (`A` + `HTTPS_SVCB`) in `/admin/log`; `www.google.com` / random `*.neverssl.com` rows nobody
-  queried by hand = independent corroboration. Manual run (not CI), like `phase1_metrics`.
-  Procedure written into `README.md` ("Перевірка: браузер → локальний DoH"); raw output in
-  scratchpad `t172_browser_doh_pass_2026-09-06.txt`.
+  queried by hand = independent corroboration. `ERR_ADDRESS_INVALID` (not `ERR_NAME_NOT_RESOLVED`)
+  also = first end-to-end proof of the SPEC.md §3.2 invariant against a live browser (NULL `0.0.0.0`,
+  not NXDOMAIN → no resolver fallback). Ran against an **automation-profile** Chrome (real binary +
+  real `chrome://settings/security` path, but not the user's daily profile). Manual run (not CI),
+  like `phase1_metrics`. Procedure in `README.md` ("Перевірка: браузер → локальний DoH"); raw
+  output in scratchpad `t172_browser_doh_pass_2026-09-06.txt`.
 - ~~T-66's metrics did not confirm the quorum hypothesis (AdGuard 0/38, n=1)~~ — **closed by
   confirmation, T-174 (2026-09-05).** T-171 first re-measured (n=122, +0.8 pp, "not confirmed"),
   then a follow-up found `cleanbrowsing-{security,adult}` were declared `NullIp` but block via

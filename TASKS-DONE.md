@@ -3684,8 +3684,14 @@ Raw-виходи — scratchpad `t175_sinkhole_probe_2026-09-05.txt` (орієн
 **Середовище.** `dnsqb-service` (debug) на `https://127.0.0.1:8443/dns-query`; локальний
 `resolver_config.toml` переписано зі стального `[providers]` на `[[providers]]` (T-72-формат;
 `quad9` + `cloudflare-malware` + `adguard` — T-170-дефолт). Cert `CN=dns-quorum-filter local
-DoH` встановлено в `CurrentUser\Root` (`certutil -addstore -user -f Root`). Chrome 152, окремий
-профіль chrome-devtools MCP (`--disable-extensions`). DoH задано через
+DoH` встановлено в `CurrentUser\Root` (`certutil -addstore -user -f Root`). Chrome 152 —
+**автоматизаційний профіль** chrome-devtools MCP (`--enable-automation --disable-extensions
+--disable-background-networking` та ін.; реальний `chrome.exe` із `C:\Program Files\...`, реальний
+шлях налаштувань `chrome://settings/security`). Жоден із цих прапорців не чіпає резолвер-шлях
+(`--disable-background-networking` прибирає лише фонові Google-сервіси, не DNS застосунку). Той
+самий застережний клас, що icacls/CI-урок цього проєкту: автоматизаційний Chrome — **не**
+щоденний Chrome користувача; механізм і шлях конфігурації тут ідентичні, профіль — ні. DoH задано
+через
 `chrome://settings/security` → «Додати власного постачальника послуг DNS»; звірено через
 `chrome.settingsPrivate.getPref`: **`dns_over_https.mode = "secure"`** (без тихого fallback на
 системний резолвер — саме та умова, без якої негативний контроль нічого не доводить),
@@ -3711,6 +3717,12 @@ net-internals/#dns` → «Clear host cache». Chrome → `http://neverssl.com`:
 Збіг {помилка з'єднання Chrome до address-invalid цілі} + {корельований у часі `BLOCKLIST`-рядок
 для точно тих доменів, куди Chrome навігував} доводить, що резолюцію зробив Chrome через
 `dnsqb-service` — не стальний кеш, не системний резолвер.
+
+**Побічно закрито другий незавершений e2e-гейт:** `ERR_ADDRESS_INVALID` (а не
+`ERR_NAME_NOT_RESOLVED`) — це перше наскрізне підтвердження інваріанта SPEC.md §3.2 проти живого
+браузера: блок віддає `0.0.0.0` (NULL), не NXDOMAIN, саме тому браузер **не** відскакує на інший
+резолвер (він доходить до спроби з'єднання й падає на рівні адреси). Раніше §3.2 було перевірено
+лише на рівні wire-кодека.
 
 **Прибирання.** blocklist-записи видалено, лог очищено, Chrome DoH скинуто на `automatic`/порожній
 шаблон. Cert лишається в `CurrentUser\Root` (легітимний T-49-стан; зняти —
