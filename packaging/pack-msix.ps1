@@ -119,15 +119,27 @@ try {
     } else {
         $pw = -join ((1..32) | ForEach-Object { '{0:x}' -f (Get-Random -Maximum 16) })
         Write-Host "::add-mask::$pw"
+        # -Provider forces a CryptoAPI RSA key, not the modern default (CNG):
+        # SignTool cannot use a CNG key to sign an MSIX directly, and the
+        # resulting package can fail client-side validation in ways signtool's
+        # own verify does not catch. Same fix pakko's Setup-DevCert.ps1 settled
+        # on (its docs/DECISIONS.md).
         $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject $Publisher `
             -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy Exportable `
-            -KeyUsage DigitalSignature -HashAlgorithm SHA256
+            -KeyUsage DigitalSignature -HashAlgorithm SHA256 `
+            -KeyAlgorithm RSA -KeyLength 2048 `
+            -Provider "Microsoft Strong Cryptographic Provider"
         Export-PfxCertificate -Cert $cert -FilePath $pfx `
             -Password (ConvertTo-SecureString $pw -AsPlainText -Force) | Out-Null
         Export-Certificate -Cert $cert -FilePath $cerPath | Out-Null
         Remove-Item ("Cert:\CurrentUser\My\" + $cert.Thumbprint) -Force
+        # Ship the trust helper next to the .msix/.cer so a downloader can trust
+        # the ephemeral cert with one self-elevating call. Rides dist/* into the
+        # msix artifact and the release assets with no release.yml plumbing.
+        $helperDst = Join-Path ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($OutFile))) 'Trust-TestCert.ps1'
+        Copy-Item (Join-Path $PSScriptRoot 'Trust-TestCert.ps1') $helperDst -Force
         $mode = "test-signed"
-        Write-Host "No -PfxPath — ephemeral self-signed cert; package is $mode. Exported $cerPath."
+        Write-Host "No -PfxPath — ephemeral self-signed cert; package is $mode. Exported $cerPath + Trust-TestCert.ps1."
     }
 
     & $signtool sign /fd SHA256 /f $pfx /p $pw /tr http://timestamp.digicert.com /td SHA256 $OutFile
