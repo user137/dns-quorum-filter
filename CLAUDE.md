@@ -71,8 +71,9 @@ workflows, `ci.yml`/`codeql.yml` `push: branches: ['**']` (not tags) + `paths-ig
 `**/*.md`/`diagrams/**`/`mockups/**` (a docs-only commit, and any tag push, triggers neither —
 `release.yml` owns the tag path). **Version `0.1.0` → `0.2.0` (Батч 3.7) → `0.3.0` (T-173, Батч
 3.11); `v0.2.0` and `v0.3.0` tagged → `release.yml` each produced a DRAFT GitHub release
-(test-signed binaries + `SHA256SUMS`, `v0.3.0` also `.msix` + `.cer`), left for a human to
-publish.** Version literals: 3 `crates/*/Cargo.toml` `version` + 2 path-dep specs + `Cargo.lock`
+(test-signed binaries + `SHA256SUMS`, `v0.3.0` also `.msix` + `.cer` + `Trust-TestCert.ps1`).
+`v0.3.0` was published 2026-09-06 (T-178) and is `latest`; `v0.2.0` stays a draft.** Version
+literals: 3 `crates/*/Cargo.toml` `version` + 2 path-dep specs + `Cargo.lock`
 (no `[workspace.package].version`); `VERSIONINFO` reads `CARGO_PKG_VERSION*` so it follows for
 free; `pack-msix.ps1` cross-checks the git tag against `cargo metadata` (`throw` on mismatch), so
 the bump must land before the tag.
@@ -130,11 +131,15 @@ T-170 `DEFAULT_PROVIDER_IDS` decision, T-171/T-174/T-175 quorum re-measure (hypo
 `POST /admin/providers/set-category-enabled` + reworded tray tooltips; mockup user-approved).
 **Батч 3.11 done 2026-09-06** (T-173): version `0.2.0` → `0.3.0` (separate bump commit `bd2ec61`,
 CI-green incl. `repro`; closing-advisor), tag `v0.3.0` on it → `release.yml` (`34046773417`, all 3
-jobs success: `build-sign` test-signed + `msix` + `release` cross-path repro) → DRAFT GitHub
-release (`isDraft: true`, 6 assets: 3 `.exe` + `SHA256SUMS` + `.msix` + `.cer`), left for a human
-to publish. `sinkhole_probe` (mandatory pre-release) green. Carried T-176/T-177. **Phase 3 fully
-closed.** T-51 / T-56 stay carried-forward backlog (blocked on out-of-MVP T-132 / T-134), not part
-of the Phase 3 close.
+jobs success: `build-sign` test-signed + `msix` + `release` cross-path repro) → draft GitHub
+release. `sinkhole_probe` (mandatory pre-release) green. Carried T-176/T-177. **Phase 3 fully
+closed.** **T-178 (2026-09-06, post-Ф3 fix, plan+advisor):** the v0.3.0 draft's `.msix` failed to
+sideload (`0x800B010A`) — its notes pointed `Add-AppxPackage` trust at `LocalMachine\Root` (wrong
+store) and shipped no helper. Ported `packaging/Trust-TestCert.ps1` (self-elevating, writes
+`LocalMachine\TrustedPeople` via `X509Store`) + a CryptoAPI-key `pack-msix.ps1` from sister project
+pakko (`windows-archiver-wrapper`); patched the draft (7th asset + notes) and **published `v0.3.0`
+as `latest`** (user chose "publish as-is, test-signed"). T-51 / T-56 stay carried-forward backlog
+(blocked on out-of-MVP T-132 / T-134), not part of the Phase 3 close.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.

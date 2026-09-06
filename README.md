@@ -98,8 +98,9 @@ SPEC.md §5.3.
 
 Фаза 1 (PoC) формально закрита 2026-08-29; Фаза 2 (автоматизація сертифіката, Windows) —
 2026-08-31; **Фаза 3 (production hardening: watchdog, MSIX-пакування, повне видалення) закрита
-повністю 2026-09-06** — реліз `v0.3.0` (тег на `origin`, чернетка GitHub-релізу з `.msix` +
-`.exe` + `SHA256SUMS`, публікацію лишено людині), несе UX-батч T-176/T-177 (basic/advanced
+повністю 2026-09-06** — реліз [`v0.3.0`](https://github.com/user137/dns-quorum-filter/releases/tag/v0.3.0)
+опубліковано (`.msix` + `.exe` + `SHA256SUMS` + `Trust-TestCert.ps1`, test-signed — див.
+«[Встановлення (MSIX)](#встановлення-msix)»), несе UX-батч T-176/T-177 (basic/advanced
 `/admin/ui`, іконки/version-info у `.exe`). Поставлено: watchdog-процес зі взаємним heartbeat
 (`dnsqb-watcher`),
 опційне шифроване збереження логу й кешу, `.msix`-пакет для одноклікового встановлення
