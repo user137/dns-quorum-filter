@@ -3732,3 +3732,44 @@ net-internals/#dns` → «Clear host cache». Chrome → `http://neverssl.com`:
 CLAUDE.md (Ф1-closure gap-буліт перевернуто), TASKS.md. Raw-вихід — scratchpad
 `t172_browser_doh_pass_2026-09-06.txt`. Автоматизація `chrome://settings` вдалася через
 chrome-devtools MCP — ручна README-процедура лишається як довідка/fallback.
+
+### T-177 — іконка + version-info у три `.exe` (зроблено 2026-09-06, 1 коміт, Батч 3.10)
+
+- [x] T-177 — `dnsqb-{service,tray,watcher}.exe` тепер несуть вбудовану іконку застосунку +
+  `VERSIONINFO` (`FileDescription`/`ProductName`/`FileVersion`/`CompanyName`/`OriginalFilename`/
+  `LegalCopyright`), тож у Диспетчері задач / Explorer вони — впізнавані, а не голі назви (запит
+  користувача 2026-09-06).
+
+**Механізм.** `build/win_resource.rs` — спільне тіло build-скрипта, `include!`d кожним із трьох
+`crates/dnsqb-*/build.rs` (єдина per-binary відмінність — рядки `FileDescription` +
+`OriginalFilename`). Генерує `.rc` у `OUT_DIR` (версія з `CARGO_PKG_VERSION_{MAJOR,MINOR,PATCH}` —
+Батч 3.11 підніме на 0.3.0 без правок тут; іконка — `assets/icon/app.ico` абсолютним шляхом,
+forward-slash), далі `embed_resource::compile(...)`. No-op поза Windows; `Failed` → `panic!`,
+`NotAttempted` (немає `rc.exe`/`windres`) → `cargo:warning` (білд контриб'ютора не ламається,
+CI із `rc.exe` робить справжнє).
+
+**Іконка.** `assets/gen-icon.py` отримав `make_ico()` — багаторезолюційний `app.ico`
+(16/24/32/48/64/128/256, base-frame найбільший — інакше Pillow ICO-writer відкидає більші за base
+записи; детерміновано при повторному прогоні). Той самий двотоновий wireframe-гексагон, що й PNG.
+`pack-msix.ps1` не чіпає — копіює лише 3 названі PNG-плитки + 3 `.exe`; вбудований у `.exe` ресурс
+до MSIX-плиток стосунку не має.
+
+**Крейт.** `embed-resource 3.0.11` (build-dep, MIT) — обрано **не** `winresource`: на gnu-тулчейні
+`winresource` емітить `cargo:rustc-link-lib` (propagating), тож ресурс `dnsqb-service` протікає в
+`dnsqb-tray`/`dnsqb-watcher` і колідує з їхнім (GNU ld `.rsrc merge failure: duplicate leaf`,
+плюс неправильні per-exe метадані). `embed-resource` емітить `cargo:rustc-link-arg-bins` —
+per-executable, без пропагації через rlib. +3 транзитивні на msvc-таргеті (`vswhom`/`vswhom-sys`/
+`winreg`, усі MIT; `vswhom-sys` `unsafe` FFI шукає SDK `rc.exe` — виконується на build-хості,
+`#![forbid(unsafe_code)]` у шиппед-крейтах цілий), `memchr` на gnu (уже в дереві). `cargo deny` —
+`licenses ok`, без правок `deny.toml`. Рядок у `SECURITY.md`.
+
+**Верифікація.** `cargo build/clippy --all-targets -D warnings/fmt --check/test (636+11)/doc
+-D warnings/deny` — зелені. `Get-Item ...VersionInfo` + `ExtractAssociatedIcon` підтвердили
+метадані й іконку в усіх трьох `.exe`. **Детермінізм:** локальний GNU-білд і без T-177
+NON-DETERMINISTIC (`.cargo/config.toml` явно: `/Brepro` — msvc-only, gnu dev-білд «deliberately
+left alone») — тобто T-177 не регресує репродукованість; справжній гейт — CI `repro` (msvc +
+`/Brepro`, покриває й PE-timestamp лінкованого ресурсу). Перевірити `gh run watch` після пушу.
+
+**Файли:** `build/win_resource.rs` (новий), `crates/dnsqb-{service,tray,watcher}/build.rs` (нові)
++ їх `Cargo.toml` (build-dep), `Cargo.lock`, `assets/gen-icon.py`, `assets/icon/app.ico` (новий),
+`SECURITY.md`, `TASKS.md`.

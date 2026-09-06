@@ -125,6 +125,26 @@ def make_wordmark(glyph_size: int = 96, text: str = "DNS Quorum Filter") -> Imag
     return img
 
 
+# Sizes packed into the multi-resolution app.ico that build.rs (T-177)
+# embeds into each dnsqb-*.exe — what Windows shows in Task Manager,
+# Explorer, Alt-Tab and the title bar. Each frame is drawn at its own
+# native size (crisper small icons than downscaling one 256 frame).
+ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+
+
+def make_ico(path: Path) -> None:
+    """Multi-resolution Windows .ico for the executables' embedded icon.
+    The base frame must be the largest — Pillow's ICO writer drops any
+    entry in `sizes` bigger than the base image."""
+    frames = sorted((make_tile(size) for size in ICO_SIZES), key=lambda f: -f.width)
+    frames[0].save(
+        path,
+        format="ICO",
+        sizes=[(size, size) for size in ICO_SIZES],
+        append_images=frames[1:],
+    )
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -137,6 +157,10 @@ def main() -> None:
         path = OUT_DIR / name
         make_tile(size).save(path)
         print(f"wrote {path} ({size}x{size}, MSIX)")
+
+    ico_path = OUT_DIR / "app.ico"
+    make_ico(ico_path)
+    print(f"wrote {ico_path} ({'/'.join(str(s) for s in ICO_SIZES)})")
 
     wordmark_path = OUT_DIR / "wordmark.png"
     make_wordmark().save(wordmark_path)
