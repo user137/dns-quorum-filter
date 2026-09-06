@@ -263,13 +263,14 @@ jobs:
           $sideloadLine = if ($env:SIGN_MODE -eq "signed") {
             "Install: ``Add-AppxPackage dns-quorum-filter.msix``."
           } else {
-            "**Sideload install (test-signed):** trust ``dns-quorum-filter.cer`` first -- it must go into ``Cert:\LocalMachine\Root`` or ``Cert:\LocalMachine\TrustedPeople`` (an elevated PowerShell session; ``Cert:\CurrentUser\TrustedPeople`` is not enough, confirmed empirically), then ``Add-AppxPackage dns-quorum-filter.msix``. This is a different certificate from the one the running app installs for 127.0.0.1 DoH traffic -- trusting one does not trust the other."
+            "**Sideload install (test-signed):** download ``dns-quorum-filter.msix``, ``dns-quorum-filter.cer`` and ``Trust-TestCert.ps1`` into one folder, then run ``.\Trust-TestCert.ps1 -Install`` -- it prompts for elevation, trusts the certificate in ``Cert:\LocalMachine\TrustedPeople`` (where ``Add-AppxPackage`` looks; ``Cert:\CurrentUser\...`` gives ``0x800B0109``, an absent cert ``0x800B010A``) and installs the package. Manual path: elevated PowerShell, ``Import-Certificate -FilePath dns-quorum-filter.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople`` then ``Add-AppxPackage dns-quorum-filter.msix``. Undo the trust with ``.\Trust-TestCert.ps1 -Remove`` (before removing the app -- MSIX has no uninstall hook). This certificate is unrelated to the one the running app installs for 127.0.0.1 DoH traffic -- trusting one does not trust the other."
           }
           $notes = @"
           Automated **draft** release for ``$tag``. A maintainer reviews and publishes it.
 
           **Windows x64 binaries:** ``dnsqb-service.exe``, ``dnsqb-watcher.exe``, ``dnsqb-tray.exe``
           **MSIX package:** ``dns-quorum-filter.msix`` -- Start-menu tile + autostart (Settings > Apps > Startup), both via ``dnsqb-watcher.exe``'s idempotent launcher.
+          **Sideload trust helper:** ``Trust-TestCert.ps1`` -- one self-elevating step to trust ``dns-quorum-filter.cer`` for ``Add-AppxPackage`` (see below).
           **Checksums:** ``SHA256SUMS`` -- verify with ``Get-FileHash <file> -Algorithm SHA256``.
 
           **Signing:** $signLine

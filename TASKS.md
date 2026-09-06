@@ -474,7 +474,10 @@ DECISIONS.md / PERFORMANCE.md / SPEC.md / CONFIGURATION.md / CLAUDE.md онов�
 категорійний маршрут + трей-tooltip'и; макет затверджено; TASKS-DONE.md). **Батч 3.11
 (T-173) зроблено 2026-09-06** — бамп `0.2.0` → `0.3.0`, тег `v0.3.0` на `origin`,
 `release.yml` success, чернетка GitHub-релізу з `.msix` існує (публікує людина).
-**Фаза 3 закрита повністю.**
+**Фаза 3 закрита повністю.** **T-178 зроблено 2026-09-06** (post-Ф3 фікс релізного шляху,
+plan+advisor) — `packaging/Trust-TestCert.ps1`: self-elevating хелпер довіри тест-серта
+(`LocalMachine\TrustedPeople` конкретно; `0x800B010A` у чернетці v0.3.0), перенесено з sister-проєкту
+pakko; чернетку v0.3.0 пропатчено (asset + нотатки). TASKS-DONE.md.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/

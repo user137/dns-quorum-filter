@@ -109,11 +109,14 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   Publisher>` exactly (`packaging/pack-msix.ps1` derives both from one `-Publisher` value, never
   two literals). **The sideload trust certificate is a *different* certificate from the one the
   running app installs for `127.0.0.1` DoH traffic** — trusting one does not trust the other, and
-  the two must never be conflated in operator-facing instructions. Confirmed empirically
-  (2026-09-04): `Cert:\CurrentUser\TrustedPeople` is *not* sufficient for `Add-AppxPackage`
-  (`0x800B0109`) — sideloading needs `Cert:\LocalMachine\Root` or `\LocalMachine\TrustedPeople`,
-  both requiring an elevated session, which is itself a real (if one-time, install-only) elevation
-  cost this project's "no persistent elevated privileges" principle doesn't otherwise carry.
+  the two must never be conflated in operator-facing instructions. Sideloading needs the cert in
+  `Cert:\LocalMachine\TrustedPeople` specifically (`Cert:\CurrentUser\...` → `0x800B0109`; no
+  checked store → `0x800B010A`; `\LocalMachine\Root` alone insufficient — T-178), which requires
+  an elevated session — a real (if one-time, install-only) elevation cost this project's "no
+  persistent elevated privileges" principle doesn't otherwise carry. `packaging/Trust-TestCert.ps1`
+  (shipped beside the `.msix`) performs exactly that one write and nothing else: it refuses any
+  cert whose subject isn't `CN=dns-quorum-filter` or that lacks the Code Signing EKU, so it can't
+  be repurposed to trust an arbitrary certificate, and `-Remove` reverses it for the T-70 flow.
 - **T-70 residual risk, MSIX-specific**: MSIX has no uninstall-time code hook at all — the OS just
   deletes the package's files, nothing runs afterward. `local_state::remove_all` (tray "Повністю
   видалити" / `/admin/ui`'s danger-zone card) is therefore an **in-app, user-triggered** action

@@ -84,9 +84,13 @@ placeholder identity, kickoff decision; `runFullTrust`; entry point + `windows.s
 ephemeral-or-`CODESIGN_PFX` model as T-102, `Subject` = `-Publisher` exactly or signing fails) +
 `release.yml`'s new `msix` job (attaches `.msix`+`.cer` to the tag draft release alongside the
 raw `.exe`s). Verified empirically end-to-end on this machine (Windows SDK 10.0.26100.0, same as
-CI) — pack+sign works against real `--release` binaries; **confirmed, not assumed:
-`Cert:\CurrentUser\TrustedPeople` is NOT enough for `Add-AppxPackage` (`0x800B0109`) — needs
-`Cert:\LocalMachine\Root`/`\TrustedPeople`, both requiring elevation.** T-70:
+CI) — pack+sign works against real `--release` binaries; **`Add-AppxPackage` checks
+`Cert:\LocalMachine\TrustedPeople` for the signer specifically (elevation required):
+`Cert:\CurrentUser\...` → `0x800B0109`, a cert in no checked store → `0x800B010A`,
+`\LocalMachine\Root` alone insufficient (T-178). `packaging/Trust-TestCert.ps1` (shipped next to
+the `.msix`) self-elevates and writes there via `X509Store`; `pack-msix.ps1` also forces a
+CryptoAPI key (`-Provider "Microsoft Strong Cryptographic Provider"`) — both lessons ported from
+sister project pakko (`windows-archiver-wrapper`, `github.com/pakkoapp-oss/pakko`).** T-70:
 `local_state::remove_all` (new module) — MSIX has no uninstall-time code hook at all, so clearing
 the trusted cert + 3 Credential Manager secrets is an in-app action (tray "Повністю видалити" +
 `/admin/ui` danger-zone card + `POST /admin/uninstall-local-state`), per-artifact report
@@ -1110,14 +1114,19 @@ reasoning (search by section number rather than re-deriving a decision from scra
   `pack-msix.ps1` takes the crate's 3-part `Cargo.toml` version (or a `v*` git tag, cross-checked
   against it, `throw`ing on mismatch so a `.msix` can never carry a version different from the
   binaries packed inside it) and appends `.0`.
-- **Sideloading a self-signed `.msix` needs the signing cert in `Cert:\LocalMachine\Root` or
-  `\LocalMachine\TrustedPeople` — `Cert:\CurrentUser\TrustedPeople` is NOT enough.** Confirmed
-  empirically (2026-09-04, this session, no admin access): importing the ephemeral test cert
-  into `CurrentUser\TrustedPeople` and running `Add-AppxPackage` failed with `0x800B0109`
-  ("root certificate ... not trusted by the trust provider"). Both `LocalMachine` locations need
-  an elevated PowerShell session to write to — a real, if one-time and install-only, elevation
-  cost that `packaging/README.md` and every release's notes now state explicitly rather than
-  leaving a sideloader to discover it via a cryptic HRESULT.
+- **Sideloading a self-signed `.msix`: the signing cert must be in `Cert:\LocalMachine\TrustedPeople`
+  specifically** (elevation required). `Cert:\CurrentUser\...` → `0x800B0109` ("root ... not
+  trusted"); a cert in no store `Add-AppxPackage` checks → `0x800B010A` (`CERT_E_CHAINING`);
+  `\LocalMachine\Root` alone satisfies chain-to-root but **not** AppX publisher trust, so it's
+  insufficient by itself (T-178 — the v0.3.0 draft's notes originally said "`Root` or
+  `TrustedPeople`" and a downloader hit `0x800B010A`). `packaging/Trust-TestCert.ps1` (copied next
+  to the `.msix` by `pack-msix.ps1`, shipped as a release asset) self-elevates and writes via the
+  `X509Store` API — more reliable than `Import-Certificate` into that store. `pack-msix.ps1` also
+  forces a CryptoAPI RSA key (`-Provider "Microsoft Strong Cryptographic Provider"`) on the
+  ephemeral cert: SignTool can't sign an MSIX with a CNG key cleanly. Both fixes ported from
+  sister project **pakko** (`C:\Users\Pa\Projects\windows-archiver-wrapper`,
+  `github.com/pakkoapp-oss/pakko` — its `scripts/Setup-DevCert.ps1`, `docs/DECISIONS.md`), which
+  hit the same wall first.
 - **A `gh` call inside a job that checks out multiple copies via `path: build-a`/`build-b`**
   (`release.yml`'s repro-then-release job) **needs `--repo $env:GITHUB_REPOSITORY` explicitly** —
   the job's own working directory has no `.git`, so `gh release create` fails "not a git

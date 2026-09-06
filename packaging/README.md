@@ -15,19 +15,30 @@
 
   Signs with an ephemeral self-signed certificate by default (same model as T-102's binary
   signing) — the `.cer` it emits alongside the `.msix` must be trusted on the target machine
-  before `Add-AppxPackage` will install it. This is a **different** certificate from the one the
-  running app installs for `127.0.0.1` DoH traffic (T-49) — trusting one does not trust the other.
-
-  **Confirmed empirically (2026-09-04), not assumed:** `Cert:\CurrentUser\TrustedPeople` is
-  *not* sufficient — `Add-AppxPackage` fails with `0x800B0109` ("root certificate ... not trusted
-  by the trust provider") against a cert imported there. It must go into
-  `Cert:\LocalMachine\Root` or `Cert:\LocalMachine\TrustedPeople`, both of which need an elevated
-  (admin) PowerShell session to write to:
+  before `Add-AppxPackage` will install it. It also copies `Trust-TestCert.ps1` next to the
+  output so a downloader has that step in one place. This is a **different** certificate from the
+  one the running app installs for `127.0.0.1` DoH traffic (T-49) — trusting one does not trust
+  the other.
 
   ```powershell
-  Import-Certificate -FilePath dist\dns-quorum-filter.cer -CertStoreLocation Cert:\LocalMachine\Root
+  # from an elevated prompt is fine; the helper also self-elevates:
+  .\dist\Trust-TestCert.ps1 -Install
+  ```
+
+  **The store is `Cert:\LocalMachine\TrustedPeople`, specifically.** `Add-AppxPackage` checks it
+  for the signer; `Cert:\CurrentUser\...` gives `0x800B0109` ("root ... not trusted"), and a cert
+  that isn't in any checked store gives `0x800B010A` (CERT_E_CHAINING). `Cert:\LocalMachine\Root`
+  alone is **not** enough — it satisfies chain-to-root but not AppX publisher trust. `Trust-TestCert.ps1`
+  writes there via the `X509Store` API (more reliable than `Import-Certificate` into that store),
+  mirroring pakko's `scripts/Setup-DevCert.ps1`. Manual equivalent, elevated:
+
+  ```powershell
+  Import-Certificate -FilePath dist\dns-quorum-filter.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
   Add-AppxPackage -Path dist\dns-quorum-filter.msix
   ```
+
+  Undo the trust with `.\Trust-TestCert.ps1 -Remove` (run before removing the app — MSIX has no
+  uninstall-time hook, T-70).
 
 ## The icon lives outside this directory
 

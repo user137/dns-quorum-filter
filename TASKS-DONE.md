@@ -3915,3 +3915,58 @@ v0.3.0^{commit}` == `bd2ec61` до пушу); тег пушиться сам (`g
 
 **Файли:** `crates/dnsqb-{service,tray,watcher}/Cargo.toml`, `Cargo.lock` (бамп-коміт);
 `TASKS.md`, `SPEC.md`, `README.md`, `CLAUDE.md`, `TASKS-DONE.md` (docs-коміт).
+
+### T-178 — MSIX sideload trust: self-elevating хелпер, перенесено з pakko (зроблено 2026-09-06, plan+advisor, 2 коміти + патч чернетки v0.3.0)
+
+**Мотив.** Користувач при встановленні `dns-quorum-filter.msix` із чернетки `v0.3.0` отримав
+`0x800B010A` (CERT_E_CHAINING). Реліз-нотатки + `packaging/README.md` радили
+`Import-Certificate ... -CertStoreLocation Cert:\LocalMachine\Root` — неправильне сховище
+(`Add-AppxPackage` перевіряє `LocalMachine\TrustedPeople`) + крок тихо no-op без адмін-прав. Б'є
+кожного, хто завантажить реліз, не лише цю машину.
+
+**Перевірено (не припущення).** Завантажено asset'и `v0.3.0`, `Get-AuthenticodeSignature` `.msix` —
+підпис цілий, `.cer` точно відповідає підписанту (`CN=dns-quorum-filter`, thumbprint
+`B7A986D2…`, RSA). **Не баг підпису** — суто розміщення серта.
+
+**Еталон — sister-проєкт pakko** (`github.com/pakkoapp-oss/pakko`, локально
+`C:\Users\Pa\Projects\windows-archiver-wrapper`): `scripts/Setup-DevCert.ps1` (self-elevating,
+`X509Store.Add` у `LocalMachine\TrustedPeople`), `docs/DECISIONS.md` (форсувати CryptoAPI-провайдер
+для MSIX-серта — «SignTool cannot use CNG keys to sign MSIX directly»), `docs/TASKS.md`
+(«Fixed by also importing into `Cert:\LocalMachine\TrustedPeople`»).
+
+**Зміни.**
+- **`packaging/Trust-TestCert.ps1` (новий).** Форма pakko-хелпера, але **імпортує наявний `.cer`**
+  (не генерує). Self-relaunch як адмін із **проброшеними** `-CerPath`/`-Install`/`-Remove` (bare
+  pakko-форма параметрів не має — копіювати не можна, інакше elevated-реінвокація губить `-Remove`
+  і додає довіру замість зняти). Sanity-check: Subject точно `CN=dns-quorum-filter` **і**
+  Code Signing EKU (`1.3.6.1.5.5.7.3.3`) — не довіряє довільний серт (перевірено: `127.0.0.1`
+  DoH-leaf `CN=dns-quorum-filter local DoH` відсіюється exact-subject-гейтом). `X509Store`
+  `TrustedPeople`/`LocalMachine` `.Add`/`.Remove`. `-Install` → `Add-AppxPackage`. `-Remove` →
+  знімає довіру (для T-70-flow).
+- **`packaging/pack-msix.ps1`.** (1) `New-SelfSignedCertificate` +`-KeyAlgorithm RSA -KeyLength 2048
+  -Provider "Microsoft Strong Cryptographic Provider"` — вирівнювання з pakko, **не** фікс
+  `0x800B010A` (тут підпис із PFX і так спрацьовував). (2) У `test-signed`-гілці копіює
+  `Trust-TestCert.ps1` поруч із `$OutFile` — їде в `dist/*` → `msix`-artifact → реліз-asset'и
+  **без правки плюмбінгу `release.yml`** (`Get-ChildItem dist -File` підхоплює).
+- **`.github/workflows/release.yml`** — текст `$sideloadLine` (`test-signed`): `LocalMachine\TrustedPeople`
+  конкретно, `Trust-TestCert.ps1 -Install` як основний шлях, `0x800B0109` vs `0x800B010A`,
+  `-Remove` для відкату; `Trust-TestCert.ps1` у списку asset'ів у `$notes`. Наступні релізи
+  генерують правильні нотатки й несуть хелпер автоматично.
+- **Доки:** `packaging/README.md`, `README.md` §«Встановлення (MSIX)», `CLAUDE.md` (T-156-абзац +
+  gotcha 1117), `SECURITY.md` — усі виправлено на `LocalMachine\TrustedPeople` конкретно, згадка
+  хелпера + pakko-крос-реф.
+
+**Перевипуск `v0.3.0` — обрано B (рішення користувача): патч наявної чернетки.**
+`gh release upload v0.3.0 Trust-TestCert.ps1 --clobber` + `gh release edit --notes-file` (виправлені
+нотатки). Наявний `.msix` не чіпано (перевірено валідний; CNG-підпис на встановлюваність не
+впливає). Без CI, без churn тега, без видалення чернетки. Публікацію лишено людині.
+
+**Верифікація** (до UAC-межі — elevated store-write + `Add-AppxPackage` = дія на машині
+користувача): parse OK обох скриптів; negative-path (немає `.cer` поруч) → явний `throw` з назвою
+шуканого файлу; `pack-msix.ps1` локально → `dist\` містить `.msix` + `.cer` + `Trust-TestCert.ps1`
+(hash збігається з репо), `.msix` підписано, `Key OID: RSA`; cert-validation приймає реальний
+`.cer`, відкидає DoH-leaf.
+
+**Файли:** `packaging/Trust-TestCert.ps1` (новий), `packaging/pack-msix.ps1`,
+`.github/workflows/release.yml`, `packaging/README.md`, `README.md`, `CLAUDE.md`, `SECURITY.md`,
+`TASKS.md`, `TASKS-DONE.md`.
