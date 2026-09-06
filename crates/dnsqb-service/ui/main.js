@@ -6,8 +6,6 @@
 // calls became same-origin `fetch()` calls - no CORS needed, the existing
 // `content_type_is_json` CSRF gate on `/admin/config` still applies.
 
-const statusPill = document.getElementById("status-pill");
-const statusText = document.getElementById("status-text");
 const appBody = document.getElementById("app-body");
 const providersBody = document.getElementById("providers-body");
 const overridesBody = document.getElementById("overrides-body");
@@ -19,11 +17,6 @@ const logBody = document.getElementById("log-body");
 const protectionHero = document.getElementById("protection-hero");
 const filterControlsBody = document.getElementById("filter-controls-body");
 const timeoutConfigBody = document.getElementById("timeout-config-body");
-
-function setPill(ok, text) {
-  statusPill.classList.toggle("is-bad", !ok);
-  statusText.textContent = text;
-}
 
 // T-176: the basic view's one large element. Computed from the conditions
 // diagrams/ui-status-indicator.md defines (the subset this page can see) in
@@ -205,7 +198,6 @@ function renderTimeoutConfig(status) {
 }
 
 function render(status) {
-  setPill(true, "Сервіс доступний");
   renderProtectionHero(computeProtectionState(status, true));
   renderTimeoutConfig(status);
   syncDohUrl(status);
@@ -249,7 +241,6 @@ function render(status) {
 }
 
 function renderError(err) {
-  setPill(false, "Сервіс недоступний");
   renderProtectionHero(computeProtectionState(null, false));
   appBody.textContent = "";
   const panel = document.createElement("div");
@@ -1869,7 +1860,8 @@ function toggleControl(checked, partial, onFlip, ariaLabel) {
   if (partial) {
     const span = document.createElement("span");
     span.className = "switch is-partial";
-    span.setAttribute("role", "switch");
+    // role="checkbox" (not "switch") - only checkbox accepts aria-checked="mixed".
+    span.setAttribute("role", "checkbox");
     span.setAttribute("aria-checked", "mixed");
     span.setAttribute("aria-label", ariaLabel);
     span.tabIndex = 0;
@@ -1935,19 +1927,30 @@ async function flipCategory(category, enabled) {
   try {
     renderProviders(await setCategoryEnabled(category, enabled));
   } catch (err) {
+    // refreshProviders() rebuilds #filter-controls-error empty, so the message
+    // must be shown after it, not before (same order as flipAllCategories).
+    await refreshProviders();
     showFilterControlsError(
       `Не вдалося змінити категорію: ${(err && err.message) || String(err)}`,
     );
-    refreshProviders();
   }
 }
 
 // The master switch flips all three categories to the same target. Sequential
 // (not Promise.all): each POST rewrites resolver_config.toml under
 // persist_lock, and a partial failure must be reported, not swallowed.
-async function flipAllCategories(enabled) {
+async function flipAllCategories(enabled, providers) {
+  const configured = providers || [];
   const failed = [];
   for (const cat of CATEGORY_META) {
+    // Only flip a category that already has a configured voter. The empty
+    // ADULT_CONTENT auto-add (opendns-familyshield) is reserved for the
+    // explicit adult toggle - turning the master switch on must never opt the
+    // user into adult filtering with a provider they never chose
+    // (DEFAULT_PROVIDER_IDS / T-170: adult stays opt-in, off by default).
+    if (!configured.some((entry) => entry.category === cat.key)) {
+      continue;
+    }
     try {
       await setCategoryEnabled(cat.key, enabled);
     } catch (_err) {
@@ -1971,7 +1974,12 @@ function renderFilterControls(data) {
     toggleRow(
       "Фільтрація",
       "Головний вимикач — вмикає й вимикає всі перевірки",
-      toggleControl(anyOn, false, (want) => flipAllCategories(want), "Фільтрація"),
+      toggleControl(
+        anyOn,
+        false,
+        (want) => flipAllCategories(want, providers),
+        "Фільтрація",
+      ),
       true,
     ),
   );

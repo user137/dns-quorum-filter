@@ -51,15 +51,6 @@ body {
   line-height: 1.5;
 }
 h1 { font-size: 15px; margin: 0 0 0.9rem; }
-.status-pill {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  padding: 0.28rem 0.65rem; border-radius: 999px;
-  font-size: 12px; font-weight: 600;
-  background: var(--good-soft); color: var(--good);
-  margin-bottom: 0.9rem;
-}
-.status-pill.is-bad { background: var(--bad-soft); color: var(--bad); }
-.status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 
 .card {
   background: var(--surface-raised);
@@ -272,7 +263,6 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .toggle-row .toggle-name { font-size: 13px; font-weight: 600; }
 .toggle-row .toggle-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 0.1rem; }
 .toggle-row.is-master .toggle-name { font-size: 13.5px; }
-.switch input:indeterminate + .track { background: var(--line); }
 .switch.is-partial .track { background: var(--accent); opacity: 0.55; }
 .switch.is-partial .thumb { transform: translateX(7px); }
 

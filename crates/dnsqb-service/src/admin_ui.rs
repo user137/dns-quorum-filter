@@ -398,4 +398,46 @@ mod tests {
             "the pass-through warning must render in the basic view"
         );
     }
+
+    // T-176 closing-advisor — the master switch ("Фільтрація" on) must never
+    // create a voter. On a default install ADULT_CONTENT is empty, and
+    // set-category-enabled auto-adds opendns-familyshield when that category is
+    // switched on with none configured - a path reserved for the explicit adult
+    // toggle. flipAllCategories must skip a category with zero configured
+    // voters, so turning filtering back on can't silently enable adult
+    // filtering (DEFAULT_PROVIDER_IDS / T-170: adult stays opt-in).
+    #[test]
+    fn main_js_master_switch_only_flips_categories_that_already_have_a_voter() {
+        let Some((_, after)) = MAIN_JS.split_once("async function flipAllCategories(") else {
+            panic!("flipAllCategories must exist");
+        };
+        let Some((body, _)) = after.split_once("\nfunction ") else {
+            panic!("flipAllCategories must be a bounded function");
+        };
+        assert!(
+            body.contains("entry.category === cat.key"),
+            "the master switch must check category membership before flipping"
+        );
+        assert!(
+            body.contains("continue"),
+            "a category with no configured voter must be skipped, not created"
+        );
+    }
+
+    // T-176 closing-advisor — the danger-zone sits inside the collapsed
+    // <details>, so a two-step confirm that armed its button must reset the
+    // label even on the success path, or a re-collapsed disclosure hides a
+    // button stuck reading "Точно видалити все?" (the live-verified gap the
+    // clear-log button already guards against with its own finally).
+    #[test]
+    fn main_js_resets_the_danger_zone_confirm_label_after_the_action() {
+        let Some((_, after)) = MAIN_JS.split_once("uninstall-local-state-btn") else {
+            panic!("the danger-zone button must be wired");
+        };
+        let window = &after[..after.len().min(2000)];
+        assert!(
+            window.contains("finally"),
+            "the armed confirm label must reset in a finally, not only on success"
+        );
+    }
 }
