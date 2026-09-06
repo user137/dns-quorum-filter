@@ -3674,3 +3674,49 @@ negative-control на власних доменах провайдерів об�
 DECISIONS.md, CONFIGURATION.md, PERFORMANCE.md («Resolution — T-175»), CLAUDE.md, TASKS.md.
 Raw-виходи — scratchpad `t175_sinkhole_probe_2026-09-05.txt` (орієнтація),
 `t175_phase1_metrics_2026-09-06.txt` (фінальний перемір).
+
+### T-172 — живий "браузер → локальний DoH" прохід (зроблено 2026-09-06, manual-прогін, 1 коміт)
+
+- [x] T-172 — Ф1-гейт #2 (SPEC.md `## Фаза 1` closure): жоден зафіксований тест не проганяв
+  фактичний прохід через реально налаштований Chrome Custom DoH provider. Закрито дискримінантним
+  негативним контролем (не «є рядок у логу»), проведено через chrome-devtools MCP.
+
+**Середовище.** `dnsqb-service` (debug) на `https://127.0.0.1:8443/dns-query`; локальний
+`resolver_config.toml` переписано зі стального `[providers]` на `[[providers]]` (T-72-формат;
+`quad9` + `cloudflare-malware` + `adguard` — T-170-дефолт). Cert `CN=dns-quorum-filter local
+DoH` встановлено в `CurrentUser\Root` (`certutil -addstore -user -f Root`). Chrome 152, окремий
+профіль chrome-devtools MCP (`--disable-extensions`). DoH задано через
+`chrome://settings/security` → «Додати власного постачальника послуг DNS»; звірено через
+`chrome.settingsPrivate.getPref`: **`dns_over_https.mode = "secure"`** (без тихого fallback на
+системний резолвер — саме та умова, без якої негативний контроль нічого не доводить),
+`templates = "https://127.0.0.1:8443/dns-query"`.
+
+**Санітарний leg.** Chrome → `http://neverssl.com` → `/admin/log`: `neverssl.com` A →
+`ALLOWED`/`QUORUM` (3 voter'и ALLOW), плюс `www.google.com` (connectivity-проба Chrome) і
+`finequietoldmoon.neverssl.com` (cache-bust-піддомен neverssl) — домени, яких вручну не
+запитувано, тільки навігація Chrome їх генерує.
+
+**Дискримінантний leg (негативний контроль).** T0 = `1788695768172`. `POST
+/admin/overrides/add` `neverssl.com` + `*.neverssl.com` → blocklist (persisted). `chrome://
+net-internals/#dns` → «Clear host cache». Chrome → `http://neverssl.com`:
+- **Chrome** (`chrome-error://chromewebdata/`): заголовок «Немає зв'язку із сайтом»,
+  `http://shininguniquerelaxedpathway.neverssl.com/online`, **`ERR_ADDRESS_INVALID`** — не
+  `ERR_NAME_NOT_RESOLVED`: ім'я зарезолвилось (у `0.0.0.0`) і з'єднання провалилось на рівні
+  адреси = NULL-блокування доставлено браузеру.
+- **`/admin/log`** (усі ts `1788695800xxx`, ~32 с після T0, у вікні кліку): `neverssl.com` +
+  `shininguniquerelaxedpathway.neverssl.com`, обидва `A` **і** `HTTPS_SVCB` → `BLOCKED`/
+  `BLOCKLIST`. (blocklist — крок 2 конвеєра, до HTTPS/SVCB single-upstream bypass, тож обидва
+  типи блокуються — коректно за SPEC.md §3.)
+
+Збіг {помилка з'єднання Chrome до address-invalid цілі} + {корельований у часі `BLOCKLIST`-рядок
+для точно тих доменів, куди Chrome навігував} доводить, що резолюцію зробив Chrome через
+`dnsqb-service` — не стальний кеш, не системний резолвер.
+
+**Прибирання.** blocklist-записи видалено, лог очищено, Chrome DoH скинуто на `automatic`/порожній
+шаблон. Cert лишається в `CurrentUser\Root` (легітимний T-49-стан; зняти —
+`certutil -delstore -user Root 720693788B8C5DA07278E614999F300BBCF53FB9`).
+
+**Файли:** `README.md` (нова секція «Перевірка: браузер → локальний DoH» + статус-абзац),
+CLAUDE.md (Ф1-closure gap-буліт перевернуто), TASKS.md. Raw-вихід — scratchpad
+`t172_browser_doh_pass_2026-09-06.txt`. Автоматизація `chrome://settings` вдалася через
+chrome-devtools MCP — ручна README-процедура лишається як довідка/fallback.

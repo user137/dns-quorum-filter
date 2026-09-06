@@ -288,9 +288,15 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 
 ### Фаза 1 closure — open gaps (not numbered tasks; see SPEC.md's closure paragraph)
 
-- No test anywhere exercises the real "browser → local DoH" leg — every existing confirmation is
-  either DoH-client-level (`Invoke-WebRequest`) or Chrome automation against `/admin/ui`.
-  **T-172 closes this** (Батч 3.9).
+- ~~No test anywhere exercises the real "browser → local DoH" leg~~ — **closed by T-172
+  (2026-09-06).** Live discriminant negative control via chrome-devtools MCP: Chrome 152 with
+  `dns_over_https.mode = "secure"` + `templates = https://127.0.0.1:8443/dns-query` (no silent
+  system-resolver fallback), `neverssl.com` blocklisted mid-session → Chrome `ERR_ADDRESS_INVALID`
+  (resolved to `0.0.0.0`, not `ERR_NAME_NOT_RESOLVED`) **and** time-correlated `BLOCKLIST` rows
+  (`A` + `HTTPS_SVCB`) in `/admin/log`; `www.google.com` / random `*.neverssl.com` rows nobody
+  queried by hand = independent corroboration. Manual run (not CI), like `phase1_metrics`.
+  Procedure written into `README.md` ("Перевірка: браузер → локальний DoH"); raw output in
+  scratchpad `t172_browser_doh_pass_2026-09-06.txt`.
 - ~~T-66's metrics did not confirm the quorum hypothesis (AdGuard 0/38, n=1)~~ — **closed by
   confirmation, T-174 (2026-09-05).** T-171 first re-measured (n=122, +0.8 pp, "not confirmed"),
   then a follow-up found `cleanbrowsing-{security,adult}` were declared `NullIp` but block via
