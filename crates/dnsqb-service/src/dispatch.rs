@@ -7466,4 +7466,178 @@ mod tests {
             );
         }
     }
+
+    // ---- Coverage hardening (route audit follow-up) --------------------
+    // A scrupulous route-vs-tests audit found: the per-handler CSRF gate is
+    // copy-pasted into each handler (not centralised in `serve`), so a per-
+    // route test list can't see a future route that forgets it; and the
+    // `persisted: false` user-safety signal (T-57/T-139/T-149/T-47/T-77) was
+    // unverified for the `/admin/providers/*` writes and `set-enabled`'s
+    // unknown-id path had no test.
+
+    /// Structural companion to `serve_enforces_the_route_table_it_matched_above`:
+    /// every JSON POST route rejects a body sent with no `Content-Type`, and
+    /// with a non-JSON one. Sweeps [`ROUTES`] itself, so a route added
+    /// tomorrow is covered without touching this test (the T-59 "property as
+    /// data" fix). `/dns-query` is excluded - its body is
+    /// `application/dns-message`, covered by
+    /// `serve_returns_400_for_a_post_with_the_wrong_content_type`.
+    #[tokio::test]
+    async fn every_json_post_route_rejects_a_missing_or_wrong_content_type() {
+        for &(path, methods) in ROUTES {
+            if !methods.contains(&Method::POST) || path == DNS_QUERY_PATH {
+                continue;
+            }
+            for probe in [None, Some("text/plain"), Some("application/xml")] {
+                let mut builder = Request::builder().method(Method::POST).uri(path);
+                if let Some(value) = probe {
+                    builder = builder.header(header::CONTENT_TYPE, value);
+                }
+                let Ok(req) = builder.body(Full::new(Bytes::from_static(b"{}"))) else {
+                    panic!("fixture request must build");
+                };
+                let response = match serve(req, state_with(no_op_client())).await {
+                    Ok(response) => response,
+                    Err(err) => match err {},
+                };
+                assert_eq!(
+                    response.status(),
+                    StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                    "POST {path} with Content-Type {probe:?} must be 415, got {}",
+                    response.status()
+                );
+            }
+        }
+    }
+
+    /// `state_with` sets `paths: None`, so a live-applied provider change
+    /// can't reach disk - the echoed `ProvidersResponse` must say
+    /// `persisted: false` (the same honesty
+    /// `serve_admin_config_reports_not_persisted_when_no_config_path_is_set`
+    /// and `serve_admin_overrides_add_appends_*` already enforce for their
+    /// routes).
+    #[tokio::test]
+    async fn serve_admin_providers_add_reports_not_persisted_when_no_config_path_is_set() {
+        assert_not_persisted(admin_post_json(
+            "/admin/providers/add",
+            &serde_json::json!({ "id": "cloudflare-family" }),
+        ))
+        .await;
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_set_enabled_reports_not_persisted_when_no_config_path_is_set() {
+        assert_not_persisted(admin_post_json(
+            "/admin/providers/set-enabled",
+            &serde_json::json!({ "id": "quad9", "enabled": false }),
+        ))
+        .await;
+    }
+
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_reports_not_persisted_when_no_config_path_is_set(
+    ) {
+        assert_not_persisted(admin_post_json(
+            "/admin/providers/set-category-enabled",
+            &serde_json::json!({ "category": "ADS_TRACKERS", "enabled": false }),
+        ))
+        .await;
+    }
+
+    /// Runs `request` against a no-config-path state and asserts the
+    /// `ProvidersResponse` echo is `200` with `persisted: false`.
+    async fn assert_not_persisted(request: Request<Full<Bytes>>) {
+        let response = match serve(request, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<crate::admin::ProvidersResponse>(&bytes) else {
+            panic!("response body must decode as ProvidersResponse");
+        };
+        assert!(
+            !body.persisted,
+            "a change with no config path must report persisted:false"
+        );
+    }
+
+    /// A `set-enabled` for an id that isn't in the configured list is a
+    /// client error (400), not a silent 200 that changed nothing.
+    #[tokio::test]
+    async fn serve_admin_providers_set_enabled_rejects_an_unknown_id() {
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-enabled",
+                &serde_json::json!({ "id": "not-a-real-provider", "enabled": false }),
+            ),
+            state_with(no_op_client()),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// Misuse: the user clicks "remove" on an override that isn't there (a
+    /// double click, a stale UI). It must be a safe `200` no-op, not a `500`
+    /// or a corrupted list.
+    #[tokio::test]
+    async fn serve_admin_overrides_remove_is_a_safe_no_op_for_an_absent_entry() {
+        let Ok(json) = serde_json::to_vec(&OverrideRemoveRequest {
+            domain: "never-added.example".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/overrides/remove")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<OverrideListsResponse>(&bytes) else {
+            panic!("response body must decode as OverrideListsResponse");
+        };
+        assert!(
+            body.blocklist.is_empty(),
+            "an absent-entry remove must not invent a row"
+        );
+    }
+
+    /// Misuse: "clear `MaxMind` credentials" with nothing stored (a fresh
+    /// install, or a second click). `200`, reports not-configured, no error.
+    #[tokio::test]
+    async fn serve_admin_geoip_maxmind_clear_is_idempotent_on_a_fresh_state() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/geoip/maxmind/clear")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(view) = serde_json::from_slice::<MaxmindCredentialsView>(&bytes) else {
+            panic!("response body must decode as MaxmindCredentialsView");
+        };
+        assert!(!view.configured);
+        assert!(view.account_id.is_none());
+    }
 }

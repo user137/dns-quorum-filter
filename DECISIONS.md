@@ -913,3 +913,34 @@ voter'ів у ADULT_CONTENT**; SECURITY/ADS завжди мають свої д�
 дублював hero, якого немає в затвердженому макеті; `role="switch"`+`aria-checked="mixed"` на
 частковому перемикачі → `role="checkbox"` (тільки checkbox приймає `mixed`), мертве CSS-правило
 `:indeterminate` видалено.
+
+## 2026-09-06 — тести UI/API: серверна межа, без JS-раннера
+
+**Контекст:** скрупульозний аудит кожного маршрута vs його тестів (запит користувача). Виявлено:
+(1) CSRF-гейт (`content_type_is_json`) скопійований у кожен обробник окремо, не централізований у
+`serve()` — per-route список тестів не бачить майбутній маршрут, що забув гейт; (2) сигнал
+`persisted: false` (recurring user-safety клас T-57/T-139/T-149/T-47/T-77) не перевірявся для
+`/admin/providers/{add,set-enabled,set-category-enabled}`; (3) кілька мутаційних маршрутів мали
+лише happy-тест (`set-enabled` невідомий id, `overrides/remove` відсутній запис,
+`geoip/maxmind/clear` на порожньому стані); (4) **клієнтський `main.js` не має жодного
+виконуваного тесту** — усі 17 тестів `admin_ui.rs` це `INDEX_HTML.contains(…)` /
+`MAIN_JS.contains(…)` (присутність рядка у файлі, слабше за смоук).
+
+**Рішення — зміцнюємо серверний бік межі, JS-раннер НЕ додаємо.** Причина: межа безпеки UI↔бекенд
+(чотири категорії SPEC §8.1) за задумом лежить на сервері — webview у моделі загроз недовірений,
+тож тести належать туди, де вони переважно й є. Node-тулчейн (`package.json`, CI-job, dep-audit
+поверхня) у чисто-Rust репо заради presentation-шару суперечить дисципліні мінімальних залежностей
+(`~/.claude/rules/cross-language-style.md` п.11). Структурний sweep по `ROUTES` (стиль T-59 —
+властивість як дані) — найдешевша у підтримці форма: новий маршрут покривається в день додавання.
+
+**Наслідки:** `dispatch.rs` +7 тестів — `every_json_post_route_rejects_a_missing_or_wrong_content_type`
+(структурний sweep, покриває всі 15 JSON-POST + майбутні), `serve_admin_providers_{add,set_enabled,
+set_category_enabled}_reports_not_persisted_when_no_config_path_is_set` (через спільний
+`assert_not_persisted`), `serve_admin_providers_set_enabled_rejects_an_unknown_id` (400),
+`serve_admin_overrides_remove_is_a_safe_no_op_for_an_absent_entry`,
+`serve_admin_geoip_maxmind_clear_is_idempotent_on_a_fresh_state`. Клієнтська presentation-логіка
+(`computeProtectionState`, `categoryState`, two-step confirm, `renderError` «не фейкові 0/0»,
+`textContent`-не-`innerHTML`) лишається на: (а) структурних тестах-присутності в `admin_ui.rs`,
+(б) задокументованому ручному chrome-devtools smoke (README «Перевірка: браузер → локальний DoH»,
+T-172/T-176). Якщо presentation-баг колись пройде обидва — тоді окрема задача на JS-harness, не
+раніше.
