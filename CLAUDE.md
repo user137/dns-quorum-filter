@@ -174,7 +174,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 30s only when both Online, else recheck 3s — so a building outage still probes fast); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
 | `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear`; T-97 added `snapshot()` (sync `moka::future::Cache::iter()`, best-effort) / `restore()` and `CacheKey::domain()`/`qtype()` accessors for `cache.enc` |
 | `overrides` | allowlist/blocklist `load`/`save`/`decision`/`conflicts`; suffix-wildcard match; `InvalidEntry` (domain-redacting) |
-| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
+| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; T-175 `SinkholeNet` (`IpAddr`+prefix, `v4()`/`v6()`, no `Default`, `contains` = XOR+`leading_zeros`) + `SINKHOLE_NETS` + `sinkhole_nets_for(id)` (builtin-only); `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
@@ -536,6 +536,12 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 - `cargo test --workspace --doc` — doctest gate, required. Zero doctests exist yet
   (`~/.claude/rules/rust.md`'s "key functions must include code examples" is not met anywhere) —
   the step exists so the first one is actually run.
+- `cargo run --example sinkhole_probe` — T-175 recalibrator (live, not CI): each sinkhole-preset
+  canary must still resolve inside its `SINKHOLE_NETS` prefix (A + AAAA), the provider's own site
+  must not; non-zero exit if a prefix looks stale. **Run before a release** — a hard-coded prefix
+  silently under-counts a voter if the provider rotates its block IP. `cargo test -p dnsqb-service
+  --lib -- --ignored` also runs it as `#[ignore]`d live-verify tests (`quorum::tests::live_sinkhole_*`,
+  plus `upstream`'s live-Quad9 test).
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`). Since Батч 3.7: `ci.yml` also
@@ -1089,6 +1095,24 @@ reasoning (search by section number rather than re-deriving a decision from scra
   (`release.yml`'s repro-then-release job) **needs `--repo $env:GITHUB_REPOSITORY` explicitly** —
   the job's own working directory has no `.git`, so `gh release create` fails "not a git
   repository" otherwise.
+- **No `whois` / `dig` on this box — use RDAP over HTTPS via `WebFetch`** for "who owns this IP /
+  what CIDR": `https://rdap.arin.net/registry/ip/<ip>` 303-redirects to the owning RIR
+  (`rdap.db.ripe.net/ip/<ip>` for RIPE) — refetch the redirect URL; JSON has
+  `startAddress`/`endAddress`/`name`/org. T-175 pinned sinkhole prefixes to each provider's
+  registered netblock this way, not a vendor block-page doc.
+- **CIDR "is this IP in this prefix" on a serve/hot path: `(ip.to_bits() ^ net.to_bits())
+  .leading_zeros() >= prefix`** — no shift, so no `<< 32` / `<< 128` overflow panic to reason
+  about (a panic on the query path = a watchdog restart loop). `to_bits` is stable for `Ipv4Addr`
+  (`u32`) and `Ipv6Addr` (`u128`) on 1.98; `SinkholeNet` (T-175) uses this, and the `1..=32` /
+  `1..=128` prefix invariant makes "match everything" unrepresentable (no `Default`). **An AAAA
+  answer can be IPv4-mapped (`::ffff:a.b.c.d`)** — `Ipv6Addr::to_ipv4_mapped()` unwraps it
+  (OpenDNS FamilyShield returns its block IP that way for AAAA); `requires_quorum` admits AAAA, so
+  answer-address logic must cover both, not just A.
+- **Arbitrary IP fixtures in tests must use reserved doc ranges** — RFC 5737 (`192.0.2.0/24` /
+  `198.51.100.0/24` / `203.0.113.0/24`) for v4, RFC 3849 (`2001:db8::/32`) for v6 — never a
+  plausible real address. T-175 flipped 3 `quorum::resolve` tests Allow→Block because their
+  `94.140.14.14` fixture (AdGuard's real resolver IP, picked as "an AdGuard-ish answer") matched a
+  new `94.140.14.0/24` sinkhole prefix — the "test passes for the wrong reason" family.
 
 ## Documentation map — who owns what
 
