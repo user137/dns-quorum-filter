@@ -3774,7 +3774,7 @@ left alone») — тобто T-177 не регресує репродукова�
 + їх `Cargo.toml` (build-dep), `Cargo.lock`, `assets/gen-icon.py`, `assets/icon/app.ico` (новий),
 `SECURITY.md`, `TASKS.md`.
 
-### T-176 — UX-ревізія `/admin/ui` для нетехнічного користувача (зроблено 2026-09-06, plan+advisor kickoff+closing, макет затверджено користувачем, 4 коміти + docs-коміт)
+### T-176 — UX-ревізія `/admin/ui` для нетехнічного користувача (зроблено 2026-09-06, plan+advisor kickoff+closing, макет затверджено користувачем, 4 коміти + docs-коміт + closing-advisor коміт)
 
 **Мотив (запит користувача 2026-09-06):** «програма висить як сервіс, звичайній домогосподарці
 це не зрозуміло … скувати складні налаштування у випадаючі підменю». Поточний `/admin/ui` —
@@ -3840,6 +3840,22 @@ smoke** проти живого сервісу (automation-профіль, по�
 `resolver_config.toml` + fan-out 3→4 перевірки) + disable, `<details>` розкриття (timeout-card
 всередині), інʼєкція порту в `#doh-url`, авто-розгортання кроків — **0 помилок консолі**.
 Скриншот: scratchpad `t176_admin_ui_smoke_2026-09-06.png`. CI зелений на кожен із 4 комітів.
+
+**Closing-advisor (окремий 5-й коміт `7033c9d`).** Блокер: `flipAllCategories(true)` викликав
+`set-category-enabled` для всіх трьох категорій безумовно → на свіжій інсталяції порожня
+`ADULT_CONTENT` потрапляла в авто-`add`-гілку, тож «Фільтрація» off→on мовчки вмикала фільтрацію
+дорослого вмісту + 4-й провайдер (суперечить T-170). Фікс клієнтський: `flipAllCategories` бере
+живий список провайдерів і пропускає категорію без жодного сконфігурованого voter'а — головний
+перемикач лише фліпає наявних, ніколи не створює. Бекенд без змін; явний adult-перемикач авто-`add`
+зберіг. Верифіковано chrome-devtools smoke: master off→on лишає конфіг = quad9+cloudflare-malware+
+adguard; adult-перемикач досі авто-додає `opendns-familyshield`; 0 помилок консолі. Супутнє того ж
+проходу: `flipCategory` показував помилку до `refreshProviders()` (який чистив `#filter-controls-error`)
+→ порядок вирівняно; `#status-pill` прибрано (дублював hero, нема в затвердженому макеті);
+`role="switch"`+`aria-checked="mixed"` → `role="checkbox"`, мертве CSS `:indeterminate` видалено.
++2 тести (`main_js_master_switch_only_flips_categories_that_already_have_a_voter`,
+`main_js_resets_the_danger_zone_confirm_label_after_the_action`). DECISIONS.md 2026-09-06 —
+задокументована асиметрія: master off→on відновлює всі непорожні категорії, не попередній
+per-category вибір.
 
 **Файли:** `crates/dnsqb-service/src/{upstream,admin,dispatch,lib,admin_ui}.rs`,
 `crates/dnsqb-service/ui/{index.html,main.js,style.css}`, `crates/dnsqb-tray/src/status.rs`,
