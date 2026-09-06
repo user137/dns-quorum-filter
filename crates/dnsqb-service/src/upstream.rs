@@ -238,6 +238,15 @@ const BUILTIN_PRESETS: &[(&str, &str, &str, Category, BlockSignature)] = &[
 /// voters) up to that decision.
 pub const DEFAULT_PROVIDER_IDS: &[&str] = &["quad9", "cloudflare-malware", "adguard"];
 
+/// The preset added to an empty `ADULT_CONTENT` category when the `/admin/ui`
+/// basic-view toggle for adult content is switched on (T-176). The other two
+/// categories always carry their [`DEFAULT_PROVIDER_IDS`] voters, so adult is
+/// the only one that can be empty on a fresh install. `opendns-familyshield`
+/// (Cisco OpenDNS `FamilyShield`) chosen 2026-09-06 (`DECISIONS.md`) over
+/// `cleanbrowsing-adult` / `adguard-family`; it blocks via a provider
+/// sinkhole prefix the quorum has counted since T-175.
+pub const EMPTY_ADULT_CATEGORY_DEFAULT_PRESET: &str = "opendns-familyshield";
+
 /// Resolve a built-in preset `id` to its full [`ProviderSpec`], or `None` if
 /// `id` names no preset (i.e. it must be a custom entry carrying its own
 /// `url`/`category`).

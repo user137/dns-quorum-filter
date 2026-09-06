@@ -216,7 +216,7 @@ pub use upstream::{
     all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, sinkhole_nets_for,
     validate_provider_url, BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec,
     ProviderUrlError, ReqwestDohClient, SinkholeNet, UpstreamError, BASELINE_DOH_URL,
-    DEFAULT_PROVIDER_IDS,
+    DEFAULT_PROVIDER_IDS, EMPTY_ADULT_CATEGORY_DEFAULT_PRESET,
 };
 pub use watchdog::backoff::{next_backoff, BACKOFF_CAP, BACKOFF_STEPS};
 pub use watchdog::budget::{BudgetVerdict, RestartBudget, MAX_RESTARTS_PER_WINDOW, RESTART_WINDOW};

@@ -52,6 +52,7 @@ use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutConfig;
 use crate::upstream::{
     all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
+    EMPTY_ADULT_CATEGORY_DEFAULT_PRESET,
 };
 use crate::watchdog::state::{WatchdogState, WATCHDOG_STATE_STALE_AFTER};
 use crate::wire::{decode_wire_message, encode_wire_message};
@@ -107,6 +108,7 @@ const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
 const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
 const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
 const ADMIN_PROVIDERS_SET_ENABLED_PATH: &str = "/admin/providers/set-enabled";
+const ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH: &str = "/admin/providers/set-category-enabled";
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
 const ADMIN_UNINSTALL_LOCAL_STATE_PATH: &str = "/admin/uninstall-local-state";
@@ -144,6 +146,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_REMOVE_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_SET_ENABLED_PATH, &[Method::POST]),
+    (ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH, &[Method::POST]),
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
     (ADMIN_UNINSTALL_LOCAL_STATE_PATH, &[Method::POST]),
@@ -2343,6 +2346,69 @@ where
     }
 }
 
+/// `POST /admin/providers/set-category-enabled` (T-176) — enables or disables
+/// every configured voter in one [`crate::upstream::Category`] in a **single**
+/// `resolver_config.toml` write (all-or-nothing), so the basic-view category
+/// toggle can't leave a half-applied state on disk the way N separate
+/// `set-enabled` calls could (the recurring persist bug class:
+/// T-57/T-139/T-149/T-47/T-77). Switching on an *empty* `ADULT_CONTENT` (the
+/// first-run default has no adult voter) adds
+/// [`EMPTY_ADULT_CATEGORY_DEFAULT_PRESET`] in the same transaction; the other
+/// two categories always carry their `DEFAULT_PROVIDER_IDS` voters and
+/// built-ins can't be removed, so they are never empty. `500` only if that
+/// preset has gone missing from `BUILTIN_PRESETS` (an internal invariant
+/// break, not a client error). Same CSRF gate / body cap as the other
+/// `/admin/providers/*` routes.
+async fn serve_admin_providers_set_category_enabled<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let request: crate::admin::SetCategoryEnabledRequest = match read_provider_body(req).await {
+        Ok(request) => request,
+        Err(code) => return status_response(code),
+    };
+    let result = apply_provider_change(state, |mut entries| {
+        let has_any = entries
+            .iter()
+            .any(|entry| entry.spec.category == request.category);
+        if !has_any && request.enabled {
+            let Some(spec) = builtin_preset(EMPTY_ADULT_CATEGORY_DEFAULT_PRESET) else {
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            };
+            // The constant and its category must agree — a future edit that
+            // points it at a non-adult preset would otherwise misfile it into
+            // whatever empty category was toggled. Reject rather than guess.
+            if spec.category != request.category {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            entries.push(ProviderEntry {
+                spec,
+                enabled: true,
+            });
+            return Ok(entries);
+        }
+        // An empty category being switched *off* falls through here and the
+        // filter matches nothing — an idempotent no-op that just echoes the
+        // current list.
+        for entry in entries
+            .iter_mut()
+            .filter(|entry| entry.spec.category == request.category)
+        {
+            entry.enabled = request.enabled;
+        }
+        Ok(entries)
+    });
+    match result {
+        Ok(response) => json_response(&response),
+        Err(code) => status_response(code),
+    }
+}
+
 /// `GET /admin/log`'s default result cap (T-54) — a value a user actually
 /// reads in one screen, not [`DEFAULT_MAX_ENTRIES`] (1000): every other
 /// input/output boundary in this crate is explicitly bounded, and a JSON
@@ -2730,6 +2796,9 @@ where
         ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
         ADMIN_PROVIDERS_REMOVE_PATH => serve_admin_providers_remove(req, &state).await,
         ADMIN_PROVIDERS_SET_ENABLED_PATH => serve_admin_providers_set_enabled(req, &state).await,
+        ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH => {
+            serve_admin_providers_set_category_enabled(req, &state).await
+        }
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
         ADMIN_UNINSTALL_LOCAL_STATE_PATH => serve_admin_uninstall_local_state(req, &state).await,
@@ -6873,6 +6942,7 @@ mod tests {
         ("/admin/providers/add", &[Method::POST]),
         ("/admin/providers/remove", &[Method::POST]),
         ("/admin/providers/set-enabled", &[Method::POST]),
+        ("/admin/providers/set-category-enabled", &[Method::POST]),
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
         ("/admin/uninstall-local-state", &[Method::POST]),
@@ -7180,6 +7250,189 @@ mod tests {
             .map(|p| p.id.as_str())
             .collect();
         assert_eq!(active, vec!["cloudflare-malware", "adguard"]);
+    }
+
+    // T-176 — Happy: disabling a populated category flips every one of its
+    // voters and persists in a single `resolver_config.toml` write, leaving
+    // the other categories untouched.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_disables_a_whole_category_in_one_write() {
+        let (dir, state) = providers_state();
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-category-enabled",
+                &serde_json::json!({"category": "ADS_TRACKERS", "enabled": false}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = providers_json(Arc::clone(&state)).await;
+        assert!(body.active.iter().any(|p| p.id == "adguard" && !p.enabled));
+        assert!(body.active.iter().any(|p| p.id == "quad9" && p.enabled));
+        assert!(
+            body.filtering_active,
+            "the two Security voters are still on"
+        );
+        assert_eq!(body.third_party_count, 3, "2 security voters + baseline");
+        let Ok(loaded) = ResolverConfig::load(&dir.path().join("resolver_config.toml")) else {
+            panic!("saved config must load");
+        };
+        assert!(loaded
+            .providers
+            .iter()
+            .any(|e| e.spec.id == "adguard" && !e.enabled));
+    }
+
+    // T-176 — Happy: switching on an empty `ADULT_CONTENT` (no adult voter in
+    // the first-run default) adds `opendns-familyshield`, enabled and
+    // persisted, in the same transaction.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_adds_the_adult_default_to_an_empty_category(
+    ) {
+        let (dir, state) = providers_state();
+        let before = providers_json(Arc::clone(&state)).await;
+        assert!(
+            !before
+                .active
+                .iter()
+                .any(|p| p.category == crate::upstream::Category::AdultContent),
+            "the fresh-install default has no adult voter"
+        );
+
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-category-enabled",
+                &serde_json::json!({"category": "ADULT_CONTENT", "enabled": true}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = providers_json(Arc::clone(&state)).await;
+        assert!(body
+            .active
+            .iter()
+            .any(|p| p.id == "opendns-familyshield" && p.enabled));
+        assert_eq!(
+            body.third_party_count, 5,
+            "3 defaults + opendns-familyshield + baseline"
+        );
+        let Ok(loaded) = ResolverConfig::load(&dir.path().join("resolver_config.toml")) else {
+            panic!("saved config must load");
+        };
+        assert!(loaded
+            .providers
+            .iter()
+            .any(|e| e.spec.id == "opendns-familyshield" && e.enabled));
+    }
+
+    // T-176 — Misuse & Fool: on/off/on for the adult category must re-enable
+    // the *existing* `opendns-familyshield` entry, never append a second copy.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_re_enables_without_duplicating() {
+        let (_dir, state) = providers_state();
+        for enabled in [true, false, true] {
+            let response = match serve(
+                admin_post_json(
+                    "/admin/providers/set-category-enabled",
+                    &serde_json::json!({"category": "ADULT_CONTENT", "enabled": enabled}),
+                ),
+                Arc::clone(&state),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        let body = providers_json(state).await;
+        let adult: Vec<&str> = body
+            .active
+            .iter()
+            .filter(|p| p.category == crate::upstream::Category::AdultContent)
+            .map(|p| p.id.as_str())
+            .collect();
+        assert_eq!(
+            adult,
+            vec!["opendns-familyshield"],
+            "exactly one adult voter"
+        );
+        assert!(body
+            .active
+            .iter()
+            .any(|p| p.id == "opendns-familyshield" && p.enabled));
+    }
+
+    // T-176 — Misuse & Fool: switching an already-empty category *off* is an
+    // idempotent no-op — it must not error and must not add a voter.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_off_on_an_empty_category_is_a_noop() {
+        let (_dir, state) = providers_state();
+        let before = providers_json(Arc::clone(&state)).await;
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-category-enabled",
+                &serde_json::json!({"category": "ADULT_CONTENT", "enabled": false}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let after = providers_json(state).await;
+        assert_eq!(
+            before.active, after.active,
+            "an empty category toggled off changes nothing"
+        );
+    }
+
+    // T-176 — Error / Boundary: an unknown category enum value is a
+    // payload-free 400 (serde rejects it), and the CSRF content-type gate
+    // applies here exactly as on every other `/admin/providers/*` POST.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_rejects_unknown_category_and_non_json() {
+        let (_dir, state) = providers_state();
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-category-enabled",
+                &serde_json::json!({"category": "MISCELLANEOUS", "enabled": true}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/providers/set-category-enabled")
+            .body(Full::new(Bytes::from_static(
+                b"{\"category\":\"SECURITY\",\"enabled\":false}",
+            )))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
     #[tokio::test]

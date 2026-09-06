@@ -842,3 +842,53 @@ deeply-degraded fail-open), не нову необроблену гілку. З�
 - Raw-виходи: scratchpad `t175_sinkhole_probe_2026-09-05.txt` (орієнтація),
   `t175_phase1_metrics_2026-09-06.txt` (фінальний перемір, `+6.3 pp`; перший прогін того ж дня
   дав `+5.4 pp` на іншому URLhaus-семплі — дельта стабільна).
+
+---
+
+## 2026-09-06 — T-176: категорійний перемикач `/admin/ui` = атомарний маршрут; adult-дефолт `opendns-familyshield`
+
+**Контекст:** T-176 (Батч 3.10) переробляє `/admin/ui` під нетехнічного користувача — basic-вигляд
+із трьома категорійними перемикачами (malware / ads / adult) замість поштучних тумблерів
+провайдерів. У бекенді категорійного перемикача не було: `Category` — лише групування
+`ProviderView[]`, а `POST /admin/providers/set-enabled` міняє **один** voter і **перезаписує весь**
+`resolver_config.toml`. Kickoff-plan+advisor (2026-09-06) виявив два питання, винесені на
+AskUserQuestion.
+
+**Рішення 1 — механізм: новий атомарний маршрут `POST /admin/providers/set-category-enabled`
+`{ category, enabled }`.** Один `persist_lock`, один запис, все-або-нічого, echo `ProvidersResponse`
+(та сама форма, що решта `/admin/providers/*`). Не клієнтський fan-out по `set-enabled`.
+
+**Причина:** N послідовних `set-enabled` на категорію з N voter'ів = N повних перезаписів
+`resolver_config.toml`; збій на 2-му з 3 лишає половинчастий стан на диску, а basic-вигляд читає
+«ads: off», поки один ads-voter ще живий. Це рівно recurring user-safety-баг цього проєкту
+(`persisted:false` мовчазно втрачається — T-57 / T-139 / T-149 / T-47 / T-77), і причина, чому
+«Backend before UI» у CLAUDE.md recurring-patterns. Клієнт атомарності дати не може.
+
+**Рішення 2 — adult-дефолт: порожня `ADULT_CONTENT` при `enabled=true` авто-додає
+`opendns-familyshield`** (Cisco OpenDNS `FamilyShield`) у тій самій транзакції. Не
+`cleanbrowsing-adult`, не `adguard-family`.
+
+**Причина:** `DEFAULT_PROVIDER_IDS` (T-170) = `quad9` + `cloudflare-malware` + `adguard` — **нуль
+voter'ів у ADULT_CONTENT**; SECURITY/ADS завжди мають свої дефолти й built-in'и видалити не можна,
+тож adult — єдина категорія, що буває порожня на свіжій інсталяції. Без авто-`add` basic-перемикач
+«дорослий контент» був би мертвий (найімовірніша річ, яку нетех-користувач хоче ввімкнути).
+`opendns-familyshield` блокує через провайдер-специфічний sinkhole-префікс `146.112.61.104/29`
+(+ IPv4-mapped AAAA) — детекцію додано в T-175, тож quorum його блоки **рахує**. Вибір із трьох
+кандидатів — рішення користувача.
+
+**Наслідки:**
+- `upstream.rs`: `pub const EMPTY_ADULT_CATEGORY_DEFAULT_PRESET = "opendns-familyshield"` поряд із
+  `DEFAULT_PROVIDER_IDS` (той самий клас — first-run policy); re-export у `lib.rs`.
+- `admin.rs`: `SetCategoryEnabledRequest { category: Category, enabled: bool }` +
+  `AdminClient::set_category_enabled`.
+- `dispatch.rs`: `serve_admin_providers_set_category_enabled` (через наявний `apply_provider_change`
+  — той самий `persist_lock` + cross-field-read); `ROUTES` +1 рядок + `EXPECTED_ADMIN_ROUTES`
+  snapshot; 5 тестів (disable-цілу-категорію-один-запис, add-adult-дефолт-у-порожню, on/off/on
+  без дублювання, off-порожньої = no-op, unknown-category + non-JSON → 400/415). Порожня категорія
+  `enabled=false` — ідемпотентний no-op. `500` лише якщо `opendns-familyshield` зник із
+  `BUILTIN_PRESETS` (внутрішній інваріант, не клієнтська помилка).
+- **Не** чіпає `AdminConfigUpdate` (категорії редагуються тут, як `/admin/providers/*`, не в
+  `/admin/config`). Головний перемикач «фільтрація увімк/вимк» — клієнт робить 3 послідовні
+  виклики цього маршруту (без нового config-поля/міграції); фінальне рішення — closing-advisor T-176.
+- UI-SPEC.md §3.1/§3.4, `diagrams/ui-navigation.md`, CONFIGURATION.md — синхронізуються в
+  doc-кроці T-176.

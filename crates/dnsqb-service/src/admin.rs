@@ -437,6 +437,18 @@ pub struct ProviderSetEnabledRequest {
     pub enabled: bool,
 }
 
+/// `POST /admin/providers/set-category-enabled`'s body (T-176) — flips every
+/// configured voter in one [`Category`] at once, atomically (one
+/// `resolver_config.toml` write). Switching on an empty `ADULT_CONTENT` adds
+/// the adult default preset in the same transaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetCategoryEnabledRequest {
+    /// Which `/admin/ui` group to toggle.
+    pub category: Category,
+    /// Desired state for every voter in that category.
+    pub enabled: bool,
+}
+
 /// One override-list entry as shown to a client (T-47) — a projection of
 /// [`crate::overrides::OverrideEntry`], not a reuse of it directly: once an
 /// entry is already split into `OverrideListsResponse::allowlist`/
@@ -1404,6 +1416,33 @@ impl AdminClient {
                 id: id.to_string(),
                 enabled,
             })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Enables or disables every configured voter in one category, in a single
+    /// atomic `resolver_config.toml` write (T-176). Switching on an empty
+    /// `ADULT_CONTENT` adds the `opendns-familyshield` preset.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, the
+    /// request was rejected (`400`), or the response doesn't decode.
+    pub async fn set_category_enabled(
+        &self,
+        category: Category,
+        enabled: bool,
+    ) -> Result<ProvidersResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/admin/providers/set-category-enabled",
+                self.base_url
+            ))
+            .json(&SetCategoryEnabledRequest { category, enabled })
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)
