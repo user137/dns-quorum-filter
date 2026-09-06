@@ -57,6 +57,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# On the elevated relaunch the window closes the instant the script ends, so a
+# failure would flash past. Pause on every error path (including a later `throw`
+# from Add-AppxPackage), then re-raise so the exit code stays non-zero.
+trap {
+    if ($Elevated) { Read-Host "`nError -- press Enter to close" | Out-Null }
+    break
+}
+
 $CODE_SIGNING_EKU = '1.3.6.1.5.5.7.3.3'
 $EXPECTED_SUBJECT = 'CN=dns-quorum-filter'
 $STORE_NAME       = 'TrustedPeople'
@@ -108,8 +116,8 @@ if (-not $isAdmin) {
     if ($Install) { $fwd += '-Install' }
     if ($Remove)  { $fwd += '-Remove' }
     Write-Host "Elevation required -- relaunching as Administrator..." -ForegroundColor Yellow
-    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + $fwd
-    Start-Process $psHost -Verb RunAs -Wait -ArgumentList $args
+    $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + $fwd
+    Start-Process $psHost -Verb RunAs -Wait -ArgumentList $psArgs
     # The child did the write under LocalMachine; reading the store back needs no
     # elevation, so report the final state from here too.
     $stillThere = @(Get-ChildItem "Cert:\LocalMachine\$STORE_NAME" |
