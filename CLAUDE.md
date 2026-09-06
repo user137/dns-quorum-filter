@@ -4,10 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase:** Фаза 2 (cert automation, Windows) **formally closed 2026-08-31** (SPEC.md §"Фазований
-план" / TASKS.md §"Фаза 2"). **Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging)
-is next — a 9-batch execution plan (3.0–3.8) is in TASKS.md §"Фаза 3" ("План виконання Ф3",
-2026-09-01). **T-101 done 2026-09-01** (pulled forward from Батч 3.7): `.github/workflows/
+**Phase:** Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging) **closed in full
+2026-09-06** with the `v0.3.0` release tag (Батч 3.11 / T-173); all carried Ф1 gates closed by
+honest verification (T-170/T-174/T-175/T-172). Фаза 2 (cert automation, Windows) formally closed
+2026-08-31; Фаза 1 (PoC) 2026-08-29. Фаза 4+ (rating filter, voter scope, personal-list
+exemption) and Фаза 6 (macOS/Linux) are the remaining planned work — not started. Batch execution
+history for Ф3 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
+Батч 3.7): `.github/workflows/
 codeql.yml` — CodeQL SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR;
 alerts in the Security tab, triaged like clippy/audit findings (see the Commands section for the
 `gh` read command).
@@ -66,9 +69,13 @@ mode. T-103: `v*` tag → re-proves cross-path reproducibility → **draft** Git
 (**not** `repro`/release — they must clean-build), `concurrency: cancel-in-progress` on all 3
 workflows, `ci.yml`/`codeql.yml` `push: branches: ['**']` (not tags) + `paths-ignore` for
 `**/*.md`/`diagrams/**`/`mockups/**` (a docs-only commit, and any tag push, triggers neither —
-`release.yml` owns the tag path). **Version bumped `0.1.0` → `0.2.0`; `v0.2.0` tagged →
-`release.yml` produced a DRAFT GitHub release (test-signed binaries + `SHA256SUMS`), left for a
-human to publish.**
+`release.yml` owns the tag path). **Version `0.1.0` → `0.2.0` (Батч 3.7) → `0.3.0` (T-173, Батч
+3.11); `v0.2.0` and `v0.3.0` tagged → `release.yml` each produced a DRAFT GitHub release
+(test-signed binaries + `SHA256SUMS`, `v0.3.0` also `.msix` + `.cer`), left for a human to
+publish.** Version literals: 3 `crates/*/Cargo.toml` `version` + 2 path-dep specs + `Cargo.lock`
+(no `[workspace.package].version`); `VERSIONINFO` reads `CARGO_PKG_VERSION*` so it follows for
+free; `pack-msix.ps1` cross-checks the git tag against `cargo metadata` (`throw` on mismatch), so
+the bump must land before the tag.
 **Батч 3.8 (T-156 MSIX + T-70 local-state removal) done 2026-09-04 — Фаза 3 formally closed**
 (plan+advisor kickoff+closing). T-156: `packaging/AppxManifest.template.xml` (sideload
 placeholder identity, kickoff decision; `runFullTrust`; entry point + `windows.startupTask` both
@@ -117,10 +124,13 @@ T-170 `DEFAULT_PROVIDER_IDS` decision, T-171/T-174/T-175 quorum re-measure (hypo
 +6.3 pp), T-172 live "browser → local DoH" pass. **Батч 3.10 done 2026-09-06:** T-177 (app icon +
 `VERSIONINFO` in the three `.exe`) + T-176 (basic/advanced `/admin/ui` split + atomic
 `POST /admin/providers/set-category-enabled` + reworded tray tooltips; mockup user-approved).
-**Next — Батч 3.11** (plan in TASKS.md §"Фаза 3", "План фінального закриття Ф3"): T-173 version
-bump `0.2.0` → `0.3.0` + `v0.3.0` tag → the existing `release.yml` produces a draft MSIX release
-for a human to publish; carries T-176/T-177. After 3.11 Phase 3 is fully closed. T-51 / T-56 stay
-carried-forward backlog (blocked on out-of-MVP T-132 / T-134), not part of the Phase 3 close.
+**Батч 3.11 done 2026-09-06** (T-173): version `0.2.0` → `0.3.0` (separate bump commit `bd2ec61`,
+CI-green incl. `repro`; closing-advisor), tag `v0.3.0` on it → `release.yml` (`34046773417`, all 3
+jobs success: `build-sign` test-signed + `msix` + `release` cross-path repro) → DRAFT GitHub
+release (`isDraft: true`, 6 assets: 3 `.exe` + `SHA256SUMS` + `.msix` + `.cer`), left for a human
+to publish. `sinkhole_probe` (mandatory pre-release) green. Carried T-176/T-177. **Phase 3 fully
+closed.** T-51 / T-56 stay carried-forward backlog (blocked on out-of-MVP T-132 / T-134), not part
+of the Phase 3 close.
 Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
 Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
 Фаза 6.

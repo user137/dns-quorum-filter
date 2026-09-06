@@ -3861,3 +3861,57 @@ per-category вибір.
 `crates/dnsqb-service/ui/{index.html,main.js,style.css}`, `crates/dnsqb-tray/src/status.rs`,
 `DECISIONS.md`, `UI-SPEC.md`, `diagrams/ui-navigation.md`, `diagrams/ui-status-indicator.md`,
 `mockups/gui-dashboard.html`, `README.md`, `SERVICES.md`, `TASKS.md`.
+
+### T-173 — фінальне закриття Фази 3 + реліз `v0.3.0` (зроблено 2026-09-06, Батч 3.11, короткий kickoff + closing-advisor перед пушем тега, бамп-коміт + окремий docs-коміт)
+
+- [x] T-173 — (Батч 3.11) бамп `0.2.0` → `0.3.0`, тег `v0.3.0` → `release.yml` → чернетка
+  GitHub-релізу (`.msix` + 3 `.exe` + `SHA256SUMS` + `.cer`, test-signed), публікацію лишено людині.
+  **Фаза 3 закрита повністю.**
+
+**Пре-реліз-перевірки (обидві обов'язкові, з CLAUDE.md).** `cargo run --example sinkhole_probe`
+(T-175 рекалібратор) — exit 0, кожен sinkhole-префікс досі збігається з живою поведінкою
+провайдера. `build/win_resource.rs` прочитано: `FILEVERSION`/`PRODUCTVERSION`/`FileVersion` беруться
+з `CARGO_PKG_VERSION_{MAJOR,MINOR,PATCH}` / `CARGO_PKG_VERSION` — **4-го сайту версії нема**, бамп
+поширюється у `.rc` автоматично.
+
+**Бамп (коміт `bd2ec61`, тригерить CI).** Версія не інхерититься (нема `[workspace.package].version`).
+Правлено: `version` у 3 `crates/dnsqb-{service,tray,watcher}/Cargo.toml` + 2 path-dep specs
+(`dnsqb-service = { path = "...", version = "0.3.0" }` у tray/watcher) + `Cargo.lock` через
+`cargo update -w`. `git diff Cargo.lock` = **рівно 3 member `version`-рядки**, без churn залежностей
+(інакше — або `--locked`-падіння в CI, або нова crate-рядок у SECURITY.md/`deny.toml`; ні того, ні
+того). `cargo check --workspace --locked` локально зелений. CI (`34046192648`) — усі 7 job'ів
+success, **включно з `repro`** (T-177 додав `build.rs` → це дискримінантна джоба; була зелена на
+`7033c9d`/`8f2b2d9`, тож свіжий baseline є).
+
+**Closing-advisor перед пушем тега** (тег важко відкотити — правило проєкту). Підтверджено: бамп
+чистий; тег анотований на конкретному SHA (`git tag -a v0.3.0 bd2ec61`, `git rev-parse
+v0.3.0^{commit}` == `bd2ec61` до пушу); тег пушиться сам (`git push origin v0.3.0`, не
+`--tags`) — тригерить лише `release.yml` (`ci.yml`/`codeql.yml` = `branches: ['**']`, не теги).
+
+**`release.yml` (`34046773417`, усі 3 job'и success).**
+- `build-sign` → `mode = test-signed` (нема `CODESIGN_PFX` секрета; артефакти
+  `release-{binaries,msix}-test-signed`). Production-довіра = Microsoft Store при публікації.
+- `msix` → `pack-msix.ps1` звірив `GITHUB_REF_NAME` (`v0.3.0`) з `cargo metadata` (`0.3.0`) —
+  `throw` не спрацював, `.msix` версія `0.3.0.0`.
+- `release` → **другий** cross-path repro-gate (build-a/build-b під іншими remap-прапорцями, ніж
+  `ci.yml`'s `repro`) — bit-identical, чернетку створено.
+- `gh release view v0.3.0`: `isDraft: true`, 6 артефактів — `dns-quorum-filter.msix` (9.37 МБ),
+  `dnsqb-service.exe`, `dnsqb-tray.exe`, `dnsqb-watcher.exe`, `SHA256SUMS`, `dns-quorum-filter.cer`
+  (780 Б, лише для sideload test-signed шляху). Відкат (`git push origin :refs/tags/v0.3.0` → фікс
+  → перетег) **не знадобився**.
+
+**Release-note framing (відкрите питання, винесене з Батча 3.9) — вирішено без змін коду.**
+`release.yml`'s `$notes` — generic boilerplate, спільний для всіх майбутніх релізів, без метрик-рядка.
+Формулювання «кворум +6.3 pp над найсильнішим одиночним провайдером (n=111), гіпотезу підтверджено»
+лишається в `README.md` / `PERFORMANCE.md`; людина додає його в чернетку при публікації. `release.yml`
+на тег-коміті **не чіпано**. DECISIONS.md-запису не створено (нічого шипнутого не відкочується —
+поза scope файлу); CHANGELOG.md не заводимо.
+
+**`grep 0\.2\.0` по `*.md` / `diagrams/` після бампу — порожньо** (T-100 патерн: version-літерали
+всі в `Cargo.*`, доки посилаються на них словом, не числом).
+
+**Публікацію релізу лишаємо людині** (як `v0.2.0`) — правило: не публікувати зовнішній контент без
+явного дозволу.
+
+**Файли:** `crates/dnsqb-{service,tray,watcher}/Cargo.toml`, `Cargo.lock` (бамп-коміт);
+`TASKS.md`, `SPEC.md`, `README.md`, `CLAUDE.md`, `TASKS-DONE.md` (docs-коміт).
