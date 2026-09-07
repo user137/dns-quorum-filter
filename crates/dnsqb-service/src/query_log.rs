@@ -8,20 +8,19 @@
 //! task).
 //!
 //! This module's [`LogEntry`] is the **internal backend record**, narrower
-//! than the Tauri IPC DTO of the same name (`diagrams/ui-dto-model.md`,
+//! than the admin-channel DTO of the same name (`diagrams/ui-dto-model.md`,
 //! `UI-SPEC.md`): `decision_source` here has six of the values Phase 1
 //! can actually produce (`ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM`/`GEOIP`/
 //! `BASELINE_FALLBACK`, `GEOIP` added at T-76, `BASELINE_FALLBACK` at
-//! T-155), and there is still no `voter_scope` field at all —
-//! TASKS.md's own T-43 text defers it to T-109 (Фаза 4). `geoip_country` (the
-//! ISO code a `GEOIP` entry actually matched, distinct from *whether* one
-//! matched) joined at T-79, the task right after `GEOIP` itself became
-//! producible. The DTO conversion (T-53/T-54) is expected to widen this into
-//! the seven-variant DTO enum and fill `voter_scope` with its fixed Phase-1
-//! placeholder value (`FULL`) — that widening doesn't exist yet for the two
-//! still-unbuilt sources, and doesn't belong in this module (illegal states
-//! — a `decision_source` this phase can't produce — stay unrepresentable
-//! here instead of being carried as a dead enum variant).
+//! T-155). `geoip_country` (the ISO code a `GEOIP` entry actually matched,
+//! distinct from *whether* one matched) joined at T-79, the task right after
+//! `GEOIP` itself became producible. The DTO conversion (T-53/T-54) widens
+//! this into the seven-variant DTO enum — that widening doesn't exist yet for
+//! the still-unbuilt sources, and doesn't belong in this module (illegal
+//! states — a `decision_source` this phase can't produce — stay
+//! unrepresentable here instead of being carried as a dead enum variant).
+//! The `voter_scope` field was removed everywhere at T-179 (SPEC.md §5.1
+//! dropped — nothing narrows the voter set).
 //!
 //! [`VoterRecord`]/`VoterVerdict` moved to `quorum.rs` at T-147 — which
 //! providers cast a vote and what their outcome means is quorum's own

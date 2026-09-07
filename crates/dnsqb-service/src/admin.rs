@@ -870,18 +870,6 @@ impl From<DecisionSource> for DecisionSourceView {
     }
 }
 
-/// SPEC.md §5.1/§6 `voter_scope` column, DTO form (T-54) — always [`Self::
-/// Full`] this phase: T-109 (Фаза 4) hasn't built the top-N voter-scope
-/// exemption yet, so every query gets the full enabled voter set. The field
-/// exists from day one (`UI-SPEC.md` §1) so a future phase only has to start
-/// *populating* it, never add a new wire field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum VoterScopeView {
-    Full,
-    SecurityOnly,
-}
-
 /// SPEC.md §6 `voters` column, per-voter value, DTO form (T-54) — seven
 /// variants, resolving the SPEC.md §6-vs-§8 discrepancy `diagrams/
 /// ui-dto-model.md` already documented and the user already confirmed
@@ -964,14 +952,15 @@ pub(crate) fn unix_millis(time: SystemTime) -> u64 {
 
 /// SPEC.md §6/§8 `LogEntry` DTO — the body of `GET /admin/log`'s `entries`
 /// (T-54). Widens the internal, Phase-1-only [`LogEntry`] (five
-/// `decision_source` values as of T-76, still no `voter_scope` field at all
-/// — `geoip_country` joined the internal type at T-79) into the full
-/// seven-value/placeholder-carrying shape `UI-SPEC.md` §1's
-/// "carry every field from day one" principle calls for — `crate::query_log`'s
-/// own module doc comment names this widening as this task's job, not
-/// something to build into the internal type itself (an illegal state for
-/// this phase — a `decision_source` this phase can't produce — stays
-/// unrepresentable there).
+/// `decision_source` values as of T-76 — `geoip_country` joined the internal
+/// type at T-79) into the full seven-value/placeholder-carrying shape
+/// `UI-SPEC.md` §1's "carry every field from day one" principle calls for —
+/// `crate::query_log`'s own module doc comment names this widening as this
+/// task's job, not something to build into the internal type itself (an
+/// illegal state for this phase — a `decision_source` this phase can't
+/// produce — stays unrepresentable there). The `voter_scope` field was
+/// removed at T-179 (SPEC.md §5.1 dropped — the rating filter never narrows
+/// the voter set), so `SECURITY_ONLY` is unproducible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogEntryView {
     pub timestamp_ms: u64,
@@ -979,9 +968,6 @@ pub struct LogEntryView {
     pub qtype: QTypeView,
     pub decision: DecisionView,
     pub decision_source: DecisionSourceView,
-    /// Always [`VoterScopeView::Full`] this phase — see that type's own doc
-    /// comment.
-    pub voter_scope: VoterScopeView,
     pub voters: Vec<VoterResultView>,
     /// The ISO country code that triggered a `GeoIP` block (T-79) — `Some`
     /// only when `decision_source` is `GeoIp`, a direct passthrough of the
@@ -1004,7 +990,6 @@ impl LogEntryView {
             qtype: QTypeView::from(entry.qtype),
             decision: DecisionView::from(entry.decision),
             decision_source: DecisionSourceView::from(entry.decision_source),
-            voter_scope: VoterScopeView::Full,
             voters: entry.voters.iter().map(VoterResultView::from).collect(),
             geoip_country: entry.geoip_country.clone(),
             resolved_ip_country: entry.resolved_ip_country.clone(),
@@ -1678,7 +1663,7 @@ mod tests {
 
     use super::{
         BaselineEndpointView, DecisionSourceView, DecisionView, LogEntryView, NetworkStatusView,
-        QTypeView, VoterResultView, VoterScopeView, VoterVerdictView,
+        QTypeView, VoterResultView, VoterVerdictView,
     };
     use crate::quorum::{VoterRecord, VoterVerdict};
 
@@ -1755,12 +1740,6 @@ mod tests {
             json_of(&DecisionSourceView::RatingFilter),
             "\"RATING_FILTER\""
         );
-    }
-
-    #[test]
-    fn voter_scope_view_wire_strings_match_spec() {
-        assert_eq!(json_of(&VoterScopeView::Full), "\"FULL\"");
-        assert_eq!(json_of(&VoterScopeView::SecurityOnly), "\"SECURITY_ONLY\"");
     }
 
     #[test]
@@ -1881,11 +1860,6 @@ mod tests {
         assert_eq!(view.qtype, QTypeView::Aaaa);
         assert_eq!(view.decision, DecisionView::Blocked);
         assert_eq!(view.decision_source, DecisionSourceView::Blocklist);
-        assert_eq!(
-            view.voter_scope,
-            VoterScopeView::Full,
-            "always FULL until T-109 (Фаза 4)"
-        );
         assert_eq!(
             view.geoip_country, None,
             "a Blocklist decision never carries a country, regardless of phase"
