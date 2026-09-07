@@ -180,13 +180,20 @@ last_error}`, §7.1 #7) — **єдиний письменник `dnsqb-watcher`*
 
 ### Логи
 
-Через `tracing`, `tracing_subscriber::fmt::init()` пише у stdout. Дефолтний рівень —
-`INFO` (`tracing_subscriber`'s `Subscriber::DEFAULT_MAX_LEVEL`); фільтрується змінною
-оточення `RUST_LOG` (наприклад `RUST_LOG=debug cargo run -p dnsqb-service`) — це працює навіть
-без Cargo feature `env-filter` (не увімкнена в `Cargo.toml`), бо `fmt::init()` у такому випадку
-сам парсить `RUST_LOG` через легковаговий `Targets`-фільтр. **Службові логи ніколи не містять
-доменних імен** (наскрізна вимога SPEC.md) — перевірено вручну для кожного `tracing::`-виклику
-перед тим, як `main.rs` уперше увімкнув реальний subscriber (T-143).
+Через `tracing`. **З T-184 (Батч 3.12) — файл, не консоль:** усі три бінарники кличуть спільний
+`dnsqb_service::init_logging(role, Some(&app_data))` (`crates/dnsqb-service/src/logging.rs`), який
+пише в `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log` (`dnsqb-service.log` / `dnsqb-watcher.log`
+/ `dnsqb-tray.log`). Фіксований рівень `INFO`, без `RUST_LOG` (щоб не тягнути feature `env-filter`).
+Ротація примітивна — на старті, якщо файл > 5 МіБ, він перейменовується в `<role>.log.old`.
+**Debug-збірка додатково пише в stdout** (`cargo run` без змін); release/MSIX має
+`windows_subsystem = "windows"` (T-181), тож консолі немає взагалі. Якщо `%LOCALAPPDATA%` не
+резолвиться — деградація до stdout-subscriber (під MSIX іде в нікуди, але процес стартує).
+
+**Службові логи ніколи не містять доменних імен** (наскрізна вимога SPEC.md) — DoH-fan-out
+(`quorum`/`pipeline`/`upstream`) логує лише coarse `error_kind()`-мітки; решта `{err}` — це
+payload-free error-типи, локальний I/O чи config над файлами без доменів. Перевірено вручну для
+кожного `tracing::`-виклику перед T-143 (перший subscriber) і повторно перед T-184 (перший
+**файловий** sink).
 
 ### Відомі прогалини
 
@@ -220,14 +227,19 @@ false-positive рестарту (SPEC.md §7). **Реалізовано в Ба�
 ### Що робить при старті
 
 1. `app_data_dir()` (`%LOCALAPPDATA%\dns-quorum-filter\`) — обовʼязково, інакше `exit(1)` (весь
-   сенс watcher'а вимагає теку).
-2. `Watcher` single-instance guard (`watcher.lock`, `share_mode(0)`) + `watcher.pid`. Другий
-   інстанс → `exit(1)`.
+   сенс watcher'а вимагає теку). Далі `init_logging` (T-184).
+2. `Watcher` single-instance guard (`watcher.lock`, `share_mode(0)`) + `watcher.pid`. **T-187:**
+   другий інстанс (повторний клік плитки Пуску) не робить `exit(1)`, а спершу
+   `ensure_sibling_running(Tray)` — підніме трей, якщо його закрили, — і `exit(0)`; служби й
+   `watchdog-state.json` не чіпає. «Повторний запуск плитки = покажи іконку».
 3. `resolver_config.toml` → порт для `/health` і `AdminClient` (відсутній файл → дефолт-порт +
    warn, не hard-exit).
-4. **Ідемпотентний ланчер (T-150):** перевіряє `service.pid` / `tray.pid` через `verify_pid_alive`
-   і піднімає відсутнє (`spawn_sibling` абсолютним шляхом, ніколи PATH). Повторний запуск нічого
-   не дублює — перевірка перед кожним спавном. Трей — лише launcher-scope, у heartbeat-циклі не
+4. **Ідемпотентний ланчер (T-150; `watchdog::launcher::ensure_sibling_running`):** перевіряє
+   `tray.pid` / `service.pid` через `verify_pid_alive` і піднімає відсутнє (`spawn_sibling`
+   абсолютним шляхом, ніколи PATH; діти — детачнуті, T-182). **T-187: `Tray` ПЕРШИМ, потім
+   `Service`** — плитка запускає watcher, тож іконка зʼявляється за ~0.2 с, служба слідом.
+   Повторний запуск нічого не дублює — перевірка перед кожним спавном. Трей — лише launcher-scope,
+   у heartbeat-циклі не
    моніториться.
 
 ### Робочий цикл (5 s тик)
@@ -259,8 +271,11 @@ cargo build -p dnsqb-tray
 ./target/debug/dnsqb-tray.exe
 ```
 
-Автозапуску немає (T-150, окрема, ще не побудована задача) — на цьому зрізі старт лише
-вручну, поруч із уже запущеним `dnsqb-service`.
+**У проді трей запускає не користувач, а `dnsqb-watcher`** (плитка Пуску / автозапуск →
+watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний запуск лише `dnsqb-tray.exe` —
+підтримується як запобіжник: після `Tray` guard трей робить `ensure_sibling_running(Watcher)`,
+щоб не лишити систему без нагляду (ідемпотентно, no-op якщо watcher живий). Це не інверсія
+ієрархії — watcher лишається коренем.
 
 ### Меню (дев'ять пунктів)
 

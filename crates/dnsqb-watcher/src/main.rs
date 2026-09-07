@@ -35,8 +35,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, init_logging, plan_launch, read_pid_file, spawn_sibling,
-    verify_pid_alive, GuardError, InstanceGuard, InstanceRole, LaunchAction, ResolverConfig,
+    acquire_instance_guard, app_data_dir, ensure_sibling_running, init_logging, read_pid_file,
+    spawn_sibling, verify_pid_alive, GuardError, InstanceGuard, InstanceRole, ResolverConfig,
 };
 
 #[cfg(windows)]
@@ -71,29 +71,37 @@ async fn main() {
 
     let port = load_port(&app_data);
 
-    // T-150: bring up any sibling that isn't already running — once, at startup.
-    // The tray is launcher-scope only, never heartbeat-monitored (§7 mutual
-    // heartbeat is service <-> watcher); re-checking it in the loop would stop
-    // the tray's own "Close" from ever working.
-    ensure_sibling_running(&app_data, InstanceRole::Service);
+    // T-150 / T-187: bring up any sibling that isn't already running — once, at
+    // startup. **Tray first**: the tile launches this watcher, so spawning the
+    // tray before the (slower) service makes the icon appear in ~0.2 s instead
+    // of after the whole stack is up. The tray is launcher-scope only, never
+    // heartbeat-monitored (§7 mutual heartbeat is service <-> watcher);
+    // re-checking it in the loop would stop the tray's own "Close" from ever
+    // working.
     ensure_sibling_running(&app_data, InstanceRole::Tray);
+    ensure_sibling_running(&app_data, InstanceRole::Service);
 
     run_watcher_to_service_watchdog(app_data, port).await;
 }
 
-/// Takes the `watcher` single-instance lock, exiting the process on any failure
-/// (a second watcher racing the first over the pid files and the respawn logic
-/// is worse than not starting). Mirrors `dnsqb-service::main`'s
-/// `acquire_service_guard`.
+/// Takes the `watcher` single-instance lock. A second watcher racing the first
+/// over the pid files and the respawn logic is worse than not starting, so a
+/// real lock error exits.
+///
+/// **T-187 — "clicking the tile again shows the icon".** The Start-menu tile
+/// launches this binary; when a watcher is already running, the second
+/// instance's only job is to make sure the tray is up (it may have been
+/// closed) and then exit cleanly — `exit(0)`, not `exit(1)`. It never touches
+/// the service or the watchdog state.
 fn acquire_watcher_guard(app_data: &Path) -> InstanceGuard {
     match acquire_instance_guard(app_data, InstanceRole::Watcher) {
         Ok(guard) => guard,
-        Err(GuardError::AlreadyRunning(role)) => {
-            tracing::error!(
-                "another {role} instance is already running on this app-data directory - \
-                 not starting a second one (SPEC.md §7.1 #2)"
+        Err(GuardError::AlreadyRunning(_)) => {
+            tracing::info!(
+                "a watcher is already running — ensuring the tray is up, then exiting (T-187)"
             );
-            std::process::exit(1);
+            ensure_sibling_running(app_data, InstanceRole::Tray);
+            std::process::exit(0);
         }
         Err(err) => {
             tracing::error!("could not acquire the watcher single-instance lock: {err}");
@@ -116,24 +124,6 @@ fn load_port(app_data: &Path) -> u16 {
             );
             fallback
         }
-    }
-}
-
-/// Spawns `role`'s sibling binary if no live, identity-matching instance is
-/// already running (T-150). Idempotent: the check runs before the spawn.
-fn ensure_sibling_running(app_data: &Path, role: InstanceRole) {
-    let pid_file = read_pid_file(app_data, role).ok();
-    let pid_check = pid_file
-        .as_ref()
-        .map(|record| verify_pid_alive(record.pid, &record.exe_path));
-    match plan_launch(pid_file.as_ref(), pid_check) {
-        LaunchAction::AlreadyRunning => {
-            tracing::info!("{} is already running", role.as_str());
-        }
-        LaunchAction::Spawn => match spawn_sibling(role) {
-            Ok(_child) => tracing::info!("started {}", role.as_str()),
-            Err(err) => tracing::error!("could not start {}: {err}", role.as_str()),
-        },
     }
 }
 

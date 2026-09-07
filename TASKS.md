@@ -740,10 +740,13 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   забороняє breakaway) — ретрай лише з `DETACHED_PROCESS`. Чиста `const fn detached_flags(bool)`;
   `#[cfg(not(windows))]` — плоский spawn. Unit-тест на точні Win32-значення + fallback-композицію.
   Локальні гейти зелені (660 lib+bins).
-- [ ] T-187 — watcher лишається коренем (T-156 не чіпаємо); спавнить трей **першим**, службу
-  другою (іконка за ~0.2 с); повторний запуск watcher'а робить `ensure_running(Tray)` + `exit(0)`
-  замість `exit(1)` (клік плитки = покажи іконку); спільний `ensure_running` helper у lib;
-  трей-standalone — запобіжник `ensure_running(Watcher)`. Нова `diagrams/process-lifecycle.md`.
+- [x] T-187 — **зроблено 2026-09-07** — watcher лишається коренем (T-156 / AppxManifest не
+  чіпано). `watchdog::launcher::ensure_sibling_running` винесено в lib (спільний для
+  watcher-старту й трей-запобіжника). Watcher спавнить `Tray` **перед** `Service` (іконка за
+  ~0.2 с). `acquire_watcher_guard` при `AlreadyRunning` → `ensure_running(Tray)` + `exit(0)`
+  (клік плитки = покажи іконку). `dnsqb-tray` при standalone-запуску → `ensure_running(Watcher)`
+  запобіжник. Нова `diagrams/process-lifecycle.md` + індекс; SPEC §7 + SERVICES.md оновлено.
+  Локальні гейти зелені (660 lib+bins).
 - [ ] T-185 — семантика пауза/вихід/відновлення + `stop.flag` («clear on startup, honor in
   loop»): меню трея «Вийти з DNS Quorum Filter» (зупиняє все), «Призупинити»/«Відновити
   фільтрацію», «Відновити нагляд» (watcher мертвий); тултипи «усе працює»/«призупинено».

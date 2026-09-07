@@ -41,8 +41,8 @@ mod browser;
 mod status;
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, init_logging, write_pid_file, AdminClient,
-    AdminClientError, GuardError, InstanceRole, ResolverConfig,
+    acquire_instance_guard, app_data_dir, ensure_sibling_running, init_logging, write_pid_file,
+    AdminClient, AdminClientError, GuardError, InstanceRole, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -117,6 +117,14 @@ fn main() {
     if let Err(err) = write_pid_file(&app_data, InstanceRole::Tray) {
         tracing::warn!("could not write the tray pid file: {err}");
     }
+
+    // T-187 safety net: normally the watcher spawns this tray, so a watcher is
+    // already up. But if `dnsqb-tray.exe` was launched on its own (a stray
+    // double-click of the wrong file), bring the watcher up so the user isn't
+    // left with an unsupervised or absent service. Not an inversion of the
+    // hierarchy — the watcher stays the root; this is idempotent and a no-op
+    // when a watcher is already running.
+    ensure_sibling_running(&app_data, InstanceRole::Watcher);
 
     let port = match ResolverConfig::load(&app_data.join("resolver_config.toml")) {
         Ok(config) => config.port,

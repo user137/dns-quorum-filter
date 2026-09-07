@@ -14,6 +14,7 @@ run-time-поведінки зміщується на нього, ritual ниж�
 | [`rating-filter.md`](rating-filter.md) | Рейтинговий фільтр «бульбашка» (Ф4): позиція в конвеєрі + 4 джерела зон (flowchart) | §5.3, §5.1.1, §5, §5.2, §6, ВП№8 |
 | [`watchdog-state.md`](watchdog-state.md) | Автомат живучості/рестарту watchdog (на напрям): Healthy → … → GaveUp | §7, §7.1 |
 | [`watchdog-channels.md`](watchdog-channels.md) | Три канали живучості + шар голосування (flowchart — канали незалежні) | §7, §7.1 |
+| [`process-lifecycle.md`](process-lifecycle.md) | Життя 3 процесів: бутстрап (watcher → tray → service), точки входу, пауза/вихід/відновлення (Батч 3.12) | §7, §7.1, §1, §2, §6 |
 
 Повʼязаний документ рівня екранів/полів: [`../UI-SPEC.md`](../UI-SPEC.md).
 
