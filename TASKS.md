@@ -721,10 +721,13 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
 - [x] T-181 — **зроблено 2026-09-07** — `#![cfg_attr(not(debug_assertions), windows_subsystem =
   "windows")]` у `dnsqb-service` + `dnsqb-watcher` main.rs (як у `dnsqb-tray`). Локальні гейти
   зелені. Прибирає вікно термінала на старті MSIX і касадне вбивство групи процесів.
-- [ ] T-184 — файловий лог для всіх трьох бінарників (`%LOCALAPPDATA%\dns-quorum-filter\logs\
-  <binary>.log`, INFO, debug додатково stdout) через спільний `init_logging(role)` у lib — консоль
-  прибрано, треба куди дивитись. **Sweep перед файловим writer'ом:** жоден `tracing::`-сайт на
-  мережевому шляху не форматує сирий `{err}` (`reqwest::Error` Display містить DoH-URL із домену).
+- [x] T-184 — **зроблено 2026-09-07** — `crates/dnsqb-service/src/logging.rs` (`init_logging(role,
+  Option<&Path>)`, re-export у `lib.rs`); файл `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`,
+  фікс. INFO, startup-ротація при >5 МіБ → `.old` (dependency-free — жодних нових крейтів);
+  debug додатково stdout. Три `main` перенесли `init` після резолву `app_data_dir()`. Sweep:
+  DoH-fan-out (`quorum`/`pipeline`/`upstream`) уже логує лише `error_kind()`; решта `{err}` —
+  payload-free error-типи / локальний I/O / config над файлами без доменів (узгоджено з
+  CLAUDE.md). 3 юніт-тести (`prepare_log_file`: happy/rotate/error). Локальні гейти зелені.
 - [ ] T-183 — трей runtime-іконка: перегенерувати з поточного гексагона (прозорий фон) через
   `assets/gen-icon.py` → `crates/dnsqb-tray/icons/tray-32-rgba.bin`; прибрати застарілий
   `icon_32x32_rgba.bin` + провенанс-коментар про `dnsqb-ui`. (Іконка `.exe` — вже є, T-177.)

@@ -41,8 +41,8 @@ mod browser;
 mod status;
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, write_pid_file, AdminClient, AdminClientError,
-    GuardError, InstanceRole, ResolverConfig,
+    acquire_instance_guard, app_data_dir, init_logging, write_pid_file, AdminClient,
+    AdminClientError, GuardError, InstanceRole, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -88,11 +88,13 @@ const REMOVE_ALL_ID: &str = "remove-all-local-state";
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 fn main() {
-    tracing_subscriber::fmt::init();
-
     let app_data = match app_data_dir() {
-        Ok(dir) => dir,
+        Ok(dir) => {
+            init_logging("dnsqb-tray", Some(&dir)); // T-184
+            dir
+        }
         Err(err) => {
+            init_logging("dnsqb-tray", None);
             tracing::error!("no app-data directory available, dnsqb-tray cannot run: {err}");
             std::process::exit(1);
         }

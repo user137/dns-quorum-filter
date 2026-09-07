@@ -26,7 +26,7 @@
 //! there; these task shells stay untested by the precedent above.
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, bind_listener, load_maxmind_credentials,
+    acquire_instance_guard, app_data_dir, bind_listener, init_logging, load_maxmind_credentials,
     load_or_generate_server_config, load_persisted_cache, load_persisted_query_log,
     migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater,
     run_query_log_persister, run_reachability_prober, serve, write_pid_file, AppState, BindError,
@@ -61,13 +61,15 @@ use std::time::SystemTime;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
-
     // Resolved once (a pure env read), used for the guard, resolver config and
     // override lists below (T-144) - a missing app-data directory
     // (`%LOCALAPPDATA%` unset) isn't fatal for any of them: they fall back to
     // defaults/empty with a warning.
     let app_data = app_data_dir().ok();
+
+    // T-184: file log at `<app-data>/logs/dnsqb-service.log` (release has no
+    // console since T-181); debug also keeps stdout.
+    init_logging("dnsqb-service", app_data.as_deref());
 
     // T-92: take the single-instance lock *before* `load_or_generate_server_config`
     // (SPEC.md §7.1 #2) - on a first run two concurrently-started services would

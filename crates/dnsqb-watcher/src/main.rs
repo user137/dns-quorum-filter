@@ -35,7 +35,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, plan_launch, read_pid_file, spawn_sibling,
+    acquire_instance_guard, app_data_dir, init_logging, plan_launch, read_pid_file, spawn_sibling,
     verify_pid_alive, GuardError, InstanceGuard, InstanceRole, LaunchAction, ResolverConfig,
 };
 
@@ -50,11 +50,13 @@ use std::time::SystemTime;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    tracing_subscriber::fmt::init();
-
     let app_data = match app_data_dir() {
-        Ok(dir) => dir,
+        Ok(dir) => {
+            init_logging("dnsqb-watcher", Some(&dir)); // T-184
+            dir
+        }
         Err(err) => {
+            init_logging("dnsqb-watcher", None);
             tracing::error!("no app-data directory available, dnsqb-watcher cannot run: {err}");
             std::process::exit(1);
         }
