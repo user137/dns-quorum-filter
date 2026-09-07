@@ -7,9 +7,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Phase:** Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging) **closed in full
 2026-09-06** with the `v0.3.0` release tag (Батч 3.11 / T-173); all carried Ф1 gates closed by
 honest verification (T-170/T-174/T-175/T-172). Фаза 2 (cert automation, Windows) formally closed
-2026-08-31; Фаза 1 (PoC) 2026-08-29. Фаза 4+ (rating filter, voter scope, personal-list
-exemption) and Фаза 6 (macOS/Linux) are the remaining planned work — not started. Batch execution
-history for Ф3 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
+2026-08-31; Фаза 1 (PoC) 2026-08-29. **Фаза 4 (rating filter «bubble» + per-country top-N list
+infra + personal learned zone source) — kickoff done 2026-09-07 (Батч 4.0, T-179): §5.1
+(top-sites excluded from Ads/Adult voters) removed and merged into the rating filter §5.3 — one
+opt-in bubble (out-of-zone → BLOCK, in-zone → normal pipeline), which moved here from Фаза 5.
+Reasons: T-106 (Cloudflare Radar is CC BY-NC — no cleanly-licensed ordinal per-country source;
+CrUX CC BY 4.0 is the candidate), T-104 (Ads FP ≈ 0 for the default, Adult "FP" mostly correct
+blocks + a blanket top-N exemption would un-block genuinely-adult popular sites), and a user
+design clarification. `VoterScopeView` / `LogEntry.voter_scope` removed (dead — nothing narrows
+the voter set). See DECISIONS.md 2026-09-07.** Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
+(macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
+(3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
 Батч 3.7): `.github/workflows/
 codeql.yml` — CodeQL SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR;
 alerts in the Security tab, triaged like clippy/audit findings (see the Commands section for the
@@ -178,8 +186,9 @@ catches, verification notes — goes to `TASKS-DONE.md`, never here. (This file 
 
 `dnsqb-service` — a real `hyper` + `rustls` DoH listener on `127.0.0.1` (T-143), resolving queries
 end to end through the Фаза 1 pipeline (allowlist → blocklist → cache → quorum; T-39) plus live
-GeoIP filtering (SPEC.md §3.5 / §5.3 step 8). The intermediate SPEC.md §5.3 steps — ccTLD block,
-rating filter, voter scope — are later phases, not built. Since Батч 3.3, `main.rs` also starts
+GeoIP filtering (SPEC.md §3.5 / §5.3 step 7). The intermediate SPEC.md §5.3 steps — ccTLD block
+(§5.2, Фаза 5), rating filter «bubble» (§5.3, Фаза 4) — are later phases, not built. (There is no
+"voter scope" step any more — §5.1 was removed, T-179.) Since Батч 3.3, `main.rs` also starts
 three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe server, `service.hb` touch, the
 in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists, so that
 direction's `GaveUp` is **not durable** — the restart budget resets on every service restart, a
@@ -1278,18 +1287,18 @@ Two long-running processes:
 2. Blocklist        → BLOCK
 3. ccTLD block (5.2)→ BLOCK on domain-suffix match, no network call
 4. Cache            → cached quorum verdict, if present
-5. Rating filter (5.3, opt-in) → BLOCK if domain outside allowed zones (only blocks, never force-ALLOWs)
-6. Voter scope (5.1)→ top-N-per-country domains get Security-tier voters only (5.1.1: a personal
-                       locally-learned frequent/daily-visit list is a second, opt-in, default-off
-                       source for the same exemption, Фаза 4+, T-138); others get all enabled categories
-7. Quorum           → query the resolved voter set, OR-logic
-8. GeoIP (3.5)      → applied live to cached or fresh ALLOW responses, never cached itself
+5. Rating filter (5.3, opt-in, default-OFF) → BLOCK if domain outside the allowed zones
+                       (curated per-country top-N ∪ gov ∪ edu ∪ personal learned list §5.1.1 ∪
+                       user allowlist); in-zone → proceed unchanged, NEVER force-ALLOW
+6. Quorum           → query the enabled voter set, OR-logic
+7. GeoIP (3.5)      → applied live to cached or fresh ALLOW responses, never cached itself
 ```
 
-This pipeline has been revised twice in SPEC.md (top-sites handling moved from a bypass mechanism
-to a voter-scope exemption in §5.1; the rating filter's position moved from step 0 to a late local
-step in §5.3) — when in doubt about ordering, treat the pipeline diagram in §5.3 as current and the
-earlier ones in §3.5/§5 as superseded context, not conflicting truth.
+There is **no "voter scope" step** — §5.1 (top-sites excluded from Ads/Adult voters) was removed
+2026-09-07 (T-179, DECISIONS.md); the top-sites mechanism is now only the rating-filter "bubble"
+(step 5), which never narrows the voter set. This pipeline was revised several times in SPEC.md
+(top-sites: bypass → voter-scope → removed; rating filter: step 0 → late local step; moved Фаза 5
+→ Фаза 4) — treat the §5.3 diagram as current, the §3.5/§5 ones as superseded context.
 
 ### Key non-obvious decisions worth knowing before touching related code
 
@@ -1309,9 +1318,11 @@ earlier ones in §3.5/§5 as superseded context, not conflicting truth.
 - **GeoIP verdict is never cached alongside the quorum verdict** — it's a cheap local mmap lookup
   applied live on every read (cached or fresh) so a change to the blocked-country list takes effect
   immediately without cache invalidation logic (SPEC.md §3.5).
-- **Rating filter (§5.3) can only BLOCK, never force-ALLOW.** A domain inside the allowed zones
-  just continues through the normal pipeline (voter scope → quorum → GeoIP) rather than skipping
-  it. This is a common implementation mistake per the spec's own regression-test note.
+- **Rating filter «bubble» (§5.3, Фаза 4) can only BLOCK, never force-ALLOW.** A domain inside the
+  allowed zones just continues through the normal pipeline (quorum → GeoIP) rather than skipping
+  it. Out-of-zone → BLOCK, quorum never runs. Opt-in, default-OFF (mandatory, not a judgment).
+  §5.1 (a separate always-on top-N voter-scope exemption) was removed — the bubble is the only
+  top-sites mechanism (T-179).
 - Timeout handling is one of three configurable modes — `fail-open` (default), `fail-closed`,
   `degraded` — not a single hardcoded policy (SPEC.md §3.3).
 - Default upstream set on first run (`DEFAULT_PROVIDER_IDS`, decided T-170 / DECISIONS.md
@@ -1342,7 +1353,7 @@ Phase 1 (PoC) scope is explicitly minimal: 1 platform, 2 upstreams (Quad9 + AdGu
 installed cert, override lists + in-memory log — but **no watchdog** (manual restart is acceptable
 at PoC stage; §"Фазований план" explicitly defers `dnsqb-watcher` to Phase 3). Don't build ahead of
 the current phase's scope without checking whether SPEC.md has already placed that feature in a
-later phase for a stated reason (e.g. GeoIP and top-site voter exemption are deliberately deferred
+later phase for a stated reason (e.g. GeoIP and the rating-filter «bubble» are deliberately deferred
 past Phase 1 because they're independent of the core quorum hypothesis being validated first).
 
 **Second/third desktop platform (macOS, Linux) is its own final phase — `## Фаза 6`** (moved

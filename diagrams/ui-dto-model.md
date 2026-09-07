@@ -1,8 +1,9 @@
-SOURCES: SPEC.md §5, §5.1, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
+SOURCES: SPEC.md §5, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
 T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
 `serve_baseline_when_filters_unreachable`); T-146/T-97
 (`AdminStatusResponse.encrypted_persistence { query_log, cache }`);
-DECISIONS.md 2026-09-02, 2026-09-03 (порядок пріоритету індикатора; шифрована персистентність).
+DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07 (порядок пріоритету індикатора; шифрована
+персистентність; T-179 — `VoterScope` прибрано, §5.1 знято).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -19,7 +20,6 @@ classDiagram
         +QType qtype
         +Decision decision
         +DecisionSource decision_source
-        +VoterScope voter_scope
         +List~VoterResult~ voters
         +String? geoip_country
         +String? resolved_ip_country
@@ -47,11 +47,6 @@ classDiagram
         RATING_FILTER
         QUORUM
         GEOIP
-    }
-    class VoterScope {
-        <<enum, T-54 реалізовано як admin::VoterScopeView, завжди FULL до Ф4 (T-109)>>
-        FULL
-        SECURITY_ONLY
     }
     class VoterResult {
         <<T-54, реалізовано як admin::VoterResultView>>
@@ -291,7 +286,6 @@ classDiagram
     VoterResult --> VoterStatus
     LogEntry --> Decision
     LogEntry --> DecisionSource
-    LogEntry --> VoterScope
     LogEntry --> QType
     OverrideEntry --> ListKind
     OverrideListsResponse --> OverrideDomainView : allowlist/blocklist
@@ -507,15 +501,16 @@ MaxMind GeoLite2 (креденшели з T-163 — в OS secret store, не у 
 вердикт. Зміна креденшелів (`POST /admin/geoip/maxmind[/clear]`, `POST /admin/reset`) діє
 одразу — джерело в `AppState`, апдейтер будиться через `tokio::sync::Notify`.
 
-## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`VoterScope`/`QType` — реальна реалізація (T-54)
+## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`QType` — реальна реалізація (T-54)
 
 `GET /admin/log`/`POST /admin/log/clear` (SPEC.md §0 рядок 12b) — перший log-експонуючий маршрут
 на адмін-каналі, реалізує весь блок DTO вище як `admin::LogEntryView`/`VoterResultView`/
-`VoterVerdictView`/`DecisionSourceView`/`DecisionView`/`VoterScopeView`/`QTypeView`. Внутрішній
+`VoterVerdictView`/`DecisionSourceView`/`DecisionView`/`QTypeView`. Внутрішній
 backend-тип `query_log::LogEntry` (вужчий, 5 значень `decision_source` як з T-76 — `GEOIP`
-приєднався до `ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM` — без `voter_scope` — див. `query_log.rs`'s
+приєднався до `ALLOWLIST`/`BLOCKLIST`/`CACHE`/`QUORUM` — див. `query_log.rs`'s
 власний doc-коментар) конвертується в `LogEntryView` одним методом (`LogEntryView::from_entry`), не
-дублюється по кількох маршрутах — `voter_scope` завжди `FULL` (T-109 ще не існує). `geoip_country`
+дублюється по кількох маршрутах. (`voter_scope` / `VoterScopeView` прибрано T-179 — SPEC.md §5.1
+знято, нічого не звужує voter-набір.) `geoip_country`
 **реальний з T-79**: `pipeline.rs`'s `geoip::blocking_country` (T-76 як `blocks_any`, широкий до
 `Option<String>` на T-79) тепер повертає саме ISO-код країни, що спрацювала, а не лише `bool` —
 проведений без змін через `QueryLogMeta` → `LogEntry` → `LogEntryView::from_entry`, `Some` лише коли
@@ -558,19 +553,12 @@ SPEC.md's власні `CCTLD_BLOCK`/`GEOIP` — перевірено емпір
 ніколи мовчазне "без фільтра" (типова цю-помилку-в-ALL-пастка, той самий клас, що T-148's
 disabled-provider-defaults-to-`TimedOut` баг уже називав для цього проєкту).
 
-## ⚠️ GAP — `VoterScope` більше не однозначний (SPEC.md §5.1.1, T-138)
+## `VoterScope` DTO — прибрано (T-179, 2026-09-07)
 
-Діаграма вище все ще показує `VoterScope` як два варіанти (`FULL`/
-`SECURITY_ONLY`), точно за поточним текстом SPEC.md §6/§8 — це не помилка
-діаграми, джерело справді ще не змінено. Але SPEC.md §5.1.1 (доданий після
-попередньої звірки) описує **другу, окрему причину** отримати
-`SECURITY_ONLY` — особистий локально навчений список (5.1.1), не лише
-курований топ-список країни (5.1) — і сам явно позначає це як невирішену
-DTO-прогалину: `SECURITY_ONLY` у логу більше не каже, яке з двох джерел
-спрацювало.
-
-**Не патчено тут самовільно** (за правилом ritual'у вище — джерело
-неоднозначне, не діаграма застаріла). Коли T-138 вирішить форму (третій
-варіант enum'а, чи окреме поле-джерело поруч із `voter_scope`) — оновити
-`VoterScope`-клас і зв'язок `LogEntry --> VoterScope` тут відповідно до
-факту, ухваленого в SPEC.md/TASKS.md, а не заздалегідь.
+Раніше тут була ⚠️ GAP-нотатка: `SECURITY_ONLY` мав два різні сенси (курований
+топ-список країни §5.1 vs персональний навчений список §5.1.1). Прогалину
+**закрито прибиранням поля**: §5.1 (окреме voter-scope-виключення топ-сайтів)
+знято, механізм топ-сайтів злито в рейтинговий фільтр §5.3, який ніколи не
+звужує voter-набір (in-zone → повний конвеєр; out-of-zone → BLOCK, кворум не
+запускається). `VoterScopeView` / `LogEntry.voter_scope` видалено з `admin.rs`,
+`query_log.rs`, UI-SPEC.md і з класової діаграми вище. DECISIONS.md 2026-09-07.

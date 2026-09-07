@@ -23,12 +23,11 @@ about, not a coordinated attack.
 |---|---|---|
 | 1. Allowlist | O(n) linear scan, `OverrideLists::decision` | n = allowlist entries |
 | 2. Blocklist | O(n) linear scan, same function, same pass | n = blocklist entries |
-| 3. ccTLD block | not implemented (Фаза 4+, TASKS.md T-115) | — |
+| 3. ccTLD block | not implemented (Фаза 5, TASKS.md T-115) | — |
 | 4. Cache | O(1) amortized, `moka` concurrent hash map lookup | bounded by `max_capacity` (10 000) |
-| 5. Rating filter | not implemented (Фаза 4+) | — |
-| 6. Voter scope | not implemented (Фаза 4+) | — |
-| 7. Quorum | O(k) parallel fan-out, `FuturesUnordered` | k = enabled providers, ≤10 (SPEC.md §3.4) |
-| 8. GeoIP | O(1) effectively — bounded-depth binary lookup over the IP address's bit prefix, `maxminddb` mmap read | independent of blocked-country-list size |
+| 5. Rating filter «bubble» | not implemented (Фаза 4) | — |
+| 6. Quorum | O(k) parallel fan-out, `FuturesUnordered` | k = enabled providers, ≤10 (SPEC.md §3.4) |
+| 7. GeoIP | O(1) effectively — bounded-depth binary lookup over the IP address's bit prefix, `maxminddb` mmap read | independent of blocked-country-list size |
 
 Steps 1 and 2 run on **every** query, cache hit or miss (they're upstream of the cache in the
 pipeline). `overrides::decision` (`overrides.rs:298`) calls `self.entries.iter().any(...)` once
