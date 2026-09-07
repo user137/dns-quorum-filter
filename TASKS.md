@@ -708,6 +708,43 @@ DECISIONS.md / PERFORMANCE.md / SPEC.md / CONFIGURATION.md / CLAUDE.md онов�
   **чернетка** GitHub-релізу, `isDraft: true`, 6 артефактів (3 `.exe` + `SHA256SUMS` +
   `dns-quorum-filter.msix` + `.cer`). Публікацію лишено людині (як `v0.2.0`). Деталі — TASKS-DONE.md.
 
+## Батч 3.12 — пост-Ф3 hotfix: MSIX UX / процесна модель
+
+**Живий прогін `v0.3.0` MSIX (користувач, 2026-09-07) виявив:** запуск відкриває вікно термінала,
+до якого прив'язаний сервіс (закрив — усе впало); трей-іконка = старий бірюзовий квадрат
+(застарілий RGBA-блоб від видаленого `dnsqb-ui`); трей «Перезапустити»/«Відкрити сайт» не
+працюють (наслідок мертвого сервісу); нема шляху «повністю вийти»; незрозуміло, що робить
+watchdog. Клас — як T-178: реліз опубліковано, баг у реальному використанні, plan+advisor,
+патч-реліз `v0.3.1`. Порядок комітів: T-181 → T-184 → T-183 → T-182 → T-187 → T-185 → T-186.
+Повний план + матриця з 15 сценаріїв життя трьох бінарників — `plans/silly-wiggling-globe.md`.
+
+- [x] T-181 — **зроблено 2026-09-07** — `#![cfg_attr(not(debug_assertions), windows_subsystem =
+  "windows")]` у `dnsqb-service` + `dnsqb-watcher` main.rs (як у `dnsqb-tray`). Локальні гейти
+  зелені. Прибирає вікно термінала на старті MSIX і касадне вбивство групи процесів.
+- [ ] T-184 — файловий лог для всіх трьох бінарників (`%LOCALAPPDATA%\dns-quorum-filter\logs\
+  <binary>.log`, INFO, debug додатково stdout) через спільний `init_logging(role)` у lib — консоль
+  прибрано, треба куди дивитись. **Sweep перед файловим writer'ом:** жоден `tracing::`-сайт на
+  мережевому шляху не форматує сирий `{err}` (`reqwest::Error` Display містить DoH-URL із домену).
+- [ ] T-183 — трей runtime-іконка: перегенерувати з поточного гексагона (прозорий фон) через
+  `assets/gen-icon.py` → `crates/dnsqb-tray/icons/tray-32-rgba.bin`; прибрати застарілий
+  `icon_32x32_rgba.bin` + провенанс-коментар про `dnsqb-ui`. (Іконка `.exe` — вже є, T-177.)
+- [ ] T-182 — `spawn_sibling` відв'язує дітей: `creation_flags(DETACHED_PROCESS |
+  CREATE_BREAKAWAY_FROM_JOB)` через безпечний `CommandExt`, fallback лише `DETACHED_PROCESS`,
+  якщо job забороняє breakaway. `#![forbid(unsafe_code)]` цілий. Unit-тест композиції прапорів.
+- [ ] T-187 — watcher лишається коренем (T-156 не чіпаємо); спавнить трей **першим**, службу
+  другою (іконка за ~0.2 с); повторний запуск watcher'а робить `ensure_running(Tray)` + `exit(0)`
+  замість `exit(1)` (клік плитки = покажи іконку); спільний `ensure_running` helper у lib;
+  трей-standalone — запобіжник `ensure_running(Watcher)`. Нова `diagrams/process-lifecycle.md`.
+- [ ] T-185 — семантика пауза/вихід/відновлення + `stop.flag` («clear on startup, honor in
+  loop»): меню трея «Вийти з DNS Quorum Filter» (зупиняє все), «Призупинити»/«Відновити
+  фільтрацію», «Відновити нагляд» (watcher мертвий); тултипи «усе працює»/«призупинено».
+  Новий cross-process сигнал → запис у DECISIONS.md. Макет меню — з користувачем на kickoff.
+- [ ] T-186 — патч-реліз `v0.3.1`: бамп + closing-advisor + **чиста реінсталяція на цій машині**
+  (прибрати v0.3.0 через трей «Повністю видалити» + `Remove-AppxPackage` → перевірити зникнення
+  app-data) + ручний end-to-end (плитка → без термінала → іконка-гексагон → закрити не валить →
+  меню → «Вийти» → повторний запуск) + перевірка **однієї** app-data теки (identity-split від
+  breakaway) → тег `v0.3.1` → `release.yml` draft.
+
 ## Фаза 4 — Рейтинговий фільтр «бульбашка» + інфраструктура топ-N списку по країнах
 
 **План виконання Ф4 — переписано 2026-09-07 (T-179, «Варіант 1», plan-mode + advisor).**

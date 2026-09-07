@@ -1,3 +1,6 @@
+// Release/MSIX: no console window (T-181). Debug keeps the console so a
+// `cargo run` still shows `tracing` on stdout — same split as `dnsqb-tray`.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]

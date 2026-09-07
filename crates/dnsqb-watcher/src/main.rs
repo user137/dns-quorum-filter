@@ -1,3 +1,7 @@
+// Release/MSIX: no console window (T-181). The watcher is the MSIX entry
+// point, so without this the Start-menu tile opened a terminal and closing
+// it killed the whole process group. Debug keeps the console for `cargo run`.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 #![warn(clippy::pedantic)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
