@@ -4014,3 +4014,43 @@ GitHub-дзеркало, `<cc>/<yyyymm>.csv.gz`, `origin,rank`; CC BY 4.0, тя�
 DECISIONS.md 2026-09-07).
 
 **Файли:** `crates/dnsqb-service/examples/topn_fp_probe.rs` (новий), `TASKS.md`, `TASKS-DONE.md`.
+
+### T-106 — ToS/ліцензія джерела per-country топ-N рейтингу (Батч 4.0)
+
+**Зроблено 2026-09-07** (research у plan-mode; звірено проти першоджерел).
+
+- **Cloudflare Radar Domain Rankings** (джерело, назване §5.1) — **CC BY-NC 4.0**
+  (`raw.githubusercontent.com/cloudflare/cloudflare-docs/production/src/content/docs/radar/index.mdx`,
+  секція «Cloudflare Radar Data Licensing»: *"Data available via Radar API endpoints is made
+  available under the CC BY-NC 4.0 license."*; за комерційним доступом Cloudflare адресує до
+  `radar@cloudflare.com`). **Блокер — несумісність ліцензій:** CC BY-NC вимагає, щоб
+  редистрибутовані адаптації несли NC-умови → вшити похідний per-country список у Apache-2.0-продукт
+  = шипити компонент, чия ліцензія забороняє клас використання, який решта продукту дозволяє.
+- **Tranco** (fallback, названий у старому плані) — глобальний, без per-country bulk-датасету;
+  змішані ліцензії вхідних джерел. Для per-country вимоги не підходить. Відхилено.
+- **Chrome UX Report (CrUX)** — **CC BY 4.0** (`developer.chrome.com/docs/crux/methodology`, окрема
+  секція «License», body-проза: *"CrUX datasets by Google are licensed under a Creative Commons
+  Attribution 4.0 International License."* — окреме речення від наступного футер-boilerplate). Має
+  per-country top-1M lists (BigQuery `country_CC`; дзеркало `zakird/crux-top-lists` /
+  `InternetHealthReport/crux-top-lists-country`). **Застереження:** keyed by **origin**
+  (`https://www.example.com`), не registrable-домен → потрібна нормалізація origin→registrable
+  (PSL); `rank` — magnitude-бакет (`1000`/`10K`/`100K`/`1M`), **не ординал** — найменший бакет
+  top-1000, не top-50. CC BY 4.0 бар редистрибуції проходить (потрібен лише рядок атрибуції в
+  `#credits`, як для DB-IP).
+
+**Ліцензійний бар для джерела (з нашого боку — Apache-2.0):** підходить CC0 / CC BY / ODC-BY;
+умовно CC BY-SA (окремий файл під SA); **не** підходить CC BY-NC (Radar) / CC BY-ND / research-only.
+
+**Наслідок:** разом із T-104 → §5.1 прибрано (T-179, DECISIONS.md 2026-09-07); джерело топ-N для
+рейтинг-фільтра §5.3 — CrUX як провідний кандидат, фінальний вибір у батчі курації (T-107).
+Відкриті питання п.7 закрито.
+
+### T-105 — реюз механізму версійованих файлів (Батч 4.0)
+
+**Підтверджено 2026-09-07** (однорядковий гейт, не окрема робота). `geoip_download` /
+`geoip_updater` (TLS + `.sha256`-sidecar + bounded download + integrity gate + atomic-swap;
+`AppState` секція `RwLock<Arc<_>>` + `Notify`-wake) — обкатаний у CI з Фази 2 — переюзовується
+клієнтським боком §5.3 для per-country топ-N файлу **як є**. Новий тільки проєктний конвеєр
+курації (T-107), не клієнтський механізм завантаження.
+
+**Файли (T-105/T-106):** `SPEC.md`, `TASKS.md`, `TASKS-DONE.md`, `DECISIONS.md`.
