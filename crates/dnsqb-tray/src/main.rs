@@ -89,6 +89,13 @@ const RESUME_LABEL: &str = "Відновити фільтрацію";
 /// governs how quickly a menu click gets noticed.
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How often the event loop re-stats `stop.flag` to keep the pause/resume
+/// label current (T-185). The flag only changes on a click handled here or a
+/// fresh watcher launch clearing it, so statting it on every 100 ms
+/// [`EVENT_POLL_INTERVAL`] tick is far more often than needed (advisor,
+/// Батч 3.12 closing).
+const FLAG_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
 fn main() {
     let app_data = match app_data_dir() {
         Ok(dir) => {
@@ -165,6 +172,7 @@ fn main() {
     let menu_channel = MenuEvent::receiver();
     let mut last_status = TrayStatus::Unreachable;
     let mut last_paused = stop_flag_is_set(&app_data);
+    let mut last_flag_check = Instant::now();
 
     let event_loop: EventLoop<()> = EventLoop::new();
     event_loop.run(move |_event, _target, control_flow| {
@@ -179,11 +187,15 @@ fn main() {
         }
 
         // T-185: flip the pause/resume label when `stop.flag` appears or is
-        // removed (by this menu, or by a fresh watcher launch clearing it).
-        let paused = stop_flag_is_set(&app_data);
-        if paused != last_paused {
-            pause_resume_item.set_text(if paused { RESUME_LABEL } else { PAUSE_LABEL });
-            last_paused = paused;
+        // removed (by this menu, or by a fresh watcher launch clearing it) —
+        // re-stat it at most once a second, not on every 100 ms tick.
+        if last_flag_check.elapsed() >= FLAG_CHECK_INTERVAL {
+            last_flag_check = Instant::now();
+            let paused = stop_flag_is_set(&app_data);
+            if paused != last_paused {
+                pause_resume_item.set_text(if paused { RESUME_LABEL } else { PAUSE_LABEL });
+                last_paused = paused;
+            }
         }
 
         if let Ok(event) = menu_channel.try_recv() {
@@ -533,14 +545,17 @@ fn show_about_dialog() {
 }
 
 /// Native confirm dialog before pausing filtering (T-185). Names the
-/// consequence and how to undo it — unlike the old "Зупинити фільтрацію",
-/// this state is reversible from the same menu ("Відновити фільтрацію").
+/// consequence and every way to undo it — unlike the old "Зупинити
+/// фільтрацію", this state is reversible from the same menu, and a fresh app
+/// launch also clears `stop.flag`, so the dialog must say so (advisor,
+/// Батч 3.12 closing — the earlier wording promised the pause held until an
+/// explicit resume, which is false across a restart).
 fn confirm_pause() -> bool {
     let result = rfd::MessageDialog::new()
         .set_title("Призупинити фільтрацію")
         .set_description(
-            "DNS піде нефільтрованим, доки ви не натиснете «Відновити фільтрацію» \
-             в цьому ж меню. Продовжити?",
+            "DNS піде нефільтрованим. Щоб відновити фільтрацію — натисніть «Відновити \
+             фільтрацію» в цьому ж меню або перезапустіть застосунок. Продовжити?",
         )
         .set_level(rfd::MessageLevel::Warning)
         .set_buttons(rfd::MessageButtons::YesNo)

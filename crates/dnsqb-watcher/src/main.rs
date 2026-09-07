@@ -213,6 +213,28 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
             std::process::exit(0);
         }
 
+        // T-185 (Батч 3.12 closing-advisor): filtering is paused on purpose.
+        // Freeze the automaton entirely — skip the whole tick, not just the
+        // `Effect::Spawn` below. `LoopDriver::tick` spends a `RestartBudget`
+        // slot and advances the state machine on its own the moment it sees the
+        // service is `Restarting`; guarding only the spawn effect lets a long
+        // pause burn the 5/600s budget and drive the automaton into the
+        // terminal `GaveUp` state, so a later resume would show "служба
+        // зупинилася" against a healthy service until the watcher is itself
+        // restarted. Not ticking also stops rewriting `watchdog-state.json`; it
+        // goes stale within `WATCHDOG_STATE_STALE_AFTER`, which is the honest
+        // signal (the watchdog is up but deliberately not supervising) — the
+        // tray shows a dedicated "paused" tooltip from `stop.flag` directly.
+        // Resume (flag cleared here or by a fresh launch) picks the driver up
+        // unchanged. `watcher.hb` is still touched so the service's own
+        // `service -> watcher` loop sees no gap when it comes back.
+        if stop_flag_is_set(&app_data) {
+            if let Err(err) = touch_heartbeat_file(&app_data, InstanceRole::Watcher) {
+                tracing::warn!("could not touch watcher.hb while paused: {err}");
+            }
+            continue;
+        }
+
         // Channel 1: IPC ping/pong. A failed ping drops the client so the next
         // tick reconnects.
         if pipe.is_none() {
@@ -262,40 +284,59 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
             health_signal: Some(health_signal),
             pid,
         };
-        for effect in driver.tick(now, &obs).effects {
-            match effect {
-                // T-185: `stop.flag` = the user paused filtering on purpose.
-                // The service is down and must stay down until they resume —
-                // don't respawn it. The flag is cleared by the tray's
-                // "Відновити фільтрацію" or by a fresh watcher launch, never
-                // here.
-                Effect::Spawn if stop_flag_is_set(&app_data) => {
-                    tracing::info!(
-                        "watchdog: stop.flag present — not respawning dnsqb-service (paused)"
-                    );
-                }
-                Effect::Spawn => match spawn_sibling(InstanceRole::Service) {
-                    Ok(_child) => {
-                        tracing::warn!("watchdog: respawned dnsqb-service");
-                        pipe = None;
-                        admin = None;
-                    }
-                    Err(err) => {
-                        tracing::error!("watchdog: failed to respawn dnsqb-service: {err}");
-                    }
-                },
-                Effect::LogGaveUp => tracing::error!(
-                    "watchdog: gave up restarting dnsqb-service after the retry budget - \
-                     manual recovery needed"
-                ),
-                Effect::WriteState(file) => {
-                    if let Err(err) = write_watchdog_state(&app_data, &file) {
-                        tracing::warn!("could not write watchdog-state.json: {err}");
-                    }
-                }
-                // The pid file is re-read next tick, driven by `driver.state()`.
-                Effect::VerifyPid => {}
+        apply_watchdog_effects(
+            driver.tick(now, &obs).effects,
+            &app_data,
+            &mut pipe,
+            &mut admin,
+        );
+    }
+}
+
+/// Carry out one tick's [`Effect`]s. Split out of
+/// [`run_watcher_to_service_watchdog`] to keep that loop under the line cap;
+/// it drops the cert-pinned clients after a respawn so the next tick rebuilds
+/// them against the new process (§7.1 #10).
+#[cfg(windows)]
+fn apply_watchdog_effects(
+    effects: Vec<Effect>,
+    app_data: &Path,
+    pipe: &mut Option<HeartbeatPipeClient>,
+    admin: &mut Option<AdminClient>,
+) {
+    for effect in effects {
+        match effect {
+            // T-185: `stop.flag` = the user paused filtering on purpose. The
+            // top-of-loop check normally freezes the whole tick before we reach
+            // here; this arm is the backstop for the one-tick race where the
+            // flag is set during that iteration's `.await`s, after the check
+            // passed. Either way — don't respawn the service.
+            Effect::Spawn if stop_flag_is_set(app_data) => {
+                tracing::info!(
+                    "watchdog: stop.flag present — not respawning dnsqb-service (paused)"
+                );
             }
+            Effect::Spawn => match spawn_sibling(InstanceRole::Service) {
+                Ok(_child) => {
+                    tracing::warn!("watchdog: respawned dnsqb-service");
+                    *pipe = None;
+                    *admin = None;
+                }
+                Err(err) => {
+                    tracing::error!("watchdog: failed to respawn dnsqb-service: {err}");
+                }
+            },
+            Effect::LogGaveUp => tracing::error!(
+                "watchdog: gave up restarting dnsqb-service after the retry budget - \
+                 manual recovery needed"
+            ),
+            Effect::WriteState(file) => {
+                if let Err(err) = write_watchdog_state(app_data, &file) {
+                    tracing::warn!("could not write watchdog-state.json: {err}");
+                }
+            }
+            // The pid file is re-read next tick, driven by `driver.state()`.
+            Effect::VerifyPid => {}
         }
     }
 }

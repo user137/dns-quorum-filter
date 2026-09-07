@@ -59,11 +59,18 @@ flowchart TD
 на старті; watcher у heartbeat-лупі прапор лише ПОВАЖАЄ** (бачить → не респавнить службу),
 ніколи не чистить там — інакше headless-запуск не зміг би відновитись.
 
+Поки `stop.flag` існує, heartbeat-луп watcher'а **повністю заморожений** — `LoopDriver::tick` не
+викликається взагалі (не лише глушиться `Effect::Spawn`): pure-`tick` сам витрачає `RestartBudget`
+і за ~5 спроб заганяє автомат у термінальний `GaveUp`. Заморожений луп перестає переписувати
+`watchdog-state.json` → протухає за 15 с — це і є чесний сигнал «нагляд є, свідомо не супроводжує»;
+трей показує окремий `TrayStatus::Paused` прямо з наявності прапора. Перезапуск застосунку
+знімає паузу (старт чистить `stop.flag`) — сказано в confirm-діалозі.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Running: плитка / логін
-    Running --> Paused: трей «Призупинити фільтрацію»<br/>(/admin/shutdown пише stop.flag)
-    Paused --> Running: трей «Відновити фільтрацію»<br/>(spawn_sibling(Service), старт чистить stop.flag)
+    Running --> Paused: трей «Призупинити фільтрацію»<br/>(stop.flag + /admin/shutdown; heartbeat-луп заморожено)
+    Paused --> Running: трей «Відновити фільтрацію»<br/>(clear stop.flag + spawn_sibling(Service))
     Running --> Exited: трей «Вийти з DNS Quorum Filter»<br/>(stop.flag + сигнал watcher'у на вихід)
     Paused --> Exited: трей «Вийти…»
     Exited --> Running: плитка / логін (старт watcher чистить stop.flag)
@@ -91,7 +98,10 @@ stateDiagram-v2
   каже «не стартувати другий watcher», не каже, що робити ще; T-187 дає йому єдину корисну дію
   (показати іконку) — стандартний single-instance-патерн «повторний запуск → показати вікно».
 - **`stop.flag` як механізм навмисної зупинки** — новий cross-process сигнал, DECISIONS.md
-  (T-185). §7 описував лише авто-нагляд, не навмисний вихід користувача.
+  (T-185). §7 описував лише авто-нагляд, не навмисний вихід користувача. Closing-advisor Батча
+  3.12: прапор **заморожує весь `tick`**, а не лише `Effect::Spawn` (інакше `RestartBudget`
+  вигорає → durable `GaveUp`); трей дістає окремий `TrayStatus::Paused`; пауза не переживає
+  перезапуск застосунку.
 - **Трей-запобіжник `ensure_running(Watcher)`** — трей формально launcher-scope (§7), не
   супервізор; запобіжник — лише для ручного запуску не того `.exe`, не постійний нагляд.
 

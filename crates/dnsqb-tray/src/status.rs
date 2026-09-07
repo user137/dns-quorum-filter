@@ -34,6 +34,13 @@ pub enum TrayStatus {
     /// The watchdog's restart budget is spent — `dnsqb-service` is stopped,
     /// awaiting manual recovery (T-95, `GaveUp`).
     ServiceGaveUp,
+    /// Filtering is paused on purpose (T-185) — the user clicked "Призупинити
+    /// фільтрацію". `dnsqb-service` is intentionally down and the watchdog is
+    /// intentionally not respawning it; the presence of `stop.flag` is the
+    /// whole signal. Outranks every watchdog and admin-channel state, since
+    /// while paused the watchdog file goes stale by design and the admin
+    /// channel is unreachable.
+    Paused,
     /// The machine has no internet connectivity (T-152). Ranked directly
     /// below the watchdog states and above `NoActiveProvider` — an
     /// environment failure the user can't fix by toggling providers
@@ -109,6 +116,9 @@ impl TrayStatus {
             Self::ServiceGaveUp => {
                 "DNS Quorum Filter: служба зупинилася \u{2014} відкрийте вікно, щоб перезапустити"
                     .to_string()
+            }
+            Self::Paused => {
+                "DNS Quorum Filter: фільтрацію призупинено \u{2014} увімкніть через меню".to_string()
             }
             Self::Offline => {
                 "DNS Quorum Filter: немає інтернету \u{2014} перевірки призупинено".to_string()
@@ -345,6 +355,15 @@ mod tests {
     }
 
     #[test]
+    fn paused_tooltip_names_the_state_plainly_and_not_as_a_failure() {
+        // T-185: a deliberate pause must not read as "служба недоступна" /
+        // "зупинилася" — those are failure states, this one the user chose.
+        let tooltip = TrayStatus::Paused.tooltip();
+        assert!(tooltip.contains("призупинено"), "got: {tooltip}");
+        assert!(!tooltip.contains("недоступна"), "got: {tooltip}");
+    }
+
+    #[test]
     fn no_active_provider_state_never_carries_a_degraded_signal() {
         // Even if the log still holds Timeout entries from before providers
         // were disabled (AdminStats::degraded_events's own doc comment) -
@@ -433,6 +452,18 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
             // rather than cached as permanent.
             let mut client: Option<AdminClient> = None;
             loop {
+                // T-185 (Батч 3.12): filtering paused from the tray menu.
+                // `stop.flag`'s presence is the whole signal and outranks
+                // everything below — while paused the watchdog stops rewriting
+                // its state file (so `watchdog_override` would fall through to
+                // a misleading "Unreachable") and `dnsqb-service` is
+                // deliberately down. Checked on this 2s poll cadence, not on
+                // the main thread's 100ms event-loop tick.
+                if dnsqb_service::stop_flag_is_set(&app_data_dir) {
+                    *current.write() = TrayStatus::Paused;
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
                 // T-95: the watchdog's own state file wins over anything the
                 // admin channel could say — a restarting or given-up service is
                 // unreachable on that channel by definition, so the still-alive

@@ -310,9 +310,14 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   `/admin/uninstall-local-state`) — для випадку, коли трей недоступний.
 **Група керування життям (T-185):**
 
-- **Призупинити / Відновити фільтрацію** — один пункт, лейбл фліпається за `stop.flag`.
-  «Призупинити» (за confirm-діалогом) пише `stop.flag` (watchdog більше не респавнить службу)
-  + шле `POST /admin/shutdown`. «Відновити» прибирає `stop.flag` + `ensure_sibling_running(Service)`.
+- **Призупинити / Відновити фільтрацію** — один пункт, лейбл фліпається за `stop.flag`
+  (event-loop перечитує прапор раз на секунду, не на кожному 100 мс тіку).
+  «Призупинити» (за confirm-діалогом) пише `stop.flag` + шле `POST /admin/shutdown`. Поки
+  `stop.flag` існує, heartbeat-луп watcher'а **повністю заморожений** (не тікає автомат — інакше
+  `RestartBudget` вигорає й автомат іде в `GaveUp`), тож службу не респавнить, а
+  `watchdog-state.json` навмисно протухає. Confirm-діалог каже, що зняти паузу можна «Відновити
+  фільтрацію» **або** перезапуском застосунку (старт чистить `stop.flag`). «Відновити» прибирає
+  `stop.flag` + `ensure_sibling_running(Service)`.
 - **Відновити нагляд** — `ensure_sibling_running(Watcher)`; завжди в меню, ідемпотентно (no-op,
   якщо watcher живий). Єдиний ручний шлях підняти мертвий watcher — авто-нагляд за самим
   watcher'ом ще не зроблено.
@@ -332,7 +337,10 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
 розрізняються для користувача), **`ServiceRestarting` / `ServiceGaveUp`** (T-95 — читаються прямо
 з `watchdog-state.json`, перевіряються **перед** `/admin/status` у циклі поллінгу, бо сервіс під
 час рестарту недосяжний на admin-каналі; ранг вище за `NoActiveProvider` — DECISIONS.md
-2026-09-02), `NoActiveProvider` (жоден провайдер не активний), `Filtering`
+2026-09-02), `Paused` (T-185 — читається прямо з наявності `stop.flag`, ранг **вище** за
+watchdog-стани й admin-канал: під час навмисної паузи `watchdog-state.json` протухає, а сервіс
+недосяжний, тож без цього стану tooltip показував би оманливе `Unreachable`),
+`NoActiveProvider` (жоден провайдер не активний), `Filtering`
 (нормальна робота, з живими blocked/total/in_flight числами). **T-56 (2026-08-29)**: `Filtering`
 несе ще два поля, `degraded_events`/`degraded_window` — скільки з останніх 20 записів із
 `decision_source = QUORUM` мали хоча б один голос `Timeout`/`Error`. Це не четвертий стан, а
