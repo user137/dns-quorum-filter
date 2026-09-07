@@ -754,9 +754,13 @@ voter-scope винятку). T-121 згорнуто в T-107 (те саме — 
   редистрибуція похідного списку в Apache-2.0-продукті несумісна); CrUX (CC BY 4.0) — провідний
   кандидат. Джерела: `cloudflare-docs/.../radar/index.mdx`, `developer.chrome.com/docs/crux/methodology`,
   `zakird/crux-top-lists`. (Відкриті питання п.7 закрито.)
-- [ ] T-179 — (Батч 4.0) Прибрати `VoterScopeView` / `LogEntryView.voter_scope` (`admin.rs`,
-  `query_log.rs` doc, `UI-SPEC.md`, `diagrams/ui-dto-model.md`) — жоден шлях більше не звужує
-  voter-набір, `SECURITY_ONLY` непродукований; поле ніколи не рендерилось UI (T-179)
+- [x] T-179 — (Батч 4.0) **Зроблено 2026-09-07** — Фаза 4 re-scope: §5.1 (voter-scope виключення
+  топ-сайтів) прибрано, злито в рейтинговий фільтр §5.3 «бульбашка»; §5.1.1 переюзано як 4-те
+  персональне джерело зон; рейтинг-фільтр Ф5→Ф4, Ф5 = ccTLD (§5.2) + i18n; `VoterScopeView` /
+  `LogEntry.voter_scope` видалено (жоден шлях не звужує voter-набір, `SECURITY_ONLY`
+  непродукований; поле ніколи не рендерилось UI). SPEC/DECISIONS/TASKS/CLAUDE/UI-SPEC/діаграми
+  синхронізовано; нова `diagrams/rating-filter.md`. Деталі — TASKS-DONE.md. (Відкриті питання
+  п.7, п.11 закрито.)
 - [ ] T-107 — Конвеєр курації: fetch чисто-ліцензованого per-country топ-N рейтингу (CrUX CC BY 4.0
   — провідний кандидат) → нормалізація origin→registrable + вибір бакета → публікація
   версійованого per-country файлу + `.sha256`; токен джерела належить проєкту, не вбудований у

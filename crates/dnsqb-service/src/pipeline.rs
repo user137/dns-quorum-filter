@@ -1,6 +1,8 @@
 //! T-39: end-to-end request pipeline — allowlist → blocklist → cache →
-//! quorum (SPEC.md §5 steps 1-3+5). Voter scope (step 4, top-N per country)
-//! isn't implemented yet — Фаза 4. RFC 8767 stale-if-error integration
+//! quorum (SPEC.md §5). The intermediate §5.3 pipeline steps — ccTLD block
+//! (§5.2) and the opt-in rating filter (§5.3) — aren't implemented yet
+//! (Фаза 4/5); the former voter-scope step (§5.1) was removed at T-179.
+//! RFC 8767 stale-if-error integration
 //! (`should_serve_stale` stays an unconsumed predicate here) is also
 //! deferred — see TASKS.md. Not wired to any network listener yet
 //! (T-48 waits on the self-signed certificate).

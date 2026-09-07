@@ -4054,3 +4054,73 @@ DECISIONS.md 2026-09-07).
 курації (T-107), не клієнтський механізм завантаження.
 
 **Файли (T-105/T-106):** `SPEC.md`, `TASKS.md`, `TASKS-DONE.md`, `DECISIONS.md`.
+
+### T-179 — Фаза 4 re-scope: §5.1 voter-scope прибрано, злито в рейтинговий фільтр «бульбашка» (Батч 4.0)
+
+**Зроблено 2026-09-07** (plan-mode + advisor kickoff+closing; 5 комітів + closing-advisor
+follow-up коміт). Реверс shipped-spec-рішення — обґрунтування в `DECISIONS.md` (2026-09-07);
+цей запис фіксує **що саме змінено** й **як звірено**.
+
+**Причина (порядок важливий для «чи можна §5.1 відродити»):** (1) уточнення задуму користувача —
+механізм топ-сайтів **завжди був однією фічею** («не в списку → блок; у списку → далі конвеєром»),
+не окремим always-on звуженням voter-набору; поточний текст §5.1 — дрейф, внесений правкою
+24 серпня (`31bd138`). (2) T-106 + T-104 — **незалежне підтвердження**, що навіть дрейфова версія
+§5.1 не спрацювала б: нема чисто-ліцензованого ординального per-country джерела (Radar CC BY-NC),
+Ads FP ≈ 0 для дефолту, Adult blanket-виняток backfire'ить (розблокував би реально-adult
+популярні сайти).
+
+**SPEC.md:** §5.1 → superseded-нотатка (заголовок збережено, CLAUDE.md «не депрекувати мовчки»);
+§5.1.1 → переписано як **4-те персональне джерело зон** рейтинг-фільтра (opt-in, default-OFF,
+окреме шифроване сховище, сигнал — лише вже-`ALLOW`-вердикти кворуму; тільки **додає** домени);
+§5.3 → ядро Фази 4, «чотири складові зведених зон» (курований топ-N ∪ держ ∪ освітні ∪
+персональний §5.1.1); §5 і §5.3 конвеєр-діаграми — крок «Voter scope» прибрано, перенумеровано
+(1 Allowlist · 2 Blocklist · 3 ccTLD · 4 Cache · 5 Рейтинг-фільтр · 6 Quorum · 7 GeoIP); §6
+лог-таблиця — рядок `voter_scope` прибрано; Відкриті питання п.7 і п.11 закрито, п.8 лишається;
+Фазований план — Ф4 = рейтинг-фільтр + топ-N інфра, Ф5 = ccTLD (§5.2) + i18n (T-151).
+**GeoIP лишається кроком 7 (після кворуму)** — фільтрує за країною резолвленої IP, якої до
+кворуму не існує (data dependency); пре-кворумний country-блок — це ccTLD (§5.2, рядкова
+перевірка).
+
+**DECISIONS.md:** датований запис 2026-09-07 (реверс §5.1) з порядком причин вище.
+
+**TASKS.md:** блок «План виконання Ф4» переписано під нову модель; re-partition — уся T-120–T-131
+у Фазу 4, у Ф5 лишається тільки T-115–T-119 + T-151; T-121 згорнуто в T-107; T-120
+переформульовано як внутрішньо-Ф4 гейт; T-138 — «персональне локально навчене джерело зон
+бульбашки»; T-104/T-105/T-106 → `[x]`; знято T-109/T-110/T-112/T-113/T-114 (механіка
+voter-scope винятку).
+
+**Код (`.rs`, тригерив CI — коміт `f778f45`):** `crates/dnsqb-service/src/admin.rs` — видалено
+`enum VoterScopeView`, поле `LogEntryView.voter_scope`, ініціалізацію в `from_entry`, імпорт і
+тест `voter_scope_view_wire_strings_match_spec`, ассерт `view.voter_scope`. `query_log.rs` —
+module-doc оновлено. Обґрунтування прибирання трасує **нову модель**: бульбашка in-zone →
+звичайний конвеєр, повний voter-набір; out-of-zone → BLOCK, кворум не запускається; персональний
+§5.1.1 → лише додає домени. Жоден шлях не звужує voter-набір → `SECURITY_ONLY` непродукований.
+`ui/main.js` / `ui/index.html` поле не рендерили (перевірено) → на практиці не breaking-зміна
+wire-форми. Closing-advisor follow-up: `pipeline.rs` module-doc — застаріла згадка «Voter scope
+(step 4)» замінена.
+
+**Похідні доки + діаграми:** `CLAUDE.md` (phase-line, Request-pipeline таблиця, module-table,
+key-decisions), `UI-SPEC.md` (рядок `voter_scope` видалено цілком — колонка була заспецифікована,
+ніколи не збудована), `diagrams/ui-dto-model.md` (клас `VoterScope` прибрано, SOURCES + дата),
+`diagrams/ui-navigation.md` (вузол `Advanced`), `PERFORMANCE.md` (pipeline-таблиця), **нова
+`diagrams/rating-filter.md`** (позиція бульбашки в конвеєрі + 4 джерела зон), `diagrams/README.md`
+індекс. README.md «Як працює фільтрація» — крок «Вибір провайдерів» прибрано, 8→7 кроків
+(closing-advisor).
+
+**Звірка діаграм:** прогнано, зачеплено 4 діаграми (`ui-dto-model.md`, `ui-navigation.md`,
+`rating-filter.md` нова, `README.md` mermaid), оновлено 4, GAP: 0.
+
+**Верифікація:** `cargo test --workspace --lib --bins --doc` + `cargo clippy --workspace
+--all-targets -- -D warnings` + `cargo fmt --all -- --check` + `cargo doc` (RUSTDOCFLAGS=-D
+warnings) — зелені локально; CI run `34124131117` (коміт `f778f45`) — success.
+`rg "voter_scope|VoterScope|SECURITY_ONLY" crates/ SPEC.md UI-SPEC.md CLAUDE.md` — 0 живих
+згадок (лише DECISIONS.md / TASKS-DONE.md історія + SPEC §5.1 superseded-нотатка).
+
+**Обсяг:** тільки реструктуризація дизайну/доків + прибирання мертвого DTO. Реалізація курації
+(T-107/T-108) і клієнтського рейтинг-фільтра — наступні батчі, власні plan+advisor.
+
+**Файли:** `SPEC.md`, `DECISIONS.md`, `TASKS.md`, `TASKS-DONE.md`, `CLAUDE.md`, `UI-SPEC.md`,
+`PERFORMANCE.md`, `README.md`, `crates/dnsqb-service/src/admin.rs`,
+`crates/dnsqb-service/src/query_log.rs`, `crates/dnsqb-service/src/pipeline.rs`,
+`crates/dnsqb-service/examples/topn_fp_probe.rs`, `diagrams/rating-filter.md` (нова),
+`diagrams/ui-dto-model.md`, `diagrams/ui-navigation.md`, `diagrams/README.md`.
