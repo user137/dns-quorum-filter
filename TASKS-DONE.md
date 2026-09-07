@@ -3976,3 +3976,41 @@ v0.3.0^{commit}` == `bd2ec61` до пушу); тег пушиться сам (`g
 **Файли:** `packaging/Trust-TestCert.ps1` (новий), `packaging/pack-msix.ps1`,
 `.github/workflows/release.yml`, `packaging/README.md`, `README.md`, `CLAUDE.md`, `SECURITY.md`,
 `TASKS.md`, `TASKS-DONE.md`.
+
+### T-104 — метрик-проба Ф4: FP-rate Ads/Adult-voters на per-country топ-N (Батч 4.0)
+
+**Зроблено 2026-09-07.** Починалась як гейт §5.1; §5.1 прибрано (T-179) — проба лишається як
+**вхід у дизайн зон рейтинг-фільтра §5.3**.
+
+**Інструмент:** `crates/dnsqb-service/examples/topn_fp_probe.rs` (новий, manual, не CI — родич
+`phase1_metrics.rs`: `all_builtin_presets()` / `ReqwestDohClient` / DNS-lookup-only / two-baseline
+gate T-174). Корпус — реальні per-country топ-N з CrUX (`InternetHealthReport/crux-top-lists-country`
+GitHub-дзеркало, `<cc>/<yyyymm>.csv.gz`, `origin,rank`; CC BY 4.0, тягнеться лише для приватної
+разової вимірки — нічого похідного не редистрибутується). `flate2::GzDecoder` для gunzip;
+`current_year_month()` (Hinnant civil-from-days, без `chrono`) + walk-back до 12 міс для
+найсвіжішого опублікованого файлу.
+
+**Прогін:** n=318 (з 375 sampled; 52 домени пропущено на transient Quad9/`dns10` HTTP-помилках —
+проба rate-hit Quad9 під навантаженням, skip не partial-count; 3 — two-baseline gate), топ-75/країну
+× {us, de, ua, jp, br}, CrUX 202607. Сирий вивід: scratchpad `t104_topn_fp_probe_2026-09-07.txt`;
+аналіз: `t104_verdict_2026-09-07.md`.
+
+**Результат:**
+- **Ads-tier (`adguard`, дефолтний voter) FP ≈ 0 %** — 3/318 сирих, усі 3 (`luugy.com`×2,
+  `bef77.com`) ad/malvertising-adjacent, не легітимні сайти. Для дефолтної конфігурації чистити
+  нема що.
+- **Adult-tier 75/318 = 23.6 % сирих блоків, але переважно КОРЕКТНІ** блоки реально-adult
+  популярних сайтів (CrUX ранжує за трафіком, не темою — `noodlemagazine.com` у топ-1000 US,
+  дюжини porn/hentai-доменів у кожній країні). Залишковий true-FP ≈ 3–4 % — здебільшого
+  `dns4eu-child` (блокує gambling + частину anime/manga за політикою провайдера) + кілька
+  `adguard-family` на anime-порталах.
+- **Ядро §5.1 частково спростовано для Adult:** «топ-N країни = легітимний трафік» не тримається —
+  значна частка реального нацтрафіку **є** adult-контентом. Blanket-виняток топ-N з Adult-voters
+  **розблокував би** ці сайти. Наслідок для §5.3: курація зони топ-N мусить фільтрувати
+  adult/gambling (T-108), інакше бульбашка пропускає їх повз рейтинг-фільтр.
+
+**Разом із T-106** (нема чисто-ліцензованого ординального per-country джерела) це привело до
+рішення «Варіант 1» — §5.1 прибрано, механізм топ-сайтів = рейтинговий фільтр §5.3 (T-179,
+DECISIONS.md 2026-09-07).
+
+**Файли:** `crates/dnsqb-service/examples/topn_fp_probe.rs` (новий), `TASKS.md`, `TASKS-DONE.md`.
