@@ -4124,3 +4124,70 @@ warnings) — зелені локально; CI run `34124131117` (коміт `f
 `crates/dnsqb-service/src/query_log.rs`, `crates/dnsqb-service/src/pipeline.rs`,
 `crates/dnsqb-service/examples/topn_fp_probe.rs`, `diagrams/rating-filter.md` (нова),
 `diagrams/ui-dto-model.md`, `diagrams/ui-navigation.md`, `diagrams/README.md`.
+
+### Батч 3.12 — пост-Ф3 hotfix: MSIX UX / процесна модель (T-181–T-185, T-187; зроблено 2026-09-07, plan+advisor kickoff+closing, 7 кодових комітів)
+
+Живий прогін опублікованого `v0.3.0` MSIX виявив кластер багів: плитка Пуску відкривала вікно
+термінала, до якого «прив'язаний» сервіс (закрив термінал → усе впало); трей-іконка — бірюзовий
+квадрат замість гексагона; незрозуміло, як усе коректно зупинити. Прецедент — T-178 (пост-Ф3 фікс
+MSIX того ж класу: реліз опубліковано, баг у реальному використанні, окремий plan+advisor).
+Kickoff-план розклав це на матрицю життя 3 бінарників × 15 сценаріїв (S1–S15) + цільову модель
+точок входу (watcher лишається коренем — best practice, не інверсія на трей).
+
+- [x] **T-181** — `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` додано в
+  `dnsqb-service` + `dnsqb-watcher` `main.rs` (як у `dnsqb-tray`). Release/MSIX — без вікна;
+  debug лишає консоль для `cargo run`. Це саме по собі прибирає термінал на старті плитки й
+  каскадне `CTRL_CLOSE`-вбивство групи процесів. Коміт `3338db8`.
+- [x] **T-184** — файловий лог для всіх трьох бінарників: новий `crates/dnsqb-service/src/logging.rs`
+  (`init_logging(role, app_data_dir)` → `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`), безротаційний
+  `tracing_subscriber::fmt().with_writer(Arc<File>)` (нуль нових залежностей — обрано замість
+  `tracing-appender`), фіксований INFO, старт-ротація на `.log.old` при 5 MiB. Debug додатково пише
+  в stdout. Sweep call-site'ів на витік доменів (`reqwest::Error` Display несе DoH-URL) — жоден не
+  на мережевому шляху. Другим у порядку — лог має існувати ДО найризикованіших змін (T-182/T-187).
+  Коміт `383ebf7`.
+- [x] **T-183** — трей-іконка перегенерована з поточного гексагона: `assets/gen-icon.py` дістав
+  `make_tray_glyph()` (прозорий фон + білий гліф, 32×32) → `crates/dnsqb-tray/icons/tray-32-rgba.bin`
+  (4096 байт); застарілий `icon_32x32_rgba.bin` (копія видаленої Tauri-іконки `dnsqb-ui`) видалено.
+  Іконка `.exe` (T-177) — окремий механізм, не чіпалась. Коміт `074e899`.
+- [x] **T-182** — `spawn_sibling` відв'язує дітей: `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`
+  через безпечний `CommandExt::creation_flags` (жодного `unsafe`), fallback лише на `DETACHED_PROCESS`
+  при `ERROR_ACCESS_DENIED` (job забороняє breakaway — MSIX-контейнер). Defense-in-depth: краш
+  watcher'а більше не забирає peer'ів. Коміт `61d1bd8`.
+- [x] **T-187** — watcher лишається коренем (T-156 / `AppxManifest` НЕ чіпається): спавнить трей
+  **першим** (іконка за ~0.2 с), службу другою; `AlreadyRunning`-гілка (повторний клік плитки) тепер
+  `ensure_sibling_running(Tray)` + `exit(0)` замість `exit(1)` — «клік плитки = покажи іконку».
+  `ensure_sibling_running` винесено з `dnsqb-watcher/main.rs` у `watchdog::launcher` (спільний helper,
+  re-export); трей-запобіжник `ensure_sibling_running(Watcher)` при standalone-запуску. Нова
+  `diagrams/process-lifecycle.md`. Коміт `025c20d`.
+- [x] **T-185** — семантика пауза / вихід / відновлення нагляду: два флаг-файли (`stop.flag` пауза,
+  `quit.flag` вихід), присутність = увесь сигнал; новий `crates/dnsqb-service/src/lifecycle.rs`.
+  Правило «clear on startup, honor in loop». Меню трея перебудовано (Варіант B, узгоджено з
+  користувачем): «Призупинити ↔ Відновити фільтрацію», «Відновити нагляд», «Вийти з DNS Quorum
+  Filter» (confirm-діалог), «Сховати іконку». DECISIONS.md 2026-09-07. Коміт `580e366`.
+  **Closing-advisor (коміти `e1cd607`, `<pending>`):** (1) `stop.flag` **повністю заморожує**
+  heartbeat-луп — `LoopDriver::tick` не викликається взагалі, бо pure-`tick` сам витрачає
+  `RestartBudget` (`register_attempt` на `Restarting`) і веде автомат у термінальний `GaveUp`
+  (`transition.rs` `S::GaveUp => S::GaveUp`); глушіння лише `Effect::Spawn` в impure shell —
+  запізно. (2) новий `TrayStatus::Paused` (читається з `stop.flag` у поллінг-потоці, ранг вище за
+  watchdog/admin) — інакше пауза читалась би як оманливе `Unreachable`. (3) `confirm_pause` текст:
+  паузу знімає й перезапуск застосунку. (4) event-loop перечитує `stop.flag` раз/с, не на 100 мс
+  тіку. (5) заморожений луп логує freeze/resume раз на перехід (без консолі лог — єдина
+  діагностика). Витягнуто `apply_watchdog_effects` (line cap).
+
+**Верифікація (T-181–T-187):** `cargo fmt --check` + `cargo clippy --workspace --all-targets -D
+warnings` + `cargo test --workspace --lib --bins` (663) + `--doc` + `cargo doc` (RUSTDOCFLAGS=-D
+warnings) — зелені; `dumpbin /headers` → `2 (Windows GUI)` для release, `3 console` для debug;
+CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручний чистий MSIX-прогін + бамп
+`v0.3.1` — T-186.
+
+**Звірка діаграм:** нова `diagrams/process-lifecycle.md` (бутстрап watcher→tray→service, точки
+входу, stop/pause/resume); `diagrams/watchdog-{state,channels}.md` — звірено, змін не потребують
+(топологію запуску не описують); `diagrams/README.md` індекс оновлено. GAP: 0.
+
+**Файли:** `crates/dnsqb-{service,watcher,tray}/src/main.rs`, `crates/dnsqb-tray/src/status.rs`,
+`crates/dnsqb-service/src/watchdog/{spawn,launcher}.rs`, нові
+`crates/dnsqb-service/src/{logging,lifecycle}.rs`, `crates/dnsqb-service/src/lib.rs` (re-export),
+`assets/gen-icon.py`, `crates/dnsqb-tray/icons/tray-32-rgba.bin` (нова; `icon_32x32_rgba.bin`
+видалено), `.gitignore`, `SPEC.md`, `DECISIONS.md`, `SERVICES.md`, `CLAUDE.md`, `TASKS.md`,
+`diagrams/process-lifecycle.md` (нова), `diagrams/README.md`. **НЕ чіпалось:**
+`packaging/AppxManifest.template.xml`, `packaging/pack-msix.ps1` (T-156 стоїть).

@@ -218,9 +218,11 @@ Modules under `crates/dnsqb-service/src/`:
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
+| `logging` | T-184 (Батч 3.12): `init_logging(role, app_data_dir)` — all 3 binaries call it once → `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`. Dependency-free `tracing_subscriber::fmt().with_writer(Arc<File>)` (no `tracing-appender`), fixed INFO, no `env-filter`; startup rotation to `.log.old` at 5 MiB. Debug build also writes stdout. Exists because T-181 removed the console — the file is the only diagnostic |
+| `lifecycle` | T-185 (Батч 3.12): `stop.flag` (pause — watcher freezes the whole heartbeat tick, doesn't respawn) / `quit.flag` (exit — watcher stops the service + exits). `set_/clear_/…_flag(app_data_dir)`; presence *is* the signal, contents unread. **Separate files, not `watchdog-state.json`** (§7.1 #7 single-writer kept). Rule "clear on startup, honor in loop": `dnsqb-watcher::main` clears both; the heartbeat loop only reads `stop.flag`. A fresh app launch therefore lifts a pause (DECISIONS.md 2026-09-07) |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). **T-176:** the page is now basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, danger-zone) — IDs unchanged, `main.js` cycles untouched. Mockup: `mockups/gui-dashboard.html` (user-approved); UI-SPEC.md §2.1 |
-| `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
+| `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency; **T-187** added the impure shell `ensure_sibling_running(app_data, role)` = read pid file → `verify_pid_alive` → `plan_launch` → `spawn_sibling`, re-exported from `lib.rs`, called by both `dnsqb-watcher` and the `dnsqb-tray` safety net). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
@@ -248,19 +250,29 @@ Every route that re-serializes `resolver_config.toml` shares
 `state.persist_lock` and reads the other fields' live values before saving — the cross-field-read
 discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77).
 
-`dnsqb-tray` — tray icon (`tray-icon` / `tao` / `rfd`), polls `/admin/status` on its own OS thread;
-menu: "Restart" = soft `/admin/reset` (clear cache + log, re-read both TOMLs), "Stop filtering" =
-confirm-gated `/admin/shutdown`, "Close" exits the tray only, plus a confirm-gated cert group
-(T-49/T-69): "Встановити"/"Видалити сертифікат" (`ensure_installed`/`uninstall`) and "Перевипустити
-сертифікат" (`cert_rotation::rotate_certificate` — reissue + re-trust; needs a manual `dnsqb-service`
-restart before the new cert is served — until then the running service still presents the previous,
-now-untrusted cert and the browser warns on `/admin/ui`; the tray's own cached-client status poll
-is unaffected). Also takes the `Tray` single-instance guard + writes `tray.pid` on startup
-(T-150 — the watcher's launcher needs a `tray.pid` to detect it; a second instance exits
-quietly). Replaced the deleted Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tooltip states:
+`dnsqb-tray` — tray icon (`tray-icon` / `tao` / `rfd`), polls `/admin/status` on its own OS thread.
+Menu **rebuilt in T-185** (Варіант B lifecycle group at the bottom): "Відкрити налаштування"
+(browser → `/admin/ui`) · "Скинути кеш і лог" (soft `/admin/reset`) · "Про програму" · cert group
+(T-49/T-69: "Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю видалити" (T-70) ·
+**"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; pause = `set_stop_flag` +
+`/admin/shutdown` behind a confirm dialog, resume = `clear_stop_flag` + `ensure_sibling_running(Service)`)
+· **"Відновити нагляд"** (`ensure_sibling_running(Watcher)` — the only manual recovery for a dead
+watcher) · **"Сховати іконку"** (exits the tray only) · **"Вийти з DNS Quorum Filter"** (confirm
+dialog → `set_stop_flag` + `set_quit_flag` + `ControlFlow::Exit`; the watcher's next tick sees
+`quit.flag`, stops the service and exits). Cert/rotation notes unchanged (a rotation needs a
+manual `dnsqb-service` restart before the new cert is served). Also takes the `Tray`
+single-instance guard + writes `tray.pid` on startup (T-150), and (T-187) runs
+`ensure_sibling_running(Watcher)` as a safety net if launched standalone. Replaced the deleted
+Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tray runtime icon: `crates/dnsqb-tray/icons/tray-32-rgba.bin`
+(T-183 — transparent bg + white hexagon glyph, generated by `gen-icon.py`'s `make_tray_glyph`; the
+pre-T-183 blob was a stale copy of the deleted `dnsqb-ui` Tauri icon and rendered as a teal square).
+Tooltip states:
 `Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
 `status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —
-DECISIONS.md 2026-09-02) / `Offline` (T-152 — `from_response` returns it before `NoActiveProvider`
+DECISIONS.md 2026-09-02) / `Paused` (T-185 — read straight from `stop.flag` in the poll thread,
+ranked **above** the watchdog/admin states: while paused the watchdog file goes stale by design
+and the service is deliberately down, so without this a pause reads as a misleading `Unreachable`) /
+`Offline` (T-152 — `from_response` returns it before `NoActiveProvider`
 when `AdminStatusResponse.network == OFFLINE`; ranked below the watchdog states, above 0-voters —
 DECISIONS.md 2026-09-03) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
 suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK`
@@ -270,15 +282,26 @@ were reworded for a lay reader (`DNS Quorum Filter:` prefix, `Filtering` → "з
 
 `dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main` since Батч 3.3.
 `#[tokio::main(flavor = "current_thread")]` (§7.1 #9 — flavor, not features, keeps it
-single-threaded: the `dnsqb-service` lib dep unifies `rt-multi-thread` in regardless). Startup:
-`Watcher` guard + `watcher.pid`; **idempotent launcher (T-150)** — `ensure_sibling_running` for
-`dnsqb-service` and `dnsqb-tray`, once, via `plan_launch` + `verify_pid_alive` + `spawn_sibling`
-(tray is launcher-scope, never heartbeat-monitored). Then the `watcher→service` loop (5s tick:
+single-threaded: the `dnsqb-service` lib dep unifies `rt-multi-thread` in regardless).
+`windows_subsystem = "windows"` under `not(debug_assertions)` (T-181) — the MSIX entry point,
+so a console-subsystem build made the Start-menu tile open a terminal whose close killed the
+group. Startup: `dnsqb-watcher::main` **clears both `stop.flag` / `quit.flag`** (T-185 — a fresh
+launch is a clean slate, so an app restart also lifts a pause); `Watcher` guard + `watcher.pid`;
+**idempotent launcher (T-150 / T-187)** — `ensure_sibling_running(Tray)` **first** (icon in ~0.2 s),
+then `ensure_sibling_running(Service)`, once each; a second watcher instance (re-clicked tile) hits
+`AlreadyRunning` → `ensure_sibling_running(Tray)` + `exit(0)` ("click the tile again = show the
+icon"), clearing only `quit.flag`. Then the `watcher→service` loop (5s tick:
 IPC ping/pong channel 1, `service.hb`/`watcher.hb` channel 2, `GET /health` via cert-pinned
 `AdminClient` channel 3; `LoopDriver` 2-of-3 vote; `spawn_sibling(Service)` on a confirmed-dead
 service; **sole writer** of `watchdog-state.json`, rewritten every tick for `mtime` freshness).
-`resume`s a <90s-old state file via `LoopDriver::restored`. Depends on `dnsqb-service` as a lib
-(§7.1 #6).
+The loop checks `quit.flag` (→ stop service, `exit(0)`) and `stop.flag` (→ **freeze the whole
+tick**, don't call `LoopDriver::tick` at all — T-185 closing-advisor: `tick` itself spends a
+`RestartBudget` slot on `Restarting` and drives the automaton to the terminal `GaveUp`, so
+guarding only `Effect::Spawn` is too late; the frozen loop stops rewriting the state file, which
+goes stale by design, and logs freeze/resume once per transition). Children are spawned detached
+(T-182 — `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` via safe `creation_flags`, fallback to
+`DETACHED_PROCESS` alone on `ERROR_ACCESS_DENIED`). `resume`s a <90s-old state file via
+`LoopDriver::restored`. Depends on `dnsqb-service` as a lib (§7.1 #6).
 
 ### GeoIP workstream (Фаза 2)
 
@@ -1011,6 +1034,18 @@ reasoning (search by section number rather than re-deriving a decision from scra
   implementing, not by any test the first draft's shape would have passed (a test posting an
   oversized body would still have measured a correctly-rejected length either way — it's the
   allocation, not the final `Err`, that the wrong ordering fails to bound).
+- **Guarding an `Effect` in the impure shell is too late when the pure step that produced it
+  already mutated its own state as a side effect of producing it.** T-185's first cut suppressed
+  respawn during a deliberate pause by matching `Effect::Spawn if stop_flag_is_set(..)` in
+  `dnsqb-watcher`'s loop — but `LoopDriver::tick` (`loop_driver.rs`) calls
+  `RestartBudget::register_attempt(now)` itself whenever it sees `Restarting`, and `transition`
+  (`S::GaveUp => S::GaveUp`) is terminal, so a pause longer than the 5/600s budget drove the
+  automaton into a `GaveUp` that stuck against a healthy service after resume — until the watcher
+  process itself was restarted. Fix: skip the *whole* `tick()` while paused, not just the effect.
+  Same family as the `Limited::new`-after-`.collect()` entry above — the property has to be
+  enforced at the point the pure code runs, not inspected in the shell after it already ran.
+  Caught by the closing advisor of Батч 3.12, not by any gate (`fmt`/`clippy`/tests all green —
+  no test exercised a multi-cycle pause).
 - **Struct-level `#[serde(default, deny_unknown_fields)]` composes fine — a missing field falls
   back to `impl Default for TheStruct`'s corresponding field, an unknown key still fails loudly —
   but per-field `#[serde(default = "...")]` needs a *function path* returning that field's type,

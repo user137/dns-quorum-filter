@@ -193,6 +193,10 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
     let mut pipe: Option<HeartbeatPipeClient> = None;
     let mut admin: Option<AdminClient> = None;
     let mut seq: u64 = 0;
+    // Log the pause freeze / resume once per transition, not per tick — with no
+    // console (T-181) the log file is the only diagnostic, and an hours-long
+    // pause that wrote nothing would read as "the watcher died".
+    let mut supervision_frozen = false;
 
     loop {
         tokio::time::sleep(WATCHDOG_INTERVAL).await;
@@ -229,10 +233,18 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
         // unchanged. `watcher.hb` is still touched so the service's own
         // `service -> watcher` loop sees no gap when it comes back.
         if stop_flag_is_set(&app_data) {
+            if !supervision_frozen {
+                tracing::info!("watchdog: stop.flag present — supervision frozen (user paused)");
+                supervision_frozen = true;
+            }
             if let Err(err) = touch_heartbeat_file(&app_data, InstanceRole::Watcher) {
                 tracing::warn!("could not touch watcher.hb while paused: {err}");
             }
             continue;
+        }
+        if supervision_frozen {
+            tracing::info!("watchdog: stop.flag cleared — resuming supervision");
+            supervision_frozen = false;
         }
 
         // Channel 1: IPC ping/pong. A failed ping drops the client so the next
