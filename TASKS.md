@@ -734,9 +734,12 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   `icon_32x32_rgba.bin` (копія іконки видаленого Tauri `dnsqb-ui` = бірюзовий квадрат) видалено;
   CLAUDE.md gen-icon-рядок оновлено. Візуально підтверджено (гексагон на темному фоні). Іконка
   `.exe` окремо — вже є з T-177 (`app.ico` у всіх трьох через `build/win_resource.rs`).
-- [ ] T-182 — `spawn_sibling` відв'язує дітей: `creation_flags(DETACHED_PROCESS |
-  CREATE_BREAKAWAY_FROM_JOB)` через безпечний `CommandExt`, fallback лише `DETACHED_PROCESS`,
-  якщо job забороняє breakaway. `#![forbid(unsafe_code)]` цілий. Unit-тест композиції прапорів.
+- [x] T-182 — **зроблено 2026-09-07** — `watchdog/spawn.rs`: `spawn_detached(&Path)` через
+  безпечний `std::os::windows::process::CommandExt::creation_flags` (жодного `unsafe`) —
+  `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`; при `ERROR_ACCESS_DENIED` (raw OS 5, job
+  забороняє breakaway) — ретрай лише з `DETACHED_PROCESS`. Чиста `const fn detached_flags(bool)`;
+  `#[cfg(not(windows))]` — плоский spawn. Unit-тест на точні Win32-значення + fallback-композицію.
+  Локальні гейти зелені (660 lib+bins).
 - [ ] T-187 — watcher лишається коренем (T-156 не чіпаємо); спавнить трей **першим**, службу
   другою (іконка за ~0.2 с); повторний запуск watcher'а робить `ensure_running(Tray)` + `exit(0)`
   замість `exit(1)` (клік плитки = покажи іконку); спільний `ensure_running` helper у lib;

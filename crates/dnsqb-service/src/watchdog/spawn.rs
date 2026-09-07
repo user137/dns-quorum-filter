@@ -7,10 +7,40 @@
 //! [`resolve_sibling_path`] is pure — the current-exe path is a parameter.
 //! [`spawn_sibling`] is the thin impure shell: it reads `current_exe()` and
 //! spawns.
+//!
+//! **Детач (T-182).** On Windows the child is spawned with
+//! `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` so that (a) a respawn never
+//! flashes a console window (the binaries are `windows_subsystem = "windows"`
+//! since T-181, but a console-subsystem debug build would otherwise still
+//! attach one), and (b) the child is not torn down together with the
+//! launcher's job object — Explorer and an MSIX container place the launched
+//! app in a job that kills its processes on close, which is exactly how a
+//! `v0.3.0` user lost the whole stack by closing one window. If the job
+//! forbids breakaway the spawn falls back to `DETACHED_PROCESS` alone.
 
 use std::path::{Path, PathBuf};
 
 use super::instance::Role;
+
+/// `DETACHED_PROCESS` — the child gets no console, not even an inherited one.
+#[cfg(windows)]
+const DETACHED_PROCESS: u32 = 0x0000_0008;
+
+/// `CREATE_BREAKAWAY_FROM_JOB` — the child leaves the launcher's job object.
+#[cfg(windows)]
+const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+/// Win32 `CreateProcess` flags for a detached sibling. `allow_breakaway`
+/// false is the fallback used after a job refuses `CREATE_BREAKAWAY_FROM_JOB`
+/// (`ERROR_ACCESS_DENIED`).
+#[cfg(windows)]
+const fn detached_flags(allow_breakaway: bool) -> u32 {
+    if allow_breakaway {
+        DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB
+    } else {
+        DETACHED_PROCESS
+    }
+}
 
 /// Why a sibling could not be spawned. Messages carry no paths — coarse only.
 #[derive(Debug, thiserror::Error)]
@@ -69,9 +99,34 @@ pub fn spawn_sibling(role: Role) -> Result<std::process::Child, SpawnError> {
     if !target.is_file() {
         return Err(SpawnError::NotFound);
     }
-    std::process::Command::new(&target)
+    spawn_detached(&target).map_err(SpawnError::Spawn)
+}
+
+/// Spawn `target` detached from this process's console and job (T-182).
+///
+/// Windows only carries `creation_flags`; on every other target this is a
+/// plain spawn. `CREATE_BREAKAWAY_FROM_JOB` is attempted first and, if the
+/// job forbids it (`ERROR_ACCESS_DENIED`, raw OS error 5), retried with
+/// `DETACHED_PROCESS` alone — a child that stays in the job is still better
+/// than no child.
+#[cfg(windows)]
+fn spawn_detached(target: &Path) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+
+    match std::process::Command::new(target)
+        .creation_flags(detached_flags(true))
         .spawn()
-        .map_err(SpawnError::Spawn)
+    {
+        Err(err) if err.raw_os_error() == Some(5) => std::process::Command::new(target)
+            .creation_flags(detached_flags(false))
+            .spawn(),
+        other => other,
+    }
+}
+
+#[cfg(not(windows))]
+fn spawn_detached(target: &Path) -> std::io::Result<std::process::Child> {
+    std::process::Command::new(target).spawn()
 }
 
 #[cfg(test)]
@@ -147,5 +202,26 @@ mod tests {
             Err(SpawnError::NotFound) => {}
             other => panic!("expected NotFound next to the test binary, got {other:?}"),
         }
+    }
+
+    // T-182: the detach flags carry the exact Win32 values (guards against a
+    // transcription typo in the magic numbers) and the fallback drops only
+    // the breakaway bit, keeping the console detach. Whether the child is
+    // *actually* detached can't be asserted without spawning a real
+    // long-lived process and inspecting its job membership — the same
+    // real-external-resource line `spawn_sibling` itself stays behind.
+    #[cfg(windows)]
+    #[test]
+    fn detached_flags_compose_the_documented_win32_values() {
+        use super::{detached_flags, CREATE_BREAKAWAY_FROM_JOB, DETACHED_PROCESS};
+        assert_eq!(DETACHED_PROCESS, 0x0000_0008);
+        assert_eq!(CREATE_BREAKAWAY_FROM_JOB, 0x0100_0000);
+        assert_eq!(detached_flags(true), 0x0100_0008);
+        assert_eq!(detached_flags(false), 0x0000_0008);
+        assert_eq!(
+            detached_flags(true) & !CREATE_BREAKAWAY_FROM_JOB,
+            detached_flags(false),
+            "the fallback keeps every bit except breakaway"
+        );
     }
 }
