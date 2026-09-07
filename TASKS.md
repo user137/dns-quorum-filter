@@ -756,6 +756,11 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   іконку»; «Перезапустити» → «Скинути кеш і лог». `dispatch::ROUTES` не чіпано (флаги пише трей).
   DECISIONS.md 2026-09-07; SPEC §7; SERVICES.md меню; `process-lifecycle.md` пауза/вихід —
   реальна. 3 юніт-тести (`lifecycle`). Локальні гейти зелені (663 lib+bins).
+  **Closing-advisor Батча 3.12:** `stop.flag` заморожує **весь** `LoopDriver::tick` (не лише
+  `Effect::Spawn`) — інакше pure-`tick` витрачає `RestartBudget` і жене автомат у термінальний
+  `GaveUp`; новий `TrayStatus::Paused`; `confirm_pause` текст (перезапуск теж знімає паузу);
+  event-loop перечитує прапор раз/с; заморожений луп логує freeze/resume раз на перехід.
+  Нова gotcha в CLAUDE.md. CI `34155167169` / `34156201573` — 7/7 success.
 - [ ] T-186 — патч-реліз `v0.3.1`: бамп + closing-advisor + **чиста реінсталяція на цій машині**
   (прибрати v0.3.0 через трей «Повністю видалити» + `Remove-AppxPackage` → перевірити зникнення
   app-data) + ручний end-to-end (плитка → без термінала → іконка-гексагон → закрити не валить →

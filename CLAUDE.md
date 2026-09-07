@@ -7,7 +7,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Phase:** Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging) **closed in full
 2026-09-06** with the `v0.3.0` release tag (Батч 3.11 / T-173); all carried Ф1 gates closed by
 honest verification (T-170/T-174/T-175/T-172). Фаза 2 (cert automation, Windows) formally closed
-2026-08-31; Фаза 1 (PoC) 2026-08-29. **Фаза 4 (rating filter «bubble» + per-country top-N list
+2026-08-31; Фаза 1 (PoC) 2026-08-29. **Post-Ф3 hotfix — Батч 3.12 (T-181–T-185, T-187), 2026-09-07,
+plan+advisor kickoff+closing:** live `v0.3.0` MSIX run found the Start-menu tile opened a console
+window the service was bound to (no `windows_subsystem` on service/watcher — T-181), a stale
+teal-square tray icon (T-183), no detached children (T-182), and no way to stop or pause the app
+from the tray (T-185: `stop.flag`/`quit.flag`, menu rebuild). T-187: watcher stays the MSIX root
+(T-156 unchanged) but spawns the tray first and a re-clicked tile shows the icon; `ensure_sibling_running`
+moved to `watchdog::launcher`. New `logging` (file logs, T-184) + `lifecycle` modules, new
+`diagrams/process-lifecycle.md`. Version bump `0.3.0` → `0.3.1` + patch release `v0.3.1` — T-186
+(closing-advisor done; manual clean-reinstall MSIX verification on this machine pending). **Фаза 4 (rating filter «bubble» + per-country top-N list
 infra + personal learned zone source) — kickoff done 2026-09-07 (Батч 4.0, T-179): §5.1
 (top-sites excluded from Ads/Adult voters) removed and merged into the rating filter §5.3 — one
 opt-in bubble (out-of-zone → BLOCK, in-zone → normal pipeline), which moved here from Фаза 5.
