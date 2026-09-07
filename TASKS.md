@@ -728,9 +728,12 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   DoH-fan-out (`quorum`/`pipeline`/`upstream`) уже логує лише `error_kind()`; решта `{err}` —
   payload-free error-типи / локальний I/O / config над файлами без доменів (узгоджено з
   CLAUDE.md). 3 юніт-тести (`prepare_log_file`: happy/rotate/error). Локальні гейти зелені.
-- [ ] T-183 — трей runtime-іконка: перегенерувати з поточного гексагона (прозорий фон) через
-  `assets/gen-icon.py` → `crates/dnsqb-tray/icons/tray-32-rgba.bin`; прибрати застарілий
-  `icon_32x32_rgba.bin` + провенанс-коментар про `dnsqb-ui`. (Іконка `.exe` — вже є, T-177.)
+- [x] T-183 — **зроблено 2026-09-07** — `assets/gen-icon.py` `make_tray_glyph` (білий гексагон,
+  прозорий фон) → `crates/dnsqb-tray/icons/tray-32-rgba.bin` (4096 Б, 32×32 RGBA); tray
+  `include_bytes!` перемкнено на новий блоб + провенанс-коментар переписано; застарілий
+  `icon_32x32_rgba.bin` (копія іконки видаленого Tauri `dnsqb-ui` = бірюзовий квадрат) видалено;
+  CLAUDE.md gen-icon-рядок оновлено. Візуально підтверджено (гексагон на темному фоні). Іконка
+  `.exe` окремо — вже є з T-177 (`app.ico` у всіх трьох через `build/win_resource.rs`).
 - [ ] T-182 — `spawn_sibling` відв'язує дітей: `creation_flags(DETACHED_PROCESS |
   CREATE_BREAKAWAY_FROM_JOB)` через безпечний `CommandExt`, fallback лише `DETACHED_PROCESS`,
   якщо job забороняє breakaway. `#![forbid(unsafe_code)]` цілий. Unit-тест композиції прапорів.

@@ -131,6 +131,27 @@ def make_wordmark(glyph_size: int = 96, text: str = "DNS Quorum Filter") -> Imag
 # native size (crisper small icons than downscaling one 256 frame).
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
+# Raw 32x32 RGBA bytes for dnsqb-tray's runtime tray icon (T-183).
+# `tray_icon::Icon::from_rgba` wants pixels, not an encoded image, so the tray
+# compiles this blob in via `include_bytes!` — no runtime file read, no
+# image-decode dependency (the same "everything in, no runtime asset I/O"
+# choice `admin_ui.rs` makes for the embedded web UI). Regenerate by re-running
+# this script; never hand-edit the .bin.
+TRAY_ICON_SIZE = 32
+TRAY_RGBA_PATH = (
+    Path(__file__).parent.parent / "crates" / "dnsqb-tray" / "icons" / "tray-32-rgba.bin"
+)
+
+
+def make_tray_glyph(size: int) -> Image.Image:
+    """White wireframe hexagon on a fully transparent background. A filled
+    accent-blue square would read as a clumsy block on a (usually dark) Windows
+    taskbar next to the other transparent tray glyphs — so, unlike make_tile,
+    no fill."""
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw_hex_shield(ImageDraw.Draw(img), size / 2, size / 2, size * 0.36, WHITE)
+    return img
+
 
 def make_ico(path: Path) -> None:
     """Multi-resolution Windows .ico for the executables' embedded icon.
@@ -165,6 +186,14 @@ def main() -> None:
     wordmark_path = OUT_DIR / "wordmark.png"
     make_wordmark().save(wordmark_path)
     print(f"wrote {wordmark_path}")
+
+    TRAY_RGBA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tray_rgba = make_tray_glyph(TRAY_ICON_SIZE).tobytes()
+    TRAY_RGBA_PATH.write_bytes(tray_rgba)
+    print(
+        f"wrote {TRAY_RGBA_PATH} ({len(tray_rgba)} bytes, "
+        f"{TRAY_ICON_SIZE}x{TRAY_ICON_SIZE} RGBA, transparent bg)"
+    )
 
 
 if __name__ == "__main__":

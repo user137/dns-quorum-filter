@@ -606,7 +606,9 @@ exercise it without a real tag: `gh workflow run release.yml` (must be on `main`
 target\release -OutFile dist\dns-quorum-filter.msix`), needs the Windows SDK's `makeappx.exe`/
 `signtool.exe` (`Windows Kits\10\bin\10.*\x64\`) — present on this dev machine as well as CI, so
 it can be (and was, T-156) verified locally before ever pushing. `assets/gen-icon.py` (Pillow) —
-regenerate `assets/icon/*.png` after editing it, never hand-edit a PNG; needs Segoe UI Bold
+regenerate `assets/icon/*.png` + `app.ico` + `assets/icon/wordmark.png` **and**
+`crates/dnsqb-tray/icons/tray-32-rgba.bin` (T-183 — the tray's runtime `Icon::from_rgba` blob,
+transparent bg + white glyph) after editing it, never hand-edit a PNG/`.bin`; needs Segoe UI Bold
 (`C:\Windows\Fonts\segoeuib.ttf`, present on any current Windows install) for `wordmark.png`.
 
 `.github/workflows/codeql.yml` (T-101) is a separate workflow — CodeQL SAST, language `rust`,
