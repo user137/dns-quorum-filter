@@ -35,15 +35,16 @@ use std::path::Path;
 use std::time::Duration;
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, ensure_sibling_running, init_logging, read_pid_file,
-    spawn_sibling, verify_pid_alive, GuardError, InstanceGuard, InstanceRole, ResolverConfig,
+    acquire_instance_guard, app_data_dir, clear_quit_flag, clear_stop_flag, ensure_sibling_running,
+    init_logging, read_pid_file, spawn_sibling, verify_pid_alive, GuardError, InstanceGuard,
+    InstanceRole, ResolverConfig,
 };
 
 #[cfg(windows)]
 use dnsqb_service::{
-    is_stale, read_heartbeat_file, read_watchdog_state, touch_heartbeat_file, write_watchdog_state,
-    AdminClient, ChannelObs, Direction, Effect, HeartbeatPipeClient, LoopDriver, WatchdogState,
-    STATE_FILE_NAME,
+    is_stale, quit_flag_is_set, read_heartbeat_file, read_watchdog_state, stop_flag_is_set,
+    touch_heartbeat_file, write_watchdog_state, AdminClient, ChannelObs, Direction, Effect,
+    HeartbeatPipeClient, LoopDriver, WatchdogState, STATE_FILE_NAME,
 };
 #[cfg(windows)]
 use std::time::SystemTime;
@@ -69,6 +70,12 @@ async fn main() {
         tracing::warn!("could not write the watcher pid file: {err}");
     }
 
+    // T-185: the entry-point process clears both lifecycle flags on startup —
+    // a fresh launch (tile / login) is a clean slate. The heartbeat loop below
+    // only *reads* `stop.flag`, never clears it there.
+    clear_stop_flag(&app_data);
+    clear_quit_flag(&app_data);
+
     let port = load_port(&app_data);
 
     // T-150 / T-187: bring up any sibling that isn't already running — once, at
@@ -92,7 +99,10 @@ async fn main() {
 /// launches this binary; when a watcher is already running, the second
 /// instance's only job is to make sure the tray is up (it may have been
 /// closed) and then exit cleanly — `exit(0)`, not `exit(1)`. It never touches
-/// the service or the watchdog state.
+/// the service or the watchdog state. It also clears a pending `quit.flag`
+/// (T-185): the user relaunching the app cancels a quit that hasn't taken
+/// effect yet. It leaves `stop.flag` alone — a re-click to see the icon must
+/// not silently un-pause a deliberate pause.
 fn acquire_watcher_guard(app_data: &Path) -> InstanceGuard {
     match acquire_instance_guard(app_data, InstanceRole::Watcher) {
         Ok(guard) => guard,
@@ -100,6 +110,7 @@ fn acquire_watcher_guard(app_data: &Path) -> InstanceGuard {
             tracing::info!(
                 "a watcher is already running — ensuring the tray is up, then exiting (T-187)"
             );
+            clear_quit_flag(app_data);
             ensure_sibling_running(app_data, InstanceRole::Tray);
             std::process::exit(0);
         }
@@ -188,6 +199,20 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
         let now = SystemTime::now();
         seq = seq.wrapping_add(1);
 
+        // T-185: the user asked to quit. Stop the service (best-effort — it may
+        // already be down), drop the quit flag, and exit. The tray has already
+        // exited or is about to; the whole app is now down until the next launch.
+        if quit_flag_is_set(&app_data) {
+            tracing::info!(
+                "watchdog: quit.flag present — stopping the service and exiting (T-185)"
+            );
+            if let Some(client) = admin.as_ref() {
+                let _ = client.shutdown().await;
+            }
+            clear_quit_flag(&app_data);
+            std::process::exit(0);
+        }
+
         // Channel 1: IPC ping/pong. A failed ping drops the client so the next
         // tick reconnects.
         if pipe.is_none() {
@@ -239,6 +264,16 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
         };
         for effect in driver.tick(now, &obs).effects {
             match effect {
+                // T-185: `stop.flag` = the user paused filtering on purpose.
+                // The service is down and must stay down until they resume —
+                // don't respawn it. The flag is cleared by the tray's
+                // "Відновити фільтрацію" or by a fresh watcher launch, never
+                // here.
+                Effect::Spawn if stop_flag_is_set(&app_data) => {
+                    tracing::info!(
+                        "watchdog: stop.flag present — not respawning dnsqb-service (paused)"
+                    );
+                }
                 Effect::Spawn => match spawn_sibling(InstanceRole::Service) {
                     Ok(_child) => {
                         tracing::warn!("watchdog: respawned dnsqb-service");

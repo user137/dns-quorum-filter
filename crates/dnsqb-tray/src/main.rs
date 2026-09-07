@@ -41,8 +41,9 @@ mod browser;
 mod status;
 
 use dnsqb_service::{
-    acquire_instance_guard, app_data_dir, ensure_sibling_running, init_logging, write_pid_file,
-    AdminClient, AdminClientError, GuardError, InstanceRole, ResolverConfig,
+    acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
+    set_quit_flag, set_stop_flag, stop_flag_is_set, write_pid_file, AdminClient, AdminClientError,
+    GuardError, InstanceRole, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -70,12 +71,17 @@ const ICON_SIZE: u32 = 32;
 const OPEN_SETTINGS_ID: &str = "open-settings";
 const RESTART_ID: &str = "restart";
 const ABOUT_ID: &str = "about";
-const STOP_FILTERING_ID: &str = "stop-filtering";
+const PAUSE_RESUME_ID: &str = "pause-resume-filtering";
+const RESTORE_SUPERVISION_ID: &str = "restore-supervision";
+const QUIT_APP_ID: &str = "quit-app";
 const CLOSE_ID: &str = "close";
 const INSTALL_CERT_ID: &str = "install-cert";
 const UNINSTALL_CERT_ID: &str = "uninstall-cert";
 const ROTATE_CERT_ID: &str = "rotate-cert";
 const REMOVE_ALL_ID: &str = "remove-all-local-state";
+
+const PAUSE_LABEL: &str = "Призупинити фільтрацію";
+const RESUME_LABEL: &str = "Відновити фільтрацію";
 
 /// Re-check cadence for `muda`'s global menu-event channel (see the module
 /// doc comment for why this loop drives it rather than `tao` itself) —
@@ -142,8 +148,9 @@ fn main() {
         );
         std::process::exit(1);
     };
+    let (menu, pause_resume_item) = build_menu(&app_data);
     let tray_icon = match TrayIconBuilder::new()
-        .with_menu(Box::new(build_menu()))
+        .with_menu(Box::new(menu))
         .with_icon(icon)
         .with_tooltip(TrayStatus::Unreachable.tooltip())
         .build()
@@ -157,6 +164,7 @@ fn main() {
 
     let menu_channel = MenuEvent::receiver();
     let mut last_status = TrayStatus::Unreachable;
+    let mut last_paused = stop_flag_is_set(&app_data);
 
     let event_loop: EventLoop<()> = EventLoop::new();
     event_loop.run(move |_event, _target, control_flow| {
@@ -170,23 +178,46 @@ fn main() {
             last_status = observed;
         }
 
+        // T-185: flip the pause/resume label when `stop.flag` appears or is
+        // removed (by this menu, or by a fresh watcher launch clearing it).
+        let paused = stop_flag_is_set(&app_data);
+        if paused != last_paused {
+            pause_resume_item.set_text(if paused { RESUME_LABEL } else { PAUSE_LABEL });
+            last_paused = paused;
+        }
+
         if let Ok(event) = menu_channel.try_recv() {
             handle_menu_event(event.id().as_ref(), &app_data, port, control_flow);
         }
     });
 }
 
-fn build_menu() -> Menu {
+/// Builds the tray menu and returns it together with a handle to the
+/// pause/resume item, whose label the event loop flips between
+/// [`PAUSE_LABEL`] and [`RESUME_LABEL`] as `stop.flag` comes and goes (T-185).
+fn build_menu(app_data: &Path) -> (Menu, MenuItem) {
     let menu = Menu::new();
     let open_settings = MenuItem::with_id(OPEN_SETTINGS_ID, "Відкрити налаштування", true, None);
-    let restart = MenuItem::with_id(RESTART_ID, "Перезапустити", true, None);
+    let restart = MenuItem::with_id(RESTART_ID, "Скинути кеш і лог", true, None);
     let about = MenuItem::with_id(ABOUT_ID, "Про програму", true, None);
     let install_cert = MenuItem::with_id(INSTALL_CERT_ID, "Встановити сертифікат", true, None);
     let uninstall_cert = MenuItem::with_id(UNINSTALL_CERT_ID, "Видалити сертифікат", true, None);
     let rotate_cert = MenuItem::with_id(ROTATE_CERT_ID, "Перевипустити сертифікат", true, None);
     let remove_all = MenuItem::with_id(REMOVE_ALL_ID, "Повністю видалити", true, None);
-    let stop_filtering = MenuItem::with_id(STOP_FILTERING_ID, "Зупинити фільтрацію", true, None);
-    let close = MenuItem::with_id(CLOSE_ID, "Закрити", true, None);
+
+    // Lifecycle group (Варіант B): pause/resume · restore supervision · [sep]
+    // · hide icon · quit.
+    let pause_resume_label = if stop_flag_is_set(app_data) {
+        RESUME_LABEL
+    } else {
+        PAUSE_LABEL
+    };
+    let pause_resume = MenuItem::with_id(PAUSE_RESUME_ID, pause_resume_label, true, None);
+    let restore_supervision =
+        MenuItem::with_id(RESTORE_SUPERVISION_ID, "Відновити нагляд", true, None);
+    let hide_icon = MenuItem::with_id(CLOSE_ID, "Сховати іконку", true, None);
+    let quit_app = MenuItem::with_id(QUIT_APP_ID, "Вийти з DNS Quorum Filter", true, None);
+
     if let Err(err) = menu.append_items(&[
         &open_settings,
         &restart,
@@ -198,12 +229,15 @@ fn build_menu() -> Menu {
         &PredefinedMenuItem::separator(),
         &remove_all,
         &PredefinedMenuItem::separator(),
-        &stop_filtering,
-        &close,
+        &pause_resume,
+        &restore_supervision,
+        &PredefinedMenuItem::separator(),
+        &hide_icon,
+        &quit_app,
     ]) {
         tracing::warn!("failed to build the full tray menu: {err}");
     }
-    menu
+    (menu, pause_resume)
 }
 
 fn handle_menu_event(id: &str, app_data: &Path, port: u16, control_flow: &mut ControlFlow) {
@@ -259,8 +293,18 @@ fn handle_menu_event(id: &str, app_data: &Path, port: u16, control_flow: &mut Co
                 );
             }
         }
-        STOP_FILTERING_ID => {
-            if confirm_stop_filtering() {
+        // T-185: pause = write `stop.flag` (so the watchdog won't respawn),
+        // then ask the service to shut down. Resume = remove the flag and
+        // relaunch the service. The label the user clicked tells us which.
+        PAUSE_RESUME_ID => {
+            if stop_flag_is_set(app_data) {
+                clear_stop_flag(app_data);
+                ensure_sibling_running(app_data, InstanceRole::Service);
+                tracing::info!("filtering resumed by the user");
+            } else if confirm_pause() {
+                if let Err(err) = set_stop_flag(app_data) {
+                    tracing::warn!("could not write stop.flag: {err}");
+                }
                 spawn_admin_action(
                     app_data.to_path_buf(),
                     port,
@@ -269,9 +313,30 @@ fn handle_menu_event(id: &str, app_data: &Path, port: u16, control_flow: &mut Co
                 );
             }
         }
-        // "Закрити" only exits this process - dnsqb-service is never
-        // touched (see the module doc comment for why these two menu items
-        // are deliberately separate).
+        // T-185: bring the watchdog back if it stopped (idempotent — a no-op
+        // when a watcher is already running). This is the only actionable
+        // recovery for a dead watcher; there is no automatic one yet.
+        RESTORE_SUPERVISION_ID => {
+            ensure_sibling_running(app_data, InstanceRole::Watcher);
+        }
+        // T-185: quit the whole app. Write both flags and exit the tray; the
+        // watcher picks up `quit.flag` on its next tick, stops the service and
+        // exits itself. `stop.flag` covers the gap so nothing is respawned in
+        // between.
+        QUIT_APP_ID => {
+            if confirm_quit() {
+                if let Err(err) = set_stop_flag(app_data) {
+                    tracing::warn!("could not write stop.flag: {err}");
+                }
+                if let Err(err) = set_quit_flag(app_data) {
+                    tracing::warn!("could not write quit.flag: {err}");
+                }
+                *control_flow = ControlFlow::Exit;
+            }
+        }
+        // "Сховати іконку" only exits this process — dnsqb-service and the
+        // watcher keep running, filtering stays on. "Вийти з DNS Quorum
+        // Filter" above is the one that stops everything.
         CLOSE_ID => *control_flow = ControlFlow::Exit,
         _ => {}
     }
@@ -369,8 +434,7 @@ fn confirm_install_cert() -> bool {
 }
 
 /// Native confirm dialog before `certutil -delstore` — names the real
-/// consequence (browser warning returns), same pattern as
-/// [`confirm_stop_filtering`].
+/// consequence (browser warning returns), same pattern as [`confirm_pause`].
 fn confirm_uninstall_cert() -> bool {
     let result = rfd::MessageDialog::new()
         .set_title("Видалити сертифікат")
@@ -468,14 +532,31 @@ fn show_about_dialog() {
         .show();
 }
 
-/// Native confirm dialog naming the actual consequence before
-/// `/admin/shutdown` is ever called — see the module doc comment for why
-/// this exists as a separate step from "Закрити".
-fn confirm_stop_filtering() -> bool {
+/// Native confirm dialog before pausing filtering (T-185). Names the
+/// consequence and how to undo it — unlike the old "Зупинити фільтрацію",
+/// this state is reversible from the same menu ("Відновити фільтрацію").
+fn confirm_pause() -> bool {
     let result = rfd::MessageDialog::new()
-        .set_title("Зупинити фільтрацію")
+        .set_title("Призупинити фільтрацію")
         .set_description(
-            "DNS піде нефільтрованим, доки ви вручну не перезапустите dnsqb-service. \
+            "DNS піде нефільтрованим, доки ви не натиснете «Відновити фільтрацію» \
+             в цьому ж меню. Продовжити?",
+        )
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show();
+    result == rfd::MessageDialogResult::Yes
+}
+
+/// Native confirm dialog before quitting the whole app (T-185) — this stops
+/// the service, the watchdog and the tray. Same blast-radius warning shape as
+/// [`confirm_pause`], stronger wording.
+fn confirm_quit() -> bool {
+    let result = rfd::MessageDialog::new()
+        .set_title("Вийти з DNS Quorum Filter")
+        .set_description(
+            "Застосунок повністю зупиниться: DNS-фільтрація, фоновий нагляд і ця іконка. \
+             DNS піде нефільтрованим, доки ви знову не запустите застосунок із меню Пуск. \
              Продовжити?",
         )
         .set_level(rfd::MessageLevel::Warning)

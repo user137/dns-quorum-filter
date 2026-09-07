@@ -1,10 +1,12 @@
 SOURCES: SPEC.md §7 (+ §7.1 — реалізаційні рішення Ф3 Батч 3.0), §1 (лістенер `127.0.0.1`),
 §2 (self-signed cert), §6 (лог у памʼяті); `packaging/AppxManifest.template.xml` (T-156 — entry
 point + startup task); `plans/silly-wiggling-globe.md` (Батч 3.12 — матриця сценаріїв S1–S15);
+DECISIONS.md 2026-09-07 (T-185 — `stop.flag`/`quit.flag`);
 TASKS.md T-150, T-181, T-182, T-183, T-185, T-187; `crates/dnsqb-service/src/watchdog/launcher.rs`
-(`ensure_sibling_running`), `crates/dnsqb-watcher/src/main.rs` (порядок спавну + повторний
-запуск), `crates/dnsqb-tray/src/main.rs` (запобіжник); `diagrams/watchdog-state.md` +
-`diagrams/watchdog-channels.md` (нагляд після бутстрапу).
+(`ensure_sibling_running`), `crates/dnsqb-service/src/lifecycle.rs` (флаги),
+`crates/dnsqb-watcher/src/main.rs` (порядок спавну, повторний запуск, `stop.flag`/`quit.flag`
+у лупі), `crates/dnsqb-tray/src/main.rs` (запобіжник, меню T-185); `diagrams/watchdog-state.md`
++ `diagrams/watchdog-channels.md` (нагляд після бутстрапу).
 
 # Життя трьох процесів — бутстрап, точки входу, зупинка
 
@@ -50,13 +52,9 @@ flowchart TD
 якщо нема живого. Трей, що вже тримає `tray.lock`, не спавниться вдруге; watcher, що тримає
 `watcher.lock`, не спавниться вдруге. Жодного tray↔watcher пінг-понгу.
 
-## Зупинка / пауза / відновлення
+## Зупинка / пауза / відновлення (T-185)
 
-> ⚠️ **Заплановано — T-185, ще НЕ в коді.** `stop.flag` і пункти меню нижче — цільова модель
-> цього батчу; станом на T-187 меню трея ще: «Перезапустити» (=`/admin/reset`), «Зупинити
-> фільтрацію» (=`/admin/shutdown`, службу watchdog респавнить за ~40 с), «Закрити» (лише трей).
-
-`stop.flag` (`%LOCALAPPDATA%\...\stop.flag`) — **окремий файл**, не `watchdog-state.json`
+`stop.flag` / `quit.flag` (`%LOCALAPPDATA%\...\`) — **окремі файли**, не `watchdog-state.json`
 (§7.1 #7 — єдиний письменник лишається). Правило: **entry-point процес (watcher) чистить прапор
 на старті; watcher у heartbeat-лупі прапор лише ПОВАЖАЄ** (бачить → не респавнить службу),
 ніколи не чистить там — інакше headless-запуск не зміг би відновитись.
@@ -70,8 +68,8 @@ stateDiagram-v2
     Paused --> Exited: трей «Вийти…»
     Exited --> Running: плитка / логін (старт watcher чистить stop.flag)
 
-    Running --> Running: трей «Сховати лише іконку»<br/>(виходить лише трей; служба+watcher живі;<br/>повернути — клік плитки → 2-й watcher піднімає трей)
-    Running --> Running: watcher помер → трей показує<br/>«Відновити нагляд» → spawn_sibling(Watcher)
+    Running --> Running: трей «Сховати іконку»<br/>(виходить лише трей; служба+watcher живі;<br/>повернути — клік плитки → 2-й watcher піднімає трей)
+    Running --> Running: трей «Відновити нагляд»<br/>(завжди в меню; ensure_sibling_running(Watcher),<br/>no-op якщо watcher живий)
 ```
 
 **S6 (служба крашиться)** — не показано тут: це вже нагляд, `watchdog-state.md` (респавн за

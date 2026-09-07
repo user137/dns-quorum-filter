@@ -747,10 +747,15 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   (клік плитки = покажи іконку). `dnsqb-tray` при standalone-запуску → `ensure_running(Watcher)`
   запобіжник. Нова `diagrams/process-lifecycle.md` + індекс; SPEC §7 + SERVICES.md оновлено.
   Локальні гейти зелені (660 lib+bins).
-- [ ] T-185 — семантика пауза/вихід/відновлення + `stop.flag` («clear on startup, honor in
-  loop»): меню трея «Вийти з DNS Quorum Filter» (зупиняє все), «Призупинити»/«Відновити
-  фільтрацію», «Відновити нагляд» (watcher мертвий); тултипи «усе працює»/«призупинено».
-  Новий cross-process сигнал → запис у DECISIONS.md. Макет меню — з користувачем на kickoff.
+- [x] T-185 — **зроблено 2026-09-07** — новий `crates/dnsqb-service/src/lifecycle.rs`:
+  `stop.flag` (пауза — watchdog не респавнить) + `quit.flag` (вихід — watcher зупиняє службу й
+  виходить). «Clear on startup, honor in loop»: `dnsqb-watcher::main` чистить обидва; loop лише
+  читає `stop.flag`; `AlreadyRunning`-гілка чистить лише `quit.flag`. Меню трея (Варіант B,
+  узгоджено з користувачем): «Призупинити ↔ Відновити фільтрацію» (live-тогл), «Відновити нагляд»
+  (`ensure_sibling_running(Watcher)`, завжди), «Вийти з DNS Quorum Filter» (confirm), «Сховати
+  іконку»; «Перезапустити» → «Скинути кеш і лог». `dispatch::ROUTES` не чіпано (флаги пише трей).
+  DECISIONS.md 2026-09-07; SPEC §7; SERVICES.md меню; `process-lifecycle.md` пауза/вихід —
+  реальна. 3 юніт-тести (`lifecycle`). Локальні гейти зелені (663 lib+bins).
 - [ ] T-186 — патч-реліз `v0.3.1`: бамп + closing-advisor + **чиста реінсталяція на цій машині**
   (прибрати v0.3.0 через трей «Повністю видалити» + `Remove-AppxPackage` → перевірити зникнення
   app-data) + ручний end-to-end (плитка → без термінала → іконка-гексагон → закрити не валить →

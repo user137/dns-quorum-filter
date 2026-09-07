@@ -136,6 +136,7 @@ mod geoip_credentials;
 mod geoip_download;
 mod geoip_updater;
 mod key_store;
+mod lifecycle;
 mod listener;
 mod local_state;
 mod log_persist;
@@ -191,6 +192,10 @@ pub use geoip_updater::{
     run_geoip_updater, GeoipSource, GeoipUpdateError, MaxmindHealth, GEOIP_CHECK_INTERVAL,
 };
 pub use key_store::{load_or_create_persistence_key, KeyStoreError, PersistenceKey};
+pub use lifecycle::{
+    clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_stop_flag,
+    stop_flag_is_set,
+};
 pub use listener::{bind_listener, BindError};
 pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
 pub use log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
