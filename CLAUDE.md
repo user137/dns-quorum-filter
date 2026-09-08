@@ -23,8 +23,12 @@ thread; cert-not-trusted → red flips `Filtering` only (SPEC §3/§8.1 + T-185 
 the cert issue reaches other states as a `compose_tooltip` suffix. T-192: patch release **`v0.3.1`**
 covers Батч 3.12 **+ 3.14** and closes T-186 — bump commit `0e9b944`, tag `v0.3.1` pushed after a
 manual clean-reinstall MSIX check → `release.yml` draft (unpublished, a human clicks Publish, same
-as `v0.3.0`). The first-run onboarding wizard (Батч 3.13, T-188–T-190) is deferred and becomes
-`v0.3.2` (needs its own `0.3.1`→`0.3.2` bump). **Фаза 4 (rating filter «bubble» + per-country top-N list
+as `v0.3.0`). The first-run onboarding wizard (Батч 3.13) becomes `v0.3.2` (needs its own `0.3.1`→`0.3.2` bump):
+**T-188** (`GET /admin/cert-status` three-state + `POST /admin/install-cert` + `rfd` tray wizard +
+`onboarding.rs` + `/admin/ui` hero cert-branch, `4cb9ed9`) + **T-189** (per-browser setup card,
+`98ac6c8` + `a5489ef`) + **T-193** (pause serves the unfiltered baseline instead of killing DNS —
+`pause_watch` module, tray drops `/admin/shutdown`, watcher drops the freeze; DECISIONS.md
+2026-09-08 revises T-185) done; **T-190** (bump + closing-advisor + MSIX + tag `v0.3.2`) pending. **Фаза 4 (rating filter «bubble» + per-country top-N list
 infra + personal learned zone source) — kickoff done 2026-09-07 (Батч 4.0, T-179): §5.1
 (top-sites excluded from Ads/Adult voters) removed and merged into the rating filter §5.3 — one
 opt-in bubble (out-of-zone → BLOCK, in-zone → normal pipeline), which moved here from Фаза 5.
@@ -236,7 +240,8 @@ Modules under `crates/dnsqb-service/src/`:
 | `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
 | `logging` | T-184 (Батч 3.12): `init_logging(role, app_data_dir)` — all 3 binaries call it once → `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`. Dependency-free `tracing_subscriber::fmt().with_writer(Arc<File>)` (no `tracing-appender`), fixed INFO, no `env-filter`; startup rotation to `.log.old` at 5 MiB. Debug build also writes stdout. Exists because T-181 removed the console — the file is the only diagnostic |
-| `lifecycle` | T-185 (Батч 3.12): `stop.flag` (pause — watcher freezes the whole heartbeat tick, doesn't respawn) / `quit.flag` (exit — watcher stops the service + exits). `set_/clear_/…_flag(app_data_dir)`; presence *is* the signal, contents unread. **Separate files, not `watchdog-state.json`** (§7.1 #7 single-writer kept). Rule "clear on startup, honor in loop": `dnsqb-watcher::main` clears both; the heartbeat loop only reads `stop.flag`. A fresh app launch therefore lifts a pause (DECISIONS.md 2026-09-07) |
+| `lifecycle` | T-185 (Батч 3.12) / **T-193**: `stop.flag` (pause) / `quit.flag` (exit — watcher stops the service + exits). `set_/clear_/…_flag(app_data_dir)`; presence *is* the signal, contents unread. **Separate files, not `watchdog-state.json`** (§7.1 #7 single-writer kept). `dnsqb-watcher::main` clears both on startup → a fresh app launch lifts a pause. **T-193:** `stop.flag` is now read by `dnsqb-service` itself (`pause_watch`, below) — a pause keeps the service **up** serving the unfiltered baseline; the watcher no longer freezes or special-cases it. (DECISIONS.md 2026-09-07 + 2026-09-08) |
+| `pause_watch` | T-193: `run_pause_watcher(app_data, state)` — detached 1 s poll of `lifecycle::stop.flag` → `AppState::filtering_paused` (`RwLock<bool>`, `Copy`, no `Arc` — mirrors `reachability`). `handle_query` snapshots it into `UpstreamContext.filtering_paused` and shares the `!ProviderEntry::any_enabled` branch: paused ⇒ baseline pass-through, never cached, `DecisionSource::Quorum` + empty voters. Providers stay *enabled* (resume = zero config change). Overrides + offline fast path still win above it. Same "detached loop publishes a `Copy` value to `AppState`" shape as `reachability`; loop itself untested by precedent |
 | `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
 | `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). **T-176:** the page is now basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, danger-zone) — IDs unchanged, `main.js` cycles untouched. Mockup: `mockups/gui-dashboard.html` (user-approved); UI-SPEC.md §2.1 |
 | `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency; **T-187** added the impure shell `ensure_sibling_running(app_data, role)` = read pid file → `verify_pid_alive` → `plan_launch` → `spawn_sibling`, re-exported from `lib.rs`, called by both `dnsqb-watcher` and the `dnsqb-tray` safety net). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
@@ -278,8 +283,10 @@ Menu **rebuilt in T-185** (Варіант B lifecycle group at the bottom): "В�
 (browser → `/admin/ui`) · "Скинути кеш і лог" (soft `/admin/reset`) · "Про програму" · "Майстер
 налаштування" (T-188 — manual re-entry to the first-run wizard) · cert group
 (T-49/T-69: "Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю видалити" (T-70) ·
-**"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; pause = `set_stop_flag` +
-`/admin/shutdown` behind a confirm dialog, resume = `clear_stop_flag` + `ensure_sibling_running(Service)`)
+**"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; **T-193:** pause =
+`set_stop_flag` **only** (no `/admin/shutdown`) behind a confirm dialog — the service stays up and
+serves the unfiltered baseline via `pause_watch`; resume = `clear_stop_flag` +
+`ensure_sibling_running(Service)` (idempotent no-op unless both siblings died mid-pause))
 · **"Відновити нагляд"** (`ensure_sibling_running(Watcher)` — the only manual recovery for a dead
 watcher) · **"Сховати іконку"** (exits the tray only) · **"Вийти з DNS Quorum Filter"** (confirm
 dialog → `set_stop_flag` + `set_quit_flag` + `ControlFlow::Exit`; the watcher's next tick sees
@@ -338,11 +345,12 @@ icon"), clearing only `quit.flag`. Then the `watcher→service` loop (5s tick:
 IPC ping/pong channel 1, `service.hb`/`watcher.hb` channel 2, `GET /health` via cert-pinned
 `AdminClient` channel 3; `LoopDriver` 2-of-3 vote; `spawn_sibling(Service)` on a confirmed-dead
 service; **sole writer** of `watchdog-state.json`, rewritten every tick for `mtime` freshness).
-The loop checks `quit.flag` (→ stop service, `exit(0)`) and `stop.flag` (→ **freeze the whole
-tick**, don't call `LoopDriver::tick` at all — T-185 closing-advisor: `tick` itself spends a
-`RestartBudget` slot on `Restarting` and drives the automaton to the terminal `GaveUp`, so
-guarding only `Effect::Spawn` is too late; the frozen loop stops rewriting the state file, which
-goes stale by design, and logs freeze/resume once per transition). Children are spawned detached
+The loop checks `quit.flag` (→ stop service, `exit(0)`). **T-193 removed the `stop.flag` freeze
+entirely** — the pre-T-193 pause killed the service (`/admin/shutdown`), which is the only reason
+the freeze existed; now a pause keeps the service **up** (it reads `stop.flag` itself via
+`pause_watch` and serves the unfiltered baseline), so the normal tick sees a healthy service and
+is a no-op. A genuine crash mid-pause now respawns (the new service re-reads `stop.flag`).
+Children are spawned detached
 (T-182 — `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` via safe `creation_flags`, fallback to
 `DETACHED_PROCESS` alone on `ERROR_ACCESS_DENIED`). `resume`s a <90s-old state file via
 `LoopDriver::restored`. Depends on `dnsqb-service` as a lib (§7.1 #6).
@@ -1086,11 +1094,15 @@ reasoning (search by section number rather than re-deriving a decision from scra
   `RestartBudget::register_attempt(now)` itself whenever it sees `Restarting`, and `transition`
   (`S::GaveUp => S::GaveUp`) is terminal, so a pause longer than the 5/600s budget drove the
   automaton into a `GaveUp` that stuck against a healthy service after resume — until the watcher
-  process itself was restarted. Fix: skip the *whole* `tick()` while paused, not just the effect.
-  Same family as the `Limited::new`-after-`.collect()` entry above — the property has to be
-  enforced at the point the pure code runs, not inspected in the shell after it already ran.
-  Caught by the closing advisor of Батч 3.12, not by any gate (`fmt`/`clippy`/tests all green —
-  no test exercised a multi-cycle pause).
+  process itself was restarted. Fix at the time: skip the *whole* `tick()` while paused, not just
+  the effect. **T-193 removed the pause-freeze entirely** — the root cause was that the pause path
+  *killed the service* (`/admin/shutdown`); once a pause keeps the service up (it reads `stop.flag`
+  itself now), the tick sees a healthy service, never reaches `Restarting`, and the whole problem
+  dissolves. The *general* lesson stands: a property that a pure step can violate as a side effect
+  of running must be enforced at the point that step runs, not inspected in the shell afterward —
+  same family as the `Limited::new`-after-`.collect()` entry above. Caught by the closing advisor
+  of Батч 3.12, not by any gate (`fmt`/`clippy`/tests all green — no test exercised a multi-cycle
+  pause).
 - **A "changed?" guard that gates a fallible side effect must commit the new value only when the
   effect actually succeeded** (T-191, `dnsqb-tray`'s `refresh_tray`). The tooltip guard commits
   `last_status`/`last_trusted` unconditionally — a missed `set_tooltip` is cosmetic and self-heals

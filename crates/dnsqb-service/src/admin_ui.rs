@@ -430,6 +430,35 @@ mod tests {
         }
     }
 
+    // T-193 — a tray pause keeps the service up, so nothing else in
+    // computeProtectionState fires; without this branch the hero would read
+    // green "Захищено" while every query is unfiltered. It ranks between
+    // OFFLINE and the 0-providers case, matching the pipeline fast-path order.
+    #[test]
+    fn main_js_hero_has_a_dedicated_paused_state() {
+        let Some((_, after)) = MAIN_JS.split_once("function computeProtectionState(") else {
+            panic!("computeProtectionState must exist");
+        };
+        let Some((body, _)) = after.split_once("\nfunction ") else {
+            panic!("computeProtectionState must be a bounded function");
+        };
+        assert!(
+            body.contains("status.paused"),
+            "the hero must branch on status.paused"
+        );
+        assert!(
+            body.contains("Фільтрацію призупинено"),
+            "the paused hero must name the state, not read as green"
+        );
+        let offline_at = body.find("OFFLINE").unwrap_or(usize::MAX);
+        let paused_at = body.find("status.paused").unwrap_or(0);
+        let providers_at = body.find("active_providers").unwrap_or(usize::MAX);
+        assert!(
+            offline_at < paused_at && paused_at < providers_at,
+            "offline must outrank paused, which must outrank the 0-providers case"
+        );
+    }
+
     // T-176 — the fan-out privacy line and the pass-through warning moved into
     // the basic view (renderFilterControls), so they render even when the
     // advanced disclosure is collapsed (CLAUDE.md "not buried" / SPEC.md §8.1).

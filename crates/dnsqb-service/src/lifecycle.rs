@@ -6,21 +6,26 @@
 //! user who meant "stop filtering" or "quit". These flags let the tray express
 //! that intent to `dnsqb-watcher`:
 //!
-//! - **`stop.flag`** — pause. While it exists, the watchdog does **not**
-//!   respawn a dead `dnsqb-service`. The tray's "Призупинити фільтрацію" writes
-//!   it (then asks the service to shut down); "Відновити фільтрацію" removes it
-//!   (then relaunches the service).
+//! - **`stop.flag`** — pause. **Since T-193** (revising the original T-185
+//!   design — see `DECISIONS.md` 2026-09-08) this no longer shuts the service
+//!   down: `dnsqb-service` observes the flag itself (`pause_watch::
+//!   run_pause_watcher` → `AppState::filtering_paused`) and serves every A/AAAA
+//!   query through the **unfiltered baseline** while it exists — the service
+//!   stays up, the watchdog keeps supervising it normally. The tray's
+//!   "Призупинити фільтрацію" only *writes* the flag; "Відновити фільтрацію"
+//!   removes it. The user's own allow/blocklist still apply during a pause;
+//!   only quorum + `GeoIP` are bypassed.
 //! - **`quit.flag`** — exit. On its next tick the watcher stops the service
 //!   and exits the process itself, then the tray exits — the whole app is
 //!   down until the next tile / login launch.
 //!
 //! **Who clears them:** the **entry-point process on startup** — `dnsqb-watcher`
-//! `main` clears both, so a fresh launch is a clean slate. The watchdog's
-//! heartbeat loop only *reads* `stop.flag` (never clears it there — otherwise a
-//! headless `dnsqb-watcher.exe` launch could never stay paused). A tile
-//! re-click that hits an already-running watcher clears `quit.flag` only (the
-//! user relaunched → cancel a pending quit) but leaves `stop.flag` (don't
-//! silently un-pause).
+//! `main` clears both, so a fresh launch is a clean slate (a pause does not
+//! survive an app restart). The watchdog's heartbeat loop no longer special-
+//! cases `stop.flag` at all (T-193) — the service staying up during a pause
+//! makes the loop a no-op. A tile re-click that hits an already-running watcher
+//! clears `quit.flag` only (the user relaunched → cancel a pending quit) but
+//! leaves `stop.flag` (don't silently un-pause).
 //!
 //! Neither flag is `watchdog-state.json` — that file keeps its single-writer
 //! invariant (§7.1 #7). A flag's *presence* is the whole signal; its contents

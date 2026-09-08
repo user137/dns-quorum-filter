@@ -42,9 +42,9 @@ use dnsqb_service::{
 
 #[cfg(windows)]
 use dnsqb_service::{
-    is_stale, quit_flag_is_set, read_heartbeat_file, read_watchdog_state, stop_flag_is_set,
-    touch_heartbeat_file, write_watchdog_state, AdminClient, ChannelObs, Direction, Effect,
-    HeartbeatPipeClient, LoopDriver, WatchdogState, STATE_FILE_NAME,
+    is_stale, quit_flag_is_set, read_heartbeat_file, read_watchdog_state, touch_heartbeat_file,
+    write_watchdog_state, AdminClient, ChannelObs, Direction, Effect, HeartbeatPipeClient,
+    LoopDriver, WatchdogState, STATE_FILE_NAME,
 };
 #[cfg(windows)]
 use std::time::SystemTime;
@@ -193,10 +193,6 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
     let mut pipe: Option<HeartbeatPipeClient> = None;
     let mut admin: Option<AdminClient> = None;
     let mut seq: u64 = 0;
-    // Log the pause freeze / resume once per transition, not per tick — with no
-    // console (T-181) the log file is the only diagnostic, and an hours-long
-    // pause that wrote nothing would read as "the watcher died".
-    let mut supervision_frozen = false;
 
     loop {
         tokio::time::sleep(WATCHDOG_INTERVAL).await;
@@ -217,35 +213,16 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
             std::process::exit(0);
         }
 
-        // T-185 (Батч 3.12 closing-advisor): filtering is paused on purpose.
-        // Freeze the automaton entirely — skip the whole tick, not just the
-        // `Effect::Spawn` below. `LoopDriver::tick` spends a `RestartBudget`
-        // slot and advances the state machine on its own the moment it sees the
-        // service is `Restarting`; guarding only the spawn effect lets a long
-        // pause burn the 5/600s budget and drive the automaton into the
-        // terminal `GaveUp` state, so a later resume would show "служба
-        // зупинилася" against a healthy service until the watcher is itself
-        // restarted. Not ticking also stops rewriting `watchdog-state.json`; it
-        // goes stale within `WATCHDOG_STATE_STALE_AFTER`, which is the honest
-        // signal (the watchdog is up but deliberately not supervising) — the
-        // tray shows a dedicated "paused" tooltip from `stop.flag` directly.
-        // Resume (flag cleared here or by a fresh launch) picks the driver up
-        // unchanged. `watcher.hb` is still touched so the service's own
-        // `service -> watcher` loop sees no gap when it comes back.
-        if stop_flag_is_set(&app_data) {
-            if !supervision_frozen {
-                tracing::info!("watchdog: stop.flag present — supervision frozen (user paused)");
-                supervision_frozen = true;
-            }
-            if let Err(err) = touch_heartbeat_file(&app_data, InstanceRole::Watcher) {
-                tracing::warn!("could not touch watcher.hb while paused: {err}");
-            }
-            continue;
-        }
-        if supervision_frozen {
-            tracing::info!("watchdog: stop.flag cleared — resuming supervision");
-            supervision_frozen = false;
-        }
+        // T-193: a pause (`stop.flag`) no longer freezes supervision. The
+        // service now *stays up* while paused — it reads the flag itself
+        // (`pause_watch`) and serves the unfiltered baseline — so the normal
+        // tick below is a no-op (all three channels answer, the vote stays
+        // `Alive`, `RestartBudget` is never touched, no `Effect::Spawn`). This
+        // is strictly better than the old freeze: if the service genuinely
+        // crashes during a pause it now gets respawned, and the new process
+        // comes back in bypass mode (it re-reads `stop.flag` on startup). The
+        // freeze existed only because the pre-T-193 pause path killed the
+        // service via `/admin/shutdown`.
 
         // Channel 1: IPC ping/pong. A failed ping drops the client so the next
         // tick reconnects.
@@ -318,16 +295,13 @@ fn apply_watchdog_effects(
 ) {
     for effect in effects {
         match effect {
-            // T-185: `stop.flag` = the user paused filtering on purpose. The
-            // top-of-loop check normally freezes the whole tick before we reach
-            // here; this arm is the backstop for the one-tick race where the
-            // flag is set during that iteration's `.await`s, after the check
-            // passed. Either way — don't respawn the service.
-            Effect::Spawn if stop_flag_is_set(app_data) => {
-                tracing::info!(
-                    "watchdog: stop.flag present — not respawning dnsqb-service (paused)"
-                );
-            }
+            // T-193: a paused service (`stop.flag`) stays running, so this loop
+            // never actually reaches `Effect::Spawn` during a pause. And if it
+            // did — a genuine crash mid-pause — respawning is the right move:
+            // the new process re-reads `stop.flag` and comes up serving the
+            // unfiltered baseline, rather than leaving DNS dead until resume.
+            // The pre-T-193 `stop_flag_is_set` guard here (which suppressed the
+            // respawn) is deliberately gone.
             Effect::Spawn => match spawn_sibling(InstanceRole::Service) {
                 Ok(_child) => {
                     tracing::warn!("watchdog: respawned dnsqb-service");

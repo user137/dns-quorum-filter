@@ -404,9 +404,12 @@ fn handle_menu_event(
                 );
             }
         }
-        // T-185: pause = write `stop.flag` (so the watchdog won't respawn),
-        // then ask the service to shut down. Resume = remove the flag and
-        // relaunch the service. The label the user clicked tells us which.
+        // T-185 + T-193: pause = write `stop.flag` only. `dnsqb-service` polls
+        // it (`pause_watch`) and serves every query through the unfiltered
+        // baseline while it exists — the service stays up, the watchdog keeps
+        // supervising it. Resume = remove the flag; `ensure_sibling_running` is
+        // an idempotent no-op unless both the service and watcher died during
+        // the pause. The label the user clicked tells us which.
         PAUSE_RESUME_ID => {
             if stop_flag_is_set(app_data) {
                 clear_stop_flag(app_data);
@@ -416,12 +419,6 @@ fn handle_menu_event(
                 if let Err(err) = set_stop_flag(app_data) {
                     tracing::warn!("could not write stop.flag: {err}");
                 }
-                spawn_admin_action(
-                    app_data.to_path_buf(),
-                    port,
-                    "shutdown",
-                    |client| async move { client.shutdown().await },
-                );
             }
         }
         // T-185: bring the watchdog back if it stopped (idempotent — a no-op
@@ -745,18 +742,20 @@ fn show_about_dialog() {
         .show();
 }
 
-/// Native confirm dialog before pausing filtering (T-185). Names the
-/// consequence and every way to undo it — unlike the old "Зупинити
-/// фільтрацію", this state is reversible from the same menu, and a fresh app
-/// launch also clears `stop.flag`, so the dialog must say so (advisor,
-/// Батч 3.12 closing — the earlier wording promised the pause held until an
-/// explicit resume, which is false across a restart).
+/// Native confirm dialog before pausing filtering (T-185 / T-193). Names the
+/// consequence precisely: DNS keeps working (the service stays up, T-193), but
+/// quorum + `GeoIP` stop applying — the user's own lists still do. Reversible
+/// from the same menu, and a fresh app launch also clears `stop.flag`, so the
+/// dialog says so. Deliberately does **not** claim "everything goes unfiltered"
+/// — a blocklisted domain is still blocked during a pause.
 fn confirm_pause() -> bool {
     let result = rfd::MessageDialog::new()
         .set_title("Призупинити фільтрацію")
         .set_description(
-            "DNS піде нефільтрованим. Щоб відновити фільтрацію — натисніть «Відновити \
-             фільтрацію» в цьому ж меню або перезапустіть застосунок. Продовжити?",
+            "DNS продовжить працювати, але фільтрацію буде вимкнено: quorum-перевірка та \
+             GeoIP не застосовуватимуться, домени резолвитимуться напряму через \
+             baseline-резолвер. Ваші власні списки блокування та дозволу продовжать діяти. \
+             Відновити — цим самим пунктом меню або перезапуском застосунку. Продовжити?",
         )
         .set_level(rfd::MessageLevel::Warning)
         .set_buttons(rfd::MessageButtons::YesNo)

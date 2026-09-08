@@ -89,6 +89,11 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    `cache.enc` майже-порожнім.
 8. `GET /admin/status.encrypted_persistence` = `{ query_log, cache }` (стан обох прапорців);
    `/admin/ui` показує окремий пасивний рядок-попередження на кожен активний.
+9. Запускає **фоновий pause-watcher** (T-193, `pause_watch::run_pause_watcher`) — раз на секунду
+   `stat` файла `stop.flag` у теці app-data, публікує наявність у `AppState.filtering_paused`.
+   Поки увімкнено, `handle_query` віддає кожен A/AAAA-запит через нефільтрований baseline (без
+   кворуму, без GeoIP, без кешу) — служба лишається живою (раніше трей-пауза вбивала процес).
+   Читається `GET /admin/status.paused`. Detached, без shutdown-хука — як reachability-проб.
 
 ### Адмін-канал (T-52, розширено T-149)
 
@@ -315,12 +320,17 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
 
 - **Призупинити / Відновити фільтрацію** — один пункт, лейбл фліпається за `stop.flag`
   (event-loop перечитує прапор раз на секунду, не на кожному 100 мс тіку).
-  «Призупинити» (за confirm-діалогом) пише `stop.flag` + шле `POST /admin/shutdown`. Поки
-  `stop.flag` існує, heartbeat-луп watcher'а **повністю заморожений** (не тікає автомат — інакше
-  `RestartBudget` вигорає й автомат іде в `GaveUp`), тож службу не респавнить, а
-  `watchdog-state.json` навмисно протухає. Confirm-діалог каже, що зняти паузу можна «Відновити
-  фільтрацію» **або** перезапуском застосунку (старт чистить `stop.flag`). «Відновити» прибирає
-  `stop.flag` + `ensure_sibling_running(Service)`.
+  «Призупинити» (за confirm-діалогом) пише **лише** `stop.flag` (T-193 — раніше ще й слав
+  `POST /admin/shutdown`). **`dnsqb-service` лишається живим**: полер `pause_watch::run_pause_watcher`
+  раз на секунду публікує наявність прапора в `AppState.filtering_paused`, і `handle_query`
+  віддає кожен A/AAAA-запит через нефільтрований baseline (без кворуму, без GeoIP, без кешу —
+  тією ж гілкою, що й «0 активних провайдерів»; власні allow/blocklist користувача далі діють).
+  Watcher наглядає **як звичайно** — заморозки heartbeat-лупа більше немає (краш служби під час
+  паузи тепер респавниться, і нова служба повертається в bypass-режимі). Confirm-діалог каже, що
+  зняти паузу можна «Відновити фільтрацію» **або** перезапуском застосунку (старт чистить
+  `stop.flag`). «Відновити» прибирає `stop.flag` + `ensure_sibling_running(Service)` (ідемпотентно).
+  `/admin/status.paused` несе цей стан, hero `/admin/ui` показує окремий сірий «Фільтрацію
+  призупинено».
 - **Відновити нагляд** — `ensure_sibling_running(Watcher)`; завжди в меню, ідемпотентно (no-op,
   якщо watcher живий). Єдиний ручний шлях підняти мертвий watcher — авто-нагляд за самим
   watcher'ом ще не зроблено.

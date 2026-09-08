@@ -4235,7 +4235,7 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
     трей-іконки» + SOURCES) + `diagrams/README.md`; `SERVICES.md` §Іконка; `CLAUDE.md` (tray-абзац,
     `trust_store` surface, gen-icon рядок, нова gotcha про «commit lastcolour лише на Ok» + seed +
     каденс на `Ok(true)`); `UI-SPEC.md` (одне речення); `TASKS.md` (секція Батч 3.14).
-  - **Closing-advisor Батча 3.14 (коміт `<pending>`):** знайшов блокер — `spawn_trust_watch` брав
+  - **Closing-advisor Батча 3.14 (коміт `25ef641`):** знайшов блокер — `spawn_trust_watch` брав
     каденс від кешу `trusted` (лишається `true` на першому `Err`, коли `cert.pem` ще нема, бо трей
     стартує раніше служби, T-187) → спав 300 с → зелена іконка + tooltip «захищає» 5 хв на чистій
     машині (Три Б — саме той сценарій, задля якого батч). Фікс: витягнуто чисту
@@ -4280,7 +4280,7 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
     «Сховати іконку» не валить службу · «Вийти» зупиняє все · свіжий запуск чистий · одна app-data
     тека · логи без доменів. **Результат: <заповнити після прогону>.**
   - **Closing-advisor** Батча 3.14 — знайшов блокер каденсу (див. T-191 запис вище), виправлено
-    коміт `<pending>`; решту підтверджено.
+    коміт `25ef641`; решту підтверджено.
   - **Тег `v0.3.1` ЩЕ НЕ ПУШНУТО** (2026-09-08 — користувач не за ПК): ручний чистий прогін MSIX
     робитиметься **разом із Батчем 3.13**, тоді ж пушиться `git tag v0.3.1` на коміт `25ef641`
     (або новіший, якщо між тим ще будуть docs-правки) → `release.yml` (`build-sign` test-signed +
@@ -4367,7 +4367,7 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     `ui-status-indicator.md` (hero cert-гілка), `ui-dto-model.md` (2 DTO + 2 маршрути) — звірено,
     SOURCES оновлено; `README.md` індекс. GAP: 0.
 - [x] **T-189** — картка налаштування браузера, свідома до браузера (Chromium / Firefox / інший).
-  Коміт `<pending>`.
+  Коміт `98ac6c8` (+ closing-advisor `a5489ef`).
   - `ui/index.html`: `#browser-setup-steps` (`<ol>` → `<div>`-обгортка) містить **три статичні**
     блоки кроків — `browser-steps-chromium` (Chrome/Edge/Brave/Opera; `<code
     id="chromium-settings-url">` + кнопка «Копіювати»), `browser-steps-firefox`
@@ -4419,5 +4419,62 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     (Dashboard — per-браузер кроки), `UI-SPEC.md` картка «Підключення браузера» — оновлено.
     `ui-status-indicator.md`/`ui-dto-model.md` не зачеплено (T-189 — жодного нового стану/DTO).
     GAP: 0.
+- [x] **T-193** — пауза фільтрації зберігає службу, віддає нефільтрований baseline. Коміт
+  `<pending>`, kickoff plan+advisor 2026-09-08 (3 Explore-агенти + Plan-агент + advisor).
+  Перегляд T-185 (DECISIONS.md 2026-09-08).
+  - **Баг:** трей «Призупинити фільтрацію» писав `stop.flag` **і слав `POST /admin/shutdown`** →
+    процес `dnsqb-service` виходив, watcher заморожував нагляд → **браузер не резолвив нічого**.
+    `confirm_pause` обіцяв «DNS піде нефільтрованим» — брехня (DNS ішов мертвим). Три Б.
+  - **Служба:** `AppState.filtering_paused: RwLock<bool>` (`Copy`, без `Arc` — як `reachability`)
+    + акцесори `update_/snapshot`. Новий модуль `pause_watch.rs`: `run_pause_watcher(app_data,
+    state)` — detached infinite loop, 1-с `stat` `lifecycle::stop_flag_is_set` → `update_filtering_paused`,
+    лог раз на перехід. Generic по `C` (задача клієнта не торкається). Спавн у `main.rs` одразу
+    після `spawn_watchdog_tasks`, ungated, `None`-фолбек `tracing::warn!`. `UpstreamContext`
+    дістав `filtering_paused: bool` (знімок у `resolve_doh_request`). `handle_query`: умова гілки
+    `!ProviderEntry::any_enabled(voters)` → `upstream.filtering_paused || !any_enabled` — пауза й
+    «0 провайдерів» резолвляться ідентично (baseline pass-through, **не кешується**,
+    `DecisionSource::Quorum` + порожні voters); провайдери лишаються enabled (resume = 0 змін
+    конфігу). Порядок: overrides (blocklist/allowlist виграють) → offline (виграє — baseline теж
+    недосяжний) → paused → cache → quorum. `pause_watch`-луп сам не юніт-теститься (прецедент
+    `reachability`).
+  - **`/admin/status.paused: bool`** — нове поле `AdminStatusResponse` (3 bool'и всього — під
+    `struct_excessive_bools`; enum-проєкція не потрібна). 2 літерали в `dispatch.rs`
+    (`admin_status` + `apply_admin_config`; `apply_admin_reset` делегує). `ui/main.js`
+    `computeProtectionState(status, reachable, cert)` дістав гілку `status.paused` → `is-warn`
+    «Фільтрацію призупинено», **між** `OFFLINE` і 0-voters (= порядок конвеєра). Без цього hero
+    показав би зелене «Захищено» під час паузи (служба жива) — хибне зелене, яке **вводить саме
+    цей коміт**.
+  - **Трей (`main.rs`):** `PAUSE_RESUME_ID` — пауза **прибрала** `spawn_admin_action("shutdown")`,
+    лишилось `set_stop_flag`. Resume — `clear_stop_flag` + `ensure_sibling_running(Service)`
+    (ідемпотентно). `confirm_pause` переписано на правду — **без** over-claim «усе нефільтроване»
+    (blocklist блокує). `QUIT_APP_ID`/`RESTORE_SUPERVISION_ID`/`CLOSE_ID`/`confirm_quit` — без змін.
+  - **Трей (`status.rs`):** код деривації `TrayStatus::Paused` **без змін** (`stop_flag_is_set`
+    досі перша перевірка). Doc-коментарі: «служба навмисно down» → «служба жива, віддає
+    нефільтрований baseline; watchdog наглядає як звичайно»; трей ранжує `Paused` вище за
+    `Offline`, конвеєр/hero — навпаки; навмисна розбіжність.
+  - **Watcher (`main.rs`):** блок заморозки `stop.flag` (+ `supervision_frozen` латч + resume-лог)
+    і `Effect::Spawn if stop_flag_is_set` guard **прибрано**. Поки служба жива й здорова — tick
+    no-op (3 канали відповідають, `RestartBudget` не торкається, `GaveUp` недосяжний). Краш
+    служби під час паузи тепер респавниться, нова служба читає `stop.flag` → bypass. Занепокоєння
+    T-185 closing-advisor «guarding Effect у impure shell запізно → `GaveUp`» розчиняється.
+    Прибрано невикористаний імпорт `stop_flag_is_set`. Старт `clear_stop_flag`/`clear_quit_flag`
+    і `quit.flag`-обробка — без змін.
+  - **Вікно виходу ~5 с:** `QUIT_APP_ID` пише `stop.flag` тоді `quit.flag`; до ~5 с перед виходом
+    служба віддає нефільтрований baseline. Прийнятно (застосунок усе одно зараз повністю
+    нефільтрований). Задокументовано.
+  - **Тести:** `pipeline.rs` +5 (`filtering_paused_serves_the_baseline_and_never_consults_quorum`,
+    `_still_honors_the_blocklist`, `_does_not_serve_a_stale_block_cache_entry`,
+    `_baseline_error_yields_servfail_not_a_fake_block`, `offline_outranks_filtering_paused`) +
+    ~45 наявних `UpstreamContext`-літералів дістали `filtering_paused: false` (скрипт); `dispatch.rs`
+    +1 (`serve_admin_status_reports_the_live_filtering_paused_flag`) + assert у наявному
+    default-статус тесті; `admin_ui.rs` +1 (`main_js_hero_has_a_dedicated_paused_state` — порядок
+    offline > paused > 0-voters у JS). Всього dnsqb-service lib 671 → 678.
+  - **Верифікація:** `fmt --check` + `clippy --workspace --all-targets -D warnings` +
+    `test --workspace --lib --bins` (678 + 22 tray) + `--doc` + `cargo doc` (RUSTDOCFLAGS=-D warnings)
+    — зелені. `#![forbid(unsafe_code)]` цілий. `struct_excessive_bools` — 3 bool'и ОК.
+  - **Звірка діаграм:** `process-lifecycle.md` (секція паузи + `stateDiagram` без «служба down» +
+    bullet); `ui-status-indicator.md` (умова 3a + flowchart-нода + hero-список + SOURCES);
+    `ui-dto-model.md` (`AdminStatusResponse.paused` + нота + SOURCES). GAP: 0.
+  - closing plan+advisor — **перед завершенням** (ще попереду).
 - [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
   прогін спільно з `v0.3.1` + тег).

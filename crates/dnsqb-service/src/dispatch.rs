@@ -529,6 +529,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         baseline_url: baseline.current(),
         serve_baseline_fallback: settings.serve_baseline_when_filters_unreachable,
         reachability: state.reachability_snapshot(),
+        filtering_paused: state.filtering_paused_snapshot(),
     };
     let response = match handle_query(
         &query,
@@ -638,6 +639,14 @@ pub struct AppState<C: DohClient + Sync> {
     /// the `Arc<_>` wrapper the bigger per-query state uses would be pure
     /// overhead. Never held across `.await`.
     reachability: RwLock<NetworkReachability>,
+    /// T-193 — whether the user paused filtering from the tray ("Призупинити
+    /// фільтрацію", `lifecycle::stop.flag`). Published by
+    /// `pause_watch::run_pause_watcher`, read once per query
+    /// (`pipeline::handle_query`'s pause fast path — every A/AAAA query goes
+    /// through the unfiltered baseline while it is `true`, `dnsqb-service`
+    /// stays up). Plain `RwLock<bool>` for the same reason as `reachability`.
+    /// Never held across `.await`.
+    filtering_paused: RwLock<bool>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -785,6 +794,7 @@ impl<C: DohClient + Sync> AppState<C> {
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             reachability: RwLock::new(NetworkReachability::default()),
+            filtering_paused: RwLock::new(false),
             query_log,
             // Read the `Copy` cap out of `persist` before it moves on the next line.
             gate: ConnectionGate::new(persist.limits.max_concurrent_connections),
@@ -865,6 +875,19 @@ impl<C: DohClient + Sync> AppState<C> {
     /// query by `resolve_doh_request`, never held across `.await`.
     pub(crate) fn reachability_snapshot(&self) -> NetworkReachability {
         *self.reachability.read()
+    }
+
+    /// Publishes the tray's pause state (T-193) — the sole writer is
+    /// `pause_watch::run_pause_watcher`.
+    pub(crate) fn update_filtering_paused(&self, paused: bool) {
+        *self.filtering_paused.write() = paused;
+    }
+
+    /// Whether the user has paused filtering from the tray (T-193) — read
+    /// once per query by `resolve_doh_request` and once per `/admin/status`,
+    /// never held across `.await`.
+    pub(crate) fn filtering_paused_snapshot(&self) -> bool {
+        *self.filtering_paused.read()
     }
 
     /// One `Arc::clone` snapshot of the baseline selector (T-154) — the hot
@@ -1045,6 +1068,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         timeout_ms: timeout_ms(settings.timeout.duration),
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
         network: NetworkStatusView::from(state.reachability_snapshot()),
+        paused: state.filtering_paused_snapshot(),
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -1159,6 +1183,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         timeout_ms: timeout_ms(settings.timeout.duration),
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
         network: NetworkStatusView::from(state.reachability_snapshot()),
+        paused: state.filtering_paused_snapshot(),
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -3832,6 +3857,7 @@ mod tests {
             .collect();
         assert_eq!(active_ids, vec!["quad9", "cloudflare-malware", "adguard"]);
         assert!(status.persisted);
+        assert!(!status.paused, "T-193: a fresh AppState is not paused");
         assert!(
             !status.encrypted_persistence.query_log,
             "T-96: the default fixture has persist_query_log off"
@@ -3852,6 +3878,32 @@ mod tests {
         // `state_with` uses `paths: None`, so there is nowhere to read a
         // watchdog state file from (T-95).
         assert_eq!(status.watchdog, None);
+    }
+
+    // T-193: `GET /admin/status.paused` tracks the live flag the tray's
+    // pause writes (via `pause_watch`), so `/admin/ui`'s hero can show a
+    // dedicated "paused" state instead of a misleading green one.
+    #[tokio::test]
+    async fn serve_admin_status_reports_the_live_filtering_paused_flag() {
+        let state = state_with(no_op_client());
+        state.update_filtering_paused(true);
+
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/status")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(status) = serde_json::from_slice::<AdminStatusResponse>(&bytes) else {
+            panic!("response body must decode as AdminStatusResponse");
+        };
+        assert!(status.paused);
     }
 
     // T-169: `GET /admin/status` surfaces the live `ConnectionGate` reject

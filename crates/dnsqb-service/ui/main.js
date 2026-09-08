@@ -59,6 +59,19 @@ function computeProtectionState(status, reachable, cert) {
       detail: "Резолвінг призупинено, доки не відновиться зв'язок.",
     };
   }
+  // T-193: the tray paused filtering. The service is up and answering, so
+  // nothing above fires - but every query is going through the unfiltered
+  // baseline. Ranked here (offline > paused > 0-voters) to match the pipeline
+  // fast-path order, so a pause never reads as green "Захищено".
+  if (status.paused) {
+    return {
+      cls: "is-warn",
+      state: "Фільтрацію призупинено",
+      detail:
+        "DNS працює, але без фільтра: quorum і GeoIP вимкнено. Ваші власні " +
+        "списки блокування та дозволу діють. Відновіть через меню іконки в треї.",
+    };
+  }
   if (!status.active_providers || status.active_providers.length === 0) {
     return {
       cls: "is-bad",

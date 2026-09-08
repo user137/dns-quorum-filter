@@ -483,10 +483,11 @@ pakko; чернетку v0.3.0 пропатчено (asset + нотатки). TA
 kickoff+closing) — кольорові трей-іконки за станом (`status::icon_colour`, 4 гліфи) + read-only
 `trust_store::is_trusted` наперед; T-191 закомічено (`6bba1f8` + `25ef641`), CI 7/7. Патч-реліз
 **`v0.3.1`** (покриває Батч 3.12 + 3.14, закриває T-186) — **тег ще не пушнуто**: ручний чистий
-прогін MSIX користувач робитиме разом із Батчем 3.13. **Батч 3.13 (онбординг першого запуску,
-T-188–T-190) — у роботі: T-188 (`4cb9ed9`) + T-189 зроблено 2026-09-08** (`GET /admin/cert-status`
-+ `POST /admin/install-cert` + майстер трея `rfd` + hero cert-гілка + per-браузер картка
-Chromium/Firefox); T-190 (бамп `0.3.2` + closing-advisor + MSIX + тег) попереду. TASKS-DONE.md.
+прогін MSIX користувач робитиме разом із Батчем 3.13. **Батч 3.13 (T-188–T-190 + T-193) — у
+роботі: T-188 (`4cb9ed9`) + T-189 (`98ac6c8`/`a5489ef`) + T-193 зроблено 2026-09-08** (онбординг:
+`GET /admin/cert-status` + `POST /admin/install-cert` + майстер трея `rfd` + hero cert-гілка +
+per-браузер картка; **T-193** — трей-пауза більше не вбиває DNS, служба віддає нефільтрований
+baseline); T-190 (бамп `0.3.2` + closing-advisor + MSIX + тег) попереду. TASKS-DONE.md.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -842,8 +843,8 @@ HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`** 
   - Docs: DECISIONS.md (новий запис), `diagrams/onboarding.md` (нова) + README, `ui-navigation.md`
     + `ui-status-indicator.md` + `ui-dto-model.md` (звірка), `SPEC.md` §8, `UI-SPEC.md`,
     `SERVICES.md`, `CLAUDE.md`. Деталі — TASKS-DONE.md.
-- [x] T-189 — **зроблено 2026-09-08**, коміт `<pending>`. Картка налаштування браузера, свідома
-  до браузера. `navigator.userAgent` детект (`detectBrowserFamily` → Edge/Firefox/Opera/Chrome;
+- [x] T-189 — **зроблено 2026-09-08**, коміт `98ac6c8` (+ closing-advisor `a5489ef`). Картка
+  налаштування браузера, свідома до браузера. `navigator.userAgent` детект (`detectBrowserFamily` → Edge/Firefox/Opera/Chrome;
   `navigator.brave.isBrave()` async уточнює Brave) → `revealBrowserSteps` розкриває один із 3
   статичних блоків (`browser-steps-{chromium,firefox,other}`) + виставляє `chromium-settings-url`
   (`chrome://`/`edge://`/`brave://`/`opera://`). Кроки — **статичний HTML** (toggled `hidden`), не
@@ -852,7 +853,20 @@ HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`** 
   без змін. `README.md` секція браузера переписана (+Firefox). Тест `admin_ui`
   `browser_setup_card_has_a_static_step_block_per_browser_family`. Автоматичне прописування DoH —
   **поза обсягом** (T-99/T-134); one-click ProgId-перехід — відкладено (норма копіювати рядок).
-- [ ] T-190 — патч-реліз **`v0.3.2`** (майстер онбордингу). Бамп `0.3.1`→`0.3.2` (3 літерали +
+- [x] T-193 — **зроблено 2026-09-08**, коміт `<pending>`, kickoff plan+advisor. Пауза фільтрації
+  більше не вбиває DNS — трей-пауза тримає `dnsqb-service` живим, служба віддає нефільтрований
+  baseline (перегляд T-185, DECISIONS.md 2026-09-08). Новий `pause_watch::run_pause_watcher`
+  (detached, 1-с `stat` `stop.flag` → `AppState.filtering_paused`, `RwLock<bool>` як `reachability`);
+  `handle_query` знімає `UpstreamContext.filtering_paused` і зливає в гілку `!any_enabled` (baseline
+  pass-through, без кешу, `DecisionSource::Quorum`). Трей: `PAUSE_RESUME_ID` **прибрав**
+  `/admin/shutdown` (лише `set_stop_flag`); `confirm_pause` переписано (без over-claim — blocklist
+  блокує). Watcher: блок заморозки + `supervision_frozen` + `Effect::Spawn if stop_flag_is_set`
+  guard **прибрано** (служба жива → tick no-op; краш під час паузи респавниться в bypass).
+  `/admin/status.paused: bool` + hero-гілка `computeProtectionState` (сірий, ранг offline > paused
+  > 0-voters). 5 pipeline-тестів + dispatch + admin_ui. Docs: DECISIONS.md, SPEC §7,
+  `process-lifecycle.md`, `ui-status-indicator.md`, `ui-dto-model.md`, `lifecycle.rs` module-doc,
+  CLAUDE.md, SERVICES.md. Ships у `v0.3.2` **перед тегом T-190**.
+- [ ] T-190 — патч-реліз **`v0.3.2`** (майстер онбордингу + T-193). Бамп `0.3.1`→`0.3.2` (3 літерали +
   2 path-dep + `Cargo.lock`) окремим комітом; closing-advisor; пере-збірка MSIX; ручний чистий
   прогін (розширення T-186 чек-листа: діалог майстра з'являється → [Так] → cert у
   `CurrentUser\Root` → браузер відкриває `/admin/ui`; per-браузер кроки Chrome і Firefox;

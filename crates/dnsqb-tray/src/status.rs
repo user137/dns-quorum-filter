@@ -36,11 +36,14 @@ pub enum TrayStatus {
     /// awaiting manual recovery (T-95, `GaveUp`).
     ServiceGaveUp,
     /// Filtering is paused on purpose (T-185) — the user clicked "Призупинити
-    /// фільтрацію". `dnsqb-service` is intentionally down and the watchdog is
-    /// intentionally not respawning it; the presence of `stop.flag` is the
-    /// whole signal. Outranks every watchdog and admin-channel state, since
-    /// while paused the watchdog file goes stale by design and the admin
-    /// channel is unreachable.
+    /// фільтрацію". Since T-193 `dnsqb-service` **stays up** and serves every
+    /// query through the unfiltered baseline; the watchdog keeps supervising it
+    /// normally. The presence of `stop.flag` is still the whole signal, read
+    /// straight off disk here. Ranked **above** every watchdog and admin state
+    /// — a pause is a deliberate choice the user needs named as such, not as a
+    /// failure. (The pipeline and the `/admin/ui` hero rank `Offline` above
+    /// `Paused`; the tray ranks `Paused` first. Both are correct — the tray's
+    /// is the actionable reading. Intentional, not to be "reconciled".)
     Paused,
     /// The machine has no internet connectivity (T-152). Ranked directly
     /// below the watchdog states and above `NoActiveProvider` — an
@@ -314,6 +317,7 @@ mod tests {
             timeout_ms: 2000,
             serve_baseline_when_filters_unreachable: false,
             network: dnsqb_service::NetworkStatusView::Online,
+            paused: false,
             baseline_endpoint: dnsqb_service::BaselineEndpointView::Primary,
             port: 8443,
             stats,
@@ -629,13 +633,14 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
             // rather than cached as permanent.
             let mut client: Option<AdminClient> = None;
             loop {
-                // T-185 (Батч 3.12): filtering paused from the tray menu.
-                // `stop.flag`'s presence is the whole signal and outranks
-                // everything below — while paused the watchdog stops rewriting
-                // its state file (so `watchdog_override` would fall through to
-                // a misleading "Unreachable") and `dnsqb-service` is
-                // deliberately down. Checked on this 2s poll cadence, not on
-                // the main thread's 100ms event-loop tick.
+                // T-185 (Батч 3.12) / T-193: filtering paused from the tray
+                // menu. `stop.flag`'s presence is the whole signal and outranks
+                // everything below — a deliberate pause must read as such, not
+                // as a failure. Since T-193 the service stays up (it serves the
+                // unfiltered baseline while the flag exists), so `/admin/status`
+                // would report a healthy, filtering-looking service — this
+                // check is what still surfaces the pause. Checked on this 2s
+                // poll cadence, not on the main thread's 100ms event-loop tick.
                 if dnsqb_service::stop_flag_is_set(&app_data_dir) {
                     *current.write() = TrayStatus::Paused;
                     tokio::time::sleep(Duration::from_secs(2)).await;

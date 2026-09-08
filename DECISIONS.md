@@ -1171,3 +1171,69 @@ hero-стан), `ui-status-indicator.md` (hero cert-гілка), `ui-dto-model.m
 **Наслідки в інших доках:** `UI-SPEC.md` (маршрути + hero-стан); `SERVICES.md` (майстер трея +
 пункт меню + `onboarding.seen`); `CLAUDE.md` (module-table, tray-абзац). T-189 (per-браузер
 картка + Firefox) і T-190 (`v0.3.2`) — попереду.
+
+---
+
+## 2026-09-08 — T-193: пауза фільтрації тримає службу живою й віддає нефільтрований baseline (перегляд T-185)
+
+**Контекст:** живий прогін `v0.3.1` MSIX. Трей-пункт «Призупинити фільтрацію» (T-185, Батч 3.12)
+писав `stop.flag` **і слав `POST /admin/shutdown`** → процес `dnsqb-service` виходив, watcher
+бачив `stop.flag` і заморожував heartbeat-луп (не респавнив) → на `127.0.0.1:<port>` ніхто не
+слухав → браузер **не резолвив нічого**. Діалог `confirm_pause` обіцяв «DNS піде нефільтрованим»
+— обіцянка хибна: DNS іде не нефільтрованим, а мертвим (Три Б — користувач після паузи гірше,
+ніж без фільтра, і діалог бреше). Первісне рішення T-185 (нижче, 2026-09-07) явно вибрало «не
+чіпати `dnsqb-service` зовсім» заради меншого blast radius хотфіксу — цей запис його переглядає.
+
+**Рішення:**
+- **`stop.flag` стає сигналом, який читає сама служба.** Новий detached-полер
+  `pause_watch::run_pause_watcher` (дзеркало `run_reachability_prober`) раз на секунду публікує
+  наявність `stop.flag` в `AppState::filtering_paused` (`RwLock<bool>`, `Copy`, без `Arc` — як
+  `reachability`). `pipeline::handle_query` знімає його раз на запит у `UpstreamContext.filtering_paused`
+  і **зливає в наявну гілку `!ProviderEntry::any_enabled(voters)`** — пауза й «0 провайдерів»
+  резолвляться ідентично: baseline pass-through, **ніколи не кешується**, лог `DecisionSource::Quorum`
+  + порожні voters. Провайдери лишаються **enabled** (resume = нуль змін конфігу), просто не
+  опитуються.
+- **Порядок fast-path'ів:** overrides (blocklist/allowlist далі виграють) → offline (далі виграє —
+  baseline теж недосяжний) → **paused** → cache → quorum. Заблокований домен під час паузи далі
+  повертає `0.0.0.0`; обходяться лише quorum + GeoIP.
+- **Трей:** «Призупинити» = **лише `set_stop_flag`**, без `/admin/shutdown`. Resume = `clear_stop_flag`
+  + `ensure_sibling_running(Service)` (ідемпотентний no-op, крім випадку «і служба, і watcher
+  померли під час паузи»). `confirm_pause` переписано на правду — **без** over-claim «усе
+  нефільтроване» (blocklist блокує).
+- **Watcher:** блок заморозки `stop.flag` + латч `supervision_frozen` + `Effect::Spawn if
+  stop_flag_is_set` guard **прибрано**. Поки служба жива й здорова під час паузи, звичайний tick
+  — no-op (3 канали відповідають, vote `Alive`, `RestartBudget` не витрачається, `GaveUp`
+  недосяжний). Реальний краш служби під час паузи тепер **респавниться** (нова служба читає
+  `stop.flag` на старті й повертається в bypass-режимі) — строго краще за старе «DNS мертвий до
+  resume». Занепокоєння T-185 closing-advisor «guarding Effect у impure shell запізно → durable
+  `GaveUp`» повністю розчиняється, щойно пауза не вбиває службу.
+- **`/admin/status.paused: bool`** — нове поле. Без нього після цієї зміни hero `/admin/ui`
+  показав би зелене «Захищено» під час трей-паузи (служба жива, провайдери ввімкнені, мережа
+  Online) — хибне зелене, яке **вводить саме цей коміт**. `computeProtectionState` дістав гілку
+  «Фільтрацію призупинено» (сірий `is-warn`), ранг offline > paused > 0-voters (=порядок конвеєра).
+- **Трей `TrayStatus::Paused` — код деривації без змін**, `stop_flag_is_set` досі перша перевірка.
+  Трей ранжує `Paused` **вище** за `Offline`; конвеєр і hero ставлять offline першим. Обидва
+  читання коректні, трейове — дієве; навмисно, не «фіксити».
+- **Вікно виходу ~5 с:** `QUIT_APP_ID` пише `stop.flag` тоді `quit.flag`; tick watcher'а 5 с →
+  до ~5 с перед виходом застосунку служба віддає нефільтрований baseline замість фільтрованого.
+  Прийнятно (застосунок усе одно зараз стане повністю нефільтрованим). Задокументовано, не
+  інженерено навколо.
+
+**Причина:** середній шлях між «пауза = мертвий DNS» (статус-кво, Три Б + брехливий діалог) і
+«пауза = вимкнути всіх провайдерів через `/admin/config`» (потребує backup/restore стану
+провайдерів — гірше). Дзеркалення offline-fast-path T-152 — той самий `Copy`-прапорець, знятий
+раз на запит, один ранній `if`, без рестарту, без кешу.
+
+**Наслідки в коді:** `crates/dnsqb-service/src/pause_watch.rs` (новий) · `dispatch.rs`
+(`AppState.filtering_paused` + акцесори + 2 літерали `AdminStatusResponse` + `UpstreamContext`
+знімок) · `pipeline.rs` (`UpstreamContext.filtering_paused` + гілка `handle_query` + 5 тестів) ·
+`lib.rs` (`mod`/re-export) · `main.rs` (спавн полера) · `admin.rs` (`AdminStatusResponse.paused`) ·
+`ui/main.js` (hero-гілка) · `crates/dnsqb-tray/src/main.rs` (`PAUSE_RESUME_ID`, `confirm_pause`) ·
+`crates/dnsqb-tray/src/status.rs` (doc-коментарі) · `crates/dnsqb-watcher/src/main.rs` (прибрано
+заморозку).
+**Наслідки в SPEC:** §7 «Навмисна зупинка (T-185)» — пауза = нефільтровано-але-живо, не мертво.
+**Наслідки в діаграмах:** `diagrams/process-lifecycle.md` (секція паузи, `stateDiagram`,
+bullet); `diagrams/ui-status-indicator.md` + `diagrams/ui-dto-model.md` (поле `paused` / hero-стан).
+**Наслідки в інших доках:** `crates/dnsqb-service/src/lifecycle.rs` module-doc; `CLAUDE.md`
+(трей-абзац, gotcha «Guarding an Effect … → GaveUp» розчинилась, module-table, watcher-абзац,
+Project state); `SERVICES.md`. Ships у `v0.3.2` (Батч 3.13, перед тегом T-190).

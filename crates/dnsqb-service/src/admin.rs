@@ -95,6 +95,15 @@ pub struct AdminStatusResponse {
     /// (DECISIONS.md 2026-09-03: above "0 active providers", below the
     /// watchdog states).
     pub network: NetworkStatusView,
+    /// T-193 — whether the user paused filtering from the tray
+    /// (`lifecycle::stop.flag`). `dnsqb-service` is up and answering, but
+    /// every query is going through the unfiltered baseline (quorum + `GeoIP`
+    /// bypassed; the user's own allow/blocklist still apply). The `/admin/ui`
+    /// hero shows a dedicated grey state for this, ranked below `network`
+    /// (offline) and above "0 active providers" — the same order as
+    /// `pipeline::handle_query`'s fast paths — so a pause never reads as green
+    /// "protected".
+    pub paused: bool,
     /// T-154 — which entry of the baseline failover chain is currently
     /// active. `PRIMARY` unless the primary baseline has been failed over.
     /// Diagnostic only — not part of the status indicator.

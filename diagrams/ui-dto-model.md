@@ -4,7 +4,7 @@ T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_en
 (`AdminStatusResponse.encrypted_persistence { query_log, cache }`);
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08 (порядок пріоритету індикатора;
 шифрована персистентність; T-179 — `VoterScope` прибрано, §5.1 знято; T-188 — `CertStatusResponse`
-/ `InstallCertResponse` для онбордингу). TASKS.md T-188.
+/ `InstallCertResponse` для онбордингу; T-193 — `AdminStatusResponse.paused`). TASKS.md T-188, T-193.
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -163,12 +163,13 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 реалізовано>>
+        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
         +bool serve_baseline_when_filters_unreachable
         +NetworkStatusView network
+        +bool paused
         +BaselineEndpointView baseline_endpoint
         +u16 port
         +AdminStats stats
@@ -416,6 +417,16 @@ Canceled`, а не п'ять з жодного зі списків окремо.
 return-тип) у `dnsqb-tray` як `status::watchdog_override` → `TrayStatus::{ServiceRestarting,
 ServiceGaveUp}`. Крос-посилання: `watchdog-state.md` «Крос-посилання на UI»; порядок пріоритету
 в індикаторі — DECISIONS.md 2026-09-02 (watchdog вище за 0-voters).
+
+## `AdminStatusResponse.paused: bool` — реалізовано (T-193)
+
+`GET /admin/status` несе `paused` — чи користувач призупинив фільтрацію з трея (`lifecycle::
+stop.flag`, читається полером `pause_watch` у `AppState.filtering_paused`). Плоский `bool`, не
+enum-проєкція: це двійковий стан, і на струкурі всього 3 bool'и (`serve_baseline_when_filters_unreachable`,
+`persisted`, `paused`) — під `clippy::struct_excessive_bools`. `computeProtectionState` дає йому
+окрему сіру hero-гілку «Фільтрацію призупинено» (`ui-status-indicator.md` умова 3a), між `OFFLINE`
+і 0-voters. Служба при цьому **жива** — віддає нефільтрований baseline (той самий шлях, що
+«0 активних провайдерів»). DECISIONS.md 2026-09-08 (перегляд T-185).
 
 ## `OverrideDomainView`/`OverrideListsResponse` — реальна реалізація, відмінна від чернеткового `OverrideEntry` (T-47)
 

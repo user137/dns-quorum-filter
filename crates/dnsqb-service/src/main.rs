@@ -28,7 +28,7 @@
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, init_logging, load_maxmind_credentials,
     load_or_generate_server_config, load_persisted_cache, load_persisted_query_log,
-    migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater,
+    migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater, run_pause_watcher,
     run_query_log_persister, run_reachability_prober, serve, write_pid_file, AppState, BindError,
     Cache, CacheInit, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError,
     InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig, OverrideLists, OverridesState,
@@ -219,6 +219,20 @@ async fn main() {
     // (SPEC.md §7.1 #7), so the service-side direction acts and logs but never
     // persists.
     spawn_watchdog_tasks(app_data.as_deref());
+
+    // T-193: observe the tray's "Призупинити фільтрацію" flag (`stop.flag`) and
+    // publish it onto `AppState` so `handle_query` serves the unfiltered
+    // baseline while paused — the service stays up. Detached like the other
+    // background loops; not in `spawn_public_http_tasks` (that is for tasks
+    // that talk to third parties over their own `reqwest::Client`).
+    match app_data.as_deref() {
+        Some(dir) => {
+            tokio::spawn(run_pause_watcher(dir.to_path_buf(), Arc::clone(&state)));
+        }
+        None => {
+            tracing::warn!("no app-data directory — tray pause (stop.flag) will not be observed");
+        }
+    }
 
     serve_until_shutdown(listener, acceptor, state, resolver_config.limits).await;
 }

@@ -52,35 +52,38 @@ flowchart TD
 якщо нема живого. Трей, що вже тримає `tray.lock`, не спавниться вдруге; watcher, що тримає
 `watcher.lock`, не спавниться вдруге. Жодного tray↔watcher пінг-понгу.
 
-## Зупинка / пауза / відновлення (T-185)
+## Зупинка / пауза / відновлення (T-185, переглянуто T-193)
 
 `stop.flag` / `quit.flag` (`%LOCALAPPDATA%\...\`) — **окремі файли**, не `watchdog-state.json`
 (§7.1 #7 — єдиний письменник лишається). Правило: **entry-point процес (watcher) чистить прапор
-на старті; watcher у heartbeat-лупі прапор лише ПОВАЖАЄ** (бачить → не респавнить службу),
-ніколи не чистить там — інакше headless-запуск не зміг би відновитись.
+на старті** (пауза не переживає рестарт застосунку — сказано в confirm-діалозі).
 
-Поки `stop.flag` існує, heartbeat-луп watcher'а **повністю заморожений** — `LoopDriver::tick` не
-викликається взагалі (не лише глушиться `Effect::Spawn`): pure-`tick` сам витрачає `RestartBudget`
-і за ~5 спроб заганяє автомат у термінальний `GaveUp`. Заморожений луп перестає переписувати
-`watchdog-state.json` → протухає за 15 с — це і є чесний сигнал «нагляд є, свідомо не супроводжує»;
-трей показує окремий `TrayStatus::Paused` прямо з наявності прапора. Перезапуск застосунку
-знімає паузу (старт чистить `stop.flag`) — сказано в confirm-діалозі.
+**Пауза (T-193):** трей-пункт «Призупинити фільтрацію» пише **лише** `stop.flag` (без
+`/admin/shutdown`). `dnsqb-service` **лишається живим** — новий полер `pause_watch::run_pause_watcher`
+раз на секунду публікує наявність прапора в `AppState.filtering_paused`, і `handle_query` віддає
+кожен A/AAAA-запит через **нефільтрований baseline** (тією ж гілкою, що й «0 провайдерів»: без
+кворуму, без GeoIP, без кешу). Власні allow/blocklist користувача далі діють. Watcher наглядає
+**як звичайно** — служба здорова, tick — no-op; заморозки heartbeat-лупа більше немає (краш
+служби під час паузи тепер респавниться, і нова служба читає `stop.flag` → повертається в
+bypass-режимі). Трей показує окремий `TrayStatus::Paused` прямо з наявності прапора; `/admin/ui`
+hero — окремий стан «Фільтрацію призупинено» (поле `AdminStatusResponse.paused`).
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Running: плитка / логін
-    Running --> Paused: трей «Призупинити фільтрацію»<br/>(stop.flag + /admin/shutdown; heartbeat-луп заморожено)
-    Paused --> Running: трей «Відновити фільтрацію»<br/>(clear stop.flag + spawn_sibling(Service))
-    Running --> Exited: трей «Вийти з DNS Quorum Filter»<br/>(stop.flag + сигнал watcher'у на вихід)
+    [*] --> Filtering: плитка / логін
+    Filtering --> Paused: трей «Призупинити фільтрацію»<br/>(лише stop.flag; служба жива, віддає нефільтрований baseline;<br/>watcher наглядає як звичайно)
+    Paused --> Filtering: трей «Відновити фільтрацію»<br/>(clear stop.flag; ensure_sibling_running(Service) — no-op якщо жива)
+    Filtering --> Exited: трей «Вийти з DNS Quorum Filter»<br/>(stop.flag + quit.flag; watcher за ≤5 с зупиняє службу й виходить)
     Paused --> Exited: трей «Вийти…»
-    Exited --> Running: плитка / логін (старт watcher чистить stop.flag)
+    Exited --> Filtering: плитка / логін (старт watcher чистить stop.flag)
 
-    Running --> Running: трей «Сховати іконку»<br/>(виходить лише трей; служба+watcher живі;<br/>повернути — клік плитки → 2-й watcher піднімає трей)
-    Running --> Running: трей «Відновити нагляд»<br/>(завжди в меню; ensure_sibling_running(Watcher),<br/>no-op якщо watcher живий)
+    Filtering --> Filtering: трей «Сховати іконку»<br/>(виходить лише трей; служба+watcher живі;<br/>повернути — клік плитки → 2-й watcher піднімає трей)
+    Filtering --> Filtering: трей «Відновити нагляд»<br/>(завжди в меню; ensure_sibling_running(Watcher),<br/>no-op якщо watcher живий)
 ```
 
 **S6 (служба крашиться)** — не показано тут: це вже нагляд, `watchdog-state.md` (респавн за
-≤~40 с, `ServiceRestarting`/`ServiceGaveUp` у tooltip).
+≤~40 с, `ServiceRestarting`/`ServiceGaveUp` у tooltip). **Під час паузи S6 працює так само** —
+watcher більше не заморожений.
 
 ## Крайові сценарії (з матриці S1–S15, `plans/silly-wiggling-globe.md`)
 
@@ -98,10 +101,12 @@ stateDiagram-v2
   каже «не стартувати другий watcher», не каже, що робити ще; T-187 дає йому єдину корисну дію
   (показати іконку) — стандартний single-instance-патерн «повторний запуск → показати вікно».
 - **`stop.flag` як механізм навмисної зупинки** — новий cross-process сигнал, DECISIONS.md
-  (T-185). §7 описував лише авто-нагляд, не навмисний вихід користувача. Closing-advisor Батча
-  3.12: прапор **заморожує весь `tick`**, а не лише `Effect::Spawn` (інакше `RestartBudget`
-  вигорає → durable `GaveUp`); трей дістає окремий `TrayStatus::Paused`; пауза не переживає
-  перезапуск застосунку.
+  (T-185, переглянуто T-193 2026-09-08). §7 описував лише авто-нагляд, не навмисний вихід
+  користувача. **T-193:** пауза більше не вбиває службу — служба сама читає `stop.flag`
+  (`pause_watch`) і віддає нефільтрований baseline; watcher більше не заморожується (заморозка
+  Батча 3.12 закривала `RestartBudget`-вигорання, спричинене саме тим, що стара пауза слала
+  `/admin/shutdown` — щойно служба лишається жива, tick — no-op, проблема зникає). Трей досі
+  дістає окремий `TrayStatus::Paused`; пауза не переживає рестарт застосунку.
 - **Трей-запобіжник `ensure_running(Watcher)`** — трей формально launcher-scope (§7), не
   супервізор; запобіжник — лише для ручного запуску не того `.exe`, не постійний нагляд.
 

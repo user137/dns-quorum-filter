@@ -143,6 +143,7 @@ mod log_persist;
 mod logging;
 mod overrides;
 mod paths;
+mod pause_watch;
 mod persist_dto;
 mod pipeline;
 mod query_log;
@@ -204,6 +205,7 @@ pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
 pub use paths::{app_data_dir, PathsError};
+pub use pause_watch::{run_pause_watcher, PAUSE_POLL_INTERVAL};
 pub use pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
     PipelineOutcome, QueryLogMeta,

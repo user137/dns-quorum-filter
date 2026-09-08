@@ -94,6 +94,14 @@ pub struct UpstreamContext<'a> {
     /// against upstreams that can't be reached anyway. Override lists still
     /// apply first (they're local).
     pub reachability: NetworkReachability,
+    /// T-193 — the user paused filtering from the tray (`lifecycle::stop.flag`).
+    /// `true` routes every A/AAAA query through the unfiltered baseline
+    /// resolver, no quorum and no `GeoIP`, without `dnsqb-service` restarting —
+    /// the same resolution as zero active voters. Snapshotted once per query,
+    /// like `reachability`. Override lists still apply first (they're local)
+    /// and the offline fast path still wins above this (the baseline is
+    /// unreachable too).
+    pub filtering_paused: bool,
 }
 
 /// SPEC.md §3.5's live `GeoIP` filter inputs for one query (T-76) — bundled
@@ -420,7 +428,7 @@ pub async fn handle_query<C: DohClient + Sync>(
         return offline_servfail_with_meta(query, log_domain, qtype);
     }
 
-    if !ProviderEntry::any_enabled(voters) {
+    if upstream.filtering_paused || !ProviderEntry::any_enabled(voters) {
         // SPEC.md §3, §8.1: explicit pass-through, not fail-closed, not a
         // silent no-op — OR-logic over an empty voter set is semantically
         // undefined, so resolution goes through the baseline resolver with
@@ -429,6 +437,16 @@ pub async fn handle_query<C: DohClient + Sync>(
         // check regardless of `enabled` - disabling third-party voters does
         // not disable the user's own override rules, that's the pipeline's
         // fixed step order, not an inconsistency to "fix" later.
+        //
+        // T-193 — `upstream.filtering_paused` (the tray's "Призупинити
+        // фільтрацію" → `lifecycle::stop.flag`) reaches the *identical*
+        // resolution: baseline pass-through, never cached, logged `Quorum`
+        // with `voters: vec![]`. It shares this branch rather than
+        // duplicating it. The providers are left *enabled* on purpose so
+        // resume needs zero config change — they are simply not consulted
+        // while paused. The user's own allow/blocklist already ran above,
+        // and the offline fast path already won above (the baseline is
+        // unreachable too).
         //
         // Placed *before* the cache lookup below, not just before the
         // cache write - a fresh cache entry written while voters were
@@ -1186,6 +1204,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1239,6 +1258,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1276,6 +1296,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1329,6 +1350,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1362,6 +1384,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1404,6 +1427,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1460,6 +1484,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1508,6 +1533,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1539,6 +1565,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1580,6 +1607,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1616,6 +1644,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1657,6 +1686,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1689,6 +1719,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1732,6 +1763,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1770,6 +1802,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -1817,6 +1850,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2003,6 +2037,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2041,6 +2076,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2085,6 +2121,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2134,6 +2171,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2222,6 +2260,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2269,6 +2308,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2283,6 +2323,238 @@ mod tests {
             panic!("expected a NULL-blocked A answer");
         };
         assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+    }
+
+    // T-193: `UpstreamContext.filtering_paused` (the tray "Призупинити
+    // фільтрацію" flag) shares the `!any_enabled` branch — every A/AAAA query
+    // goes through the unfiltered baseline, providers stay *enabled* (so
+    // `default_voters()` here) but are never consulted, and nothing is cached.
+    // The user's own lists and the offline fast path still win above it.
+
+    #[tokio::test]
+    async fn filtering_paused_serves_the_baseline_and_never_consults_quorum() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.answers, allow_message_with_ip(baseline_ip).answers);
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+        assert!(
+            meta.voters.is_empty(),
+            "a paused pass-through consulted no voter"
+        );
+        // Not cached — resume must be instant and see no stale pass-through.
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        assert!(cache.get(&key).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn filtering_paused_still_honors_the_blocklist() {
+        // Pausing quorum does not disable the user's own block rules.
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.com".to_string(),
+            is_wildcard: false,
+            list: ListKind::Blocklist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let (outcome, _meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-blocked A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+    }
+
+    #[tokio::test]
+    async fn filtering_paused_does_not_serve_a_stale_block_cache_entry() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(
+                key,
+                CacheEntry::new(Verdict::Block, Duration::from_secs(300)),
+            )
+            .await;
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let (outcome, _meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected the real baseline A answer, not a NULL-blocked one");
+        };
+        assert!(
+            matches!(answer.data, RData::A(a) if a.0 == baseline_ip),
+            "a stale cached BLOCK verdict must not be served while filtering is paused"
+        );
+    }
+
+    #[tokio::test]
+    async fn filtering_paused_baseline_error_yields_servfail_not_a_fake_block() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Error,
+            calls: AtomicU32::new(0),
+        };
+
+        let (outcome, _meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+    }
+
+    #[tokio::test]
+    async fn offline_outranks_filtering_paused() {
+        // Both fast paths are live; offline is checked first (the baseline is
+        // unreachable too), so a paused + offline query is an instant SERVFAIL
+        // with nothing consulted.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+
+        let (outcome, _meta) = handle_query(
+            &query_for("example.com.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Offline,
+                filtering_paused: true,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
     }
 
     // T-147: QueryLogMeta - one test per branch that produces Some(meta),
@@ -2317,6 +2589,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2362,6 +2635,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2404,6 +2678,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2460,6 +2735,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2487,6 +2763,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2526,6 +2803,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2571,6 +2849,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2615,6 +2894,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2660,6 +2940,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2705,6 +2986,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2735,6 +3017,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -2779,6 +3062,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2836,6 +3120,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2907,6 +3192,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -2954,6 +3240,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3021,6 +3308,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3083,6 +3371,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3141,6 +3430,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3197,6 +3487,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: toggle,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -3284,6 +3575,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: true,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -3324,6 +3616,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: true,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
@@ -3349,6 +3642,7 @@ mod tests {
             baseline_url: BASELINE_URL,
             serve_baseline_fallback: false,
             reachability: crate::reachability::NetworkReachability::Offline,
+            filtering_paused: false,
         }
     }
 
@@ -3497,6 +3791,7 @@ mod tests {
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
             },
             &GeoipFilter {
                 reader: None,
