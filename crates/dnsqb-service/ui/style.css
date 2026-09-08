@@ -255,6 +255,15 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .hero.is-warn .hero-mark { background: var(--warn); }
 .hero.is-warn .hero-state { color: var(--warn); }
 .hero.is-warn .hero-detail { color: var(--warn); }
+/* T-188: the "install the local cert" action button, only ever rendered on
+   the is-bad (NOT_TRUSTED) hero. */
+.hero-action {
+  margin-top: 0.7rem; padding: 0.4rem 0.9rem;
+  border: 1px solid var(--bad); border-radius: 6px;
+  background: var(--paper); color: var(--bad);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.hero-action:disabled { opacity: 0.6; cursor: default; }
 
 /* Master + per-category toggles (basic view). Row layout reuses the
    .toggle-row / .switch primitives already defined above; these add the

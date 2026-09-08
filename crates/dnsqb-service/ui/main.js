@@ -18,13 +18,19 @@ const protectionHero = document.getElementById("protection-hero");
 const filterControlsBody = document.getElementById("filter-controls-body");
 const timeoutConfigBody = document.getElementById("timeout-config-body");
 
+// T-188: the last GET /admin/cert-status result (CertTrustView), or null
+// until the first fetch. Fetched on load and re-fetched after an install
+// click - NOT on the 2s poll (each call is two certutil spawns server-side).
+let certTrust = null;
+
 // T-176: the basic view's one large element. Computed from the conditions
 // diagrams/ui-status-indicator.md defines (the subset this page can see) in
 // that same priority order - a failed fetch (`reachable=false`) is the worst
 // case and outranks everything, then watchdog, then network, then "no
-// provider active", then healthy. Pure - takes the status object, returns
-// {cls,state,detail}.
-function computeProtectionState(status, reachable) {
+// provider active", then (T-188) the local cert trust state, then healthy.
+// Pure - takes the status object + cert-trust string, returns
+// {cls,state,detail,action?}.
+function computeProtectionState(status, reachable, cert) {
   if (!reachable) {
     return {
       cls: "is-bad",
@@ -60,6 +66,27 @@ function computeProtectionState(status, reachable) {
       detail: "Фільтрація вимкнена — жоден провайдер не активний.",
     };
   }
+  // T-188: filtering itself is up, but the local cert isn't trusted, so the
+  // browser can't reach /admin/ui without a warning and (more importantly) may
+  // not be sending DNS through this service at all. Distinct from "can't tell"
+  // (UNKNOWN) - trust_store::is_trusted's own "unknown != untrusted" contract.
+  if (cert === "NOT_TRUSTED") {
+    return {
+      cls: "is-bad",
+      state: "Сертифікат не встановлено",
+      detail:
+        "Локальний сертифікат не додано до довірених кореневих сертифікатів. " +
+        "Без цього браузер не довірятиме сторінці налаштувань.",
+      action: "install-cert",
+    };
+  }
+  if (cert === "UNKNOWN") {
+    return {
+      cls: "is-warn",
+      state: "Сертифікат не перевірено",
+      detail: "Не вдалося перевірити стан локального сертифіката.",
+    };
+  }
   const blocked = status.stats ? status.stats.blocked : 0;
   return {
     cls: "is-ok",
@@ -93,7 +120,60 @@ function renderProtectionHero(state) {
   detail.className = "hero-detail";
   detail.textContent = state.detail;
   box.appendChild(detail);
+  // T-188: the "install the local cert" hero carries its own action button
+  // (same-origin POST, no CSP change). Built via DOM methods, like the
+  // override editor below.
+  if (state.action === "install-cert") {
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "hero-action";
+    action.textContent = "Встановити сертифікат";
+    action.addEventListener("click", () => installCertFromHero(action));
+    box.appendChild(action);
+  }
   protectionHero.appendChild(box);
+}
+
+// T-188: POST /admin/install-cert, then re-check and re-render. On failure,
+// point the user at the tray item (which surfaces the certutil error in a
+// dialog) rather than trying to show it here.
+async function installCertFromHero(button) {
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = "Встановлення…";
+  try {
+    const response = await fetch("/admin/install-cert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    await refreshCertStatus();
+  } catch (_err) {
+    button.disabled = false;
+    button.textContent = "Не вдалося — скористайтеся пунктом трея";
+    setTimeout(() => {
+      button.textContent = original;
+    }, 4000);
+  }
+}
+
+// T-188: fetch GET /admin/cert-status into the module-level `certTrust`, then
+// re-render (refresh() recomputes the hero from it). Called on load and after
+// an install click - never on the 2s poll.
+async function refreshCertStatus() {
+  try {
+    const response = await fetch("/admin/cert-status");
+    if (response.ok) {
+      const body = await response.json();
+      certTrust = body.trusted;
+    }
+  } catch (_err) {
+    /* leave the previous value; the hero just doesn't gain the cert branch */
+  }
+  await refresh();
 }
 
 async function getStatus() {
@@ -198,7 +278,7 @@ function renderTimeoutConfig(status) {
 }
 
 function render(status) {
-  renderProtectionHero(computeProtectionState(status, true));
+  renderProtectionHero(computeProtectionState(status, true, certTrust));
   renderTimeoutConfig(status);
   syncDohUrl(status);
   // T-96: passive indicator that the query log (i.e. browsing history) is
@@ -241,7 +321,7 @@ function render(status) {
 }
 
 function renderError(err) {
-  renderProtectionHero(computeProtectionState(null, false));
+  renderProtectionHero(computeProtectionState(null, false, certTrust));
   appBody.textContent = "";
   const panel = document.createElement("div");
   panel.className = "error-panel";
@@ -268,6 +348,9 @@ async function refresh() {
 }
 
 refresh();
+// T-188: one cert-trust fetch on load (re-fetched only after an install
+// click) - it feeds the protection hero's cert branch.
+refreshCertStatus();
 // `in_flight` (a live count of requests being resolved right now) is
 // otherwise only ever sampled at the instant of a toggle click - a page
 // that only re-renders on user action would show it near-permanently 0,

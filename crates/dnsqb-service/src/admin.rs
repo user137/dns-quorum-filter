@@ -1488,6 +1488,60 @@ impl From<crate::local_state::UninstallReport> for UninstallLocalStateResponse {
     }
 }
 
+/// `GET /admin/cert-status` (T-188) — whether the local `cert.pem` is the
+/// certificate currently trusted in `CurrentUser\Root`. Three-state, not a
+/// bool: `certutil` can fail to answer — `cert.pem` absent on a fresh install
+/// before `dnsqb-service` has generated it, or a broken `certutil` — and
+/// [`crate::trust_store::is_trusted`]'s own contract says a caller must treat
+/// that as "unknown", never "untrusted". Collapsing the two would tell a user
+/// whose check is broken to (re)install a cert that may already be there, with
+/// a button that then appears to do nothing. Same closed-projection shape as
+/// [`WatchdogStatusView`] / [`ArtifactOutcomeView`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CertTrustView {
+    /// `cert.pem` matches the trusted `CurrentUser\Root` entry.
+    Trusted,
+    /// `certutil` ran and the certificate is not trusted.
+    NotTrusted,
+    /// `certutil` could not answer — neither trusted nor untrusted.
+    Unknown,
+}
+
+/// The body of `GET /admin/cert-status` (T-188).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertStatusResponse {
+    /// The trust state of the local `cert.pem`.
+    pub trusted: CertTrustView,
+}
+
+/// Wire form of [`crate::trust_store::TrustStoreOutcome`] — what `POST
+/// /admin/install-cert` (T-188) actually did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum InstallCertOutcomeView {
+    /// The certificate was installed into `CurrentUser\Root`.
+    Installed,
+    /// The certificate was already the trusted one — no `certutil` mutation.
+    AlreadyInstalled,
+}
+
+impl From<crate::trust_store::TrustStoreOutcome> for InstallCertOutcomeView {
+    fn from(outcome: crate::trust_store::TrustStoreOutcome) -> Self {
+        match outcome {
+            crate::trust_store::TrustStoreOutcome::Installed => Self::Installed,
+            crate::trust_store::TrustStoreOutcome::AlreadyInstalled => Self::AlreadyInstalled,
+        }
+    }
+}
+
+/// The body of `POST /admin/install-cert` (T-188).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstallCertResponse {
+    /// What the install attempt did.
+    pub outcome: InstallCertOutcomeView,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{compute_stats, degraded_counts, AdminStats, DEGRADED_LOOKBACK};

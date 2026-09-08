@@ -84,7 +84,7 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 
 | Поле | Тип | Джерело (SPEC.md) | Контрол UI | Що приймає / валідація |
 |---|---|---|---|---|
-| **[basic]** Hero-статус захисту (T-176) | обчислюваний із `AdminStatusResponse.{network,watchdog}` + `ProvidersResponse.filtering_active` + чи сервіс відповідає | §8, §3.3, §7, ВП№10; T-95/T-152/T-56 | єдиний великий блок угорі базового вигляду: колір (good/bad/warn) + слово («Захищено» / «Не захищено» / «Відновлення…» / «Немає інтернету» / «Служба зупинилась») + один рядок пояснення | обчислюваний, не редагується; той самий набір умов і порядок пріоритету, що `diagrams/ui-status-indicator.md` — T-176 лише піднімає його у hero, не змінює умови |
+| **[basic]** Hero-статус захисту (T-176; T-188) | обчислюваний із `AdminStatusResponse.{network,watchdog}` + `ProvidersResponse.filtering_active` + чи сервіс відповідає + **`GET /admin/cert-status` (T-188)** | §8, §3.3, §7, ВП№10; T-95/T-152/T-56 | єдиний великий блок угорі базового вигляду: колір (good/bad/warn) + слово («Захищено» / «Не захищено» / «Відновлення…» / «Немає інтернету» / «Служба зупинилась» / **«Сертифікат не встановлено»** [+ кнопка «Встановити сертифікат» → `POST /admin/install-cert`] / **«Сертифікат не перевірено»**) + один рядок пояснення | обчислюваний, не редагується; той самий набір умов і порядок пріоритету, що `diagrams/ui-status-indicator.md`; **T-188** додає cert-гілку після 0-voters, перед «Захищено» — `NOT_TRUSTED` → is-bad + дія, `UNKNOWN` → is-warn (окремо; `certutil` не відповів). `cert-status` fetched раз на завантаженні + після install-кліку, не на 2-с поллі |
 | **[basic]** Головний перемикач «Фільтрація» (T-176) | — | §3, §8.1 | switch угорі картки контролів | клієнт викликає `POST /admin/providers/set-category-enabled` для всіх трьох категорій послідовно (не `/admin/shutdown` — той вбиває й admin-канал); OFF = `filtering_active=false` pass-through |
 | **[basic]** Категорійні перемикачі: шкідливе / реклама / дорослий вміст (T-176) | `Category` (`SECURITY` / `ADS_TRACKERS` / `ADULT_CONTENT`) | §3.4, T-176 | три switch'і з людськими підписами + рядок «що це» | `POST /admin/providers/set-category-enabled {category, enabled}` — атомарно вмикає/вимикає всіх voter'ів категорії за один запис конфігу; порожня `ADULT_CONTENT` при ON додає `opendns-familyshield` (DECISIONS.md 2026-09-06); неоднорідна категорія (частина voter'ів) → стан «частково», клік вмикає всіх |
 | **[basic]** Рядок «N сторін бачать запити» (T-176) | `ProvidersResponse.third_party_count` | §3.4, CLAUDE.md «не ховати» | текст у базовому вигляді, під перемикачами — **не** в розкритті | лише читання; увімкнені voter'и + baseline |
@@ -274,7 +274,9 @@ persist'нути напівстан). Рядок «N сторін бачать �
    несе той самий обчислений good/warn/bad три-стан кольором (green/amber/red)
    плюс grey для «вимкнено-за-вибором»; ті самі умови й той самий порядок, без
    нового поля DTO (`cert_trusted` — локальна read-only перевірка трея, не через
-   адмін-канал).
+   адмін-канал). **T-188:** hero `/admin/ui` дістав ту саму cert-гілку — через
+   `GET /admin/cert-status` (`CertTrustView` три-стан), окремим fetch-циклом, не
+   на status-поллі; `NOT_TRUSTED` несе дію `POST /admin/install-cert`.
 
 ---
 
@@ -312,6 +314,8 @@ persist'нути напівстан). Рядок «N сторін бачать �
 | `get_override_lists()` → `GET /admin/overrides` | ⚠️ реалізовано T-47 як `OverrideListsResponse{allowlist, blocklist, conflicts}` — `conflicts` рахується сервером, не клієнтом | Списки | Ф1 |
 | `get_provider_config()` / `set_timeout_mode(mode)` / `set_doh_port(port)` | `ResolverSettings` — ⚠️ `set_timeout_mode` реалізовано T-52 (повертає `AdminStatusResponse`, не окремий `ResolverSettings`); `get_provider_config()`/`set_doh_port(port)` ще ні | Провайдери | Ф1 |
 | — (нова, не в цій чернетці) → `GET /admin/cache-config` / `POST /admin/cache-config/apply` | ⚠️ реалізовано T-153 як `CacheConfigView`/`CacheConfigUpdate` (5 полів TTL-меж/ємності, SPEC.md §4.1) — окремий маршрут від `set_timeout_mode`, навмисно не злитий у `AdminConfigUpdate`, щоб звичайний тумблер провайдера не тягнув за собою скидання кешу як побічний ефект. Секція "Кеш" на `/admin/ui` — окрема картка, не частина "Розширені" (та секція ще не існує в реалізованому UI) | Кеш (нова секція, backend-роут реалізовано T-153; UI-картка — той самий зріз, другий коміт) | Ф1 |
+| — (нова, не в цій чернетці) → `GET /admin/cert-status` | ⚠️ реалізовано T-188 — `CertStatusResponse { trusted: CertTrustView }`, три-стан `TRUSTED` / `NOT_TRUSTED` / `UNKNOWN` (`certutil` міг не відповісти — «unknown ≠ untrusted» контракт `trust_store::is_trusted`). Read-only, без CSRF-гейта як `GET /admin/status`; **не** в `/admin/status` (той политься кожні 2 с — задорого, 2 `certutil`-спавни на виклик). Живить hero cert-гілку + майстер трея | Hero `/admin/ui`, майстер трея | Батч 3.13 |
+| — (нова, не в цій чернетці) → `POST /admin/install-cert` | ⚠️ реалізовано T-188 — `{}`-тіло, CSRF-гейт як усі write-маршрути; `trust_store::ensure_installed(cert.pem)` через `spawn_blocking` → `InstallCertResponse { outcome: INSTALLED \| ALREADY_INSTALLED }`. Прецедент мутації trust store з маршруту — `POST /admin/uninstall-local-state` (T-70). Обидва в `FUZZ_EXCLUDED_ROUTES` | Кнопка hero «Встановити сертифікат» | Батч 3.13 |
 | `add_custom_provider(name, url)` | — | Провайдери | Ф2 |
 | `get_geoip_config()` / `set_blocked_countries(list)` | `GeoIPConfig` | GeoIP | Ф2 |
 | `get_geoip_db_status()` | дата оновлення | GeoIP | Ф2 |

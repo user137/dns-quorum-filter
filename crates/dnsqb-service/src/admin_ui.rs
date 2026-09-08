@@ -332,6 +332,31 @@ mod tests {
         );
     }
 
+    // T-188 — the protection hero gains a cert-trust branch: it fetches
+    // GET /admin/cert-status, distinguishes NOT_TRUSTED (with an install
+    // action) from UNKNOWN, and the install button POSTs the real route.
+    #[test]
+    fn main_js_wires_the_cert_trust_hero_branch_and_install_action() {
+        assert!(
+            MAIN_JS.contains("/admin/cert-status"),
+            "the hero must fetch the cert-trust state"
+        );
+        assert!(
+            MAIN_JS.contains("/admin/install-cert"),
+            "the install button must call the real route"
+        );
+        for token in ["NOT_TRUSTED", "UNKNOWN"] {
+            assert!(
+                MAIN_JS.contains(token),
+                "the hero must treat {token} as its own distinct cert state"
+            );
+        }
+        assert!(
+            !MAIN_JS.contains("setInterval(refreshCertStatus"),
+            "cert-status must not be polled - each call is two certutil spawns server-side"
+        );
+    }
+
     // T-176 — the basic-view master + category toggles must call the new
     // atomic route, cover all three categories, and the master switch must
     // never reach for /admin/shutdown (which would kill the admin channel and

@@ -726,6 +726,12 @@ fn next_delay(confirmed_trusted: bool, miss_streak: usize) -> Duration {
 pub struct TrustState {
     trusted: Arc<AtomicBool>,
     recheck: Arc<AtomicBool>,
+    /// `true` once the thread has had at least one conclusive `certutil`
+    /// answer (either polarity). Until then [`Self::is_trusted`] is the
+    /// optimistic seed, not a reading — the T-188 first-run wizard keys on
+    /// this so it never fires on "unknown" (on a fresh MSIX install the
+    /// service hasn't written `cert.pem` yet when the tray starts, T-187).
+    confirmed: Arc<AtomicBool>,
 }
 
 impl TrustState {
@@ -734,6 +740,13 @@ impl TrustState {
     #[must_use]
     pub fn is_trusted(&self) -> bool {
         self.trusted.load(Ordering::Relaxed)
+    }
+
+    /// Whether [`Self::is_trusted`] reflects a real `certutil` answer yet
+    /// rather than the seeded default. See [`Self::confirmed`].
+    #[must_use]
+    pub fn is_confirmed(&self) -> bool {
+        self.confirmed.load(Ordering::Relaxed)
     }
 
     /// A cert menu action just ran — re-poll `certutil` promptly instead of
@@ -756,9 +769,11 @@ impl TrustState {
 pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
     let trusted = Arc::new(AtomicBool::new(true));
     let recheck = Arc::new(AtomicBool::new(false));
+    let confirmed = Arc::new(AtomicBool::new(false));
     let state = TrustState {
         trusted: Arc::clone(&trusted),
         recheck: Arc::clone(&recheck),
+        confirmed: Arc::clone(&confirmed),
     };
 
     std::thread::spawn(move || {
@@ -773,6 +788,10 @@ pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
             match result {
                 Ok(now_trusted) => {
                     trusted.store(now_trusted, Ordering::Relaxed);
+                    // Any `Ok` — trusted or not — means `certutil` gave a real
+                    // answer, so the displayed flag is now a reading, not the
+                    // seed (T-188).
+                    confirmed.store(true, Ordering::Relaxed);
                     logged_err = false;
                 }
                 Err(err) => {

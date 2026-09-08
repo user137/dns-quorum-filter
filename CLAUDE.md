@@ -258,6 +258,12 @@ voter in one `Category` atomically, one `resolver_config.toml` write; turning on
 DECISIONS.md 2026-09-06),
 `/admin/log[/clear]`; `POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
 `resolver_config.toml`);
+`GET /admin/cert-status` (T-188 — `CertStatusResponse { trusted: CertTrustView }`, three-state
+`TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate; `is_trusted` on `<app-data>/cert.pem`,
+`None` persist-paths → `UNKNOWN` with no `certutil` spawn) + `POST /admin/install-cert` (T-188 —
+`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
+`CurrentUser\Root` like `/admin/uninstall-local-state`; **both** in `FUZZ_EXCLUDED_ROUTES` —
+`cert-status` GET = 2 `certutil` spawns/case);
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
 **not** an admin route: `GET /health` (T-86, watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
@@ -269,7 +275,8 @@ discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47
 
 `dnsqb-tray` — tray icon (`tray-icon` / `tao` / `rfd`), polls `/admin/status` on its own OS thread.
 Menu **rebuilt in T-185** (Варіант B lifecycle group at the bottom): "Відкрити налаштування"
-(browser → `/admin/ui`) · "Скинути кеш і лог" (soft `/admin/reset`) · "Про програму" · cert group
+(browser → `/admin/ui`) · "Скинути кеш і лог" (soft `/admin/reset`) · "Про програму" · "Майстер
+налаштування" (T-188 — manual re-entry to the first-run wizard) · cert group
 (T-49/T-69: "Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю видалити" (T-70) ·
 **"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; pause = `set_stop_flag` +
 `/admin/shutdown` behind a confirm dialog, resume = `clear_stop_flag` + `ensure_sibling_running(Service)`)
@@ -295,7 +302,14 @@ poll loop; the displayed flag seeds `true` so "unknown" ≠ "untrusted", but the
 (`next_delay`) keys on a **confirmed `Ok(true)`** — an `Err` first poll before `cert.pem` exists
 takes the 2→5→15→60→300s back-off ladder, not the 300s slow branch, or a fresh install shows green
 for 5 min; cert menu items call `request_recheck()`). `refresh_tray` commits `last_colour` only on
-`set_icon` success.
+`set_icon` success. **First-run onboarding (T-188, Батч 3.13):** `onboarding` module — pure
+`should_offer_onboarding(cert_confirmed, cert_trusted, seen)` (fires only on a **confirmed**
+untrusted reading — `TrustState.is_confirmed()`, set on the first `Ok(_)`; `cert.pem` is absent
+when the tray starts on a fresh install, T-187) + `onboarding.seen` marker file in app-data (NOT
+`lifecycle.rs` — that's cleared on startup; this must survive launches). `maybe_offer_onboarding`
+(once-per-process latch, called each event-loop tick) → `run_setup_wizard` (own `std::thread`,
+`rfd` Yes/No; on Yes reuses `spawn_cert_action` → `ensure_installed` → marker + open `/admin/ui`
+**only on success**). Same wizard on the "Майстер налаштування" menu item.
 Tooltip states:
 `Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
 `status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —

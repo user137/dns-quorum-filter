@@ -2,8 +2,9 @@ SOURCES: SPEC.md §5, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4,
 T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
 `serve_baseline_when_filters_unreachable`); T-146/T-97
 (`AdminStatusResponse.encrypted_persistence { query_log, cache }`);
-DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07 (порядок пріоритету індикатора; шифрована
-персистентність; T-179 — `VoterScope` прибрано, §5.1 знято).
+DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08 (порядок пріоритету індикатора;
+шифрована персистентність; T-179 — `VoterScope` прибрано, §5.1 знято; T-188 — `CertStatusResponse`
+/ `InstallCertResponse` для онбордингу). TASKS.md T-188.
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -500,6 +501,25 @@ MaxMind GeoLite2 (креденшели з T-163 — в OS secret store, не у 
 `/admin/ui` показує попередження). Транзієнтна помилка (мережа/таймаут) не чіпає відомий
 вердикт. Зміна креденшелів (`POST /admin/geoip/maxmind[/clear]`, `POST /admin/reset`) діє
 одразу — джерело в `AppState`, апдейтер будиться через `tokio::sync::Notify`.
+
+## `CertStatusResponse`/`InstallCertResponse` — нова пара DTO для онбордингу (T-188, Батч 3.13)
+
+`GET /admin/cert-status` → `CertStatusResponse { trusted: CertTrustView }`; `POST
+/admin/install-cert` (тіло `{}`) → `InstallCertResponse { outcome: InstallCertOutcomeView }`.
+Живлять cert-гілку hero `/admin/ui` (`ui-status-indicator.md`) і майстер трея
+(`diagrams/onboarding.md`).
+
+- **`CertTrustView`** — `TRUSTED` / `NOT_TRUSTED` / `UNKNOWN` (`#[serde(rename_all =
+  "SCREAMING_SNAKE_CASE")]`). Три-стан, **не bool**: `certutil` може не відповісти (свіжа
+  інсталяція до генерації `cert.pem`, зламаний `certutil`), і контракт `trust_store::is_trusted`
+  вимагає трактувати це як «невідомо», ніколи як «недовірений». Та сама закрита-проєкція форма,
+  що `WatchdogStatusView` (сталий/відсутній стан → окремий варіант, не вгадування).
+- **`InstallCertOutcomeView`** — `INSTALLED` / `ALREADY_INSTALLED` (`From<TrustStoreOutcome>`).
+- Read-only маршрут (`cert-status`) — без CSRF-гейта, як `GET /admin/status`; **не** поле
+  `/admin/status` (той политься кожні 2 с — 2 `certutil`-спавни на виклик задорого). `install-cert`
+  — CSRF-гейт + body-cap як усі write-маршрути; `ensure_installed` через `spawn_blocking`. Обидва
+  в `FUZZ_EXCLUDED_ROUTES`. Немає `AdminClient`-методів — жоден Rust-споживач не кличе (трей —
+  `ensure_installed` напряму, `/admin/ui` — `fetch`), той самий прецедент, що `/admin/overrides`.
 
 ## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`QType` — реальна реалізація (T-54)
 

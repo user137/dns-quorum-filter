@@ -15,6 +15,7 @@ run-time-поведінки зміщується на нього, ritual ниж�
 | [`watchdog-state.md`](watchdog-state.md) | Автомат живучості/рестарту watchdog (на напрям): Healthy → … → GaveUp | §7, §7.1 |
 | [`watchdog-channels.md`](watchdog-channels.md) | Три канали живучості + шар голосування (flowchart — канали незалежні) | §7, §7.1 |
 | [`process-lifecycle.md`](process-lifecycle.md) | Життя 3 процесів: бутстрап (watcher → tray → service), точки входу, пауза/вихід/відновлення (Батч 3.12) | §7, §7.1, §1, §2, §6 |
+| [`onboarding.md`](onboarding.md) | Майстер першого запуску (T-188, Батч 3.13): тригер (3 незалежні прапорці), потік [Так]/[Пізніше], hero cert-гілка `/admin/ui`, маршрути `cert-status`/`install-cert` | §8, §2, §7.1 |
 
 Повʼязаний документ рівня екранів/полів: [`../UI-SPEC.md`](../UI-SPEC.md).
 

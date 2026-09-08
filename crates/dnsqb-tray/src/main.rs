@@ -38,6 +38,7 @@
 //! tick via `ControlFlow::WaitUntil` instead.
 
 mod browser;
+mod onboarding;
 mod status;
 
 use dnsqb_service::{
@@ -112,6 +113,7 @@ const PAUSE_RESUME_ID: &str = "pause-resume-filtering";
 const RESTORE_SUPERVISION_ID: &str = "restore-supervision";
 const QUIT_APP_ID: &str = "quit-app";
 const CLOSE_ID: &str = "close";
+const SETUP_WIZARD_ID: &str = "setup-wizard";
 const INSTALL_CERT_ID: &str = "install-cert";
 const UNINSTALL_CERT_ID: &str = "uninstall-cert";
 const ROTATE_CERT_ID: &str = "rotate-cert";
@@ -215,6 +217,7 @@ fn main() {
     let mut last_colour = IconColour::Red;
     let mut last_paused = stop_flag_is_set(&app_data);
     let mut last_flag_check = Instant::now();
+    let mut onboarding_offered = false;
 
     let event_loop: EventLoop<()> = EventLoop::new();
     event_loop.run(move |_event, _target, control_flow| {
@@ -231,6 +234,7 @@ fn main() {
             &mut last_trusted,
             &mut last_colour,
         );
+        maybe_offer_onboarding(&mut onboarding_offered, &app_data, port, &trust, trusted);
 
         // T-185: flip the pause/resume label when `stop.flag` appears or is
         // removed (by this menu, or by a fresh watcher launch clearing it) —
@@ -293,6 +297,7 @@ fn build_menu(app_data: &Path) -> (Menu, MenuItem) {
     let open_settings = MenuItem::with_id(OPEN_SETTINGS_ID, "Відкрити налаштування", true, None);
     let restart = MenuItem::with_id(RESTART_ID, "Скинути кеш і лог", true, None);
     let about = MenuItem::with_id(ABOUT_ID, "Про програму", true, None);
+    let setup_wizard = MenuItem::with_id(SETUP_WIZARD_ID, "Майстер налаштування", true, None);
     let install_cert = MenuItem::with_id(INSTALL_CERT_ID, "Встановити сертифікат", true, None);
     let uninstall_cert = MenuItem::with_id(UNINSTALL_CERT_ID, "Видалити сертифікат", true, None);
     let rotate_cert = MenuItem::with_id(ROTATE_CERT_ID, "Перевипустити сертифікат", true, None);
@@ -316,6 +321,7 @@ fn build_menu(app_data: &Path) -> (Menu, MenuItem) {
         &restart,
         &about,
         &PredefinedMenuItem::separator(),
+        &setup_wizard,
         &install_cert,
         &uninstall_cert,
         &rotate_cert,
@@ -350,6 +356,7 @@ fn handle_menu_event(
             });
         }
         ABOUT_ID => show_about_dialog(),
+        SETUP_WIZARD_ID => run_setup_wizard(app_data, port, trust),
         INSTALL_CERT_ID => {
             if confirm_install_cert() {
                 let cert_path = app_data.join("cert.pem");
@@ -536,6 +543,77 @@ fn spawn_cert_action<F, E>(
         let outcome = action();
         trust.request_recheck();
         outcome
+    });
+}
+
+/// One-shot first-run onboarding offer (T-188). Fires at most once per
+/// process (`offered` latch), and only once the trust-watch thread has a
+/// *confirmed* `certutil` reading — on a fresh MSIX install `cert.pem` does
+/// not exist when the tray starts (T-187), so an earlier check would read the
+/// optimistic seed, not the store. [`onboarding::should_offer_onboarding`] is
+/// the pure predicate.
+fn maybe_offer_onboarding(
+    offered: &mut bool,
+    app_data: &Path,
+    port: u16,
+    trust: &TrustState,
+    trusted: bool,
+) {
+    if *offered {
+        return;
+    }
+    let seen = onboarding::onboarding_seen(app_data);
+    if onboarding::should_offer_onboarding(trust.is_confirmed(), trusted, seen) {
+        *offered = true;
+        run_setup_wizard(app_data, port, trust);
+    }
+}
+
+/// The first-run wizard (T-188): a welcome dialog offering to install the
+/// local certificate, then — on «Так» and a successful install — open the
+/// browser-setup page. Runs entirely on a throwaway thread because `rfd`
+/// dialogs block and both callers (the auto-offer above and the "Майстер
+/// налаштування" menu item) are on the event-loop thread. Reuses
+/// [`spawn_cert_action`] for the install half, so the trust icon re-polls
+/// afterward for free. `onboarding.seen` is written on «Пізніше» and on a
+/// *successful* install, never on a failed one (that should re-offer next
+/// launch); the menu item is the manual re-entry regardless.
+fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
+    let app_data = app_data.to_path_buf();
+    let trust = trust.clone();
+    std::thread::spawn(move || {
+        let proceed = rfd::MessageDialog::new()
+            .set_title("Ласкаво просимо до DNS Quorum Filter")
+            .set_description(
+                "Залишилось два кроки, щоб браузер почав фільтрувати DNS:\n\n\
+                 1. Встановити локальний сертифікат — без нього браузер не довірятиме \
+                 сторінці налаштувань.\n\
+                 2. Вказати адресу локального фільтра в налаштуваннях браузера — \
+                 сторінка з інструкцією відкриється після кроку 1.\n\n\
+                 Встановити сертифікат зараз?",
+            )
+            .set_level(rfd::MessageLevel::Info)
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+        if proceed != rfd::MessageDialogResult::Yes {
+            onboarding::mark_onboarding_seen(&app_data);
+            return;
+        }
+        let cert_path = app_data.join("cert.pem");
+        let url = format!("https://127.0.0.1:{port}/admin/ui");
+        spawn_cert_action(
+            "onboarding-install",
+            "Встановити сертифікат",
+            &trust,
+            move || -> Result<String, dnsqb_service::TrustStoreError> {
+                let outcome = ensure_installed(&cert_path)?;
+                // Reached only on a successful install — a failure bails on the
+                // `?` above with the marker still unwritten.
+                onboarding::mark_onboarding_seen(&app_data);
+                browser::open_in_default_browser(&url);
+                Ok(format!("{outcome:?}"))
+            },
+        );
     });
 }
 

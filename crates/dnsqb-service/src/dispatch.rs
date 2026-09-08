@@ -23,12 +23,12 @@
 
 use crate::admin::{
     compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    BaselineEndpointView, CacheConfigUpdate, CacheConfigView, DatabaseSource,
-    EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
-    HealthResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
-    MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
-    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
-    UninstallLocalStateResponse, WatchdogStatusView,
+    BaselineEndpointView, CacheConfigUpdate, CacheConfigView, CertStatusResponse, CertTrustView,
+    DatabaseSource, EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest,
+    HealthGeoip, HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse,
+    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView,
+    OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
+    ProviderStatusView, UninstallLocalStateResponse, WatchdogStatusView,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -112,6 +112,8 @@ const ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH: &str = "/admin/providers/set-ca
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
 const ADMIN_UNINSTALL_LOCAL_STATE_PATH: &str = "/admin/uninstall-local-state";
+const ADMIN_CERT_STATUS_PATH: &str = "/admin/cert-status";
+const ADMIN_INSTALL_CERT_PATH: &str = "/admin/install-cert";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
@@ -150,6 +152,8 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
     (ADMIN_UNINSTALL_LOCAL_STATE_PATH, &[Method::POST]),
+    (ADMIN_CERT_STATUS_PATH, &[Method::GET]),
+    (ADMIN_INSTALL_CERT_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
@@ -2640,6 +2644,93 @@ where
     json_response(&UninstallLocalStateResponse::from(report))
 }
 
+/// `<app-data>/cert.pem`, when this service has a persisted config location at
+/// all — it always does in a real deployment (the cert it serves TLS with
+/// lives there); an in-memory test [`AppState`] does not.
+fn cert_pem_path<C: DohClient + Sync>(state: &AppState<C>) -> Option<PathBuf> {
+    state
+        .persist
+        .paths
+        .as_ref()
+        .map(PersistPaths::app_data_dir)
+        .map(|dir| dir.join("cert.pem"))
+}
+
+/// `GET /admin/cert-status` (T-188) — is the local `cert.pem` the certificate
+/// currently trusted in `CurrentUser\Root`? Read-only, no CSRF gate (same as
+/// `GET /admin/status`); the `/admin/ui` protection hero and the tray's
+/// first-run wizard both consult it before offering to install. Method
+/// allowlisting happens centrally in [`serve`]'s `ROUTES` check.
+///
+/// Three-state, never a bare bool: [`crate::trust_store::is_trusted`]'s
+/// contract says an unreadable `cert.pem` (a fresh install before
+/// `dnsqb-service` has generated it, or a broken `certutil`) is "unknown",
+/// never "untrusted" — collapsing them would tell a user whose check is broken
+/// to reinstall a cert that may already be trusted. An in-memory state with no
+/// `cert.pem` path is [`CertTrustView::Unknown`] for the same reason, which
+/// also keeps this route from spawning a real `certutil` under
+/// `serve_enforces_the_route_table_it_matched_above` (its fixture state has
+/// `paths: None`).
+fn serve_admin_cert_status<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
+    let trusted = match cert_pem_path(state) {
+        Some(cert_path) => match crate::trust_store::is_trusted(&cert_path) {
+            Ok(true) => CertTrustView::Trusted,
+            Ok(false) => CertTrustView::NotTrusted,
+            Err(_) => CertTrustView::Unknown,
+        },
+        None => CertTrustView::Unknown,
+    };
+    json_response(&CertStatusResponse { trusted })
+}
+
+/// `POST /admin/install-cert` (T-188) — installs the local `cert.pem` into
+/// `CurrentUser\Root` (`certutil -addstore -user Root`, no elevation) if it
+/// isn't already trusted; an already-trusted cert returns
+/// [`crate::admin::InstallCertOutcomeView::AlreadyInstalled`] with no
+/// mutation. Same CSRF gate and body-size cap as every other admin `POST`; no
+/// config file touched, so no `persist_lock`. Precedent for mutating the trust
+/// store from a route: `POST /admin/uninstall-local-state` (T-70).
+///
+/// [`crate::trust_store::ensure_installed`] is a synchronous `certutil` call
+/// that can sit behind a crypt32 confirmation dialog — run on `spawn_blocking`
+/// so it never stalls this listener, which also serves `/health` (watchdog
+/// channel 3).
+async fn serve_admin_install_cert<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    if limited.collect().await.is_err() {
+        return status_response(StatusCode::BAD_REQUEST);
+    }
+    let Some(cert_path) = cert_pem_path(state) else {
+        return status_response(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    match tokio::task::spawn_blocking(move || crate::trust_store::ensure_installed(&cert_path))
+        .await
+    {
+        Ok(Ok(outcome)) => json_response(&InstallCertResponse {
+            outcome: outcome.into(),
+        }),
+        // A `certutil` failure or a join error — both map to 500; the UI copy
+        // tells the user to fall back to the tray's own "Встановити
+        // сертифікат" item, which surfaces the underlying error in a dialog.
+        Ok(Err(_)) | Err(_) => status_response(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 /// `POST /admin/shutdown` (T-149) — the highest blast-radius endpoint on
 /// this channel: its only consumer is `dnsqb-tray`'s "Зупинити фільтрацію"
 /// menu item, which gates it behind a confirm dialog that names the
@@ -2802,6 +2893,8 @@ where
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
         ADMIN_UNINSTALL_LOCAL_STATE_PATH => serve_admin_uninstall_local_state(req, &state).await,
+        ADMIN_CERT_STATUS_PATH => serve_admin_cert_status(&state),
+        ADMIN_INSTALL_CERT_PATH => serve_admin_install_cert(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
@@ -2819,14 +2912,16 @@ mod tests {
         admin_status, content_type_is_dns_message, parse_log_query, read_watchdog_view,
         resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
         GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
-        PersistTarget, RuntimeInit, WatchdogState, ADMIN_UNINSTALL_LOCAL_STATE_PATH,
-        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        PersistTarget, RuntimeInit, WatchdogState, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH,
+        ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT,
+        MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
-        AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView, DecisionView,
-        GeoipCountriesResponse, GeoipCountryRequest, LogQueryResponse, MaxmindCredentialCheck,
-        MaxmindCredentialsRequest, MaxmindCredentialsView, OverrideAddRequest,
-        OverrideListsResponse, OverrideRemoveRequest, WatchdogStatusView,
+        AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
+        CertStatusResponse, CertTrustView, DecisionView, GeoipCountriesResponse,
+        GeoipCountryRequest, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
+        MaxmindCredentialsView, OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
+        WatchdogStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::{LimitsConfig, ResolverConfig};
@@ -3020,24 +3115,37 @@ mod tests {
     // "unlikely" isn't the same as "provably never" the way it is for the
     // admin-only property above, which never reaches `handle_query` at all.
 
-    /// Routes this property deliberately never selects. T-70's real handler
-    /// (once past the content-type gate, which this property always
-    /// satisfies for a non-GET route - see below) spawns a real
-    /// `certutil.exe` subprocess and mutates whatever this project's fixed
-    /// `CommonName` has installed in the machine's actual `CurrentUser\Root`
-    /// store, the same real-external-resource side effect `trust_store`'s
-    /// and `cert_rotation`'s own tests already refuse to trigger (see
-    /// `local_state.rs`'s `remove_all` doc comment). Unlike every other
-    /// route this property fuzzes, the handler never even inspects the
-    /// body once the gate passes, so fuzzing it here buys nothing while
-    /// still paying a real subprocess-spawn cost per case, repeated across
-    /// however many of `Config::with_cases`' 64 cases happen to land on it.
-    /// Routing/method-gating for this path is proven instead by
+    /// Routes this property deliberately never selects, because their real
+    /// handler spawns a real `certutil.exe` subprocess and/or mutates
+    /// whatever this project's fixed `CommonName` has in the machine's actual
+    /// `CurrentUser\Root` store — the same real-external-resource side effect
+    /// `trust_store`'s and `cert_rotation`'s own tests already refuse to
+    /// trigger (see `local_state.rs`'s `remove_all` doc comment):
+    ///
+    /// - `/admin/uninstall-local-state` (T-70) — once past the content-type
+    ///   gate (which this property always satisfies for a non-GET route),
+    ///   `local_state::remove_all` runs `certutil` and clears the trust
+    ///   store; the handler never even inspects the body, so fuzzing it buys
+    ///   nothing.
+    /// - `/admin/install-cert` (T-188) — same, `trust_store::ensure_installed`
+    ///   mutates `CurrentUser\Root`.
+    /// - `/admin/cert-status` (T-188) — a GET, so nothing else excludes it,
+    ///   but its handler calls `trust_store::is_trusted` = two `certutil`
+    ///   spawns per case; harmless to the store but a real subprocess cost on
+    ///   every one of `Config::with_cases`' 64 cases that lands on it (the
+    ///   60-second hang CLAUDE.md records for T-70). Its `paths: None` fixture
+    ///   answer under `serve_enforces_the_route_table_it_matched_above` is
+    ///   `Unknown` with no spawn, so routing is still proven there.
+    ///
+    /// Method-gating for all three is proven by
     /// `serve_matches_the_documented_admin_route_allowlist` +
-    /// `serve_enforces_the_route_table_it_matched_above` (whose fixture
-    /// request carries no `Content-Type` at all, so it never reaches the
-    /// real handler either), plus this route's own two gate tests below.
-    const FUZZ_EXCLUDED_ROUTES: &[&str] = &[ADMIN_UNINSTALL_LOCAL_STATE_PATH];
+    /// `serve_enforces_the_route_table_it_matched_above`, plus each route's
+    /// own gate tests below.
+    const FUZZ_EXCLUDED_ROUTES: &[&str] = &[
+        ADMIN_UNINSTALL_LOCAL_STATE_PATH,
+        ADMIN_CERT_STATUS_PATH,
+        ADMIN_INSTALL_CERT_PATH,
+    ];
 
     fn fuzzable_routes() -> impl Iterator<Item = &'static (&'static str, &'static [Method])> {
         ROUTES
@@ -6910,6 +7018,84 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
+    // T-188: `/admin/cert-status` + `/admin/install-cert`. The success path of
+    // either would spawn a real `certutil.exe` (see `FUZZ_EXCLUDED_ROUTES`'s
+    // comment), so — like T-70's route above — only the paths that answer
+    // *before* `trust_store` is touched are exercised through `serve()` here.
+    // `/admin/cert-status` is read-only: with `state_with`'s `paths: None` it
+    // returns `Unknown` and spawns nothing, matching `trust_store::
+    // is_trusted`'s "unknown ≠ untrusted" contract.
+
+    #[tokio::test]
+    async fn serve_admin_cert_status_is_unknown_when_the_state_has_no_persist_paths() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri(ADMIN_CERT_STATUS_PATH)
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(parsed) = serde_json::from_slice::<CertStatusResponse>(&bytes) else {
+            panic!("body must decode as CertStatusResponse");
+        };
+        assert_eq!(parsed.trusted, CertTrustView::Unknown);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_cert_status_rejects_non_get_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri(ADMIN_CERT_STATUS_PATH)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_install_cert_rejects_non_post_methods() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri(ADMIN_INSTALL_CERT_PATH)
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn serve_admin_install_cert_rejects_a_missing_content_type() {
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri(ADMIN_INSTALL_CERT_PATH)
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
     /// T-53/T-59: `serve()`'s `ROUTES` table (declared near this module's
     /// `_PATH` consts) is the actual dispatch source — a request is checked
     /// against it *before* the handler-selection `match` in `serve()` ever
@@ -6946,6 +7132,8 @@ mod tests {
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
         ("/admin/uninstall-local-state", &[Method::POST]),
+        ("/admin/cert-status", &[Method::GET]),
+        ("/admin/install-cert", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),

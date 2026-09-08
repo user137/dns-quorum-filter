@@ -483,8 +483,10 @@ pakko; чернетку v0.3.0 пропатчено (asset + нотатки). TA
 kickoff+closing) — кольорові трей-іконки за станом (`status::icon_colour`, 4 гліфи) + read-only
 `trust_store::is_trusted` наперед; T-191 закомічено (`6bba1f8` + `25ef641`), CI 7/7. Патч-реліз
 **`v0.3.1`** (покриває Батч 3.12 + 3.14, закриває T-186) — **тег ще не пушнуто**: ручний чистий
-прогін MSIX користувач робитиме разом із Батчем 3.13. Майстер онбордингу (Батч 3.13, T-188–T-190)
-→ `v0.3.2`. TASKS-DONE.md.
+прогін MSIX користувач робитиме разом із Батчем 3.13. **Батч 3.13 (онбординг першого запуску,
+T-188–T-190) — у роботі: T-188 зроблено 2026-09-08** (`GET /admin/cert-status` +
+`POST /admin/install-cert` + майстер трея `rfd` + hero cert-гілка); T-189/T-190 попереду;
+тегається як `v0.3.2`. TASKS-DONE.md.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -803,6 +805,56 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   `dist\dns-quorum-filter-0.3.1.msix` 17.4 MB, з фіксом каденсу). **Ручний чистий прогін MSIX +
   тег `v0.3.1` → `release.yml` — відкладено: користувач перевірятиме РАЗОМ із Батчем 3.13**
   (не за ПК 2026-09-08). Деталі — TASKS-DONE.md.
+
+## Батч 3.13 — онбординг першого запуску: майстер сертифіката + налаштування браузера
+
+**Йде ПІСЛЯ Батча 3.14** (вибір користувача). Kickoff plan+advisor 2026-09-08; повний план —
+`plans/silly-wiggling-globe.md` (локальний untracked-файл, не в репо). Живий прогін `v0.3.1` MSIX
+на чистій машині без сертифіката показав: застосунок нічого не пропонує нетехнічному користувачеві
+(немає майстра першого запуску, немає інструкції для Firefox, немає «переходу» в налаштування
+браузера). `is_trusted()` + `lib.rs` re-export уже доставлені T-191 → T-188 звузилось до 2
+HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`** (потребує власного бампу `0.3.1`→`0.3.2` —
+`v0.3.1` закриває Батч 3.12+3.14). Порядок комітів: T-188 → T-189 → T-190. DECISIONS.md 2026-09-08.
+
+- [x] T-188 — **зроблено 2026-09-08**, коміт `<pending>`. Read-only перевірка довіри як
+  HTTP-маршрут + майстер першого запуску.
+  - Backend: `GET /admin/cert-status` → `{ trusted: CertTrustView }` (три-стан `TRUSTED` /
+    `NOT_TRUSTED` / `UNKNOWN` — `certutil` може не відповісти; «unknown ≠ untrusted» контракт
+    `is_trusted`); `POST /admin/install-cert` → `{ outcome }` (`ensure_installed` через
+    `spawn_blocking`; CSRF-гейт + body-cap; прецедент — `POST /admin/uninstall-local-state`).
+    `dispatch::ROUTES` + `EXPECTED_ADMIN_ROUTES` + `FUZZ_EXCLUDED_ROUTES` (**обидва** маршрути —
+    `cert-status` GET = 2 `certutil`-спавни/кейс). 5 нових тестів (unknown-без-paths, method/
+    content-type гейти).
+  - Tray: новий пункт меню «Майстер налаштування» (`SETUP_WIZARD_ID`, cert-група); новий модуль
+    `onboarding.rs` (`onboarding.seen` marker у app-data — **не** `lifecycle.rs`, той чиститься на
+    старті; чиста `should_offer_onboarding(cert_confirmed, cert_trusted, seen)` + 4 тести).
+    `TrustState` дістав `confirmed: Arc<AtomicBool>` (+ `is_confirmed()`) — виставляється на
+    першому `Ok(_)`; майстер стартує лише на **підтвердженому** «не довірений» (advisor — на
+    чистій MSIX-інсталяції `cert.pem` ще нема, коли трей стартує, T-187). `maybe_offer_onboarding`
+    (латч, раз на процес) + `run_setup_wizard` (`rfd` Yes/No на власному треді; на Yes → reuse
+    `spawn_cert_action` → `ensure_installed` → marker + `open_in_default_browser` **лише на
+    успіху**).
+  - `/admin/ui`: `#protection-hero` дістав cert-гілку — `computeProtectionState(status, reachable,
+    certTrust)`: `NOT_TRUSTED` → `is-bad` + кнопка «Встановити сертифікат» (`POST
+    /admin/install-cert`); `UNKNOWN` → `is-warn` (окремо, не «не встановлено»). `refreshCertStatus()`
+    — один fetch на завантаженні + після install-кліку, **не** на 2-с поллі. `.hero-action` у
+    `style.css`, CSP без змін (той самий origin).
+  - Docs: DECISIONS.md (новий запис), `diagrams/onboarding.md` (нова) + README, `ui-navigation.md`
+    + `ui-status-indicator.md` + `ui-dto-model.md` (звірка), `SPEC.md` §8, `UI-SPEC.md`,
+    `SERVICES.md`, `CLAUDE.md`. Деталі — TASKS-DONE.md.
+- [ ] T-189 — картка налаштування браузера, свідома до браузера. `navigator.userAgent` детект
+  (Edge/Firefox/Brave/Opera/Chromium) → показати статичний блок кроків саме для цього браузера
+  (Firefox: `about:preferences#privacy`). Кроки лишаються статичним HTML (toggled `hidden`), не
+  JS-рендер — index.html прямо це фіксує. `README.md` секція браузера — переписати, +Firefox.
+  Автоматичне прописування DoH — **поза обсягом** (T-99/T-134). Розвилка «one-click перехід у
+  налаштування браузера» через реєстровий ProgId — рекомендовано відкласти (норма Fiddler/AdGuard:
+  копіювати рядок).
+- [ ] T-190 — патч-реліз **`v0.3.2`** (майстер онбордингу). Бамп `0.3.1`→`0.3.2` (3 літерали +
+  2 path-dep + `Cargo.lock`) окремим комітом; closing-advisor; пере-збірка MSIX; ручний чистий
+  прогін (розширення T-186 чек-листа: діалог майстра з'являється → [Так] → cert у
+  `CurrentUser\Root` → браузер відкриває `/admin/ui`; per-браузер кроки Chrome і Firefox;
+  [Пізніше]-гілка + повторний виклик пункту меню; hero-кнопка). Тег `v0.3.2` → `release.yml` draft.
+  `sinkhole_probe` перед тегом. **Спільно з відкладеним прогоном MSIX `v0.3.1` (Батч 3.14).**
 
 ## Фаза 4 — Рейтинговий фільтр «бульбашка» + інфраструктура топ-N списку по країнах
 

@@ -4289,3 +4289,83 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
   - **Наступне:** Батч 3.13 (майстер онбордингу, T-188–T-190). Після нього — спільна перевірка
     3.14+3.13 на чистій MSIX-інсталяції + тег(и). Відкрите питання на той момент: `v0.3.1` (3.12+3.14)
     і `v0.3.2` (3.13) двома тегами, чи один тег на все — вирішиться при закритті 3.13.
+
+### Батч 3.13 — онбординг першого запуску: майстер сертифіката + налаштування браузера (T-188–T-190; kickoff plan+advisor 2026-09-08)
+
+Живий прогін `v0.3.1` MSIX на чистій машині без сертифіката показав: застосунок нічого не
+пропонує нетехнічному користувачеві — немає майстра першого запуску (встановлення серта — лише
+ручний пункт трея T-49, застосунок навіть не вміє *перевірити* довіру), немає інструкції для
+Firefox, немає «переходу» в налаштування браузера. Kickoff-опитування (2 рішення): форма майстра
+— `rfd`-діалог [Так]/[Пізніше] (модалка = правильний патерн онбордингу; toast/кастомне вікно
+відхилено); дія «переходу» — копіювати рядок `chrome://…` (індустрійна норма Fiddler/AdGuard/
+NextDNS; ProgId-резолв exe = окрема задача якщо колись). `is_trusted()` + `lib.rs` re-export уже
+доставлені T-191 → T-188 звузилось до 2 HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`**
+(потребує власного бампу; `v0.3.1` закриває Батч 3.12+3.14). DECISIONS.md 2026-09-08. Pre-impl
+advisor Батча 3.13 (перед T-188): три-стан `cert-status` замість bool, `spawn_blocking` для
+`ensure_installed`, `FUZZ_EXCLUDED_ROUTES` для **обох** маршрутів, `onboarding.seen` не в
+`lifecycle.rs`, `run_setup_wizard` reuse `spawn_cert_action` без зміни сигнатур, marker лише на
+успіху, майстер на **підтвердженому** `confirmed`-прапорі (не seed).
+
+- [x] **T-188** — read-only перевірка довіри як HTTP-маршрут + майстер першого запуску. Коміт
+  `<pending>`.
+  - **Backend (`dnsqb-service`):**
+    - `admin.rs`: `CertTrustView` (`TRUSTED` / `NOT_TRUSTED` / `UNKNOWN` — закрита проєкція, як
+      `WatchdogStatusView` / `ArtifactOutcomeView`; `certutil` може не відповісти на свіжій
+      інсталяції до генерації `cert.pem` або при зламаному `certutil` → «unknown», ніколи не
+      «untrusted» — контракт `trust_store::is_trusted`, згортання в bool сказало б користувачу зі
+      зламаною перевіркою ставити серт, що вже є). `CertStatusResponse { trusted }`;
+      `InstallCertOutcomeView` (`INSTALLED` / `ALREADY_INSTALLED`, `From<TrustStoreOutcome>`);
+      `InstallCertResponse { outcome }`. **Без `AdminClient`-методів** — жоден Rust-споживач їх не
+      кличе (трей використовує `ensure_installed` напряму, `/admin/ui` — `fetch`); той самий
+      прецедент, що `/admin/overrides`/`/admin/log` без `AdminClient`-методу.
+    - `dispatch.rs`: `GET /admin/cert-status` → `serve_admin_cert_status` (read-only, без CSRF-гейта
+      як `GET /admin/status`; `cert_pem_path(state)` з `PersistPaths::app_data_dir`; `None` (in-memory
+      тест) → `Unknown` без спавну `certutil`). `POST /admin/install-cert` → `serve_admin_install_cert`
+      (CSRF-гейт + body-cap; `tokio::task::spawn_blocking(ensure_installed)` — синхронний `certutil`
+      за crypt32-модалкою не має стопорити лістенер, що ще й обслуговує `/health`; `Ok(Err) | Err`
+      → 500, UI-копія відсилає до пункту трея). Прецедент мутації trust store з маршруту — `POST
+      /admin/uninstall-local-state` (T-70).
+    - `ROUTES` + `EXPECTED_ADMIN_ROUTES` (ручна копія, T-59) + `FUZZ_EXCLUDED_ROUTES` — **обидва**
+      маршрути: `install-cert` мутує стор, `cert-status` GET = 2 `certutil`-спавни/кейс (той самий
+      60-с ханг, що CLAUDE.md фіксує для T-70). 5 нових тестів: `unknown_when_the_state_has_no_persist_paths`
+      (Happy/Error — тіло декодує `CertStatusResponse`, `== Unknown`), method-гейти для обох,
+      content-type-гейт для `install-cert`.
+  - **Tray (`dnsqb-tray`):**
+    - Новий модуль `onboarding.rs`: `ONBOARDING_SEEN_NAME` marker-файл у app-data (форма
+      `lifecycle`-прапорів, але **не** в `lifecycle.rs` — той чиститься entry-point-процесом на
+      старті, а цей мусить пережити кожен запуск); `onboarding_seen` / `mark_onboarding_seen`
+      (best-effort, лог на err); чиста `should_offer_onboarding(cert_confirmed, cert_trusted, seen)`
+      = `cert_confirmed && !cert_trusted && !seen`. 4 тести (Happy / trusted-не-нагадує /
+      unconfirmed-«unknown»-не-стартує / marker-round-trip + повторний write не панікує).
+    - `status.rs`: `TrustState` дістав `confirmed: Arc<AtomicBool>` + `is_confirmed()` —
+      виставляється на першому `Ok(_)` (будь-якої полярності) у `spawn_trust_watch`. Майстер
+      стартує лише коли є **підтверджена** відповідь `certutil`, не seed: на чистій MSIX-інсталяції
+      служба ще не написала `cert.pem`, коли трей стартує (T-187), тож рання перевірка читала б
+      оптимістичний seed (advisor).
+    - `main.rs`: пункт меню «Майстер налаштування» (`SETUP_WIZARD_ID`, cert-група);
+      `maybe_offer_onboarding` (латч `onboarding_offered`, раз на процес; кличеться щотік після
+      `refresh_tray`); `run_setup_wizard(&Path, u16, &TrustState)` — власний `std::thread` (`rfd`
+      блокує, обидва виклики на event-loop-треді), `rfd` Yes/No welcome; на «Ні» → `mark_onboarding_seen`;
+      на «Так» → reuse `spawn_cert_action` (враппер `spawn_trust_store_action` + `request_recheck`
+      після), closure: `ensure_installed(&cert_path)?` → `mark_onboarding_seen` → `open_in_default_browser`
+      — marker і браузер **лише на успіху** (`?` бейлить раніше на невдачі → майстер повторить
+      наступний запуск).
+  - **`/admin/ui`:** `computeProtectionState(status, reachable, certTrust)` — після watchdog/
+    network/0-voters, перед `is-ok`: `NOT_TRUSTED` → `is-bad` + `action: "install-cert"`;
+    `UNKNOWN` → `is-warn` («Сертифікат не перевірено», окремо від «не встановлено»); `null` (ще не
+    fetched) → гілка не спрацьовує. `renderProtectionHero` додає кнопку (createElement/textContent,
+    CSP без змін) → `installCertFromHero` → `POST /admin/install-cert` → на успіх `refreshCertStatus()`.
+    `refreshCertStatus()` — один fetch на завантаженні + після install-кліку, **не** на 2-с поллі
+    (кожен = 2 `certutil`-спавни серверно). `.hero-action` у `style.css`. Тест `admin_ui`
+    `main_js_wires_the_cert_trust_hero_branch_and_install_action`.
+  - **Верифікація:** `cargo fmt --check` + `clippy --workspace --all-targets -D warnings` +
+    `cargo test --workspace --lib --bins` (dnsqb-service lib 665→670 +5, dnsqb-tray 18→22 +4) +
+    `--doc` + `cargo doc` (RUSTDOCFLAGS=-D warnings) + `cargo test --test conformance` (18, без
+    змін) — усі зелені. `#![forbid(unsafe_code)]` цілий.
+  - **Звірка діаграм:** нова `diagrams/onboarding.md` (перший запуск: cert-майстер → браузер;
+    гілки [Так]/[Пізніше]; hero cert-стан); `ui-navigation.md` (пункт меню + hero-стан),
+    `ui-status-indicator.md` (hero cert-гілка), `ui-dto-model.md` (2 DTO + 2 маршрути) — звірено,
+    SOURCES оновлено; `README.md` індекс. GAP: 0.
+- [ ] **T-189** — картка налаштування браузера, свідома до браузера (Firefox / Edge / Brave).
+- [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
+  прогін спільно з `v0.3.1` + тег).
