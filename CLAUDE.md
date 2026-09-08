@@ -222,7 +222,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed). `rename_orphan` is `pub(crate)`, reused by `cache_persist` |
 | `cache_persist_dto` | T-97 serde form of the verdict cache. `PersistedCacheEntry { domain, qtype: u16, expiry_millis: u64, verdict: PCacheVerdict }` — `expiry_millis` is an **absolute wall-clock** deadline (the live `CacheEntry.expires_at` is a monotonic `Instant`, unserialisable); `to_json(snapshot, now_wall, now_mono)` filters `Verdict::Block` + non-fresh + converts `Instant`→wall (clocks injected for tests); `from_json(plaintext, now_wall)` drops any entry whose deadline already passed. `PCacheVerdict` keeps `Block` representable (format-stable) though `to_json` never emits it. `IpAddr` kept un-mirrored (has its own serde impl) |
 | `cache_persist` | T-97, sibling of `log_persist`: `persist_cache_snapshot` (→`seal(FileKind::Cache)`→`write_atomic`), `load_persisted_cache` (→`CacheInit { restore, flusher }`; independent `ciphertext_present` for `cache.enc`, shared `persistence-key`), `run_cache_persister` (60s + shutdown). `AppState::cache_snapshot`/`restore_cache` pass-throughs (lock dropped before `.await`) |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; **one** key seals **both** `query-log.enc` (T-146) and `cache.enc` (T-97), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; **one** key seals **both** `query-log.enc` (T-146) and `cache.enc` (T-97), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49) + read-only `trust_store::is_trusted(cert_path)` (T-191 — shared `trusted_state` core with `ensure_installed`, `certutil -dump`/`-store` only, no route, called directly by the tray icon's trust-watch thread); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
@@ -271,9 +271,19 @@ dialog → `set_stop_flag` + `set_quit_flag` + `ControlFlow::Exit`; the watcher'
 manual `dnsqb-service` restart before the new cert is served). Also takes the `Tray`
 single-instance guard + writes `tray.pid` on startup (T-150), and (T-187) runs
 `ensure_sibling_running(Watcher)` as a safety net if launched standalone. Replaced the deleted
-Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tray runtime icon: `crates/dnsqb-tray/icons/tray-32-rgba.bin`
-(T-183 — transparent bg + white hexagon glyph, generated by `gen-icon.py`'s `make_tray_glyph`; the
-pre-T-183 blob was a stale copy of the deleted `dnsqb-ui` Tauri icon and rendered as a teal square).
+Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tray runtime icon **(T-191, Батч 3.14):** four colour
+blobs `crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` (`gen-icon.py`'s
+`make_tray_glyph(size, colour)`, GitHub Primer palette; the pre-T-183 blob was a stale `dnsqb-ui`
+teal square). `status::icon_colour(TrayStatus, cert_trusted) -> IconColour` picks one:
+🟢 `Filtering`/no-degraded · 🟡 `Filtering`/degraded, `ServiceRestarting`, `Offline` · ⚪ `Paused`,
+`NoActiveProvider` · 🔴 `Unreachable`, `ServiceGaveUp`, **and `Filtering` when the cert isn't
+trusted** (override — flips `Filtering` **only**; `NoActiveProvider`/`Paused`/`Offline`/watchdog
+stay their row colour, SPEC §3/§8.1 "pass-through ≠ failure" + the T-185 paused-tooltip test). The
+cert issue reaches those other states as a `status::cert_warning` tooltip suffix
+(`compose_tooltip`), not a red glyph. `cert_trusted` = read-only `trust_store::is_trusted(cert.pem)`
+polled by a **dedicated thread** (`status::spawn_trust_watch` — `certutil` is blocking, off the 2s
+poll loop; seed `true` so "unknown" ≠ "untrusted"; back-off 15→60→300s while untrusted; cert menu
+items call `request_recheck()`). `refresh_tray` commits `last_colour` only on `set_icon` success.
 Tooltip states:
 `Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
 `status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —
@@ -637,9 +647,10 @@ exercise it without a real tag: `gh workflow run release.yml` (must be on `main`
 target\release -OutFile dist\dns-quorum-filter.msix`), needs the Windows SDK's `makeappx.exe`/
 `signtool.exe` (`Windows Kits\10\bin\10.*\x64\`) — present on this dev machine as well as CI, so
 it can be (and was, T-156) verified locally before ever pushing. `assets/gen-icon.py` (Pillow) —
-regenerate `assets/icon/*.png` + `app.ico` + `assets/icon/wordmark.png` **and**
-`crates/dnsqb-tray/icons/tray-32-rgba.bin` (T-183 — the tray's runtime `Icon::from_rgba` blob,
-transparent bg + white glyph) after editing it, never hand-edit a PNG/`.bin`; needs Segoe UI Bold
+regenerate `assets/icon/*.png` + `app.ico` + `assets/icon/wordmark.png` **and** the four
+`crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` blobs (T-191 — the tray's
+runtime `Icon::from_rgba` per-status glyphs, `make_tray_glyph(size, colour)`; replaced T-183's
+single `tray-32-rgba.bin`) after editing it, never hand-edit a PNG/`.bin`; needs Segoe UI Bold
 (`C:\Windows\Fonts\segoeuib.ttf`, present on any current Windows install) for `wordmark.png`.
 
 `.github/workflows/codeql.yml` (T-101) is a separate workflow — CodeQL SAST, language `rust`,
@@ -1054,6 +1065,15 @@ reasoning (search by section number rather than re-deriving a decision from scra
   enforced at the point the pure code runs, not inspected in the shell after it already ran.
   Caught by the closing advisor of Батч 3.12, not by any gate (`fmt`/`clippy`/tests all green —
   no test exercised a multi-cycle pause).
+- **A "changed?" guard that gates a fallible side effect must commit the new value only when the
+  effect actually succeeded** (T-191, `dnsqb-tray`'s `refresh_tray`). The tooltip guard commits
+  `last_status`/`last_trusted` unconditionally — a missed `set_tooltip` is cosmetic and self-heals
+  on the next change. But `set_icon` commits `last_colour` **only on `Ok`**: commit it after a
+  failed call and `colour != *last_colour` reads equal forever, pinning the wrong colour for the
+  process lifetime. Also: a boolean input that seeds a warning state (here `cert_trusted` for the
+  red override) seeds to the *safe* value (`true` — "trusted until proven otherwise"), so
+  "unknown" / a transient `certutil` failure never reads as "broken"; and the poll for it runs on
+  its own `std::thread`, not the async status loop, because `certutil` is a blocking subprocess.
 - **Struct-level `#[serde(default, deny_unknown_fields)]` composes fine — a missing field falls
   back to `impl Default for TheStruct`'s corresponding field, an unknown key still fails loudly —
   but per-field `#[serde(default = "...")]` needs a *function path* returning that field's type,

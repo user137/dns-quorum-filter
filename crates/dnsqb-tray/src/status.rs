@@ -11,6 +11,7 @@ use dnsqb_service::{
 };
 use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -152,6 +153,78 @@ impl TrayStatus {
             }
         }
     }
+}
+
+/// Which of the four generated tray-icon blobs to display (T-191). A
+/// *rendering* of the existing [`TrayStatus`] ladder plus `cert_trusted` as a
+/// second, orthogonal input — it adds no new status condition and does not
+/// reorder the priority the poll loop already applies (DECISIONS.md
+/// 2026-09-02 / 2026-09-03).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconColour {
+    Green,
+    Amber,
+    Grey,
+    Red,
+}
+
+/// Pure and total. The `match` is exhaustive with no wildcard arm on purpose:
+/// a future 8th [`TrayStatus`] variant must fail to compile here rather than
+/// silently render green ("захищає"). DECISIONS.md 2026-09-08 records why the
+/// cert-not-trusted → red override touches only [`TrayStatus::Filtering`].
+#[must_use]
+pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
+    match status {
+        TrayStatus::Unreachable | TrayStatus::ServiceGaveUp => IconColour::Red,
+        TrayStatus::ServiceRestarting | TrayStatus::Offline => IconColour::Amber,
+        // "Filtering off on purpose" — SPEC.md §3/§8.1 requires this be shown
+        // as a distinct, non-failure state, so an untrusted cert does not
+        // repaint it red; [`cert_warning`] still names the cert issue in the
+        // tooltip.
+        TrayStatus::Paused | TrayStatus::NoActiveProvider { .. } => IconColour::Grey,
+        TrayStatus::Filtering {
+            degraded_events, ..
+        } => {
+            if !cert_trusted {
+                IconColour::Red
+            } else if degraded_events > 0 {
+                IconColour::Amber
+            } else {
+                IconColour::Green
+            }
+        }
+    }
+}
+
+/// Tooltip suffix naming the untrusted-certificate problem. `Some` exactly
+/// when the certificate the `DoH` listener serves isn't trusted **and** the
+/// service is otherwise reachable ([`TrayStatus::Filtering`] /
+/// [`TrayStatus::NoActiveProvider`]) — the states where the browser's own
+/// `DoH` to us then fails silently. Mirrors the `degraded_events` suffix
+/// already in [`TrayStatus::tooltip`]; appended by [`compose_tooltip`], never
+/// alone, so a red icon can't sit beside a green-sounding tooltip.
+#[must_use]
+pub fn cert_warning(status: TrayStatus, cert_trusted: bool) -> Option<&'static str> {
+    if cert_trusted {
+        return None;
+    }
+    match status {
+        TrayStatus::Filtering { .. } | TrayStatus::NoActiveProvider { .. } => Some(
+            " \u{2014} сертифікат не встановлено: у меню іконки \u{2192} «Встановити сертифікат»",
+        ),
+        _ => None,
+    }
+}
+
+/// The tray tooltip for `status`, plus the [`cert_warning`] suffix when it
+/// applies. `main.rs` calls this instead of [`TrayStatus::tooltip`] directly.
+#[must_use]
+pub fn compose_tooltip(status: TrayStatus, cert_trusted: bool) -> String {
+    let mut text = status.tooltip();
+    if let Some(suffix) = cert_warning(status, cert_trusted) {
+        text.push_str(suffix);
+    }
+    text
 }
 
 #[cfg(test)]
@@ -375,6 +448,90 @@ mod tests {
             TrayStatus::NoActiveProvider { in_flight: 0 }
         );
     }
+
+    // ---- T-191: coloured tray icon ----
+
+    use super::{cert_warning, compose_tooltip, icon_colour, IconColour};
+
+    fn filtering(degraded_events: u64) -> TrayStatus {
+        TrayStatus::Filtering {
+            in_flight: 0,
+            blocked: 1,
+            total: 9,
+            degraded_events,
+            degraded_window: 20,
+        }
+    }
+
+    #[test]
+    fn every_tray_status_maps_to_a_colour_when_the_cert_is_trusted() {
+        let cases = [
+            (TrayStatus::Unreachable, IconColour::Red),
+            (TrayStatus::ServiceGaveUp, IconColour::Red),
+            (TrayStatus::ServiceRestarting, IconColour::Amber),
+            (TrayStatus::Offline, IconColour::Amber),
+            (TrayStatus::Paused, IconColour::Grey),
+            (
+                TrayStatus::NoActiveProvider { in_flight: 0 },
+                IconColour::Grey,
+            ),
+            (filtering(0), IconColour::Green),
+            (filtering(2), IconColour::Amber),
+        ];
+        for (status, want) in cases {
+            assert_eq!(icon_colour(status, true), want, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn untrusted_cert_reddens_only_filtering() {
+        // The one state where a silently-failing browser DoH is the problem
+        // the user must act on (DECISIONS.md 2026-09-08).
+        assert_eq!(icon_colour(filtering(0), false), IconColour::Red);
+        assert_eq!(icon_colour(filtering(3), false), IconColour::Red);
+    }
+
+    #[test]
+    fn untrusted_cert_does_not_redden_paused_offline_no_provider_or_watchdog_states() {
+        // Regression lock on the precedence decision: a deliberate "off"
+        // state or an infra failure must not be repainted red by cert trust.
+        assert_eq!(icon_colour(TrayStatus::Paused, false), IconColour::Grey);
+        assert_eq!(
+            icon_colour(TrayStatus::NoActiveProvider { in_flight: 0 }, false),
+            IconColour::Grey
+        );
+        assert_eq!(icon_colour(TrayStatus::Offline, false), IconColour::Amber);
+        assert_eq!(
+            icon_colour(TrayStatus::ServiceRestarting, false),
+            IconColour::Amber
+        );
+        assert_eq!(icon_colour(TrayStatus::Unreachable, false), IconColour::Red);
+        assert_eq!(
+            icon_colour(TrayStatus::ServiceGaveUp, false),
+            IconColour::Red
+        );
+    }
+
+    #[test]
+    fn cert_warning_fires_for_reachable_states_only_and_never_when_trusted() {
+        assert!(cert_warning(filtering(0), false).is_some());
+        assert!(cert_warning(TrayStatus::NoActiveProvider { in_flight: 0 }, false).is_some());
+        // Trusted → never a warning.
+        assert!(cert_warning(filtering(0), true).is_none());
+        // Unreachable / paused → the cert isn't the point; no suffix.
+        assert!(cert_warning(TrayStatus::Unreachable, false).is_none());
+        assert!(cert_warning(TrayStatus::Paused, false).is_none());
+    }
+
+    #[test]
+    fn compose_tooltip_appends_the_cert_warning_when_it_applies() {
+        let status = filtering(0);
+        let with = compose_tooltip(status, false);
+        assert!(with.contains("захищає"), "{with}");
+        assert!(with.contains("сертифікат не встановлено"), "{with}");
+        // Trusted → identical to the plain tooltip.
+        assert_eq!(compose_tooltip(status, true), status.tooltip());
+    }
 }
 
 /// A cheap, clonable read handle onto the background thread's latest result
@@ -511,4 +668,103 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
     });
 
     handle
+}
+
+/// Latest known `CurrentUser\Root` trust state of the local `cert.pem`,
+/// maintained by [`spawn_trust_watch`]'s own OS thread (T-191). Seeded `true`
+/// — no red override — so a first run before `cert.pem` exists, or a
+/// transient `certutil` failure, never flips the icon red on "unknown"; red
+/// is shown only once `certutil` has actually *proven* the cert untrusted.
+#[derive(Clone)]
+pub struct TrustState {
+    trusted: Arc<AtomicBool>,
+    recheck: Arc<AtomicBool>,
+}
+
+impl TrustState {
+    /// The last polled trust state. Cheap, non-blocking — `main.rs` reads it
+    /// on every event-loop tick.
+    #[must_use]
+    pub fn is_trusted(&self) -> bool {
+        self.trusted.load(Ordering::Relaxed)
+    }
+
+    /// A cert menu action just ran — re-poll `certutil` promptly instead of
+    /// waiting out the current back-off sleep.
+    pub fn request_recheck(&self) {
+        self.recheck.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Spawns the dedicated trust-watch thread and returns a handle to read its
+/// result. Kept off [`spawn`]'s poll loop on purpose: [`dnsqb_service::is_trusted`]
+/// is two blocking `certutil` subprocesses (~100–300 ms each), and threading a
+/// slow, self-scheduling check through a 2 s loop that already
+/// early-`continue`s on `stop.flag` / `watchdog_override` is tangled and risks
+/// skipping the seed when the app starts paused. This matches what the crate
+/// already does twice for synchronous work (`spawn_trust_store_action`,
+/// `spawn_admin_action`). The thread is never joined — like [`spawn`], process
+/// exit (the `tao` loop never returns) reclaims it.
+#[must_use]
+pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
+    let trusted = Arc::new(AtomicBool::new(true));
+    let recheck = Arc::new(AtomicBool::new(false));
+    let state = TrustState {
+        trusted: Arc::clone(&trusted),
+        recheck: Arc::clone(&recheck),
+    };
+
+    std::thread::spawn(move || {
+        // Back-off while untrusted: a machine where the user hasn't installed
+        // the cert shouldn't pay 4 `certutil` spawn-pairs a minute forever
+        // (advisor). Index is clamped to the last element, so it's safe from
+        // the line regardless of `miss_streak`.
+        const BACKOFF: [Duration; 3] = [
+            Duration::from_secs(15),
+            Duration::from_secs(60),
+            Duration::from_secs(300),
+        ];
+        let mut miss_streak: usize = 0;
+        let mut logged_err = false;
+        loop {
+            match dnsqb_service::is_trusted(&cert_path) {
+                Ok(now_trusted) => {
+                    trusted.store(now_trusted, Ordering::Relaxed);
+                    logged_err = false;
+                }
+                Err(err) => {
+                    // First run (cert.pem absent) is the common case, not an
+                    // anomaly — log once on entry to the error state, then
+                    // stay quiet (no console in release; a warn per tick is
+                    // spam). The previous value is kept: "unknown" is not
+                    // "untrusted".
+                    if !logged_err {
+                        tracing::warn!(
+                            "cert trust check unavailable, keeping previous state: {err}"
+                        );
+                        logged_err = true;
+                    }
+                }
+            }
+
+            let delay = if trusted.load(Ordering::Relaxed) {
+                miss_streak = 0;
+                Duration::from_secs(300)
+            } else {
+                let d = BACKOFF[miss_streak.min(BACKOFF.len() - 1)];
+                miss_streak = miss_streak.saturating_add(1);
+                d
+            };
+
+            // A cert menu action (`request_recheck`) short-circuits the sleep.
+            let step = Duration::from_millis(500);
+            let mut waited = Duration::ZERO;
+            while waited < delay && !recheck.swap(false, Ordering::Relaxed) {
+                std::thread::sleep(step);
+                waited += step;
+            }
+        }
+    });
+
+    state
 }

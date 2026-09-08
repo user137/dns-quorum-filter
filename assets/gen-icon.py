@@ -131,25 +131,35 @@ def make_wordmark(glyph_size: int = 96, text: str = "DNS Quorum Filter") -> Imag
 # native size (crisper small icons than downscaling one 256 frame).
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 
-# Raw 32x32 RGBA bytes for dnsqb-tray's runtime tray icon (T-183).
+# Raw 32x32 RGBA bytes for dnsqb-tray's runtime tray icon — one blob per
+# status colour (T-191, extending T-183's single white glyph).
 # `tray_icon::Icon::from_rgba` wants pixels, not an encoded image, so the tray
-# compiles this blob in via `include_bytes!` — no runtime file read, no
+# compiles these blobs in via `include_bytes!` — no runtime file read, no
 # image-decode dependency (the same "everything in, no runtime asset I/O"
 # choice `admin_ui.rs` makes for the embedded web UI). Regenerate by re-running
-# this script; never hand-edit the .bin.
+# this script; never hand-edit a .bin.
 TRAY_ICON_SIZE = 32
-TRAY_RGBA_PATH = (
-    Path(__file__).parent.parent / "crates" / "dnsqb-tray" / "icons" / "tray-32-rgba.bin"
-)
+TRAY_RGBA_DIR = Path(__file__).parent.parent / "crates" / "dnsqb-tray" / "icons"
+
+# GitHub Primer state palette (success / attention / neutral / danger) — an
+# existing UI palette already vetted for light+dark legibility, not a hand-mix.
+# amber leans orange so green↔amber stay ≥90° apart in hue on the ~7px vertex
+# dots that carry nearly all of a 32px glyph's colour (the 1px outline is
+# almost incidental). Mapped from TrayStatus by `status::icon_colour`.
+TRAY_GLYPH_COLOURS = {
+    "green": (0x3F, 0xB9, 0x50),
+    "amber": (0xF5, 0xA6, 0x23),
+    "grey": (0x8B, 0x94, 0x9E),
+    "red": (0xF8, 0x51, 0x49),
+}
 
 
-def make_tray_glyph(size: int) -> Image.Image:
-    """White wireframe hexagon on a fully transparent background. A filled
-    accent-blue square would read as a clumsy block on a (usually dark) Windows
-    taskbar next to the other transparent tray glyphs — so, unlike make_tile,
-    no fill."""
+def make_tray_glyph(size: int, colour) -> Image.Image:
+    """Wireframe hexagon in `colour` on a fully transparent background. A filled
+    square would read as a clumsy block on a (usually dark) Windows taskbar next
+    to the other transparent tray glyphs — so, unlike make_tile, no fill."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw_hex_shield(ImageDraw.Draw(img), size / 2, size / 2, size * 0.36, WHITE)
+    draw_hex_shield(ImageDraw.Draw(img), size / 2, size / 2, size * 0.36, colour)
     return img
 
 
@@ -187,13 +197,15 @@ def main() -> None:
     make_wordmark().save(wordmark_path)
     print(f"wrote {wordmark_path}")
 
-    TRAY_RGBA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tray_rgba = make_tray_glyph(TRAY_ICON_SIZE).tobytes()
-    TRAY_RGBA_PATH.write_bytes(tray_rgba)
-    print(
-        f"wrote {TRAY_RGBA_PATH} ({len(tray_rgba)} bytes, "
-        f"{TRAY_ICON_SIZE}x{TRAY_ICON_SIZE} RGBA, transparent bg)"
-    )
+    TRAY_RGBA_DIR.mkdir(parents=True, exist_ok=True)
+    for name, rgb in TRAY_GLYPH_COLOURS.items():
+        blob = make_tray_glyph(TRAY_ICON_SIZE, rgb).tobytes()
+        path = TRAY_RGBA_DIR / f"tray-32-{name}-rgba.bin"
+        path.write_bytes(blob)
+        print(
+            f"wrote {path} ({len(blob)} bytes, "
+            f"{TRAY_ICON_SIZE}x{TRAY_ICON_SIZE} RGBA, transparent bg)"
+        )
 
 
 if __name__ == "__main__":

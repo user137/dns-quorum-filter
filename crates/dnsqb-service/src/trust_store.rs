@@ -58,6 +58,15 @@
 //! [`ensure_installed`] and [`uninstall`] are wired instead as two
 //! symmetric, confirm-gated `dnsqb-tray` menu actions (`crates/dnsqb-tray`),
 //! matching the existing "Зупинити фільтрацію" pattern.
+//!
+//! [`is_trusted`] (T-191) is the read-only public counterpart: it only
+//! *reads* trust state — the same `certutil -dump` / `-store` calls the
+//! install path already makes to decide whether it has work to do — never
+//! mutates, and so is safe to call unattended, including from a background
+//! poll. The `dnsqb-tray` status icon uses it to turn red when the
+//! certificate the `DoH` listener serves isn't trusted (the browser's own
+//! `DoH` connection would then fail silently). No HTTP route wraps it; the
+//! tray calls it directly, exactly as it already does for [`ensure_installed`].
 
 use std::env;
 use std::ffi::OsStr;
@@ -272,6 +281,40 @@ fn confirmed_thumbprints_for_common_name(
     Err(TrustStoreError::ListFailed(output.status.code()))
 }
 
+/// Shared read-only core of [`is_trusted`] and [`ensure_installed`]. Returns a
+/// pair: whether the certificate currently at `cert_path` is trusted, and
+/// every `CurrentUser\Root` thumbprint found under this project's fixed
+/// `CommonName`. The [`Vec`] half is consumed only by [`ensure_installed`]'s
+/// stale-entry warning; [`is_trusted`] discards it. Kept as one function so
+/// the thumbprint-vs-CN identity distinction (this module's whole doc comment)
+/// can never drift between the two callers. Read-only — `certutil -dump` +
+/// `certutil -store`.
+fn trusted_state(cert_path: &Path) -> Result<(bool, Vec<String>), TrustStoreError> {
+    let local_thumbprint = local_cert_thumbprint(cert_path)?;
+    let installed = thumbprints_for_common_name(CERT_COMMON_NAME)?;
+    let trusted = installed
+        .iter()
+        .any(|thumbprint| thumbprint.eq_ignore_ascii_case(&local_thumbprint));
+    Ok((trusted, installed))
+}
+
+/// Read-only: is the certificate currently at `cert_path` the exact one
+/// trusted in `CurrentUser\Root`? Never mutates the store, so — unlike
+/// [`ensure_installed`] / [`uninstall`] — it's safe to call unattended,
+/// including from a background poll (the `dnsqb-tray` status icon). See this
+/// module's doc comment.
+///
+/// # Errors
+///
+/// [`TrustStoreError::LocalThumbprint`] if `cert_path` is absent or isn't a
+/// certificate `certutil -dump` can parse — including the common first-run
+/// case where `dnsqb-service` has never generated `cert.pem`. A caller must
+/// treat that as "unknown", never as "untrusted". Plus the usual
+/// [`TrustStoreError::Spawn`] / [`TrustStoreError::MissingSystemRoot`].
+pub fn is_trusted(cert_path: &Path) -> Result<bool, TrustStoreError> {
+    Ok(trusted_state(cert_path)?.0)
+}
+
 /// Ensures the certificate currently at `cert_path` is trusted in
 /// `CurrentUser\Root`, installing it (`certutil -addstore`) only if it isn't
 /// already — see this module's doc comment for why identity here is the
@@ -289,13 +332,9 @@ fn confirmed_thumbprints_for_common_name(
 /// be read (including the common first-run case where `cert.pem` doesn't
 /// exist yet) or if `certutil -addstore` itself fails.
 pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStoreError> {
-    let local_thumbprint = local_cert_thumbprint(cert_path)?;
-    let installed = thumbprints_for_common_name(CERT_COMMON_NAME)?;
+    let (already_trusted, installed) = trusted_state(cert_path)?;
 
-    if installed
-        .iter()
-        .any(|thumbprint| thumbprint.eq_ignore_ascii_case(&local_thumbprint))
-    {
+    if already_trusted {
         return Ok(TrustStoreOutcome::AlreadyInstalled);
     }
     if !installed.is_empty() {
@@ -396,7 +435,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        local_cert_thumbprint, parse_cert_hash_sha1, uninstall_loop, MAX_MATCHING_ENTRIES,
+        is_trusted, local_cert_thumbprint, parse_cert_hash_sha1, uninstall_loop,
+        MAX_MATCHING_ENTRIES,
     };
 
     #[test]
@@ -537,6 +577,56 @@ mod tests {
                 "a certain-to-be-absent CommonName must yield no thumbprints, got {thumbprints:?}"
             ),
             Err(err) => panic!("thumbprints_for_common_name must succeed (empty, not Err): {err}"),
+        }
+    }
+
+    #[test]
+    fn is_trusted_is_false_for_a_freshly_generated_never_installed_cert() {
+        // T-191. Real `certutil -dump` + `-store` calls against a real
+        // cert.pem this project actually generates — read-only, no store
+        // mutation (the whole reason `is_trusted` is safe to call from a
+        // test, unlike `ensure_installed`). A cert generated right here has a
+        // random key, so its SHA-1 thumbprint is certainly not in the test
+        // account's real CurrentUser\Root — the answer must be a clean
+        // `Ok(false)`, never an `Err` and never a spurious `true`.
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("must be able to create a temp dir: {err}"),
+        };
+        let cert_path = dir.path().join("cert.pem");
+        let certified_key = match crate::cert::generate_self_signed_cert() {
+            Ok(ck) => ck,
+            Err(err) => panic!("generation must succeed: {err}"),
+        };
+        if let Err(err) = std::fs::write(&cert_path, certified_key.cert.pem()) {
+            panic!("must be able to write cert.pem: {err}");
+        }
+        match is_trusted(&cert_path) {
+            Ok(trusted) => assert!(
+                !trusted,
+                "a freshly generated, never-installed cert must not report as trusted"
+            ),
+            Err(err) => panic!("is_trusted must succeed (Ok(false), not Err): {err}"),
+        }
+    }
+
+    #[test]
+    fn is_trusted_errors_when_cert_pem_is_absent() {
+        // T-191. First run — `dnsqb-service` has never generated `cert.pem`.
+        // This must be a distinguishable error, never a silent `Ok(false)`:
+        // the caller (the tray icon) treats "unknown" and "untrusted"
+        // differently — see `is_trusted`'s doc comment.
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("must be able to create a temp dir: {err}"),
+        };
+        let missing_path = dir.path().join("cert.pem");
+        match is_trusted(&missing_path) {
+            Err(super::TrustStoreError::LocalThumbprint { path }) => {
+                assert_eq!(path, missing_path);
+            }
+            Ok(_) => panic!("expected LocalThumbprint on a missing cert.pem, got Ok"),
+            Err(err) => panic!("expected LocalThumbprint, got a different Err: {err}"),
         }
     }
 }

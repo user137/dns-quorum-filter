@@ -1,6 +1,7 @@
 SOURCES: SPEC.md §8, §8.1, §3.3, §3.7, §5.3, §7; "Відкриті питання" №10; CLAUDE.md
 (dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-128, T-152,
-T-176; UI-SPEC.md §2.1, §3.1; DECISIONS.md 2026-09-02, 2026-09-03.
+T-176, T-191; SERVICES.md §dnsqb-tray "Іконка"; UI-SPEC.md §2.1, §3.1;
+DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08.
 
 # Індикатор стану — умови, не автомат переходів
 
@@ -80,6 +81,40 @@ flowchart TD
 Повна версія індикатора (умови 1–5 як окремі конкуруючі стани з єдиним індикатором, не суфіксом)
 — майбутня; ця діаграма описує її як ціль. Порядок пріоритету при одночасному виконанні — нижче,
 закрито.
+
+## Колір трей-іконки (T-191, Батч 3.14)
+
+**Це рендер драбини вище, не нова умова.** `dnsqb-tray` показує один із 4 кольорових гліфів
+(green / amber / grey / red) замість єдиної статичної білої іконки (T-183). Вхід — той самий
+`TrayStatus`, який дає драбина, **плюс** `cert_trusted: bool` як другий *ортогональний* вхід
+(read-only `trust_store::is_trusted`, окремий тред). Жодної нової умови верхнього рівня, жодної
+зміни порядку пріоритетів 2026-09-02 / 2026-09-03 — узгоджується з тезою цього файлу
+(«незалежні прапорці, не automaton»).
+
+Чиста тотальна `status::icon_colour(TrayStatus, cert_trusted) -> IconColour`:
+
+| `TrayStatus` | `cert_trusted` | Колір |
+|---|---|---|
+| `Filtering` (degraded_events == 0) | так | 🟢 green |
+| `Filtering` (degraded_events > 0) | так | 🟡 amber |
+| `ServiceRestarting` / `Offline` | будь-яке | 🟡 amber |
+| `NoActiveProvider` / `Paused` | так | ⚪ grey |
+| `Unreachable` / `ServiceGaveUp` | будь-яке | 🔴 red |
+| `Filtering` (будь-яка degraded) | **ні** | 🔴 red (override) |
+| `NoActiveProvider` / `Paused` / `Offline` / watchdog | **ні** | без override — колір рядка вище |
+
+**Override cert-not-trusted → red фліпає лише `Filtering`** (DECISIONS.md 2026-09-08): SPEC §3/§8.1
+вимагає показувати `NoActiveProvider` як окремий стан, **не помилку** (умова 4 вище — «явний
+pass-through, не помилка»); `Paused` — свідомий вибір (T-185, регресійний тест). Для цих станів
+проблему недовіреного сертифіката несе **tooltip-суфікс** `status::cert_warning` /
+`compose_tooltip` (той самий прийом, що degraded-суфікс умови 5), а не червоний гліф — щоб червона
+іконка не стояла поряд із tooltip «захищає».
+
+Реалізовано T-191 (Батч 3.14): `status::icon_colour` / `cert_warning` / `compose_tooltip`
+(`crates/dnsqb-tray/src/status.rs`, чисті + свої тести); `TrustState` / `spawn_trust_watch`
+(окремий тред, `trust_store::is_trusted`, seed `true`, бекоф 15→60→300 с); `main.rs` —
+`refresh_tray` (tooltip на зміну `(observed, trusted)`, `set_icon` на зміну кольору, комміт
+`last_colour` лише на `Ok`). 4 гліфи — `assets/gen-icon.py` `make_tray_glyph(size, colour)`.
 
 ## Закрито — порядок пріоритету при одночасному виконанні кількох умов (DECISIONS.md 2026-09-02)
 

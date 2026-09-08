@@ -4191,3 +4191,49 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
 видалено), `.gitignore`, `SPEC.md`, `DECISIONS.md`, `SERVICES.md`, `CLAUDE.md`, `TASKS.md`,
 `diagrams/process-lifecycle.md` (нова), `diagrams/README.md`. **НЕ чіпалось:**
 `packaging/AppxManifest.template.xml`, `packaging/pack-msix.ps1` (T-156 стоїть).
+
+### Батч 3.14 — кольорові трей-іконки за станом + `is_trusted` наперед (T-191, T-192; kickoff plan+advisor 2026-09-08)
+
+Йде **перед** Батчем 3.13 (вибір користувача «давай батч 3.14»). T-183 дав одну статичну білу
+іконку трея; користувач попросив індикацію станом за патерном Google Drive / Dropbox. Kickoff-опитування:
+`is_trusted()` витягнуто **наперед** у 3.14 (не відкладено до T-188); `v0.3.1` тегається **після**
+3.14 (T-192), покриваючи Батч 3.12 + 3.14 і закриваючи давній T-186. Майстер онбордингу (Батч 3.13)
+→ окремий `v0.3.2`. Advisor-catch (kickoff): червона іконка не може стояти поряд із tooltip
+«захищає» → `cert_warning`-суфікс; override cert→red фліпає **лише** `Filtering` (SPEC §3/§8.1 —
+`NoActiveProvider` це не помилка); seed довіри `true` — «невідомо» ≠ «зламано». DECISIONS.md 2026-09-08.
+
+- [x] **T-191** — кольорові трей-іконки + `is_trusted` наперед + кеш довіри. Коміт `<pending>`.
+  - `trust_store::is_trusted(cert_path) -> Result<bool, TrustStoreError>` — read-only (`certutil
+    -dump` + `-store`, без мутації стору); спільне ядро `trusted_state` з `ensure_installed` (той
+    тепер `let (already_trusted, installed) = trusted_state(..)?`); re-export з `lib.rs`. **Без
+    HTTP-маршруту** — трей кличе lib-функцію напряму, як уже кличе `ensure_installed`. 2 тести
+    (`is_trusted_is_false_for_a_freshly_generated_never_installed_cert`,
+    `is_trusted_errors_when_cert_pem_is_absent`).
+  - `crates/dnsqb-tray/src/status.rs`: `IconColour` (Green/Amber/Grey/Red); `icon_colour(TrayStatus,
+    cert_trusted)` — чиста тотальна, вичерпний `match` **без wildcard** (8-й варіант має не
+    компілюватись); `cert_warning` + `compose_tooltip` (суфікс «сертифікат не встановлено…» для
+    `Filtering`/`NoActiveProvider` коли `!trusted`, патерн T-56 degraded-суфікса); `TrustState`
+    (`Arc<AtomicBool>` trusted + recheck, `Clone`) + `spawn_trust_watch` (окремий `std::thread`,
+    не 2-с poll-луп — `certutil` блокує; seed `true`; бекоф `15→60→300` с поки `!trusted`, `300` с
+    коли `trusted`; `request_recheck` короткочасить сон). 5 нових тестів.
+  - `crates/dnsqb-tray/src/main.rs`: `TrayIcons` (4 `Icon` при старті, `Icon` є `Clone` у tray-icon
+    0.21.3; `TrayIconBuilder` стартує з червоної, узгоджено з `Unreachable`-tooltip); `refresh_tray`
+    (tooltip на зміну `(observed, trusted)`; `set_icon` на зміну кольору; `last_colour` коммітиться
+    **лише на `Ok`** — інакше транзієнтний збій запінив би хибний колір); `spawn_cert_action` (враппер
+    `spawn_trust_store_action` + `trust.request_recheck()` **після** `certutil`-мутації) для 4
+    cert-пунктів меню; `handle_menu_event` дістав `&TrustState`.
+  - `assets/gen-icon.py`: `make_tray_glyph(size, colour)`; `main()` цикл по `TRAY_GLYPH_COLOURS`
+    (GitHub Primer: `#3FB950`/`#F5A623`/`#8B949E`/`#F85149`) → 4 блоби
+    `crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` (комітовані, `.gitignore` не
+    ловить); старий `tray-32-rgba.bin` — `git rm`. Геометрія без змін. **Без анімації вершин.**
+  - Docs: DECISIONS.md (новий запис); `diagrams/ui-status-indicator.md` (підрозділ «Колір
+    трей-іконки» + SOURCES) + `diagrams/README.md`; `SERVICES.md` §Іконка; `CLAUDE.md` (tray-абзац,
+    `trust_store` surface, gen-icon рядок, нова gotcha про «commit lastcolour лише на Ok» + seed);
+    `UI-SPEC.md` (одне речення); `TASKS.md` (секція Батч 3.14).
+  - **Верифікація:** `cargo fmt --check` + `clippy --workspace --all-targets -D warnings` +
+    `cargo test --workspace --lib --bins` (dnsqb-service lib 663→665 +2, dnsqb-tray 12→17 +5) +
+    `--doc` + `cargo doc` (RUSTDOCFLAGS=-D warnings) — усі зелені. `python assets/gen-icon.py` →
+    `git status` чисто (4 блоби відтворювані). `#![forbid(unsafe_code)]` цілий.
+  - **Звірка діаграм:** зачеплено 1 — `ui-status-indicator.md` (новий підрозділ «Колір трей-іконки»,
+    SOURCES оновлено), `README.md` індекс. `ui-dto-model.md` НЕ зачеплено — нема нового HTTP-роуту/
+    DTO-поля (`is_trusted` — прямий lib-виклик). Інші 5 — без змін. GAP: 0.

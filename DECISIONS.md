@@ -1047,3 +1047,68 @@ T-172/T-176). Якщо presentation-баг колись пройде обидв�
 **Наслідки в SPEC:** §7 — блок «Навмисна зупинка (T-185)»; §8 — меню трея.
 **Наслідки в діаграмах:** `diagrams/process-lifecycle.md` — секція пауза/вихід стає реальною
 (знято ⚠️ «заплановано»).
+
+---
+
+## 2026-09-08 — Батч 3.14: колір трей-іконки за станом; `is_trusted` наперед; порядок тегів
+
+**Контекст:** T-183 (Батч 3.12) дав одну статичну білу гексагон-іконку трея. Користувач попросив
+індикацію станом за патерном Google Drive / Dropbox: зелений — фільтрує ОК, жовтий — деградація /
+перезапуск / офлайн, сірий — свідомо вимкнено, червоний — недосяжно / здалося / сертифікат не
+встановлено. Окремо: `AdminClient` трея пінить власний сертифікат, тож на чистій машині без
+довіреного cert трей чесно поллить «захищає», поки браузерний DoH до нас узагалі не
+встановлюється й DNS тихо йде нефільтрованим (**Три Б**). Живий прогін показав, що застосунок не
+вміє навіть *перевірити* довіру. Замовлення користувача — окремий Батч 3.14, «не критично».
+
+**Рішення:**
+- **Кольорова мапа** над наявними 7 варіантами `TrayStatus` + `cert_trusted: bool`, як чиста
+  тотальна `status::icon_colour(TrayStatus, bool) -> IconColour` з вичерпним `match` без
+  wildcard-гілки (майбутній 8-й варіант має не компілюватись, а не тихо стати зеленим):
+  🟢 `Filtering{degraded==0}` · 🟡 `Filtering{degraded>0}` / `ServiceRestarting` / `Offline` ·
+  ⚪ `Paused` / `NoActiveProvider` · 🔴 `Unreachable` / `ServiceGaveUp`.
+- **Override cert-not-trusted → red фліпає ЛИШЕ `Filtering`.** Не `NoActiveProvider`, не `Paused`,
+  не `Offline`/watchdog. `cert_warning`-суфікс у tooltip (`status::compose_tooltip`, патерн
+  T-56 degraded-суфікса) натомість спрацьовує для `Filtering` **і** `NoActiveProvider` — червона
+  іконка не може стояти поряд із tooltip «захищає» (той самий провал, що doc-comment `status.rs`
+  «Honestly distinguished states» існує запобігти). Tooltip писати на зміну `(observed, trusted)`,
+  не лише `observed`.
+- **`is_trusted()` витягнуто наперед у 3.14** (вибір користувача, замість відкладання до T-188):
+  read-only `pub fn trust_store::is_trusted(cert_path) -> Result<bool, TrustStoreError>`, спільне
+  ядро `trusted_state` з `ensure_installed`, re-export з `lib.rs`. **Без HTTP-маршруту** —
+  `GET /admin/cert-status` + `POST /admin/install-cert` лишаються в Батчі 3.13 / T-188; трей кличе
+  lib-функцію напряму, як уже кличе `ensure_installed`. Окремий `std::thread`
+  (`status::spawn_trust_watch`) тримає `Arc<AtomicBool>`; seed `true` (червоний лише коли
+  `certutil` *довів* недовіру; `cert.pem` відсутній = «невідомо», не «недовірений»); бекоф
+  каденсу 15→60→300 с поки `!trusted`, 300 с коли `trusted`; cert-пункти меню викликають
+  `request_recheck()` після `certutil`-мутації.
+- **Повноколірний гліф** (крапки-вершини несуть колір), палітра GitHub Primer
+  (`green #3FB950` / `amber #F5A623` / `grey #8B949E` / `red #F85149`). **Без анімації вершин.**
+  `assets/gen-icon.py` `make_tray_glyph(size, colour)` → 4 блоби
+  `crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin`; старий `tray-32-rgba.bin`
+  видалено.
+- **Порядок тегів:** `v0.3.1` тегається **після 3.14** (T-192) і покриває Батч 3.12 **+ 3.14**,
+  закриваючи давно відкритий T-186. Майстер онбордингу (Батч 3.13) стає окремим **`v0.3.2`**
+  (потребує власного бампу `0.3.1`→`0.3.2`).
+
+**Причина:** override лише `Filtering` — SPEC §3/§8.1 вимагає показувати порожній voter-набір
+**як окремий стан, не як помилку** (`ui-status-indicator.md` умова 4 — «явний pass-through, не
+помилка»), а червоний — колір помилки; `Paused` захищений регресійним тестом
+`paused_tooltip_names_the_state_plainly_and_not_as_a_failure` (T-185). `Filtering`+untrusted —
+єдиний стан, де тихий збій браузерного DoH є проблемою, яку користувач мусить лагодити.
+Окремий тред (не `spawn_blocking` на 2-с poll-лупі): `is_trusted` = два блокувальні
+`certutil`-сабпроцеси; seed `true` — «невідомо» ≠ «зламано». `is_trusted` напряму з lib —
+дзеркалить наявний `INSTALL_CERT_ID`-хендлер.
+
+**Наслідки в коді:** `crates/dnsqb-service/src/{trust_store.rs,lib.rs}` (`trusted_state` +
+`is_trusted` + 2 тести); `crates/dnsqb-tray/src/status.rs` (`IconColour`, `icon_colour`,
+`cert_warning`, `compose_tooltip`, `TrustState`, `spawn_trust_watch` + тести);
+`crates/dnsqb-tray/src/main.rs` (`TrayIcons`, `refresh_tray`, `spawn_cert_action`,
+`handle_menu_event` дістає `&TrustState`); `assets/gen-icon.py` + 4 нові `.bin` (старий видалено).
+
+**Наслідки в SPEC:** немає (SPEC §8 hero-стани не чіпано — це Батч 3.13 / T-188).
+**Наслідки в діаграмах:** `diagrams/ui-status-indicator.md` — новий підрозділ «Колір трей-іконки»
+(рендер наявної драбини + `cert_trusted` як ортогональний вхід, **без** нової умови й **без**
+зміни порядку пріоритетів 2026-09-02 / 09-03); `diagrams/README.md` індекс.
+**Наслідки в інших доках:** `SERVICES.md` §dnsqb-tray «Іконка»; `CLAUDE.md` (module-table,
+tray-абзац, gen-icon рядок, `trust_store` surface); `UI-SPEC.md` (одне речення); `TASKS.md`
+(секція Батч 3.14, T-191/T-192); T-186 закривається в T-192.

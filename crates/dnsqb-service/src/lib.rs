@@ -218,7 +218,9 @@ pub use reachability::{
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
-pub use trust_store::{ensure_installed, uninstall, TrustStoreError, TrustStoreOutcome};
+pub use trust_store::{
+    ensure_installed, is_trusted, uninstall, TrustStoreError, TrustStoreOutcome,
+};
 pub use upstream::{
     all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, sinkhole_nets_for,
     validate_provider_url, BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec,
