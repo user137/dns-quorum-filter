@@ -1,6 +1,6 @@
 SOURCES: SPEC.md §8, §8.1, §3.3, §3.7, §5.3, §7; "Відкриті питання" №10; CLAUDE.md
 (dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-128, T-152,
-T-176, T-188, T-191, T-193; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
+T-176, T-188, T-191, T-193, T-196; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
 "Меню"; UI-SPEC.md §2.1, §3.1; `diagrams/onboarding.md`, `diagrams/process-lifecycle.md`;
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08 (T-191 — колір іконки; T-188 — онбординг +
 hero cert-гілка; T-193 — пауза = нефільтрований baseline + `AdminStatusResponse.paused`).
@@ -123,8 +123,8 @@ flowchart TD
 
 | `TrayStatus` | `cert_trusted` | Колір |
 |---|---|---|
-| `Filtering` (degraded_events == 0) | так | 🟢 green |
-| `Filtering` (degraded_events > 0) | так | 🟡 amber |
+| `Filtering` (`degraded_events < degraded_window`, у т.ч. `== 0`) | так | 🟢 green |
+| `Filtering` (`degraded_events == degraded_window > 0` — всі останні quorum-запити деградували, T-196) | так | 🟡 amber |
 | `ServiceRestarting` / `Offline` | будь-яке | 🟡 amber |
 | `NoActiveProvider` / `Paused` | так | ⚪ grey |
 | `Unreachable` / `ServiceGaveUp` | будь-яке | 🔴 red |
@@ -137,6 +137,11 @@ pass-through, не помилка»); `Paused` — свідомий вибір (
 проблему недовіреного сертифіката несе **tooltip-суфікс** `status::cert_warning` /
 `compose_tooltip` (той самий прийом, що degraded-суфікс умови 5), а не червоний гліф — щоб червона
 іконка не стояла поряд із tooltip «захищає».
+
+**T-196 (Батч 3.14):** `Filtering` іде amber лише коли `degraded_events == degraded_window` (усі
+останні quorum-запити деградували → фільтрація фактично не відбувається). Частковий лічильник —
+відновлений блип: іконка лишається зеленою, суфікс умови 5 у тултіпі несе «N/M останніх». До
+T-196 один тайм-аут апстріма застрягав жовтим на весь таскбар на ~20 запитів.
 
 Реалізовано T-191 (Батч 3.14): `status::icon_colour` / `cert_warning` / `compose_tooltip`
 (`crates/dnsqb-tray/src/status.rs`, чисті + свої тести); `TrustState` / `spawn_trust_watch`

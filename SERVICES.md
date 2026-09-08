@@ -408,10 +408,13 @@ Filter:`, а `Filtering` тепер читається як «захищає —
 
 | Колір | Коли |
 |---|---|
-| 🟢 green | `Filtering`, `degraded_events == 0` |
-| 🟡 amber | `Filtering` з `degraded_events > 0`; `ServiceRestarting`; `Offline` |
+| 🟢 green | `Filtering` (у т.ч. частковий `degraded_events` — T-196: відновлений блип не тривога) |
+| 🟡 amber | `Filtering` коли деградували **всі** останні quorum-запити (`degraded_events == degraded_window`, T-196 — фільтрація фактично не відбувається); `ServiceRestarting`; `Offline` |
 | ⚪ grey | `NoActiveProvider`; `Paused` (свідомо вимкнено — не помилка) |
 | 🔴 red | `Unreachable`; `ServiceGaveUp`; **`Filtering` коли сертифікат не встановлено** (override) |
+
+Частковий `degraded_events` далі несе tooltip-суфікс «N/M останніх …» (T-56) — деталь у тултіпі,
+не колір іконки на весь таскбар (T-196: один тайм-аут застрягав жовтим на ~20 запитів).
 
 **Override cert-not-trusted → red фліпає лише `Filtering`.** Для `NoActiveProvider` / `Paused` /
 `Offline` / watchdog-станів недовірений сертифікат **не** перефарбовує іконку — SPEC §3/§8.1

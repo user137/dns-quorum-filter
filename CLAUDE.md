@@ -27,7 +27,10 @@ per poll, flashed a console window every few seconds on a fresh install); T-195 
 видалити" now stops the whole app (`stop.flag`+`quit.flag`) and a detached hidden `powershell`
 helper (`dnsqb-tray/src/self_uninstall.rs`) waits for every process to exit then wipes all of
 `%LOCALAPPDATA%\dns-quorum-filter`, then opens `ms-settings:appsfeatures` via `explorer.exe`
-(revises T-70; DECISIONS.md 2026-09-08). Commits `58c269d` + `45aa0d6`, in `v0.3.1` before the tag.
+(revises T-70; DECISIONS.md 2026-09-08). **T-196** — the tray icon only goes amber for `Filtering`
+when *every* recent quorum query degraded (`degraded_events == degraded_window`), not on any
+`> 0` — a recovered upstream blip was pinning the taskbar icon amber for ~20 queries (revises
+T-191). Commits `58c269d` + `45aa0d6` (+ `a65143f` closing-advisor) + T-196, in `v0.3.1` before the tag.
 T-192: patch release **`v0.3.1`**
 covers Батч 3.12 **+ 3.14** and closes T-186 — bump commit `0e9b944`, tag `v0.3.1` pushed after a
 manual clean-reinstall MSIX check (MSIX rebuilt with T-194/T-195) → `release.yml` draft (unpublished,
@@ -313,7 +316,9 @@ Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tray runtime icon **(T-191, Батч 3.1
 blobs `crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` (`gen-icon.py`'s
 `make_tray_glyph(size, colour)`, GitHub Primer palette; the pre-T-183 blob was a stale `dnsqb-ui`
 teal square). `status::icon_colour(TrayStatus, cert_trusted) -> IconColour` picks one:
-🟢 `Filtering`/no-degraded · 🟡 `Filtering`/degraded, `ServiceRestarting`, `Offline` · ⚪ `Paused`,
+🟢 `Filtering` (incl. a partial degraded count — T-196: a recovered blip is not an alarm) · 🟡
+`Filtering` when **every** recent quorum query degraded (`degraded_events == degraded_window`, T-196),
+`ServiceRestarting`, `Offline` · ⚪ `Paused`,
 `NoActiveProvider` · 🔴 `Unreachable`, `ServiceGaveUp`, **and `Filtering` when the cert isn't
 trusted** (override — flips `Filtering` **only**; `NoActiveProvider`/`Paused`/`Offline`/watchdog
 stay their row colour, SPEC §3/§8.1 "pass-through ≠ failure" + the T-185 paused-tooltip test). The
@@ -341,8 +346,10 @@ and the service is deliberately down, so without this a pause reads as a mislead
 `Offline` (T-152 — `from_response` returns it before `NoActiveProvider`
 when `AdminStatusResponse.network == OFFLINE`; ranked below the watchdog states, above 0-voters —
 DECISIONS.md 2026-09-03) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
-suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK`
-log entries — T-56, narrowed; T-155 added `BASELINE_FALLBACK`). **T-176:** the tooltip *strings*
+tooltip suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK`
+log entries — T-56, narrowed; T-155 added `BASELINE_FALLBACK`). **The tray *icon* (T-191) only goes
+amber on `degraded_events == degraded_window` (T-196) — a partial count is a recovered blip, tooltip
+only.** **T-176:** the tooltip *strings*
 were reworded for a lay reader (`DNS Quorum Filter:` prefix, `Filtering` → "захищає — N/M
 заблоковано", no "резолвінг"/"апстрім") — the state set and priority logic are unchanged.
 

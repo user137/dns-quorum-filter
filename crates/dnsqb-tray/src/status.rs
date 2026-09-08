@@ -175,6 +175,12 @@ pub enum IconColour {
 /// a future 8th [`TrayStatus`] variant must fail to compile here rather than
 /// silently render green ("захищає"). DECISIONS.md 2026-09-08 records why the
 /// cert-not-trusted → red override touches only [`TrayStatus::Filtering`].
+///
+/// T-196: `Filtering` goes amber only when **every** recent quorum query was
+/// degraded (`degraded_events == degraded_window`) — i.e. filtering is
+/// effectively not happening. A single recovered upstream timeout is a
+/// trailing-window blip, not an alarm: the icon stays green and
+/// [`TrayStatus::tooltip`]'s own "N/M останніх" suffix carries the nuance.
 #[must_use]
 pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
     match status {
@@ -186,11 +192,16 @@ pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
         // tooltip.
         TrayStatus::Paused | TrayStatus::NoActiveProvider { .. } => IconColour::Grey,
         TrayStatus::Filtering {
-            degraded_events, ..
+            degraded_events,
+            degraded_window,
+            ..
         } => {
             if !cert_trusted {
                 IconColour::Red
-            } else if degraded_events > 0 {
+            } else if degraded_window > 0 && degraded_events == degraded_window {
+                // Every recent quorum query degraded → filtering effectively
+                // isn't happening (T-196). `degraded_window == 0` is a fresh
+                // start with no quorum entries yet, not a failure.
                 IconColour::Amber
             } else {
                 IconColour::Green
@@ -458,12 +469,16 @@ mod tests {
     use super::{cert_warning, compose_tooltip, icon_colour, IconColour};
 
     fn filtering(degraded_events: u64) -> TrayStatus {
+        filtering_wd(degraded_events, 20)
+    }
+
+    fn filtering_wd(degraded_events: u64, degraded_window: u64) -> TrayStatus {
         TrayStatus::Filtering {
             in_flight: 0,
             blocked: 1,
             total: 9,
             degraded_events,
-            degraded_window: 20,
+            degraded_window,
         }
     }
 
@@ -480,11 +495,25 @@ mod tests {
                 IconColour::Grey,
             ),
             (filtering(0), IconColour::Green),
-            (filtering(2), IconColour::Amber),
+            // T-196: a partial degraded count is a recovered blip, not amber.
+            (filtering(2), IconColour::Green),
+            (filtering_wd(20, 20), IconColour::Amber),
         ];
         for (status, want) in cases {
             assert_eq!(icon_colour(status, true), want, "{status:?}");
         }
+    }
+
+    #[test]
+    fn filtering_icon_is_amber_only_when_every_recent_query_degraded() {
+        // T-196 — the taskbar icon must not cry wolf over a single recovered
+        // upstream timeout; it goes amber only when filtering is effectively
+        // not happening at all.
+        assert_eq!(icon_colour(filtering_wd(1, 20), true), IconColour::Green);
+        assert_eq!(icon_colour(filtering_wd(19, 20), true), IconColour::Green);
+        assert_eq!(icon_colour(filtering_wd(20, 20), true), IconColour::Amber);
+        // A fresh start (no quorum entries yet) is green, not amber.
+        assert_eq!(icon_colour(filtering_wd(0, 0), true), IconColour::Green);
     }
 
     #[test]

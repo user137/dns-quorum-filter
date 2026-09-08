@@ -4549,6 +4549,32 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     (`system_root_exe_joins_directly_under_system_root`). Сам спавн/видалення — I/O shell, не
     юнітиться (прецедент `main.rs`/`spawn.rs`).
   - **Верифікація:** повний локальний гейт зелений. **Заходить у `v0.3.1` перед тегом.**
-  - closing plan+advisor — перед тегом `v0.3.1` (спільний для всього у `v0.3.1`).
+  - **closing plan+advisor (`a65143f`):** результат звірено з планом. 5 пунктів: (1 БЛОКЕР) wipe-
+    хелпер спавнився `DETACHED_PROCESS` без `CREATE_BREAKAWAY_FROM_JOB` — job MSIX-дерева убив би
+    його разом із треєм; додано breakaway + raw-OS-error-5 fallback (дзеркало `watchdog::spawn`).
+    (2) `watchdog_override` на трейовому боці **вже** має mtime-guard (`is_stale`) — стала
+    `Restarting` не пінить. (3) wait-loop після кепу падав у delete навіть коли процеси живі —
+    додано `if (Get-Process $p) { exit 1 }`. (4) `/admin/ui` danger-zone: картка = лише секрети,
+    але лейбл «Повністю видалити» збігся з трей-пунктом — додано речення-вказівник. (5)
+    `resolve_app_data_dir` бере теку з того ж `%LOCALAPPDATA%` env, що й `build_wipe_script` —
+    розбіжності немає.
+- [x] **T-196** — трей-іконка не «кричить» на відновлений блип. Коміт `<pending>`. Живий прогін:
+  іконка жовта при робочій фільтрації.
+  - **Баг:** `status::icon_colour` (T-191) фарбував `Filtering` в amber на будь-який
+    `degraded_events > 0`. Це трейлінговий лічильник за останні 20 quorum-записів (`admin::degraded_counts`,
+    T-56/T-155) — один тайм-аут апстріма застрягав жовтим на весь таскбар, поки 20 чистих запитів
+    не виштовхнуть його з вікна.
+  - **Фікс:** amber для `Filtering` **лише** коли `degraded_events == degraded_window > 0` (усі
+    останні quorum-запити деградували → фільтрація фактично не відбувається). Advisor: не просто
+    прибрати гілку (це дало б зелене, коли `filters_unreachable` → всі запити йдуть нефільтрованим
+    baseline, Три Б), а поріг «усі». Частковий лічильник → зелена + наявний суфікс тултіпа «N/M
+    останніх» (T-56). `degraded_window == 0` (свіжий старт) → зелена.
+  - **Тести:** `filtering_icon_is_amber_only_when_every_recent_query_degraded` (1/20 → green,
+    19/20 → green, 20/20 → amber, 0/0 → green); `every_tray_status_maps_to_a_colour…` оновлено
+    (`filtering(2)` тепер green, додано `filtering_wd(20,20)` → amber). tray bins 29 → 30.
+  - **Верифікація:** `fmt`/`clippy -D warnings`/`test --workspace --lib --bins`/`--doc`/`cargo doc`
+    — зелені. **Заходить у `v0.3.1` перед тегом.**
+  - **Звірка діаграм:** `diagrams/ui-status-indicator.md` §«Колір трей-іконки» (таблиця + абзац
+    T-196 + SOURCES +T-196). Інші — без змін.
 - [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
   прогін спільно з `v0.3.1` + тег).
