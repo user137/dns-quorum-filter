@@ -853,7 +853,8 @@ HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`** 
   без змін. `README.md` секція браузера переписана (+Firefox). Тест `admin_ui`
   `browser_setup_card_has_a_static_step_block_per_browser_family`. Автоматичне прописування DoH —
   **поза обсягом** (T-99/T-134); one-click ProgId-перехід — відкладено (норма копіювати рядок).
-- [x] T-193 — **зроблено 2026-09-08**, коміт `<pending>`, kickoff plan+advisor. Пауза фільтрації
+- [x] T-193 — **зроблено 2026-09-08**, коміти `ab72e73` + `af86515` (closing-advisor), CI 7/7,
+  kickoff+closing plan+advisor. Пауза фільтрації
   більше не вбиває DNS — трей-пауза тримає `dnsqb-service` живим, служба віддає нефільтрований
   baseline (перегляд T-185, DECISIONS.md 2026-09-08). Новий `pause_watch::run_pause_watcher`
   (detached, 1-с `stat` `stop.flag` → `AppState.filtering_paused`, `RwLock<bool>` як `reachability`);

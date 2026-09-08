@@ -4419,9 +4419,9 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     (Dashboard — per-браузер кроки), `UI-SPEC.md` картка «Підключення браузера» — оновлено.
     `ui-status-indicator.md`/`ui-dto-model.md` не зачеплено (T-189 — жодного нового стану/DTO).
     GAP: 0.
-- [x] **T-193** — пауза фільтрації зберігає службу, віддає нефільтрований baseline. Коміт
-  `<pending>`, kickoff plan+advisor 2026-09-08 (3 Explore-агенти + Plan-агент + advisor).
-  Перегляд T-185 (DECISIONS.md 2026-09-08).
+- [x] **T-193** — пауза фільтрації зберігає службу, віддає нефільтрований baseline. Коміти
+  `ab72e73` (основний) + `af86515` (closing-advisor), CI `34242356026` 7/7. kickoff plan+advisor
+  2026-09-08 (3 Explore-агенти + Plan-агент + advisor). Перегляд T-185 (DECISIONS.md 2026-09-08).
   - **Баг:** трей «Призупинити фільтрацію» писав `stop.flag` **і слав `POST /admin/shutdown`** →
     процес `dnsqb-service` виходив, watcher заморожував нагляд → **браузер не резолвив нічого**.
     `confirm_pause` обіцяв «DNS піде нефільтрованим» — брехня (DNS ішов мертвим). Три Б.
@@ -4475,6 +4475,15 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
   - **Звірка діаграм:** `process-lifecycle.md` (секція паузи + `stateDiagram` без «служба down» +
     bullet); `ui-status-indicator.md` (умова 3a + flowchart-нода + hero-список + SOURCES);
     `ui-dto-model.md` (`AdminStatusResponse.paused` + нота + SOURCES). GAP: 0.
-  - closing plan+advisor — **перед завершенням** (ще попереду).
+  - **closing plan+advisor (2026-09-08, `af86515`):** результат звірено з планом — дрейфу нема.
+    Advisor підняв 4 пункти: (1) standalone `dnsqb-service` без watcher'а може успадкувати
+    stale `stop.flag` після `QUIT_APP_ID` — задокументовано в module-doc `pause_watch` (перший
+    полл логує стан; чистити прапор — робота watcher'а, не цієї задачі); (2) `paused` не може
+    потрапити в `resolver_config.toml` — `ResolverConfig` не має такого поля, обидва сайти читають
+    `filtering_paused_snapshot()` наживо (перевірено, без змін); (3) `main_js_hero_..._paused_state`
+    тепер якориться на самі guard-вирази (`status.network === "OFFLINE"` / `if (status.paused)` /
+    `status.active_providers.length === 0`), не на голі токени — коментар не може тихо послабити
+    перевірку порядку; (4) два ручні пункти (полл `/admin/status` при відкритій сторінці;
+    `watchdog-state.json` не стає stale + іконка сіра не жовта) додано в чек-ліст T-190.
 - [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
   прогін спільно з `v0.3.1` + тег).
