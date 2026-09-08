@@ -478,6 +478,11 @@ DECISIONS.md / PERFORMANCE.md / SPEC.md / CONFIGURATION.md / CLAUDE.md онов�
 plan+advisor) — `packaging/Trust-TestCert.ps1`: self-elevating хелпер довіри тест-серта
 (`LocalMachine\TrustedPeople` конкретно; `0x800B010A` у чернетці v0.3.0), перенесено з sister-проєкту
 pakko; чернетку v0.3.0 пропатчено (asset + нотатки). TASKS-DONE.md.
+**Батч 3.12 (T-181–T-185, T-187) зроблено 2026-09-07** (пост-Ф3 hotfix процесної моделі MSIX).
+**Батч 3.14 (T-191–T-192) зроблено 2026-09-08** (plan+advisor kickoff+closing) — кольорові
+трей-іконки за станом (`status::icon_colour`, 4 гліфи) + read-only `trust_store::is_trusted`
+наперед; патч-реліз **`v0.3.1`** покриває Батч 3.12 + 3.14, закриває T-186 → `release.yml`
+чернетка. Майстер онбордингу (Батч 3.13, T-188–T-190) відкладено → `v0.3.2`. TASKS-DONE.md.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -761,13 +766,9 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   `GaveUp`; новий `TrayStatus::Paused`; `confirm_pause` текст (перезапуск теж знімає паузу);
   event-loop перечитує прапор раз/с; заморожений луп логує freeze/resume раз на перехід.
   Нова gotcha в CLAUDE.md. CI `34155167169` / `34156201573` — 7/7 success.
-- [ ] T-186 — патч-реліз `v0.3.1`: бамп + closing-advisor + **чиста реінсталяція на цій машині**
-  (прибрати v0.3.0 через трей «Повністю видалити» + `Remove-AppxPackage` → перевірити зникнення
-  app-data) + ручний end-to-end (плитка → без термінала → іконка-гексагон → закрити не валить →
-  меню → «Вийти» → повторний запуск) + перевірка **однієї** app-data теки (identity-split від
-  breakaway) → тег `v0.3.1` → `release.yml` draft. **Механічну частину зроблено** (бамп
-  `0.3.0`→`0.3.1`, `0e9b944`); решту (closing-advisor + ручний прогін + тег) поглинає **T-192**
-  — тег `v0.3.1` тепер покриває Батч 3.12 + 3.14.
+- [x] T-186 — патч-реліз `v0.3.1`. **Розділено:** механічну частину (бамп `0.3.0`→`0.3.1`,
+  `0e9b944`) зроблено в Батчі 3.12; closing-advisor + ручний чистий прогін + тег `v0.3.1`
+  (покриває Батч 3.12 **+ 3.14**) — виконано як **T-192** (2026-09-08).
 
 ## Батч 3.14 — кольорові трей-іконки за станом + `is_trusted` наперед
 
@@ -778,7 +779,8 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
 `is_trusted()` витягнуто **наперед** у 3.14; `v0.3.1` тегається **після 3.14** (T-192, покриває
 Батч 3.12 + 3.14). DECISIONS.md 2026-09-08. Порядок комітів: T-191 → T-192.
 
-- [ ] T-191 — кольорові трей-іконки за станом + `is_trusted` наперед + кеш довіри. `assets/gen-icon.py`
+- [x] T-191 — **зроблено 2026-09-08**, коміт `6bba1f8`, CI `34215928169` 7/7 success. Кольорові
+  трей-іконки за станом + `is_trusted` наперед + кеш довіри. `assets/gen-icon.py`
   `make_tray_glyph(size, colour)` → 4 блоби `tray-32-{green,amber,grey,red}-rgba.bin` (палітра
   GitHub Primer; старий `tray-32-rgba.bin` видалено). `trust_store::is_trusted(cert_path)` (read-only,
   спільне ядро `trusted_state` з `ensure_installed`; re-export з `lib.rs`; **без HTTP-маршруту** —
@@ -788,14 +790,14 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   (tooltip на зміну `(observed, trusted)`; `set_icon` на зміну кольору; `last_colour` лише на `Ok`),
   `spawn_cert_action` (`request_recheck()` після `certutil`-мутації). Override cert→red фліпає
   **лише** `Filtering`. Docs: DECISIONS.md, `diagrams/ui-status-indicator.md` (+SOURCES) + README,
-  SERVICES.md §Іконка, CLAUDE.md, UI-SPEC.md. **Без анімації вершин** (поза обсягом).
-- [ ] T-192 — патч-реліз `v0.3.1` (покриває Батч 3.12 + 3.14; закриває T-186). Без бампу (`0.3.1`
-  уже в `0e9b944`). CLAUDE.md «Project state»; `sinkhole_probe` перед тегом (flaky `adguard` —
-  не блокує); повний локальний гейт; `python assets/gen-icon.py` → чиста тека; MSIX-репак; **ручний
-  чистий прогін на цій машині** (T-186 крок-лист + перевірка, що колір іконки відстежує стан:
-  red→green на старті, grey на паузі / 0 провайдерів, red за ~15 с після «Видалити сертифікат» →
-  green після «Встановити», amber при рестарті watchdog / офлайні; палітра light+dark);
-  closing-advisor; тег `v0.3.1` → `release.yml` draft (неопубліковано). Оновити T-186 → `[x]`.
+  SERVICES.md §Іконка, CLAUDE.md, UI-SPEC.md. Без анімації вершин. Деталі — TASKS-DONE.md.
+- [x] T-192 — **зроблено 2026-09-08**. Патч-реліз `v0.3.1` (покриває Батч 3.12 + 3.14; закриває
+  T-186). Без бампу (`0.3.1` уже в `0e9b944`). CLAUDE.md «Project state»; `sinkhole_probe` — exit 1
+  на flaky `adguard`-canary (не блокує — `94.140.14.0/24` живий: `adguard-family` + `dns4eu*`
+  влучили в свої префікси в тому ж прогоні, `SINKHOLE_NETS` без змін); повний локальний гейт зелений;
+  `python assets/gen-icon.py` → чиста тека; MSIX перезібрано (`pack-msix.ps1`, test-signed,
+  `dist\dns-quorum-filter-0.3.1.msix` 17.4 MB); ручний чистий прогін MSIX (користувач); closing-advisor;
+  тег `v0.3.1` на docs-коміті → `release.yml` чернетка (неопубліковано). Деталі — TASKS-DONE.md.
 
 ## Фаза 4 — Рейтинговий фільтр «бульбашка» + інфраструктура топ-N списку по країнах
 

@@ -14,8 +14,17 @@ teal-square tray icon (T-183), no detached children (T-182), and no way to stop 
 from the tray (T-185: `stop.flag`/`quit.flag`, menu rebuild). T-187: watcher stays the MSIX root
 (T-156 unchanged) but spawns the tray first and a re-clicked tile shows the icon; `ensure_sibling_running`
 moved to `watchdog::launcher`. New `logging` (file logs, T-184) + `lifecycle` modules, new
-`diagrams/process-lifecycle.md`. Version bump `0.3.0` → `0.3.1` + patch release `v0.3.1` — T-186
-(closing-advisor done; manual clean-reinstall MSIX verification on this machine pending). **Фаза 4 (rating filter «bubble» + per-country top-N list
+`diagrams/process-lifecycle.md`. Version bump `0.3.0` → `0.3.1` (`0e9b944`). **Post-Ф3 hotfix —
+Батч 3.14 (T-191–T-192), 2026-09-08, plan+advisor kickoff+closing:** user asked for Google-Drive-style
+coloured tray icons (T-191) — `status::icon_colour(TrayStatus, cert_trusted)` picks one of four
+`gen-icon.py` blobs (green/amber/grey/red); read-only `trust_store::is_trusted` pulled forward
+(shared `trusted_state` core, no HTTP route), polled by a dedicated `status::spawn_trust_watch`
+thread; cert-not-trusted → red flips `Filtering` only (SPEC §3/§8.1 + T-185 paused-tooltip test),
+the cert issue reaches other states as a `compose_tooltip` suffix. T-192: patch release **`v0.3.1`**
+covers Батч 3.12 **+ 3.14** and closes T-186 — bump commit `0e9b944`, tag `v0.3.1` pushed after a
+manual clean-reinstall MSIX check → `release.yml` draft (unpublished, a human clicks Publish, same
+as `v0.3.0`). The first-run onboarding wizard (Батч 3.13, T-188–T-190) is deferred and becomes
+`v0.3.2` (needs its own `0.3.1`→`0.3.2` bump). **Фаза 4 (rating filter «bubble» + per-country top-N list
 infra + personal learned zone source) — kickoff done 2026-09-07 (Батч 4.0, T-179): §5.1
 (top-sites excluded from Ads/Adult voters) removed and merged into the rating filter §5.3 — one
 opt-in bubble (out-of-zone → BLOCK, in-zone → normal pipeline), which moved here from Фаза 5.

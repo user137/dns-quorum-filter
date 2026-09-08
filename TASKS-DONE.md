@@ -4237,3 +4237,35 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
   - **Звірка діаграм:** зачеплено 1 — `ui-status-indicator.md` (новий підрозділ «Колір трей-іконки»,
     SOURCES оновлено), `README.md` індекс. `ui-dto-model.md` НЕ зачеплено — нема нового HTTP-роуту/
     DTO-поля (`is_trusted` — прямий lib-виклик). Інші 5 — без змін. GAP: 0.
+
+- [x] **T-192** — патч-реліз `v0.3.1` (покриває Батч 3.12 + 3.14; закриває T-186). Коміт `<pending>`,
+  тег `v0.3.1` на ньому.
+  - **Без бампу версії** — `0.3.1` уже в 3×`crates/*/Cargo.toml` (`0e9b944`, Батч 3.12); нуль
+    `Cargo.lock`-змін.
+  - `CLAUDE.md` «Project state» — абзац Батча 3.14 (кольорові іконки, `is_trusted` наперед,
+    `v0.3.1` покриває 3.12+3.14, Батч 3.13 → `v0.3.2`).
+  - **`sinkhole_probe`** (обов'язково перед релізом, live): exit 1 на flaky `adguard`-canary —
+    **не блокує**, той самий артефакт, що T-175 (свіжі URLhaus-хости ще не у фіді AdGuard). У тому
+    ж прогоні `adguard-family` → `pornhub.com` = `94.140.14.35` (IN `94.140.14.0/24`), `dns4eu-child`
+    / `dns4eu-protective` canary IN префікс — префікси живі, `SINKHOLE_NETS` без змін. Вивід —
+    scratchpad `t192_sinkhole_probe_2026-09-08.txt`.
+  - **Локальний гейт:** `cargo fmt --check` + `clippy --workspace --all-targets -D warnings` +
+    `cargo test --workspace --lib --bins` + `--doc` + `cargo doc` (RUSTDOCFLAGS=-D warnings) —
+    зелені (CI `34215928169` по `6bba1f8` — 7/7 success, включно з `repro`).
+  - **MSIX перезібрано** з кодом 3.14: `.\packaging\pack-msix.ps1 -BinDir target\release -OutFile
+    dist\dns-quorum-filter-0.3.1.msix` (Windows SDK 10.0.26100.0, ephemeral test-signed, `MSIX
+    version 0.3.1.0`, 7 файлів, 17.4 MB). `dist\dns-quorum-filter-0.3.1.cer` + `Trust-TestCert.ps1`
+    поруч. `dist/` — untracked, не комітиться.
+  - **Ручний чистий прогін MSIX (користувач, на цій машині):** видалити старий пакет +
+    `%LOCALAPPDATA%\dns-quorum-filter` → `Trust-TestCert.ps1` → `Add-AppxPackage` → плитка Пуску →
+    без термінала · іконка-гексагон за ~0.2 с · **колір відстежує стан** (red→green старт; grey
+    пауза / 0 провайдерів; red за ~15 с після «Видалити сертифікат» → green після «Встановити»;
+    amber рестарт watchdog / офлайн; палітра light+dark) · «Сховати іконку» не валить службу ·
+    «Вийти» зупиняє все · свіжий запуск чистий · одна app-data тека · логи без доменів. **Результат:
+    <заповнити після прогону>.**
+  - **Closing-advisor** Батча 3.14 — <заповнити>.
+  - Тег `v0.3.1` → `release.yml` (`build-sign` test-signed + `msix` + `release` cross-path repro) →
+    **чернетка** GitHub-релізу (3 `.exe` + `SHA256SUMS` + `.msix` + `.cer` + `Trust-TestCert.ps1`),
+    лишено неопублікованою (публікує людина, як `v0.3.0`).
+  - **Наступне:** Батч 3.13 (майстер онбордингу, T-188–T-190) → `v0.3.2` за «Продовжуй»; або
+    розпарковка Фази 4.
