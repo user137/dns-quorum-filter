@@ -291,8 +291,11 @@ stay their row colour, SPEC §3/§8.1 "pass-through ≠ failure" + the T-185 pau
 cert issue reaches those other states as a `status::cert_warning` tooltip suffix
 (`compose_tooltip`), not a red glyph. `cert_trusted` = read-only `trust_store::is_trusted(cert.pem)`
 polled by a **dedicated thread** (`status::spawn_trust_watch` — `certutil` is blocking, off the 2s
-poll loop; seed `true` so "unknown" ≠ "untrusted"; back-off 15→60→300s while untrusted; cert menu
-items call `request_recheck()`). `refresh_tray` commits `last_colour` only on `set_icon` success.
+poll loop; the displayed flag seeds `true` so "unknown" ≠ "untrusted", but the poll *cadence*
+(`next_delay`) keys on a **confirmed `Ok(true)`** — an `Err` first poll before `cert.pem` exists
+takes the 2→5→15→60→300s back-off ladder, not the 300s slow branch, or a fresh install shows green
+for 5 min; cert menu items call `request_recheck()`). `refresh_tray` commits `last_colour` only on
+`set_icon` success.
 Tooltip states:
 `Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
 `status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —

@@ -112,9 +112,10 @@ pass-through, не помилка»); `Paused` — свідомий вибір (
 
 Реалізовано T-191 (Батч 3.14): `status::icon_colour` / `cert_warning` / `compose_tooltip`
 (`crates/dnsqb-tray/src/status.rs`, чисті + свої тести); `TrustState` / `spawn_trust_watch`
-(окремий тред, `trust_store::is_trusted`, seed `true`, бекоф 15→60→300 с); `main.rs` —
-`refresh_tray` (tooltip на зміну `(observed, trusted)`, `set_icon` на зміну кольору, комміт
-`last_colour` лише на `Ok`). 4 гліфи — `assets/gen-icon.py` `make_tray_glyph(size, colour)`.
+(окремий тред, `trust_store::is_trusted`; показуваний прапор seed `true`, каденс `next_delay`
+ключиться на підтверджений `Ok(true)` — `Err`/`Ok(false)` беруть драбину `2→5→15→60→300` с);
+`main.rs` — `refresh_tray` (tooltip на зміну `(observed, trusted)`, `set_icon` на зміну кольору,
+комміт `last_colour` лише на `Ok`). 4 гліфи — `assets/gen-icon.py` `make_tray_glyph(size, colour)`.
 
 ## Закрито — порядок пріоритету при одночасному виконанні кількох умов (DECISIONS.md 2026-09-02)
 

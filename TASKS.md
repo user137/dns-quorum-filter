@@ -786,7 +786,8 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   спільне ядро `trusted_state` з `ensure_installed`; re-export з `lib.rs`; **без HTTP-маршруту** —
   той у Батчі 3.13 / T-188). `status::{IconColour, icon_colour, cert_warning, compose_tooltip}`
   (чисті, вичерпний `match` без wildcard) + `TrustState`/`spawn_trust_watch` (окремий тред,
-  seed `true`, бекоф 15→60→300 с). `main.rs`: `TrayIcons` (4 `Icon` при старті), `refresh_tray`
+  показуваний прапор seed `true`; каденс `next_delay` ключиться на підтверджений `Ok(true)` —
+  `Err`/`Ok(false)` → драбина `2→5→15→60→300` с; closing-advisor). `main.rs`: `TrayIcons` (4 `Icon` при старті), `refresh_tray`
   (tooltip на зміну `(observed, trusted)`; `set_icon` на зміну кольору; `last_colour` лише на `Ok`),
   `spawn_cert_action` (`request_recheck()` після `certutil`-мутації). Override cert→red фліпає
   **лише** `Filtering`. Docs: DECISIONS.md, `diagrams/ui-status-indicator.md` (+SOURCES) + README,

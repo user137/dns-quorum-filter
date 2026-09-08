@@ -532,6 +532,26 @@ mod tests {
         // Trusted → identical to the plain tooltip.
         assert_eq!(compose_tooltip(status, true), status.tooltip());
     }
+
+    #[test]
+    fn trust_poll_cadence_stays_fast_until_a_confirmed_trusted_cert() {
+        use super::next_delay;
+        use std::time::Duration;
+
+        // Closing-advisor regression: an `Err` first poll (cert.pem not
+        // written yet) is `confirmed_trusted == false` and must take the fast
+        // ladder, not the 300 s slow branch — otherwise a fresh install shows
+        // a green icon for 5 minutes while the cert is untrusted.
+        assert_eq!(next_delay(false, 0), Duration::from_secs(2));
+        assert_eq!(next_delay(false, 1), Duration::from_secs(5));
+        assert_eq!(next_delay(false, 2), Duration::from_secs(15));
+        assert_eq!(next_delay(false, 4), Duration::from_secs(300));
+        // Index clamps — never panics no matter how long the streak.
+        assert_eq!(next_delay(false, 999), Duration::from_secs(300));
+        // Only a proven-trusted cert earns the slow interval.
+        assert_eq!(next_delay(true, 0), Duration::from_secs(300));
+        assert_eq!(next_delay(true, 3), Duration::from_secs(300));
+    }
 }
 
 /// A cheap, clonable read handle onto the background thread's latest result
@@ -670,11 +690,38 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
     handle
 }
 
+/// Poll cadence for [`spawn_trust_watch`]. Only a **confirmed** `Ok(true)`
+/// from [`dnsqb_service::is_trusted`] earns the slow interval; a still-untrusted
+/// cert (`Ok(false)`) **and** an error (`cert.pem` not written yet — the
+/// fresh-install case, since the tray is spawned before the service, T-187)
+/// both take the back-off ladder, so the icon turns red within seconds of the
+/// service coming up rather than after a 5-minute nap (closing-advisor,
+/// Батч 3.14 — keying this on the `trusted` cache instead let an `Err` on the
+/// first poll leave the seed `true` and pick the 300 s branch).
+fn next_delay(confirmed_trusted: bool, miss_streak: usize) -> Duration {
+    const BACKOFF: [Duration; 5] = [
+        Duration::from_secs(2),
+        Duration::from_secs(5),
+        Duration::from_secs(15),
+        Duration::from_secs(60),
+        Duration::from_secs(300),
+    ];
+    const SLOW: Duration = Duration::from_secs(300);
+    if confirmed_trusted {
+        SLOW
+    } else {
+        // Index clamped to the last element — provably in bounds from the line.
+        BACKOFF[miss_streak.min(BACKOFF.len() - 1)]
+    }
+}
+
 /// Latest known `CurrentUser\Root` trust state of the local `cert.pem`,
 /// maintained by [`spawn_trust_watch`]'s own OS thread (T-191). Seeded `true`
 /// — no red override — so a first run before `cert.pem` exists, or a
 /// transient `certutil` failure, never flips the icon red on "unknown"; red
 /// is shown only once `certutil` has actually *proven* the cert untrusted.
+/// (The seed governs the *displayed* state only — the poll *cadence* keys on a
+/// confirmed `Ok(true)`, see [`next_delay`].)
 #[derive(Clone)]
 pub struct TrustState {
     trusted: Arc<AtomicBool>,
@@ -715,19 +762,15 @@ pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
     };
 
     std::thread::spawn(move || {
-        // Back-off while untrusted: a machine where the user hasn't installed
-        // the cert shouldn't pay 4 `certutil` spawn-pairs a minute forever
-        // (advisor). Index is clamped to the last element, so it's safe from
-        // the line regardless of `miss_streak`.
-        const BACKOFF: [Duration; 3] = [
-            Duration::from_secs(15),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-        ];
         let mut miss_streak: usize = 0;
         let mut logged_err = false;
         loop {
-            match dnsqb_service::is_trusted(&cert_path) {
+            let result = dnsqb_service::is_trusted(&cert_path);
+            // Cadence keys on a *confirmed* `Ok(true)`, not on the `trusted`
+            // cache: an `Err` on the first poll (cert.pem not written yet)
+            // must not leave the thread on the 300 s branch — see [`next_delay`].
+            let confirmed_trusted = matches!(result, Ok(true));
+            match result {
                 Ok(now_trusted) => {
                     trusted.store(now_trusted, Ordering::Relaxed);
                     logged_err = false;
@@ -736,8 +779,8 @@ pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
                     // First run (cert.pem absent) is the common case, not an
                     // anomaly — log once on entry to the error state, then
                     // stay quiet (no console in release; a warn per tick is
-                    // spam). The previous value is kept: "unknown" is not
-                    // "untrusted".
+                    // spam). The previous displayed value is kept: "unknown"
+                    // is not "untrusted".
                     if !logged_err {
                         tracing::warn!(
                             "cert trust check unavailable, keeping previous state: {err}"
@@ -747,13 +790,11 @@ pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
                 }
             }
 
-            let delay = if trusted.load(Ordering::Relaxed) {
-                miss_streak = 0;
-                Duration::from_secs(300)
+            let delay = next_delay(confirmed_trusted, miss_streak);
+            miss_streak = if confirmed_trusted {
+                0
             } else {
-                let d = BACKOFF[miss_streak.min(BACKOFF.len() - 1)];
-                miss_streak = miss_streak.saturating_add(1);
-                d
+                miss_streak.saturating_add(1)
             };
 
             // A cert menu action (`request_recheck`) short-circuits the sleep.

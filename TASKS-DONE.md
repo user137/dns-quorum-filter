@@ -4202,7 +4202,8 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
 «захищає» → `cert_warning`-суфікс; override cert→red фліпає **лише** `Filtering` (SPEC §3/§8.1 —
 `NoActiveProvider` це не помилка); seed довіри `true` — «невідомо» ≠ «зламано». DECISIONS.md 2026-09-08.
 
-- [x] **T-191** — кольорові трей-іконки + `is_trusted` наперед + кеш довіри. Коміт `<pending>`.
+- [x] **T-191** — кольорові трей-іконки + `is_trusted` наперед + кеш довіри. Коміти `6bba1f8`
+  (основний, CI `34215928169` 7/7) + `<pending>` (closing-advisor: каденс `next_delay`).
   - `trust_store::is_trusted(cert_path) -> Result<bool, TrustStoreError>` — read-only (`certutil
     -dump` + `-store`, без мутації стору); спільне ядро `trusted_state` з `ensure_installed` (той
     тепер `let (already_trusted, installed) = trusted_state(..)?`); re-export з `lib.rs`. **Без
@@ -4214,8 +4215,12 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
     компілюватись); `cert_warning` + `compose_tooltip` (суфікс «сертифікат не встановлено…» для
     `Filtering`/`NoActiveProvider` коли `!trusted`, патерн T-56 degraded-суфікса); `TrustState`
     (`Arc<AtomicBool>` trusted + recheck, `Clone`) + `spawn_trust_watch` (окремий `std::thread`,
-    не 2-с poll-луп — `certutil` блокує; seed `true`; бекоф `15→60→300` с поки `!trusted`, `300` с
-    коли `trusted`; `request_recheck` короткочасить сон). 5 нових тестів.
+    не 2-с poll-луп — `certutil` блокує). Показуваний прапор seed `true`; **каденс `next_delay`
+    (closing-advisor) ключиться на підтверджений `Ok(true)`**, не на кеш `trusted` — `Err` (перший
+    полл до появи `cert.pem`, бо трей стартує раніше служби) і `Ok(false)` обидва беруть драбину
+    `2 → 5 → 15 → 60 → 300` с, `300` с лише після доведеної довіри; інакше свіжа інсталяція
+    показувала б зелену іконку + tooltip «захищає» 5 хв, поки cert недовірений (Три Б).
+    `request_recheck` короткочасить сон. 6 нових тестів (+ `trust_poll_cadence_stays_fast_*`).
   - `crates/dnsqb-tray/src/main.rs`: `TrayIcons` (4 `Icon` при старті, `Icon` є `Clone` у tray-icon
     0.21.3; `TrayIconBuilder` стартує з червоної, узгоджено з `Unreachable`-tooltip); `refresh_tray`
     (tooltip на зміну `(observed, trusted)`; `set_icon` на зміну кольору; `last_colour` коммітиться
@@ -4228,18 +4233,27 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
     ловить); старий `tray-32-rgba.bin` — `git rm`. Геометрія без змін. **Без анімації вершин.**
   - Docs: DECISIONS.md (новий запис); `diagrams/ui-status-indicator.md` (підрозділ «Колір
     трей-іконки» + SOURCES) + `diagrams/README.md`; `SERVICES.md` §Іконка; `CLAUDE.md` (tray-абзац,
-    `trust_store` surface, gen-icon рядок, нова gotcha про «commit lastcolour лише на Ok» + seed);
-    `UI-SPEC.md` (одне речення); `TASKS.md` (секція Батч 3.14).
+    `trust_store` surface, gen-icon рядок, нова gotcha про «commit lastcolour лише на Ok» + seed +
+    каденс на `Ok(true)`); `UI-SPEC.md` (одне речення); `TASKS.md` (секція Батч 3.14).
+  - **Closing-advisor Батча 3.14 (коміт `<pending>`):** знайшов блокер — `spawn_trust_watch` брав
+    каденс від кешу `trusted` (лишається `true` на першому `Err`, коли `cert.pem` ще нема, бо трей
+    стартує раніше служби, T-187) → спав 300 с → зелена іконка + tooltip «захищає» 5 хв на чистій
+    машині (Три Б — саме той сценарій, задля якого батч). Фікс: витягнуто чисту
+    `fn next_delay(confirmed_trusted: bool, miss_streak: usize) -> Duration`, каденс ключиться на
+    `matches!(result, Ok(true))`, драбина стартує з `2` с; юніт-тест
+    `trust_poll_cadence_stays_fast_until_a_confirmed_trusted_cert`. Решта batch'у advisor підтвердив
+    (`NoActiveProvider` → grey, `trusted_state` extraction, wildcard-free `match`,
+    `last_colour`-only-on-`Ok`, sinkhole-діагноз).
   - **Верифікація:** `cargo fmt --check` + `clippy --workspace --all-targets -D warnings` +
-    `cargo test --workspace --lib --bins` (dnsqb-service lib 663→665 +2, dnsqb-tray 12→17 +5) +
+    `cargo test --workspace --lib --bins` (dnsqb-service lib 663→665 +2, dnsqb-tray 12→18 +6) +
     `--doc` + `cargo doc` (RUSTDOCFLAGS=-D warnings) — усі зелені. `python assets/gen-icon.py` →
     `git status` чисто (4 блоби відтворювані). `#![forbid(unsafe_code)]` цілий.
   - **Звірка діаграм:** зачеплено 1 — `ui-status-indicator.md` (новий підрозділ «Колір трей-іконки»,
     SOURCES оновлено), `README.md` індекс. `ui-dto-model.md` НЕ зачеплено — нема нового HTTP-роуту/
     DTO-поля (`is_trusted` — прямий lib-виклик). Інші 5 — без змін. GAP: 0.
 
-- [x] **T-192** — патч-реліз `v0.3.1` (покриває Батч 3.12 + 3.14; закриває T-186). Коміт `<pending>`,
-  тег `v0.3.1` на ньому.
+- [x] **T-192** — патч-реліз `v0.3.1` (покриває Батч 3.12 + 3.14; закриває T-186). Коміти `cd0443c`
+  (docs) + `<pending>` (closing-advisor фікс каденсу); тег `v0.3.1` на фінальному.
   - **Без бампу версії** — `0.3.1` уже в 3×`crates/*/Cargo.toml` (`0e9b944`, Батч 3.12); нуль
     `Cargo.lock`-змін.
   - `CLAUDE.md` «Project state» — абзац Батча 3.14 (кольорові іконки, `is_trusted` наперед,
@@ -4258,12 +4272,15 @@ CI (`34155167169`, коміт `e1cd607`) — усі 7 job'ів success. Ручн
     поруч. `dist/` — untracked, не комітиться.
   - **Ручний чистий прогін MSIX (користувач, на цій машині):** видалити старий пакет +
     `%LOCALAPPDATA%\dns-quorum-filter` → `Trust-TestCert.ps1` → `Add-AppxPackage` → плитка Пуску →
-    без термінала · іконка-гексагон за ~0.2 с · **колір відстежує стан** (red→green старт; grey
-    пауза / 0 провайдерів; red за ~15 с після «Видалити сертифікат» → green після «Встановити»;
-    amber рестарт watchdog / офлайн; палітра light+dark) · «Сховати іконку» не валить службу ·
-    «Вийти» зупиняє все · свіжий запуск чистий · одна app-data тека · логи без доменів. **Результат:
-    <заповнити після прогону>.**
-  - **Closing-advisor** Батча 3.14 — <заповнити>.
+    без термінала · іконка-гексагон за ~0.2 с · **на чистій машині ДО встановлення сертифіката:
+    щойно служба піднялась, іконка мусить бути ЧЕРВОНА і tooltip нести «сертифікат не встановлено»
+    протягом кількох секунд — НЕ зелена** (це і є перевірка фіксу closing-advisor); тоді
+    «Встановити сертифікат» → green · пауза / 0 провайдерів → grey · «Видалити сертифікат» → red за
+    ≤~15 с → «Встановити» → green · рестарт watchdog / офлайн → amber · палітра light+dark ·
+    «Сховати іконку» не валить службу · «Вийти» зупиняє все · свіжий запуск чистий · одна app-data
+    тека · логи без доменів. **Результат: <заповнити після прогону>.**
+  - **Closing-advisor** Батча 3.14 — знайшов блокер каденсу (див. T-191 запис вище), виправлено
+    коміт `<pending>`; решту підтверджено.
   - Тег `v0.3.1` → `release.yml` (`build-sign` test-signed + `msix` + `release` cross-path repro) →
     **чернетка** GitHub-релізу (3 `.exe` + `SHA256SUMS` + `.msix` + `.cer` + `Trust-TestCert.ps1`),
     лишено неопублікованою (публікує людина, як `v0.3.0`).

@@ -1077,10 +1077,12 @@ T-172/T-176). Якщо presentation-баг колись пройде обидв�
   ядро `trusted_state` з `ensure_installed`, re-export з `lib.rs`. **Без HTTP-маршруту** —
   `GET /admin/cert-status` + `POST /admin/install-cert` лишаються в Батчі 3.13 / T-188; трей кличе
   lib-функцію напряму, як уже кличе `ensure_installed`. Окремий `std::thread`
-  (`status::spawn_trust_watch`) тримає `Arc<AtomicBool>`; seed `true` (червоний лише коли
-  `certutil` *довів* недовіру; `cert.pem` відсутній = «невідомо», не «недовірений»); бекоф
-  каденсу 15→60→300 с поки `!trusted`, 300 с коли `trusted`; cert-пункти меню викликають
-  `request_recheck()` після `certutil`-мутації.
+  (`status::spawn_trust_watch`) тримає `Arc<AtomicBool>`; показуваний прапор seed `true` (червоний
+  лише коли `certutil` *довів* недовіру; `cert.pem` відсутній = «невідомо», не «недовірений»);
+  **каденс** (`next_delay`, closing-advisor Батча 3.14) ключиться на підтверджений `Ok(true)`, не
+  на кеш `trusted` — `Ok(false)` **і** `Err` (перший полл до появи `cert.pem`, бо трей стартує
+  раніше служби) обидва беруть драбину `2→5→15→60→300` с, `300` с лише після доведеної довіри;
+  cert-пункти меню викликають `request_recheck()` після `certutil`-мутації.
 - **Повноколірний гліф** (крапки-вершини несуть колір), палітра GitHub Primer
   (`green #3FB950` / `amber #F5A623` / `grey #8B949E` / `red #F85149`). **Без анімації вершин.**
   `assets/gen-icon.py` `make_tray_glyph(size, colour)` → 4 блоби
