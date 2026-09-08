@@ -443,16 +443,19 @@ mod tests {
             panic!("computeProtectionState must be a bounded function");
         };
         assert!(
-            body.contains("status.paused"),
-            "the hero must branch on status.paused"
-        );
-        assert!(
             body.contains("Фільтрацію призупинено"),
             "the paused hero must name the state, not read as green"
         );
-        let offline_at = body.find("OFFLINE").unwrap_or(usize::MAX);
-        let paused_at = body.find("status.paused").unwrap_or(0);
-        let providers_at = body.find("active_providers").unwrap_or(usize::MAX);
+        // Anchor on the branch guards themselves, not bare tokens - a comment
+        // mentioning "OFFLINE" or "active_providers" must not be able to shift
+        // these positions and silently weaken the ordering check.
+        let offline_at = body
+            .find(r#"status.network === "OFFLINE""#)
+            .unwrap_or(usize::MAX);
+        let paused_at = body.find("if (status.paused)").unwrap_or(0);
+        let providers_at = body
+            .find("status.active_providers.length === 0")
+            .unwrap_or(usize::MAX);
         assert!(
             offline_at < paused_at && paused_at < providers_at,
             "offline must outrank paused, which must outrank the 0-providers case"

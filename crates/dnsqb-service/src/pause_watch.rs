@@ -17,6 +17,18 @@
 //! supervising normally (a crash mid-pause is respawned and comes back in
 //! bypass mode). See `DECISIONS.md` (2026-09-08, revising the 2026-09-07 T-185
 //! entry).
+//!
+//! **Stale flag on a bare launch.** `stop.flag` is cleared by the *watcher* on
+//! every startup (`lifecycle.rs`'s "entry-point clears on startup" rule), and
+//! in the real (MSIX) flow the watcher always starts the service, so the
+//! service never inherits a stale flag there. A **standalone `dnsqb-service`**
+//! launched without the watcher (a bare `cargo run -p dnsqb-service`) *can*
+//! inherit a `stop.flag` a prior session left behind — e.g. after a
+//! `QUIT_APP_ID` quit, which writes `stop.flag` + `quit.flag` and only the
+//! latter is cleared. The first poll below logs `filtering paused …` in that
+//! case, so it is visible in the log file rather than silent; clearing the
+//! flag is the watcher's job, not this task's (it must not clear a flag the
+//! user may have set on purpose).
 
 use std::path::PathBuf;
 use std::sync::Arc;
