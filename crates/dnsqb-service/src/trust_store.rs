@@ -161,6 +161,29 @@ fn certutil_path() -> Result<std::path::PathBuf, TrustStoreError> {
         .join("certutil.exe"))
 }
 
+/// A `Command` for `certutil.exe` that never flashes a console window.
+///
+/// `certutil` is a console-subsystem binary; spawned from the GUI tray
+/// (`windows_subsystem = "windows"`, no console of its own) a plain
+/// `Command::new` pops a console window for the child's lifetime. Invisible
+/// when this was only reached on an explicit menu click, but T-191's
+/// `status::spawn_trust_watch` polls `is_trusted` on a back-off ladder — two
+/// `certutil` spawns per poll — so on a fresh install the window flashed every
+/// few seconds. `CREATE_NO_WINDOW` runs the child with no console at all;
+/// stdout/stderr are still captured through the pipes.
+fn certutil_command(certutil: &Path) -> Command {
+    let mut command = Command::new(certutil);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        /// `CREATE_NO_WINDOW` (winbase.h) — same shape as `watchdog::spawn`'s
+        /// named `DETACHED_PROCESS`/`CREATE_BREAKAWAY_FROM_JOB` constants.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 /// The SHA-1 thumbprint (`certutil`'s own "Cert Hash(sha1)" field) of the
 /// certificate currently at `cert_path`, read via `certutil -dump` — a
 /// read-only operation, safe to call freely (including from tests). Never
@@ -176,7 +199,7 @@ fn certutil_path() -> Result<std::path::PathBuf, TrustStoreError> {
 /// usual process-spawning failure modes.
 pub(crate) fn local_cert_thumbprint(cert_path: &Path) -> Result<String, TrustStoreError> {
     let certutil = certutil_path()?;
-    let output = Command::new(&certutil)
+    let output = certutil_command(&certutil)
         .arg("-dump")
         .arg(cert_path)
         .output()
@@ -211,7 +234,7 @@ fn parse_cert_hash_sha1(stdout: &str) -> Option<String> {
 /// `Command` construction lives in exactly one place.
 fn store_lookup_output(common_name: &str) -> Result<std::process::Output, TrustStoreError> {
     let certutil = certutil_path()?;
-    Command::new(&certutil)
+    certutil_command(&certutil)
         .args([
             OsStr::new("-store"),
             OsStr::new("-user"),
@@ -347,7 +370,7 @@ pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStor
     }
 
     let certutil = certutil_path()?;
-    let output = Command::new(&certutil)
+    let output = certutil_command(&certutil)
         .args([
             OsStr::new("-addstore"),
             OsStr::new("-user"),
@@ -387,7 +410,7 @@ pub fn uninstall() -> Result<(), TrustStoreError> {
         // actually confirm is empty (see this module's doc comment).
         || confirmed_thumbprints_for_common_name(CERT_COMMON_NAME),
         |thumbprint| {
-            let output = Command::new(&certutil)
+            let output = certutil_command(&certutil)
                 .args([
                     OsStr::new("-delstore"),
                     OsStr::new("-user"),
@@ -435,9 +458,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        is_trusted, local_cert_thumbprint, parse_cert_hash_sha1, uninstall_loop,
+        certutil_command, is_trusted, local_cert_thumbprint, parse_cert_hash_sha1, uninstall_loop,
         MAX_MATCHING_ENTRIES,
     };
+    use std::path::Path;
+
+    #[test]
+    fn certutil_command_targets_the_given_path() {
+        // The shared spawn helper (`CREATE_NO_WINDOW` on Windows) exists and
+        // runs the certutil at the path it's handed. It does not, on its own,
+        // prove every call site routes through it — a stray direct
+        // `Command::new` elsewhere would still compile.
+        let command = certutil_command(Path::new("X:\\System32\\certutil.exe"));
+        assert_eq!(command.get_program(), "X:\\System32\\certutil.exe");
+    }
 
     #[test]
     fn uninstall_loop_succeeds_when_exactly_max_matching_entries_are_all_deleted() {
