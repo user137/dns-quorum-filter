@@ -1132,14 +1132,18 @@ reasoning (search by section number rather than re-deriving a decision from scra
   `trust_store::certutil_command`). Harmless when the spawn is a rare explicit user action; once a
   background poll (T-191's trust-watch, 2 `certutil` spawns per tick) does it every few seconds it
   becomes a visible defect. `CREATE_NO_WINDOW` (`0x0800_0000`) still captures stdout/stderr through
-  the pipes. It is **ignored when paired with `DETACHED_PROCESS`** — for a detached child (T-195's
-  `self_uninstall` cleaner) use `DETACHED_PROCESS` alone.
+  the pipes. It is **ignored when paired with `DETACHED_PROCESS`** — a child that must *outlive*
+  the app (T-195's `self_uninstall` cleaner) uses `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`
+  with the raw-OS-error-5 fallback, mirroring `watchdog::spawn::spawn_detached` (T-182): the MSIX
+  process tree is job-contained, so `DETACHED_PROCESS` alone lets the job kill the helper with the
+  tray.
 - **A process cannot delete its own open app-data directory, and `tao`'s `event_loop.run` never
   returns** (T-195). The tray holds `tray.lock` (`share_mode(0)`) for its whole life and there is
   no post-`run` cleanup point to drop the guard. "Повністю видалити" therefore hands the wipe to a
-  **detached** `powershell` helper that first waits for every DNS-QF process to exit (deleting
-  `stop.flag`/`quit.flag` before the watcher reads `quit.flag` would leave it respawning the
-  service into a directory being erased) then loops `Remove-Item` until the dir is gone.
+  **detached, job-broken-out** `powershell` helper that waits up to 20 s for every DNS-QF process
+  to exit, then — only if they are actually gone (else it `exit`s, since deleting
+  `stop.flag`/`quit.flag` under a live watcher would leave it respawning the service into a
+  directory being erased) — loops `Remove-Item` until the dir is gone.
   `build_wipe_script` fences the target: under `%LOCALAPPDATA%` **and** final component exactly
   `dns-quorum-filter`.
 - **Struct-level `#[serde(default, deny_unknown_fields)]` composes fine — a missing field falls

@@ -4516,16 +4516,19 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     тред, **не** `spawn_cert_action` — той показує діалог після closure): `remove_all_local_state`
     (серт + секрети — не файли в app-data) → звіт-діалог → `stop.flag`+`quit.flag` (watcher
     наступним tick зупиняє службу й виходить) → `self_uninstall::spawn_app_data_dir_wipe` (detached
-    прихований `powershell.exe`, `DETACHED_PROCESS`, переживає трей) → `browser::open_windows_apps_settings`
-    (`%SystemRoot%\explorer.exe ms-settings:appsfeatures`) → `QUIT_REQUESTED` (static `AtomicBool`;
-    event-loop після рядка `WaitUntil` ставить `ControlFlow::Exit`). Скрипт прибиральника
-    (`build_wipe_script`): **спершу** `while (Get-Process dnsqb-service,dnsqb-watcher,dnsqb-tray)
-    { Start-Sleep }` (кеп ~20 с), **тільки потім** retry-цикл `Remove-Item -Recurse -Force`.
-  - **Wait-loop обов'язковий (advisor):** `stop.flag`/`quit.flag` — звичайні файли в тій самій
-    теці; якби `Remove-Item` спрацював до 5-с tick'а watcher'а, той не побачив би `quit.flag`, не
-    зупинив би службу, а `ensure_sibling_running(Service)` респавнив би службу в теку, яку саме
-    стирають. Це також розчиняє орфан-`.enc` після видалення ключа (повне стирання прибирає
-    будь-який `.enc`).
+    прихований `powershell.exe`, `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` + raw-OS-error-5
+    fallback — дзеркалить `watchdog::spawn::spawn_detached`, MSIX-дерево job-contained) →
+    `browser::open_windows_apps_settings` (`%SystemRoot%\explorer.exe ms-settings:appsfeatures`) →
+    `QUIT_REQUESTED` (static `AtomicBool`; event-loop після рядка `WaitUntil` ставить
+    `ControlFlow::Exit`). Скрипт прибиральника (`build_wipe_script`): **спершу**
+    `while (Get-Process $p) { Start-Sleep }` (кеп ~20 с) → `if (Get-Process $p) { exit 1 }` →
+    **тільки потім** retry-цикл `Remove-Item -Recurse -Force`.
+  - **Wait-loop + bail обов'язкові (closing-advisor):** `stop.flag`/`quit.flag` — звичайні файли в
+    тій самій теці; якби `Remove-Item` спрацював до 5-с tick'а watcher'а (або після вичерпання
+    кепу wait-loop), той не побачив би `quit.flag`, не зупинив би службу, а
+    `ensure_sibling_running(Service)` респавнив би службу в теку, яку саме стирають. Тому після
+    wait-loop — явний `exit 1` без видалення, якщо котрийсь процес вижив. Це також розчиняє
+    орфан-`.enc` після видалення ключа (повне стирання прибирає будь-який `.enc`).
   - **Фенс цілі (Security-Boundary):** `build_wipe_script` повертає `None`, якщо шлях не під
     `%LOCALAPPDATA%` **або** остання компонента не `dns-quorum-filter` — вироджений/порожній
     `app_data` не може розширити ціль.
@@ -4535,9 +4538,12 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
   - **`local_state.rs`** — лише module-doc (рядок «clears **every** piece …» тепер вужча половина
     історії; wipe теки — трейовий, роут `/admin/uninstall-local-state` крутиться в службі й не може
     стерти власну відкриту теку).
+  - **`/admin/ui` danger-zone (`index.html`)** — картка робить лише секрети (роут не змінено), але
+    лейбл «Повністю видалити» тепер збігається з трей-пунктом, що робить більше; додано речення,
+    що для повного видалення (стоп застосунку + вся тека + Параметри) — трей-пункт (closing-advisor).
   - **Тести (`self_uninstall`, 4 категорії):** `powershell_exe_joins_under_system_root` (Happy);
-    `wipe_script_waits_for_the_processes_before_deleting` (Happy/regression — wait-loop перед
-    delete-loop); `wipe_script_doubles_a_single_quote_in_the_path` (Misuse-Fool);
+    `wipe_script_waits_and_bails_before_it_deletes` (Happy/regression — wait → bail-guard →
+    delete-loop, у цьому порядку); `wipe_script_doubles_a_single_quote_in_the_path` (Misuse-Fool);
     `wipe_script_rejects_a_path_outside_localappdata` + `..._rejects_a_final_component_that_is_not_dns_quorum_filter`
     (Security-Boundary); `wipe_script_is_none_for_empty_paths` (Error). `browser` +2
     (`system_root_exe_joins_directly_under_system_root`). Сам спавн/видалення — I/O shell, не

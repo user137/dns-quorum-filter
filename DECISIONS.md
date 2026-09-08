@@ -1260,10 +1260,13 @@ T-70 (Батч 3.8). Раніше пункт чистив довірений с�
 (питання 2026-09-08): **уся тека**. Новий порядок у треї (`spawn_remove_all_and_quit`):
 `remove_all_local_state` (серт + секрети — не файли в app-data) → звіт-діалог → `stop.flag` +
 `quit.flag` (watcher наступним tick зупиняє службу й виходить) → **detached прихований
-`powershell.exe`** (`self_uninstall.rs`, `DETACHED_PROCESS`, переживає трей) → відкрити
-`ms-settings:appsfeatures` через `explorer.exe` → `QUIT_REQUESTED` (трей виходить на наступному
-tick). Прибиральник **спершу чекає** на зникнення `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray`
-(кеп ~20 с), лише потім `Remove-Item -Recurse -Force` у retry-циклі.
+`powershell.exe`** (`self_uninstall.rs`, `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` +
+raw-OS-error-5 fallback, дзеркалить `watchdog::spawn::spawn_detached` — MSIX-дерево job-contained,
+без breakaway job убив би прибиральника разом із треєм) → відкрити `ms-settings:appsfeatures` через
+`explorer.exe` → `QUIT_REQUESTED` (трей виходить на наступному tick). Прибиральник **спершу чекає**
+на зникнення `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray` (кеп ~20 с); якщо котрийсь вижив —
+`exit` **без** видалення (інакше стер би `stop.flag`/`quit.flag` з-під живого watcher'а); інакше
+`Remove-Item -Recurse -Force` у retry-циклі.
 
 **Причина (самозамкнення):** трей тримає `tray.lock` відкритим (`share_mode(0)`), watcher/служба
 — свої; `tao` `event_loop.run` не повертається (розходиться в `process::exit`), тож post-run

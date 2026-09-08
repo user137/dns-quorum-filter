@@ -12,12 +12,15 @@
 //! could drop its guard and clean up.
 //!
 //! So a detached helper does it. A hidden `powershell.exe`, spawned
-//! `DETACHED_PROCESS` so it outlives the tray, first *waits* for all three
-//! DNS-QF processes to exit — `stop.flag` / `quit.flag` are plain unlocked
-//! files in that directory, and deleting them before the watcher's next tick
-//! reads `quit.flag` would leave the watcher respawning the service into a
-//! directory being erased — then loops `Remove-Item -Recurse -Force` until the
-//! directory is gone.
+//! `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` (mirroring
+//! `watchdog::spawn::spawn_detached`, T-182 — the MSIX process tree is
+//! job-contained) so it outlives the tray, first *waits* up to 20 s for all
+//! three DNS-QF processes to exit — `stop.flag` / `quit.flag` are plain
+//! unlocked files in that directory, and deleting them before the watcher's
+//! next tick reads `quit.flag` would leave the watcher respawning the service
+//! into a directory being erased. If any process survives the wait the helper
+//! `exit`s *without* deleting; otherwise it loops `Remove-Item -Recurse
+//! -Force` until the directory is gone.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -58,9 +61,16 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path) -> Option<String> {
     // (doubled). `%LOCALAPPDATA%` paths don't contain one in practice; guard
     // anyway.
     let quoted = dir.to_str()?.replace('\'', "''");
+    // 1. Wait up to 20 s (well past the watcher's 5 s tick) for every DNS-QF
+    //    process to exit. 2. If any survived the wait, `exit` *without*
+    //    deleting — removing `stop.flag` / `quit.flag` from under a live
+    //    watcher would leave it respawning the service into a directory being
+    //    erased. 3. Otherwise loop `Remove-Item` until the directory is gone.
     Some(format!(
-        "$i=0; while ((Get-Process dnsqb-service,dnsqb-watcher,dnsqb-tray \
-         -ErrorAction SilentlyContinue) -and $i -lt 40) {{ Start-Sleep -Milliseconds 500; $i++ }}; \
+        "$p='dnsqb-service','dnsqb-watcher','dnsqb-tray'; \
+         $i=0; while ((Get-Process $p -ErrorAction SilentlyContinue) -and $i -lt 40) \
+         {{ Start-Sleep -Milliseconds 500; $i++ }}; \
+         if (Get-Process $p -ErrorAction SilentlyContinue) {{ exit 1 }}; \
          $j=0; while ((Test-Path -LiteralPath '{quoted}') -and $j -lt 30) {{ \
          Remove-Item -LiteralPath '{quoted}' -Recurse -Force -ErrorAction SilentlyContinue; \
          Start-Sleep -Milliseconds 500; $j++ }}"
@@ -76,28 +86,63 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path) {
         return;
     };
     let powershell = powershell_exe();
-    let mut command = Command::new(&powershell);
-    command.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-WindowStyle",
-        "Hidden",
-        "-Command",
-        &script,
-    ]);
+    let build = || {
+        let mut command = Command::new(&powershell);
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &script,
+        ]);
+        command
+    };
+
+    #[cfg(not(windows))]
+    match build().spawn() {
+        Ok(_child) => tracing::info!("app-data directory wipe scheduled"),
+        Err(err) => tracing::warn!("could not spawn the app-data wipe helper: {err}"),
+    }
+
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        /// `DETACHED_PROCESS` — the child gets no console and is not tied to
-        /// this process's lifetime (same value as `watchdog::spawn`'s). Not
-        /// paired with `CREATE_NO_WINDOW`, which Windows ignores alongside
-        /// `DETACHED_PROCESS`; `-WindowStyle Hidden` is the belt on top.
+        // Mirror `watchdog::spawn::spawn_detached` (T-182): the MSIX /
+        // Start-menu process tree is job-contained, so `DETACHED_PROCESS`
+        // alone would let this helper be killed with the tray — inside its own
+        // wait loop, before deleting anything, with only an `info!` line as a
+        // trace. `CREATE_BREAKAWAY_FROM_JOB` lifts it out; on a job that
+        // forbids that (`ERROR_ACCESS_DENIED`) we still try in-job, but say so
+        // loudly — unlike the watchdog case, an in-job wipe helper is likely a
+        // no-op, not merely degraded. (`CREATE_NO_WINDOW` is deliberately
+        // absent — Windows ignores it beside `DETACHED_PROCESS`; `-WindowStyle
+        // Hidden` covers the window.)
         const DETACHED_PROCESS: u32 = 0x0000_0008;
-        command.creation_flags(DETACHED_PROCESS);
-    }
-    match command.spawn() {
-        Ok(_child) => tracing::info!("app-data directory wipe scheduled"),
-        Err(err) => tracing::warn!("could not spawn the app-data wipe helper: {err}"),
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        match build()
+            .creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
+            .spawn()
+        {
+            Ok(_child) => {
+                tracing::info!("app-data directory wipe scheduled");
+                return;
+            }
+            Err(err) if err.raw_os_error() == Some(5) => {
+                tracing::warn!(
+                    "the job object forbids CREATE_BREAKAWAY_FROM_JOB; the app-data wipe helper \
+                     may be terminated with the tray before it finishes"
+                );
+            }
+            Err(err) => {
+                tracing::warn!("could not spawn the app-data wipe helper: {err}");
+                return;
+            }
+        }
+        match build().creation_flags(DETACHED_PROCESS).spawn() {
+            Ok(_child) => tracing::info!("app-data directory wipe scheduled (in-job)"),
+            Err(err) => tracing::warn!("could not spawn the app-data wipe helper: {err}"),
+        }
     }
 }
 
@@ -121,18 +166,17 @@ mod tests {
     }
 
     #[test]
-    fn wipe_script_waits_for_the_processes_before_deleting() {
+    fn wipe_script_waits_and_bails_before_it_deletes() {
         let Some(script) = build_wipe_script_for(Path::new(&target()), Path::new(LOCALAPPDATA))
         else {
             panic!("a valid app-data path must produce a script");
         };
-        let wait_at = script
-            .find("Get-Process dnsqb-service")
-            .unwrap_or(usize::MAX);
+        let wait_at = script.find("while ((Get-Process $p").unwrap_or(usize::MAX);
+        let bail_at = script.find("{ exit 1 }").unwrap_or(usize::MAX);
         let delete_at = script.find("Remove-Item").unwrap_or(0);
         assert!(
-            wait_at < delete_at,
-            "the process-wait loop must come before the delete loop"
+            wait_at < bail_at && bail_at < delete_at,
+            "wait loop, then the bail-if-still-running guard, then the delete loop"
         );
         assert!(script.contains(&format!("-LiteralPath '{}'", target())));
     }
