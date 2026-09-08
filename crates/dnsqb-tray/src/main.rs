@@ -52,6 +52,7 @@ use dnsqb_service::{
 };
 use status::{IconColour, TrayStatus, TrustState};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -569,6 +570,11 @@ fn maybe_offer_onboarding(
     }
 }
 
+/// Set while a [`run_setup_wizard`] welcome dialog is open, so the auto-offer
+/// and the "Майстер налаштування" menu item can't stack two modal dialogs
+/// (each able to spawn its own `ensure_installed`).
+static WIZARD_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// The first-run wizard (T-188): a welcome dialog offering to install the
 /// local certificate, then — on «Так» and a successful install — open the
 /// browser-setup page. Runs entirely on a throwaway thread because `rfd`
@@ -579,6 +585,9 @@ fn maybe_offer_onboarding(
 /// *successful* install, never on a failed one (that should re-offer next
 /// launch); the menu item is the manual re-entry regardless.
 fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
+    if WIZARD_ACTIVE.swap(true, Ordering::SeqCst) {
+        return; // a welcome dialog is already open
+    }
     let app_data = app_data.to_path_buf();
     let trust = trust.clone();
     std::thread::spawn(move || {
@@ -595,6 +604,7 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
             .set_level(rfd::MessageLevel::Info)
             .set_buttons(rfd::MessageButtons::YesNo)
             .show();
+        WIZARD_ACTIVE.store(false, Ordering::SeqCst);
         if proceed != rfd::MessageDialogResult::Yes {
             onboarding::mark_onboarding_seen(&app_data);
             return;

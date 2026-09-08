@@ -348,9 +348,17 @@ async function refresh() {
 }
 
 refresh();
-// T-188: one cert-trust fetch on load (re-fetched only after an install
-// click) - it feeds the protection hero's cert branch.
+// T-188: cert-trust is fetched on load and after an install click - NOT on
+// the 2s poll (each call is two certutil spawns server-side). Also re-fetch
+// when the tab regains focus, so a tray-side "Видалити сертифікат" while this
+// page sat in the background is picked up without a full reload - the hero is
+// the primary install affordance in the MSIX flow (closing-advisor).
 refreshCertStatus();
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    refreshCertStatus();
+  }
+});
 // `in_flight` (a live count of requests being resolved right now) is
 // otherwise only ever sampled at the instant of a toggle click - a page
 // that only re-renders on user action would show it near-permanently 0,
@@ -2195,24 +2203,9 @@ const CHROMIUM_SETTINGS_URL = {
   opera: "opera://settings",
 };
 
-// T-189: unhide the one static step block matching the detected browser and
-// fill the Chromium settings-URL. Brave reports as Chrome in the UA, so it
-// needs the async navigator.brave.isBrave() refinement.
-async function revealBrowserSteps() {
-  let family = detectBrowserFamily();
-  if (
-    family === "chrome" &&
-    navigator.brave &&
-    typeof navigator.brave.isBrave === "function"
-  ) {
-    try {
-      if (await navigator.brave.isBrave()) {
-        family = "brave";
-      }
-    } catch (_err) {
-      /* stay on "chrome" */
-    }
-  }
+// T-189: unhide the one static step block for `family`, hide the rest, set the
+// Chromium settings-URL. Synchronous - so a block is visible at every point.
+function applyBrowserFamily(family) {
   const chromium = document.getElementById("browser-steps-chromium");
   const firefox = document.getElementById("browser-steps-firefox");
   const other = document.getElementById("browser-steps-other");
@@ -2227,6 +2220,28 @@ async function revealBrowserSteps() {
     if (chromium) chromium.hidden = false;
   } else if (other) {
     other.hidden = false;
+  }
+}
+
+// Apply the UA-detected family synchronously first (so the first-visit
+// auto-open never shows an opened container with every block hidden), then
+// refine to Brave, which reports as Chrome in the UA and can only be told
+// apart via an async call.
+async function revealBrowserSteps() {
+  const family = detectBrowserFamily();
+  applyBrowserFamily(family);
+  if (
+    family === "chrome" &&
+    navigator.brave &&
+    typeof navigator.brave.isBrave === "function"
+  ) {
+    try {
+      if (await navigator.brave.isBrave()) {
+        applyBrowserFamily("brave");
+      }
+    } catch (_err) {
+      /* stay on "chrome" */
+    }
   }
 }
 

@@ -4382,7 +4382,27 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     з `CHROMIUM_SETTINGS_URL` мапи. `wireCopyButton(button, getText)` — витягнутий спільний
     copy-хелпер, тепер для 3 кнопок (DoH-URL + chromium-settings + firefox-settings); фолбек без
     Clipboard API — показати рядок для ручного копіювання (прибрано `document.execCommand` +
-    `field.select()` — не всі 3 цілі мають `<input>`).
+    `field.select()` — не всі 3 цілі мають `<input>`; `navigator.clipboard.writeText` доступний
+    на `https://127.0.0.1` незалежно від довіри до серта — secure context — тож `execCommand`-гілка
+    була мертвим кодом для цього origin, не регресія).
+  - **Closing-advisor Батча 3.13 (у складі цього коміту):**
+    - `revealBrowserSteps` викликався async без `await` перед first-visit auto-open → на
+      Brave-шляху (await `navigator.brave.isBrave()`) контейнер відкривався з **усіма 3 блоками
+      схованими** до резолву промісу. Фікс: витягнуто синхронну `applyBrowserFamily(family)` —
+      розкриває UA-визначену родину одразу, Brave уточнюється після (короткий «chrome://» флікер
+      для Brave, ніколи не порожній блок).
+    - `certTrust` fetched лише раз на завантаженні → трей-side «Видалити сертифікат» при відкритій
+      `/admin/ui` лишав hero стале безстроково. Оскільки hero тепер **основний** спосіб установки
+      серта в MSIX-флоу (не другорядний індикатор), додано re-fetch на `visibilitychange` (повернення
+      фокусу на таб) — дешево, ловить типовий «зробив щось у треї, повернувся на сторінку».
+    - `run_setup_wizard`: `WIZARD_ACTIVE: AtomicBool` guard — клік «Майстер налаштування» поки
+      авто-діалог уже відкритий давав би два модальні діалоги, кожен здатний запустити
+      `ensure_installed`. Guard знімається щойно welcome-діалог закрито (обидві гілки).
+    - **Свідоме обмеження (не міняємо у патчі):** `POST /admin/install-cert` повертає 500 і для
+      `Err(TrustStoreError)`, і для відхиленого користувачем crypt32-діалогу — hero-кнопка показує
+      «Не вдалося — скористайтеся пунктом трея». Трей (`spawn_trust_store_action`) показує реальний
+      текст помилки в діалозі; розрізняти decline-vs-error на hero — більше механізму, ніж вартий
+      патч `v0.3.2`.
   - `style.css`: `.setup-copy-row` (inline code+copy), `.setup-verify` (rule-topped note). CSP без
     змін — той самий origin, `createElement`/`addEventListener`.
   - `README.md` §«Швидкий старт» кроки 3-4 переписані: крок 3 згадує майстра трея (T-188); крок 4
