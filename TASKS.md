@@ -484,9 +484,9 @@ kickoff+closing) — кольорові трей-іконки за станом 
 `trust_store::is_trusted` наперед; T-191 закомічено (`6bba1f8` + `25ef641`), CI 7/7. Патч-реліз
 **`v0.3.1`** (покриває Батч 3.12 + 3.14, закриває T-186) — **тег ще не пушнуто**: ручний чистий
 прогін MSIX користувач робитиме разом із Батчем 3.13. **Батч 3.13 (онбординг першого запуску,
-T-188–T-190) — у роботі: T-188 зроблено 2026-09-08** (`GET /admin/cert-status` +
-`POST /admin/install-cert` + майстер трея `rfd` + hero cert-гілка); T-189/T-190 попереду;
-тегається як `v0.3.2`. TASKS-DONE.md.
+T-188–T-190) — у роботі: T-188 (`4cb9ed9`) + T-189 зроблено 2026-09-08** (`GET /admin/cert-status`
++ `POST /admin/install-cert` + майстер трея `rfd` + hero cert-гілка + per-браузер картка
+Chromium/Firefox); T-190 (бамп `0.3.2` + closing-advisor + MSIX + тег) попереду. TASKS-DONE.md.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -816,7 +816,7 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
 HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`** (потребує власного бампу `0.3.1`→`0.3.2` —
 `v0.3.1` закриває Батч 3.12+3.14). Порядок комітів: T-188 → T-189 → T-190. DECISIONS.md 2026-09-08.
 
-- [x] T-188 — **зроблено 2026-09-08**, коміт `<pending>`. Read-only перевірка довіри як
+- [x] T-188 — **зроблено 2026-09-08**, коміт `4cb9ed9`. Read-only перевірка довіри як
   HTTP-маршрут + майстер першого запуску.
   - Backend: `GET /admin/cert-status` → `{ trusted: CertTrustView }` (три-стан `TRUSTED` /
     `NOT_TRUSTED` / `UNKNOWN` — `certutil` може не відповісти; «unknown ≠ untrusted» контракт
@@ -842,13 +842,16 @@ HTTP-маршрутів + hero-стану. Тегається як **`v0.3.2`** 
   - Docs: DECISIONS.md (новий запис), `diagrams/onboarding.md` (нова) + README, `ui-navigation.md`
     + `ui-status-indicator.md` + `ui-dto-model.md` (звірка), `SPEC.md` §8, `UI-SPEC.md`,
     `SERVICES.md`, `CLAUDE.md`. Деталі — TASKS-DONE.md.
-- [ ] T-189 — картка налаштування браузера, свідома до браузера. `navigator.userAgent` детект
-  (Edge/Firefox/Brave/Opera/Chromium) → показати статичний блок кроків саме для цього браузера
-  (Firefox: `about:preferences#privacy`). Кроки лишаються статичним HTML (toggled `hidden`), не
-  JS-рендер — index.html прямо це фіксує. `README.md` секція браузера — переписати, +Firefox.
-  Автоматичне прописування DoH — **поза обсягом** (T-99/T-134). Розвилка «one-click перехід у
-  налаштування браузера» через реєстровий ProgId — рекомендовано відкласти (норма Fiddler/AdGuard:
-  копіювати рядок).
+- [x] T-189 — **зроблено 2026-09-08**, коміт `<pending>`. Картка налаштування браузера, свідома
+  до браузера. `navigator.userAgent` детект (`detectBrowserFamily` → Edge/Firefox/Opera/Chrome;
+  `navigator.brave.isBrave()` async уточнює Brave) → `revealBrowserSteps` розкриває один із 3
+  статичних блоків (`browser-steps-{chromium,firefox,other}`) + виставляє `chromium-settings-url`
+  (`chrome://`/`edge://`/`brave://`/`opera://`). Кроки — **статичний HTML** (toggled `hidden`), не
+  JS-рендер (index.html прямо це фіксує; advisor). `wireCopyButton` — спільний хелпер для 3
+  copy-кнопок (DoH-URL + 2 settings-рядки). `.setup-copy-row`/`.setup-verify` у `style.css`, CSP
+  без змін. `README.md` секція браузера переписана (+Firefox). Тест `admin_ui`
+  `browser_setup_card_has_a_static_step_block_per_browser_family`. Автоматичне прописування DoH —
+  **поза обсягом** (T-99/T-134); one-click ProgId-перехід — відкладено (норма копіювати рядок).
 - [ ] T-190 — патч-реліз **`v0.3.2`** (майстер онбордингу). Бамп `0.3.1`→`0.3.2` (3 літерали +
   2 path-dep + `Cargo.lock`) окремим комітом; closing-advisor; пере-збірка MSIX; ручний чистий
   прогін (розширення T-186 чек-листа: діалог майстра з'являється → [Так] → cert у

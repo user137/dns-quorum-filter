@@ -2143,12 +2143,99 @@ function syncDohUrl(status) {
   }
 }
 
+// T-189: wire one "copy this string to the clipboard" button. `getText`
+// returns the current string (the DoH URL is refreshed by the status poll,
+// the browser settings-URL is set by the detector below). Feedback goes to
+// the shared #browser-setup-result line.
+function wireCopyButton(button, getText) {
+  const result = document.getElementById("browser-setup-result");
+  if (!button) {
+    return;
+  }
+  button.addEventListener("click", async () => {
+    const text = getText();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error("no clipboard API");
+      }
+      if (result) {
+        result.textContent = "Скопійовано.";
+        setTimeout(() => {
+          if (result) {
+            result.textContent = "";
+          }
+        }, 2000);
+      }
+    } catch (_err) {
+      if (result) {
+        result.textContent = `Скопіюйте вручну: ${text}`;
+      }
+    }
+  });
+}
+
+// T-189: browser family from the UA string of the browser rendering THIS page
+// - which is exactly the one the user needs to configure (better than the
+// registry default: /admin/ui may have opened in a non-default browser).
+function detectBrowserFamily() {
+  const ua = navigator.userAgent;
+  if (/Firefox\//.test(ua)) return "firefox";
+  if (/Edg\//.test(ua)) return "edge";
+  if (/OPR\//.test(ua)) return "opera";
+  if (/Chrome\//.test(ua)) return "chrome";
+  return "other";
+}
+
+const CHROMIUM_SETTINGS_URL = {
+  chrome: "chrome://settings/security",
+  edge: "edge://settings/privacy",
+  brave: "brave://settings/security",
+  opera: "opera://settings",
+};
+
+// T-189: unhide the one static step block matching the detected browser and
+// fill the Chromium settings-URL. Brave reports as Chrome in the UA, so it
+// needs the async navigator.brave.isBrave() refinement.
+async function revealBrowserSteps() {
+  let family = detectBrowserFamily();
+  if (
+    family === "chrome" &&
+    navigator.brave &&
+    typeof navigator.brave.isBrave === "function"
+  ) {
+    try {
+      if (await navigator.brave.isBrave()) {
+        family = "brave";
+      }
+    } catch (_err) {
+      /* stay on "chrome" */
+    }
+  }
+  const chromium = document.getElementById("browser-steps-chromium");
+  const firefox = document.getElementById("browser-steps-firefox");
+  const other = document.getElementById("browser-steps-other");
+  const urlCode = document.getElementById("chromium-settings-url");
+  [chromium, firefox, other].forEach((el) => {
+    if (el) el.hidden = true;
+  });
+  if (family === "firefox") {
+    if (firefox) firefox.hidden = false;
+  } else if (CHROMIUM_SETTINGS_URL[family]) {
+    if (urlCode) urlCode.textContent = CHROMIUM_SETTINGS_URL[family];
+    if (chromium) chromium.hidden = false;
+  } else if (other) {
+    other.hidden = false;
+  }
+}
+
 function initBrowserSetup() {
   const steps = document.getElementById("browser-setup-steps");
   const toggle = document.getElementById("browser-setup-toggle");
-  const copy = document.getElementById("doh-url-copy");
   const field = document.getElementById("doh-url");
-  const result = document.getElementById("browser-setup-result");
+  const chromiumUrl = document.getElementById("chromium-settings-url");
+  const firefoxUrl = document.getElementById("firefox-settings-url");
 
   if (toggle && steps) {
     toggle.addEventListener("click", () => {
@@ -2160,31 +2247,16 @@ function initBrowserSetup() {
     });
   }
 
-  if (copy && field) {
-    copy.addEventListener("click", async () => {
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(field.value);
-        } else {
-          field.select();
-          document.execCommand("copy");
-        }
-        if (result) {
-          result.textContent = "Скопійовано.";
-          setTimeout(() => {
-            if (result) {
-              result.textContent = "";
-            }
-          }, 2000);
-        }
-      } catch (_err) {
-        field.select();
-        if (result) {
-          result.textContent = "Скопіюйте адресу вручну (Ctrl+C).";
-        }
-      }
-    });
-  }
+  wireCopyButton(document.getElementById("doh-url-copy"), () =>
+    field ? field.value : "",
+  );
+  wireCopyButton(document.getElementById("chromium-settings-copy"), () =>
+    chromiumUrl ? chromiumUrl.textContent : "",
+  );
+  wireCopyButton(document.getElementById("firefox-settings-copy"), () =>
+    firefoxUrl ? firefoxUrl.textContent : "",
+  );
+  revealBrowserSteps();
 
   // First visit: open the steps so a new user is walked through setup. The
   // flag is per-viewer convenience only (localStorage), never anything the

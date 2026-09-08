@@ -13,8 +13,10 @@ untrusted» seed); TASKS.md T-188, T-189, T-190; TASKS-DONE.md §«Батч 3.13
 Майстер веде через крок 1 і відкриває сторінку з інструкцією для кроку 2. **Не** автоматичне
 налаштування: `main.rs` fire-and-forget install відхилено (`trust_store.rs` module-doc);
 auto-прописування DoH у браузер відхилено (T-99 / T-134 — конфлікт із «без постійних підвищених
-прав» і Три Б тихого фолбеку на системний резолвер). T-189 доповнить крок 2 per-браузерними
-кроками (Firefox / Edge / Brave).
+прав» і Три Б тихого фолбеку на системний резолвер). Крок 2 на `/admin/ui` (картка «Підключення
+браузера») має per-браузерні блоки кроків (Chromium — Chrome/Edge/Brave/Opera; Firefox; інший),
+усі в статичному HTML, `main.js` розкриває один за `navigator.userAgent` (+`navigator.brave`,
+T-189).
 
 ## Тригер майстра — не automaton, три незалежні прапорці (`onboarding::should_offer_onboarding`)
 

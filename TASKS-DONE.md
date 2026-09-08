@@ -4307,7 +4307,7 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
 успіху, майстер на **підтвердженому** `confirmed`-прапорі (не seed).
 
 - [x] **T-188** — read-only перевірка довіри як HTTP-маршрут + майстер першого запуску. Коміт
-  `<pending>`.
+  `4cb9ed9`.
   - **Backend (`dnsqb-service`):**
     - `admin.rs`: `CertTrustView` (`TRUSTED` / `NOT_TRUSTED` / `UNKNOWN` — закрита проєкція, як
       `WatchdogStatusView` / `ArtifactOutcomeView`; `certutil` може не відповісти на свіжій
@@ -4366,6 +4366,38 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     гілки [Так]/[Пізніше]; hero cert-стан); `ui-navigation.md` (пункт меню + hero-стан),
     `ui-status-indicator.md` (hero cert-гілка), `ui-dto-model.md` (2 DTO + 2 маршрути) — звірено,
     SOURCES оновлено; `README.md` індекс. GAP: 0.
-- [ ] **T-189** — картка налаштування браузера, свідома до браузера (Firefox / Edge / Brave).
+- [x] **T-189** — картка налаштування браузера, свідома до браузера (Chromium / Firefox / інший).
+  Коміт `<pending>`.
+  - `ui/index.html`: `#browser-setup-steps` (`<ol>` → `<div>`-обгортка) містить **три статичні**
+    блоки кроків — `browser-steps-chromium` (Chrome/Edge/Brave/Opera; `<code
+    id="chromium-settings-url">` + кнопка «Копіювати»), `browser-steps-firefox`
+    (`about:preferences#privacy` + кнопка), `browser-steps-other` (загальний), усі `hidden`; плюс
+    спільний `.setup-verify` крок перевірки (несе `ERR_ADDRESS_INVALID` — наявний тест
+    `browser_setup_card_carries_the_doh_url_field_and_the_verification_pointer` лишається дійсним).
+    Advisor: кроки **не** JS-рендер — index.html прямо фіксує «static so the section is useful
+    even before the script runs», і JS-рендер зламав би той тест.
+  - `ui/main.js`: `detectBrowserFamily()` (`navigator.userAgent` → `Firefox\/` / `Edg\/` / `OPR\/`
+    / `Chrome\/` / інший); `revealBrowserSteps()` — async, `navigator.brave.isBrave()` уточнює
+    Brave (Brave шле себе як Chrome у UA), розкриває один блок + виставляє `chromium-settings-url`
+    з `CHROMIUM_SETTINGS_URL` мапи. `wireCopyButton(button, getText)` — витягнутий спільний
+    copy-хелпер, тепер для 3 кнопок (DoH-URL + chromium-settings + firefox-settings); фолбек без
+    Clipboard API — показати рядок для ручного копіювання (прибрано `document.execCommand` +
+    `field.select()` — не всі 3 цілі мають `<input>`).
+  - `style.css`: `.setup-copy-row` (inline code+copy), `.setup-verify` (rule-topped note). CSP без
+    змін — той самий origin, `createElement`/`addEventListener`.
+  - `README.md` §«Швидкий старт» кроки 3-4 переписані: крок 3 згадує майстра трея (T-188); крок 4
+    — Chromium-рядки + **Firefox** (`about:preferences#privacy`) + примітка про per-браузер картку.
+  - `admin_ui` тест `browser_setup_card_has_a_static_step_block_per_browser_family` (3 блоки в
+    HTML, Firefox settings-рядок, `detectBrowserFamily`/`isBrave`/`edge://settings` у JS).
+  - **Поза обсягом (флагнуто):** автоматичне прописування DoH у браузер (T-99/T-134 — адмін +
+    machine-global HKLM, або тихий фолбек на системний резолвер при `mode=automatic`); one-click
+    «перейти в налаштування браузера» через реєстровий ProgId → exe (погана угода заради одного
+    paste — норма Fiddler/AdGuard/NextDNS = копіювати рядок).
+  - **Верифікація:** `fmt --check` + `clippy -D warnings` + `test --workspace --lib --bins`
+    (dnsqb-service lib +1 → 671) + `--doc` + `cargo doc` — зелені.
+  - **Звірка діаграм:** `diagrams/onboarding.md` (крок 2 — per-браузер блоки), `ui-navigation.md`
+    (Dashboard — per-браузер кроки), `UI-SPEC.md` картка «Підключення браузера» — оновлено.
+    `ui-status-indicator.md`/`ui-dto-model.md` не зачеплено (T-189 — жодного нового стану/DTO).
+    GAP: 0.
 - [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
   прогін спільно з `v0.3.1` + тег).

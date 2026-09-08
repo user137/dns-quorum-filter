@@ -324,6 +324,34 @@ mod tests {
         );
     }
 
+    // T-189 — the browser-setup card carries a static step block per browser
+    // family (advisor: keep them in markup, main.js only unhides one), Firefox
+    // included, with the real settings-page string, and the detector wires
+    // Brave's async refinement.
+    #[test]
+    fn browser_setup_card_has_a_static_step_block_per_browser_family() {
+        for id in [
+            "browser-steps-chromium",
+            "browser-steps-firefox",
+            "browser-steps-other",
+        ] {
+            assert!(
+                INDEX_HTML.contains(id),
+                "the {id} step block must be present in static markup"
+            );
+        }
+        assert!(
+            INDEX_HTML.contains("about:preferences#privacy"),
+            "the Firefox block must name the real settings page"
+        );
+        for token in ["detectBrowserFamily", "isBrave", "edge://settings"] {
+            assert!(
+                MAIN_JS.contains(token),
+                "the browser detector must handle {token}"
+            );
+        }
+    }
+
     #[test]
     fn protection_hero_container_exists_for_main_js_to_fill() {
         assert!(

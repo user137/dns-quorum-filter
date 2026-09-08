@@ -37,9 +37,10 @@
 
   <!-- T-176: browser DoH setup / onboarding. Always available; on a first
        visit main.js auto-opens it (a localStorage flag on the admin origin,
-       no backend "first run" signal). The copy button and the "run the
-       check" action are wired in main.js; the steps below are static so the
-       section is useful even before the script runs. -->
+       no backend "first run" signal). T-189: the per-browser step blocks
+       below are all static markup - main.js only unhides the one matching
+       navigator.userAgent (+ navigator.brave), so the section is useful
+       even before the script runs and needs no CSP change. -->
   <div id="browser-setup-body" class="card">
     <h3>Підключення браузера</h3>
     <p class="setup-intro">
@@ -53,16 +54,50 @@
     <button type="button" id="browser-setup-toggle" class="link-button" aria-expanded="false">
       Показати покрокову інструкцію
     </button>
-    <ol id="browser-setup-steps" class="setup-steps" hidden>
-      <li>Chrome → Налаштування → Конфіденційність і безпека → Безпека.</li>
-      <li>«Використовувати безпечний DNS» → «Власний», вставити адресу вище.</li>
-      <li>
-        Відкрити будь-який сайт — у логу нижче має з'явитися рядок <code>ALLOWED</code>.
-        Що браузер справді резолвить саме через цю службу — перевіряється окремо
-        (заблокувати домен і побачити <code>ERR_ADDRESS_INVALID</code>); повна
-        процедура — у README, секція «Перевірка: браузер → локальний DoH».
-      </li>
-    </ol>
+    <div id="browser-setup-steps" hidden>
+      <!-- T-189: Chromium family (Chrome / Edge / Brave / Opera). main.js sets
+           #chromium-settings-url to the right scheme and unhides this block. -->
+      <ol id="browser-steps-chromium" class="setup-steps" hidden>
+        <li>
+          Відкрийте новий таб і вставте в адресний рядок (посилання на
+          <code>chrome://</code>-сторінки з веб-сторінки не працюють — тільки вручну):
+          <span class="setup-copy-row">
+            <code id="chromium-settings-url">chrome://settings/security</code>
+            <button type="button" id="chromium-settings-copy" class="link-button">Копіювати</button>
+          </span>
+        </li>
+        <li>«Використовувати безпечний DNS» → «Власний» → вставте адресу зверху.</li>
+      </ol>
+      <!-- T-189: Firefox. -->
+      <ol id="browser-steps-firefox" class="setup-steps" hidden>
+        <li>
+          Відкрийте новий таб і вставте в адресний рядок:
+          <span class="setup-copy-row">
+            <code id="firefox-settings-url">about:preferences#privacy</code>
+            <button type="button" id="firefox-settings-copy" class="link-button">Копіювати</button>
+          </span>
+        </li>
+        <li>
+          Розділ «DNS через HTTPS» → «Максимальний захист» → «Обрати постачальника» →
+          «Власний» → вставте адресу зверху.
+        </li>
+      </ol>
+      <!-- T-189: unknown / other browser. -->
+      <ol id="browser-steps-other" class="setup-steps" hidden>
+        <li>
+          У налаштуваннях браузера знайдіть «DNS через HTTPS» / «Secure DNS» /
+          «Custom DNS provider».
+        </li>
+        <li>Оберіть режим «Власний» / «Custom» і вставте адресу зверху.</li>
+      </ol>
+      <p class="setup-verify">
+        Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок
+        <code>ALLOWED</code>. Що браузер справді резолвить саме через цю службу —
+        перевіряється окремо: заблокуйте домен і відкрийте його, має бути
+        <code>ERR_ADDRESS_INVALID</code> (не <code>ERR_NAME_NOT_RESOLVED</code>);
+        повна процедура — у README, секція «Перевірка: браузер → локальний DoH».
+      </p>
+    </div>
     <div id="browser-setup-result"></div>
   </div>
 
