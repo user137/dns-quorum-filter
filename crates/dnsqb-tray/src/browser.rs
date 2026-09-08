@@ -28,6 +28,23 @@ pub fn open_in_default_browser(url: &str) {
     }
 }
 
+/// Opens the Windows Settings "Installed apps" page
+/// (`ms-settings:appsfeatures`) so the user can remove the app after "Повністю
+/// видалити" (T-195). `explorer.exe <shell-URI>` is the documented, reliable
+/// launcher for `ms-settings:` URIs; `explorer.exe` lives in `%SystemRoot%`
+/// itself, not `System32`. Failures are logged, not propagated (the tray is
+/// exiting).
+pub fn open_windows_apps_settings() {
+    let explorer = system_root_exe("explorer.exe");
+    match Command::new(&explorer)
+        .arg("ms-settings:appsfeatures")
+        .spawn()
+    {
+        Ok(_child) => {}
+        Err(err) => tracing::warn!("failed to open Windows Settings: {err}"),
+    }
+}
+
 /// Resolves `exe` under `%SystemRoot%\System32`, falling back to the
 /// conventional `C:\Windows` only if `SystemRoot` itself is unset — the same
 /// tolerance a bare environment-variable read needs on any real Windows
@@ -38,14 +55,30 @@ fn system32_exe(exe: &str) -> PathBuf {
     PathBuf::from(system_root).join("System32").join(exe)
 }
 
+/// Resolves `exe` directly under `%SystemRoot%` (e.g. `explorer.exe`, which is
+/// *not* in `System32`).
+fn system_root_exe(exe: &str) -> PathBuf {
+    let system_root =
+        std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".to_string().into());
+    PathBuf::from(system_root).join(exe)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::system32_exe;
+    use super::{system32_exe, system_root_exe};
 
     #[test]
     fn system32_exe_joins_under_system_root() {
         let path = system32_exe("rundll32.exe");
         let path_str = path.to_string_lossy();
         assert!(path_str.ends_with(r"System32\rundll32.exe"));
+    }
+
+    #[test]
+    fn system_root_exe_joins_directly_under_system_root() {
+        let path = system_root_exe("explorer.exe");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.ends_with(r"\explorer.exe"));
+        assert!(!path_str.contains("System32"));
     }
 }

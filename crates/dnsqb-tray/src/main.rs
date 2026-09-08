@@ -39,6 +39,7 @@
 
 mod browser;
 mod onboarding;
+mod self_uninstall;
 mod status;
 
 use dnsqb_service::{
@@ -224,6 +225,16 @@ fn main() {
     event_loop.run(move |_event, _target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + EVENT_POLL_INTERVAL);
 
+        // T-195: the "Повністю видалити" worker sets this once the report
+        // dialog is dismissed and the wipe helper is spawned. Checked after
+        // the `WaitUntil` assignment above so it isn't overwritten; the
+        // `return` drops this tick's queued menu event, which is fine here
+        // (do not copy this pattern to the pause/label path).
+        if QUIT_REQUESTED.load(Ordering::SeqCst) {
+            *control_flow = ControlFlow::Exit;
+            return;
+        }
+
         let observed = status_handle.current();
         let trusted = trust.is_trusted();
         refresh_tray(
@@ -391,17 +402,7 @@ fn handle_menu_event(
         }
         REMOVE_ALL_ID => {
             if confirm_remove_all_local_state() {
-                let app_data = app_data.to_path_buf();
-                spawn_cert_action(
-                    "remove-all-local-state",
-                    "Повністю видалити",
-                    trust,
-                    move || -> Result<String, std::convert::Infallible> {
-                        Ok(format_uninstall_report(&remove_all_local_state(Some(
-                            &app_data,
-                        ))))
-                    },
-                );
+                spawn_remove_all_and_quit(app_data.to_path_buf());
             }
         }
         // T-185 + T-193: pause = write `stop.flag` only. `dnsqb-service` polls
@@ -541,6 +542,48 @@ fn spawn_cert_action<F, E>(
         let outcome = action();
         trust.request_recheck();
         outcome
+    });
+}
+
+/// Set by [`spawn_remove_all_and_quit`] once the report dialog is dismissed
+/// and the app-data wipe helper is spawned — the event loop exits on its next
+/// tick (a worker thread has no handle to `control_flow`).
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// T-195 — "Повністю видалити": clear the out-of-tree state, show the report,
+/// then bring the whole app down and hand off the rest to the OS.
+///
+/// Not [`spawn_cert_action`]: the shutdown has to happen *after* the report
+/// dialog, and `spawn_cert_action` shows its dialog after the closure returns.
+/// Order: [`remove_all_local_state`] (cert + Credential Manager secrets, none
+/// of them files in app-data) → report dialog → `stop.flag` + `quit.flag`
+/// (the watcher stops `dnsqb-service` and exits on its next tick, exactly like
+/// [`QUIT_APP_ID`]) → spawn the detached wipe helper (it waits for every
+/// DNS-QF process to exit before deleting) → open Windows Settings →
+/// `QUIT_REQUESTED` so this tray exits too.
+fn spawn_remove_all_and_quit(app_data: PathBuf) {
+    std::thread::spawn(move || {
+        let report = format_uninstall_report(&remove_all_local_state(Some(&app_data)));
+        tracing::info!("remove-all-local-state finished:\n{report}");
+        rfd::MessageDialog::new()
+            .set_title("Повністю видалити")
+            .set_description(format!(
+                "{report}\n\nТека даних застосунку буде повністю видалена, а сам застосунок \
+                 закриється. Відкриються Параметри Windows — натисніть «Видалити» на \
+                 «dns-quorum-filter», щоб завершити."
+            ))
+            .set_level(rfd::MessageLevel::Info)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+        if let Err(err) = set_stop_flag(&app_data) {
+            tracing::warn!("could not write stop.flag: {err}");
+        }
+        if let Err(err) = set_quit_flag(&app_data) {
+            tracing::warn!("could not write quit.flag: {err}");
+        }
+        self_uninstall::spawn_app_data_dir_wipe(&app_data);
+        browser::open_windows_apps_settings();
+        QUIT_REQUESTED.store(true, Ordering::SeqCst);
     });
 }
 
@@ -687,21 +730,20 @@ fn confirm_rotate_cert() -> bool {
     result == rfd::MessageDialogResult::Yes
 }
 
-/// Native confirm dialog before T-70's full local-state removal — names
-/// every artifact it touches (the trusted certificate *and* all three
-/// Credential Manager secrets) and the one thing it deliberately does
-/// **not** do: MSIX (T-156) gives this app no code to run at uninstall
-/// time, so removing the app itself is still a separate, manual step in
-/// Windows Settings.
+/// Native confirm dialog before T-70/T-195's full removal — names everything
+/// it clears (the trusted certificate, the three Credential Manager secrets,
+/// **and** the whole app-data directory) and what happens next: the app
+/// closes and Windows Settings opens for the final "Remove" click (MSIX,
+/// T-156, gives the app no uninstall-time hook of its own).
 fn confirm_remove_all_local_state() -> bool {
     let result = rfd::MessageDialog::new()
         .set_title("Повністю видалити")
         .set_description(
-            "Буде видалено локальний сертифікат dns-quorum-filter із довірених кореневих \
-             сертифікатів, а також TLS-ключ, ключ шифрування журналу/кешу та збережені \
-             креденшели MaxMind (якщо є) зі сховища облікових даних Windows. Це НЕ видаляє \
-             сам застосунок — після цього кроку видаліть dns-quorum-filter у Параметрах \
-             Windows окремо. Продовжити?",
+            "Буде повністю видалено локальні дані dns-quorum-filter: довірений сертифікат, \
+             TLS-ключ, ключ шифрування журналу/кешу та збережені креденшели MaxMind зі сховища \
+             облікових даних Windows, а також уся тека даних застосунку (журнал, кеш, \
+             налаштування). Застосунок закриється, і відкриються Параметри Windows — там \
+             натисніть «Видалити» на dns-quorum-filter. Продовжити?",
         )
         .set_level(rfd::MessageLevel::Warning)
         .set_buttons(rfd::MessageButtons::YesNo)

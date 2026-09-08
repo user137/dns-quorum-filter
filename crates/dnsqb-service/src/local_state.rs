@@ -15,6 +15,13 @@
 //! into one bool — a partial failure (e.g. the cert cleared but a Credential
 //! Manager write is locked) must stay visible, the same discipline as this
 //! project's recurring `persisted: false` pattern.
+//!
+//! This module clears only the state that lives *outside* the app-data
+//! directory. Erasing `%LOCALAPPDATA%\dns-quorum-filter` itself (`cert.pem`,
+//! the encrypted query-log / cache, `resolver_config.toml`, logs) is the
+//! tray's job (T-195, `dnsqb-tray`'s `self_uninstall`): it happens after the
+//! processes exit, because the `/admin/uninstall-local-state` route runs
+//! *inside* `dnsqb-service` and can't delete its own open directory.
 
 use std::path::Path;
 
