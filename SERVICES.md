@@ -307,15 +307,22 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   нема в trust store, тож браузер попереджає про недовірений сертифікат на `/admin/ui` (tooltip
   трею не змінюється — його кешований клієнт ще збігається з попереднім сертифікатом). За нативним
   confirm-діалогом, що називає це наперед.
-- **Повністю видалити** (T-70, Батч 3.8) — `dnsqb_service::remove_all_local_state`:
-  `trust_store::uninstall()` + `key_store::delete_secret` для всіх трьох ключів (TLS T-67,
-  persistence T-146, MaxMind T-163), кожен артефакт звітується незалежно
-  (`Removed`/`NotPresent`/`Failed`), показано нативним `rfd::MessageDialog`. За нативним
-  confirm-діалогом, що називає всі чотири артефакти й **прямо каже, що це не видаляє сам
-  застосунок** — MSIX (T-156) не дає коду на видалення пакета, тому це обов'язковий крок
-  *перед* видаленням застосунку у Параметрах Windows, не автоматичний хук. Той самий
-  функціонал доступний з `/admin/ui` (кнопка в новій секції «Повне видалення», POST
-  `/admin/uninstall-local-state`) — для випадку, коли трей недоступний.
+- **Повністю видалити** (T-70, Батч 3.8; розширено T-195, Батч 3.14) —
+  `dnsqb_service::remove_all_local_state` (`trust_store::uninstall()` + `key_store::delete_secret`
+  для всіх трьох ключів: TLS T-67, persistence T-146, MaxMind T-163; кожен артефакт звітується
+  незалежно `Removed`/`NotPresent`/`Failed`), тоді **зупиняє весь застосунок і стирає всю теку
+  app-data**: показує звіт → пише `stop.flag` + `quit.flag` (watcher зупиняє `dnsqb-service` і
+  виходить) → спавнить від'єднаний прихований `powershell.exe` (`self_uninstall.rs`), що чекає на
+  вихід `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray`, потім у retry-циклі видаляє всю
+  `%LOCALAPPDATA%\dns-quorum-filter` (`cert.pem`, `query-log.enc`/`cache.enc`,
+  `resolver_config.toml`/`overrides.toml`, `logs\`, pid/lock) → відкриває
+  `ms-settings:appsfeatures` через `explorer.exe` → трей виходить (`QUIT_REQUESTED`). Причина
+  detached-прибиральника: трей/watcher/служба тримають свої `*.lock` відкритими, а `tao`
+  `event_loop.run` не повертається — жоден процес не може `remove_dir_all` власну теку. MSIX
+  (T-156) не дає коду на видалення пакета, тому фінальний клік «Видалити» — у Параметрах Windows.
+  Confirm-діалог називає повне стирання наперед. `POST /admin/uninstall-local-state` (для випадку,
+  коли трей недоступний) робить **лише** секрети — крутиться *в* службі, не може стерти власну
+  відкриту теку.
 **Група керування життям (T-185):**
 
 - **Призупинити / Відновити фільтрацію** — один пункт, лейбл фліпається за `stop.flag`
@@ -417,7 +424,9 @@ degraded-суфікс T-56) — «сертифікат не встановлен
 
 `cert_trusted` — read-only `trust_store::is_trusted(cert.pem)` (`certutil -dump` + `-store`, без
 мутації стору), опитуваний **окремим OS-потоком** (`status::spawn_trust_watch`, не 2-с
-poll-лупом — `certutil` блокує). Показуваний прапор seed `true` (червоний лише коли `certutil`
+poll-лупом — `certutil` блокує). Усі `certutil`-спавни йдуть через `trust_store::certutil_command`
+з `CREATE_NO_WINDOW` (T-194) — інакше цей фоновий полл (2 спавни/полл) блимав би консольним вікном
+кожні кілька секунд на свіжій інсталяції. Показуваний прапор seed `true` (червоний лише коли `certutil`
 *довів* недовіру; `cert.pem` відсутній = «невідомо», лишається попереднє). **Каденс** (`next_delay`)
 натомість ключиться на **підтверджений `Ok(true)`**: `Ok(false)` **і** `Err` (перший полл до появи
 `cert.pem` — трей стартує раніше служби) обидва беруть драбину `2 → 5 → 15 → 60 → 300` с, `300` с

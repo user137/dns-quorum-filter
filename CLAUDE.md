@@ -20,10 +20,18 @@ coloured tray icons (T-191) — `status::icon_colour(TrayStatus, cert_trusted)` 
 `gen-icon.py` blobs (green/amber/grey/red); read-only `trust_store::is_trusted` pulled forward
 (shared `trusted_state` core, no HTTP route), polled by a dedicated `status::spawn_trust_watch`
 thread; cert-not-trusted → red flips `Filtering` only (SPEC §3/§8.1 + T-185 paused-tooltip test),
-the cert issue reaches other states as a `compose_tooltip` suffix. T-192: patch release **`v0.3.1`**
+the cert issue reaches other states as a `compose_tooltip` suffix. **T-194/T-195 (2026-09-08, hotfix
+from a live `0.3.1` MSIX run, plan+advisor):** T-194 — every `certutil` spawn goes through
+`trust_store::certutil_command` with `CREATE_NO_WINDOW` (T-191's background trust-watch, 2 spawns
+per poll, flashed a console window every few seconds on a fresh install); T-195 — "Повністю
+видалити" now stops the whole app (`stop.flag`+`quit.flag`) and a detached hidden `powershell`
+helper (`dnsqb-tray/src/self_uninstall.rs`) waits for every process to exit then wipes all of
+`%LOCALAPPDATA%\dns-quorum-filter`, then opens `ms-settings:appsfeatures` via `explorer.exe`
+(revises T-70; DECISIONS.md 2026-09-08). Commits `58c269d` + `45aa0d6`, in `v0.3.1` before the tag.
+T-192: patch release **`v0.3.1`**
 covers Батч 3.12 **+ 3.14** and closes T-186 — bump commit `0e9b944`, tag `v0.3.1` pushed after a
-manual clean-reinstall MSIX check → `release.yml` draft (unpublished, a human clicks Publish, same
-as `v0.3.0`). The first-run onboarding wizard (Батч 3.13) becomes `v0.3.2` (needs its own `0.3.1`→`0.3.2` bump):
+manual clean-reinstall MSIX check (MSIX rebuilt with T-194/T-195) → `release.yml` draft (unpublished,
+a human clicks Publish, same as `v0.3.0`). The first-run onboarding wizard (Батч 3.13) becomes `v0.3.2` (needs its own `0.3.1`→`0.3.2` bump):
 **T-188** (`GET /admin/cert-status` three-state + `POST /admin/install-cert` + `rfd` tray wizard +
 `onboarding.rs` + `/admin/ui` hero cert-branch, `4cb9ed9`) + **T-189** (per-browser setup card,
 `98ac6c8` + `a5489ef`) + **T-193** (pause serves the unfiltered baseline instead of killing DNS —
@@ -124,7 +132,10 @@ sister project pakko (`windows-archiver-wrapper`, `github.com/pakkoapp-oss/pakko
 `local_state::remove_all` (new module) — MSIX has no uninstall-time code hook at all, so clearing
 the trusted cert + 3 Credential Manager secrets is an in-app action (tray "Повністю видалити" +
 `/admin/ui` danger-zone card + `POST /admin/uninstall-local-state`), per-artifact report
-(`Removed`/`NotPresent`/`Failed`), never one collapsed bool. Also: `assets/gen-icon.py` +
+(`Removed`/`NotPresent`/`Failed`), never one collapsed bool. **T-195 extended the tray path**: it
+now also stops the whole app and a detached helper wipes all of `%LOCALAPPDATA%\dns-quorum-filter`
+(the HTTP route stays secrets-only — it runs *inside* the service and can't delete its own open
+dir). Also: `assets/gen-icon.py` +
 `assets/icon/` — one drawing source for the app icon everywhere (MSIX tile, README wordmark, a
 future Store listing/Linux icon), user-revised mid-batch from a low-contrast navy/cyan/white
 funnel to a two-tone (Windows accent blue + white) wireframe hexagon with vertex dots.
@@ -235,7 +246,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed). `rename_orphan` is `pub(crate)`, reused by `cache_persist` |
 | `cache_persist_dto` | T-97 serde form of the verdict cache. `PersistedCacheEntry { domain, qtype: u16, expiry_millis: u64, verdict: PCacheVerdict }` — `expiry_millis` is an **absolute wall-clock** deadline (the live `CacheEntry.expires_at` is a monotonic `Instant`, unserialisable); `to_json(snapshot, now_wall, now_mono)` filters `Verdict::Block` + non-fresh + converts `Instant`→wall (clocks injected for tests); `from_json(plaintext, now_wall)` drops any entry whose deadline already passed. `PCacheVerdict` keeps `Block` representable (format-stable) though `to_json` never emits it. `IpAddr` kept un-mirrored (has its own serde impl) |
 | `cache_persist` | T-97, sibling of `log_persist`: `persist_cache_snapshot` (→`seal(FileKind::Cache)`→`write_atomic`), `load_persisted_cache` (→`CacheInit { restore, flusher }`; independent `ciphertext_present` for `cache.enc`, shared `persistence-key`), `run_cache_persister` (60s + shutdown). `AppState::cache_snapshot`/`restore_cache` pass-throughs (lock dropped before `.await`) |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; **one** key seals **both** `query-log.enc` (T-146) and `cache.enc` (T-97), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49) + read-only `trust_store::is_trusted(cert_path)` (T-191 — shared `trusted_state` core with `ensure_installed`, `certutil -dump`/`-store` only, no route, called directly by the tray icon's trust-watch thread); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **three** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; **one** key seals **both** `query-log.enc` (T-146) and `cache.enc` (T-97), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49) + read-only `trust_store::is_trusted(cert_path)` (T-191 — shared `trusted_state` core with `ensure_installed`, `certutil -dump`/`-store` only, no route, called directly by the tray icon's trust-watch thread; **all `certutil` spawns go through `certutil_command` with `CREATE_NO_WINDOW`, T-194** — else the background poll flashes a console window); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
 | `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
@@ -282,7 +293,11 @@ discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47
 Menu **rebuilt in T-185** (Варіант B lifecycle group at the bottom): "Відкрити налаштування"
 (browser → `/admin/ui`) · "Скинути кеш і лог" (soft `/admin/reset`) · "Про програму" · "Майстер
 налаштування" (T-188 — manual re-entry to the first-run wizard) · cert group
-(T-49/T-69: "Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю видалити" (T-70) ·
+(T-49/T-69: "Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю видалити" (T-70;
+**T-195:** clears cert+secrets, shows the report, writes `stop.flag`+`quit.flag`, spawns a detached
+hidden `powershell` (`self_uninstall.rs`) that waits for every DNS-QF process to exit then wipes all
+of `%LOCALAPPDATA%\dns-quorum-filter`, opens `ms-settings:appsfeatures` via `explorer.exe`, then
+sets `QUIT_REQUESTED` so the event loop exits) ·
 **"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; **T-193:** pause =
 `set_stop_flag` **only** (no `/admin/shutdown`) behind a confirm dialog — the service stays up and
 serves the unfiltered baseline via `pause_watch`; resume = `clear_stop_flag` +
@@ -1112,6 +1127,21 @@ reasoning (search by section number rather than re-deriving a decision from scra
   red override) seeds to the *safe* value (`true` — "trusted until proven otherwise"), so
   "unknown" / a transient `certutil` failure never reads as "broken"; and the poll for it runs on
   its own `std::thread`, not the async status loop, because `certutil` is a blocking subprocess.
+- **A console-subsystem subprocess spawned from a GUI (`windows_subsystem = "windows"`) process
+  flashes a console window unless `.creation_flags(CREATE_NO_WINDOW)` is set** (T-194,
+  `trust_store::certutil_command`). Harmless when the spawn is a rare explicit user action; once a
+  background poll (T-191's trust-watch, 2 `certutil` spawns per tick) does it every few seconds it
+  becomes a visible defect. `CREATE_NO_WINDOW` (`0x0800_0000`) still captures stdout/stderr through
+  the pipes. It is **ignored when paired with `DETACHED_PROCESS`** — for a detached child (T-195's
+  `self_uninstall` cleaner) use `DETACHED_PROCESS` alone.
+- **A process cannot delete its own open app-data directory, and `tao`'s `event_loop.run` never
+  returns** (T-195). The tray holds `tray.lock` (`share_mode(0)`) for its whole life and there is
+  no post-`run` cleanup point to drop the guard. "Повністю видалити" therefore hands the wipe to a
+  **detached** `powershell` helper that first waits for every DNS-QF process to exit (deleting
+  `stop.flag`/`quit.flag` before the watcher reads `quit.flag` would leave it respawning the
+  service into a directory being erased) then loops `Remove-Item` until the dir is gone.
+  `build_wipe_script` fences the target: under `%LOCALAPPDATA%` **and** final component exactly
+  `dns-quorum-filter`.
 - **Struct-level `#[serde(default, deny_unknown_fields)]` composes fine — a missing field falls
   back to `impl Default for TheStruct`'s corresponding field, an unknown key still fails loudly —
   but per-field `#[serde(default = "...")]` needs a *function path* returning that field's type,

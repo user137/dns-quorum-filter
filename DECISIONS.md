@@ -1237,3 +1237,52 @@ bullet); `diagrams/ui-status-indicator.md` + `diagrams/ui-dto-model.md` (пол�
 **Наслідки в інших доках:** `crates/dnsqb-service/src/lifecycle.rs` module-doc; `CLAUDE.md`
 (трей-абзац, gotcha «Guarding an Effect … → GaveUp» розчинилась, module-table, watcher-абзац,
 Project state); `SERVICES.md`. Ships у `v0.3.2` (Батч 3.13, перед тегом T-190).
+
+## 2026-09-08 — «Повністю видалити» = стоп застосунку + wipe теки app-data; `certutil` без вікна (T-194/T-195)
+
+**Контекст:** живий прогін `dist\dns-quorum-filter-0.3.1.msix` (Батч 3.14) на чистій машині
+виявив два дефекти.
+
+**Рішення T-194 — `certutil` завжди спавниться з `CREATE_NO_WINDOW`.** До T-191 `trust_store`
+викликав `certutil.exe` лише на явний клік у меню (рідко → блимання консольного вікна прийнятне).
+T-191 додав фоновий `status::spawn_trust_watch`, що поллить `is_trusted` (**2 спавни `certutil` на
+полл**) на драбині `2→5→15→60→300` с — на свіжій інсталяції без довіреного серта вікно блимало
+кожні кілька секунд, ~5 разів. Новий приватний хелпер `trust_store::certutil_command(&Path) ->
+Command` ставить `CREATE_NO_WINDOW` (`0x0800_0000`) під `#[cfg(windows)]`; усі 4 сайти
+(`local_cert_thumbprint`, `store_lookup_output`, `ensure_installed`, `uninstall`) йдуть через
+нього. `stdout`/`stderr` далі захоплюються через pipe.
+
+**Рішення T-195 — «Повністю видалити» зупиняє застосунок і стирає всю теку app-data.** Перегляд
+T-70 (Батч 3.8). Раніше пункт чистив довірений серт + 3 секрети Credential Manager й **лишав усе
+запущеним** — `dnsqb-service` на наступному циклі регенерував `cert.pem` і мінтив нові ключі,
+частково скасовуючи очищення; `query-log.enc`/`cache.enc`/config/logs у `%LOCALAPPDATA%\dns-quorum-filter`
+не чіпались узагалі (видалення MSIX через Windows їх теж не чистить). Обсяг обрав користувач
+(питання 2026-09-08): **уся тека**. Новий порядок у треї (`spawn_remove_all_and_quit`):
+`remove_all_local_state` (серт + секрети — не файли в app-data) → звіт-діалог → `stop.flag` +
+`quit.flag` (watcher наступним tick зупиняє службу й виходить) → **detached прихований
+`powershell.exe`** (`self_uninstall.rs`, `DETACHED_PROCESS`, переживає трей) → відкрити
+`ms-settings:appsfeatures` через `explorer.exe` → `QUIT_REQUESTED` (трей виходить на наступному
+tick). Прибиральник **спершу чекає** на зникнення `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray`
+(кеп ~20 с), лише потім `Remove-Item -Recurse -Force` у retry-циклі.
+
+**Причина (самозамкнення):** трей тримає `tray.lock` відкритим (`share_mode(0)`), watcher/служба
+— свої; `tao` `event_loop.run` не повертається (розходиться в `process::exit`), тож post-run
+cleanup немає й `_guard` не дропнути. Жоден процес DNS-QF не може `remove_dir_all` власну теку →
+зовнішній прибиральник. Wait-loop **обов'язковий**: `stop.flag`/`quit.flag` — звичайні файли в
+тій самій теці, і якби `Remove-Item` спрацював до 5-с tick'а watcher'а, той не побачив би
+`quit.flag`, не зупинив би службу, а `ensure_sibling_running(Service)` респавнив би службу в теку,
+яку саме стирають. Це також розчиняє орфан-`.enc` після видалення ключа (advisor) — повне
+стирання теки прибирає будь-який `.enc` незалежно від того, що persister-flush записав.
+`build_wipe_script` фенсить ціль: шлях під `%LOCALAPPDATA%` **і** остання компонента = точно
+`dns-quorum-filter`. `explorer.exe <shell-URI>` (не `rundll32 … FileProtocolHandler`, чия
+підтримка app-протоколів не підтверджена). HTTP-роут `/admin/uninstall-local-state` лишається
+«лише секрети» — крутиться *в* службі, не може видалити власну відкриту теку.
+
+**Наслідки в коді:** `crates/dnsqb-service/src/trust_store.rs` (`certutil_command`); нові
+`crates/dnsqb-tray/src/self_uninstall.rs`; `crates/dnsqb-tray/src/browser.rs`
+(`open_windows_apps_settings`, `system_root_exe`); `crates/dnsqb-tray/src/main.rs` (`QUIT_REQUESTED`,
+`spawn_remove_all_and_quit`, `confirm_remove_all_local_state`, event-loop); `crates/dnsqb-service/src/local_state.rs`
+(module-doc).
+**Наслідки в доках:** `SERVICES.md`, `CLAUDE.md` (трей-абзац, `trust_store` row, gotcha, Project
+state), `diagrams/process-lifecycle.md` (S13). Заходять у `v0.3.1` перед тегом (Батч 3.14);
+`dist`-MSIX перезбирається.

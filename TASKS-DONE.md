@@ -4485,5 +4485,64 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     `status.active_providers.length === 0`), не на голі токени — коментар не може тихо послабити
     перевірку порядку; (4) два ручні пункти (полл `/admin/status` при відкритій сторінці;
     `watchdog-state.json` не стає stale + іконка сіра не жовта) додано в чек-ліст T-190.
+- [x] **T-194** — `certutil` спавниться з `CREATE_NO_WINDOW` (без блимання консолі). Коміт
+  `58c269d`. Два баги з живого прогону `dist\dns-quorum-filter-0.3.1.msix` (Батч 3.14) на чистій
+  машині; kickoff+closing plan+advisor 2026-09-08.
+  - **Баг:** до T-191 `trust_store` кликав `certutil.exe` лише на явний клік у меню (рідко →
+    блимання прийнятне). T-191 додав фоновий `status::spawn_trust_watch`, що поллить `is_trusted`
+    (**2 спавни `certutil` на полл**: `-dump` + `-store`) на драбині `2→5→15→60→300` с — на свіжій
+    інсталяції без довіреного серта чорне вікно термінала блимало кожні кілька секунд, ~5 разів.
+    Регресія T-191.
+  - **Фікс:** новий приватний `trust_store::certutil_command(&Path) -> Command` ставить
+    `CREATE_NO_WINDOW` (`0x0800_0000`) під `#[cfg(windows)]` + `CommandExt`; усі 4 сайти
+    (`local_cert_thumbprint`, `store_lookup_output`, `ensure_installed`, `uninstall`) йдуть через
+    нього. `stdout`/`stderr` далі захоплюються через pipe.
+  - **Тест:** `certutil_command_targets_the_given_path` (Happy) — хелпер існує й адресує переданий
+    шлях; коментар формулює скромно (не претендує довести, що всіх 4 сайтів — це факт структури
+    коду, не поведінки; advisor).
+  - **Верифікація:** `fmt`/`clippy -D warnings`/`test --workspace --lib --bins`/`--doc`/`cargo doc`
+    — зелені. **Заходить у `v0.3.1` перед тегом; `dist`-MSIX перезбирається.**
+- [x] **T-195** — «Повністю видалити» зупиняє застосунок і стирає всю теку app-data. Коміт
+  `45aa0d6`. Перегляд T-70 (DECISIONS.md 2026-09-08). Обсяг обрав користувач (питання
+  2026-09-08): **уся тека `%LOCALAPPDATA%\dns-quorum-filter`**.
+  - **Баг:** пункт чистив довірений серт + 3 секрети Credential Manager, але лишав службу/watcher/
+    трей запущеними — `dnsqb-service` наступним циклом регенерував `cert.pem` і мінтив нові ключі,
+    частково скасовуючи очищення. `query-log.enc`/`cache.enc`/config/logs не чіпались узагалі
+    (видалення MSIX через Windows їх теж не чистить).
+  - **Самозамкнення:** трей тримає `tray.lock` відкритим (`share_mode(0)`), watcher/служба — свої;
+    `tao` `event_loop.run` не повертається (розходиться в `process::exit`), тож post-run cleanup
+    немає й `_guard` не дропнути. Жоден процес DNS-QF не може `remove_dir_all` власну теку.
+  - **Фікс:** новий `crates/dnsqb-tray/src/self_uninstall.rs`. `spawn_remove_all_and_quit` (worker-
+    тред, **не** `spawn_cert_action` — той показує діалог після closure): `remove_all_local_state`
+    (серт + секрети — не файли в app-data) → звіт-діалог → `stop.flag`+`quit.flag` (watcher
+    наступним tick зупиняє службу й виходить) → `self_uninstall::spawn_app_data_dir_wipe` (detached
+    прихований `powershell.exe`, `DETACHED_PROCESS`, переживає трей) → `browser::open_windows_apps_settings`
+    (`%SystemRoot%\explorer.exe ms-settings:appsfeatures`) → `QUIT_REQUESTED` (static `AtomicBool`;
+    event-loop після рядка `WaitUntil` ставить `ControlFlow::Exit`). Скрипт прибиральника
+    (`build_wipe_script`): **спершу** `while (Get-Process dnsqb-service,dnsqb-watcher,dnsqb-tray)
+    { Start-Sleep }` (кеп ~20 с), **тільки потім** retry-цикл `Remove-Item -Recurse -Force`.
+  - **Wait-loop обов'язковий (advisor):** `stop.flag`/`quit.flag` — звичайні файли в тій самій
+    теці; якби `Remove-Item` спрацював до 5-с tick'а watcher'а, той не побачив би `quit.flag`, не
+    зупинив би службу, а `ensure_sibling_running(Service)` респавнив би службу в теку, яку саме
+    стирають. Це також розчиняє орфан-`.enc` після видалення ключа (повне стирання прибирає
+    будь-який `.enc`).
+  - **Фенс цілі (Security-Boundary):** `build_wipe_script` повертає `None`, якщо шлях не під
+    `%LOCALAPPDATA%` **або** остання компонента не `dns-quorum-filter` — вироджений/порожній
+    `app_data` не може розширити ціль.
+  - **`explorer.exe`, не `rundll32`:** `rundll32 … FileProtocolHandler ms-settings:` — не
+    підтверджено, що диспетчеризує app-протокол; `explorer.exe <shell-URI>` — задокументований
+    надійний шлях. `open_in_default_browser` (rundll32) — без змін.
+  - **`local_state.rs`** — лише module-doc (рядок «clears **every** piece …» тепер вужча половина
+    історії; wipe теки — трейовий, роут `/admin/uninstall-local-state` крутиться в службі й не може
+    стерти власну відкриту теку).
+  - **Тести (`self_uninstall`, 4 категорії):** `powershell_exe_joins_under_system_root` (Happy);
+    `wipe_script_waits_for_the_processes_before_deleting` (Happy/regression — wait-loop перед
+    delete-loop); `wipe_script_doubles_a_single_quote_in_the_path` (Misuse-Fool);
+    `wipe_script_rejects_a_path_outside_localappdata` + `..._rejects_a_final_component_that_is_not_dns_quorum_filter`
+    (Security-Boundary); `wipe_script_is_none_for_empty_paths` (Error). `browser` +2
+    (`system_root_exe_joins_directly_under_system_root`). Сам спавн/видалення — I/O shell, не
+    юнітиться (прецедент `main.rs`/`spawn.rs`).
+  - **Верифікація:** повний локальний гейт зелений. **Заходить у `v0.3.1` перед тегом.**
+  - closing plan+advisor — перед тегом `v0.3.1` (спільний для всього у `v0.3.1`).
 - [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
   прогін спільно з `v0.3.1` + тег).

@@ -1,11 +1,12 @@
 SOURCES: SPEC.md §7 (+ §7.1 — реалізаційні рішення Ф3 Батч 3.0), §1 (лістенер `127.0.0.1`),
 §2 (self-signed cert), §6 (лог у памʼяті); `packaging/AppxManifest.template.xml` (T-156 — entry
 point + startup task); `plans/silly-wiggling-globe.md` (Батч 3.12 — матриця сценаріїв S1–S15);
-DECISIONS.md 2026-09-07 (T-185 — `stop.flag`/`quit.flag`);
-TASKS.md T-150, T-181, T-182, T-183, T-185, T-187; `crates/dnsqb-service/src/watchdog/launcher.rs`
+DECISIONS.md 2026-09-07 (T-185 — `stop.flag`/`quit.flag`), 2026-09-08 (T-193 — пауза; T-195 — «Повністю видалити»);
+TASKS.md T-150, T-181, T-182, T-183, T-185, T-187, T-195; `crates/dnsqb-service/src/watchdog/launcher.rs`
 (`ensure_sibling_running`), `crates/dnsqb-service/src/lifecycle.rs` (флаги),
 `crates/dnsqb-watcher/src/main.rs` (порядок спавну, повторний запуск, `stop.flag`/`quit.flag`
-у лупі), `crates/dnsqb-tray/src/main.rs` (запобіжник, меню T-185); `diagrams/watchdog-state.md`
+у лупі), `crates/dnsqb-tray/src/main.rs` (запобіжник, меню T-185), `crates/dnsqb-tray/src/self_uninstall.rs`
+(T-195 — wipe теки); `diagrams/watchdog-state.md`
 + `diagrams/watchdog-channels.md` (нагляд після бутстрапу).
 
 # Життя трьох процесів — бутстрап, точки входу, зупинка
@@ -76,6 +77,9 @@ stateDiagram-v2
     Filtering --> Exited: трей «Вийти з DNS Quorum Filter»<br/>(stop.flag + quit.flag; watcher за ≤5 с зупиняє службу й виходить)
     Paused --> Exited: трей «Вийти…»
     Exited --> Filtering: плитка / логін (старт watcher чистить stop.flag)
+    Filtering --> Removed: трей «Повністю видалити»<br/>(T-195: секрети + stop/quit.flag; detached powershell чекає вихід усіх 3<br/>і стирає всю %LOCALAPPDATA%\dns-quorum-filter; відкрито ms-settings:appsfeatures)
+    Paused --> Removed: трей «Повністю видалити»
+    Removed --> [*]: користувач тисне «Видалити» в Параметрах Windows
 
     Filtering --> Filtering: трей «Сховати іконку»<br/>(виходить лише трей; служба+watcher живі;<br/>повернути — клік плитки → 2-й watcher піднімає трей)
     Filtering --> Filtering: трей «Відновити нагляд»<br/>(завжди в меню; ensure_sibling_running(Watcher),<br/>no-op якщо watcher живий)
@@ -89,7 +93,7 @@ watcher більше не заморожений.
 
 | Сценарій | Реакція |
 |---|---|
-| S13 — видалення MSIX | Немає uninstall-хука → cert у `LocalMachine\TrustedPeople` + секрети в Credential Manager + `%LOCALAPPDATA%` лишаються. Прибрати **до** видалення: трей «Повністю видалити» (T-70) |
+| S13 — видалення MSIX | Немає uninstall-хука. Трей «Повністю видалити» (T-70 + **T-195**): чистить cert + секрети Credential Manager, тоді пише `stop.flag`+`quit.flag`, спавнить від'єднаний прихований `powershell` (`self_uninstall.rs`), що чекає на вихід усіх 3 процесів і стирає всю `%LOCALAPPDATA%\dns-quorum-filter`, і відкриває `ms-settings:appsfeatures` (`explorer.exe`); фінальний клік «Видалити» — у Параметрах Windows. `/admin/uninstall-local-state` — лише секрети (крутиться в службі). |
 | S14 — Linux / headless | Guard `instance::acquire` — `#[cfg(windows)]` → `UnsupportedPlatform` → service/watcher виходять одразу; трей без дисплея не стартує. **Нічого не працює — Фаза 6.** Лог (T-184) робить це зрозумілим |
 | S15 — dev (`cargo run`, debug) | `windows_subsystem` під `not(debug_assertions)` → debug лишає консоль зі stdout. Ручний старт будь-якого бінарника |
 
