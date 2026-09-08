@@ -479,10 +479,12 @@ plan+advisor) — `packaging/Trust-TestCert.ps1`: self-elevating хелпер д
 (`LocalMachine\TrustedPeople` конкретно; `0x800B010A` у чернетці v0.3.0), перенесено з sister-проєкту
 pakko; чернетку v0.3.0 пропатчено (asset + нотатки). TASKS-DONE.md.
 **Батч 3.12 (T-181–T-185, T-187) зроблено 2026-09-07** (пост-Ф3 hotfix процесної моделі MSIX).
-**Батч 3.14 (T-191–T-192) зроблено 2026-09-08** (plan+advisor kickoff+closing) — кольорові
-трей-іконки за станом (`status::icon_colour`, 4 гліфи) + read-only `trust_store::is_trusted`
-наперед; патч-реліз **`v0.3.1`** покриває Батч 3.12 + 3.14, закриває T-186 → `release.yml`
-чернетка. Майстер онбордингу (Батч 3.13, T-188–T-190) відкладено → `v0.3.2`. TASKS-DONE.md.
+**Батч 3.14 (T-191–T-192): код + closing-advisor зроблено 2026-09-08** (plan+advisor
+kickoff+closing) — кольорові трей-іконки за станом (`status::icon_colour`, 4 гліфи) + read-only
+`trust_store::is_trusted` наперед; T-191 закомічено (`6bba1f8` + `25ef641`), CI 7/7. Патч-реліз
+**`v0.3.1`** (покриває Батч 3.12 + 3.14, закриває T-186) — **тег ще не пушнуто**: ручний чистий
+прогін MSIX користувач робитиме разом із Батчем 3.13. Майстер онбордингу (Батч 3.13, T-188–T-190)
+→ `v0.3.2`. TASKS-DONE.md.
 
 **Наскрізні гейти (батч ≠ шорткат):** pure/impure розділення (голосування/backoff/budget/
 офлайн-рішення/stale-mtime-предикат/heartbeat-framing — чисті fn з іменованими тестами; сокети/
@@ -792,13 +794,15 @@ watchdog. Клас — як T-178: реліз опубліковано, баг �
   `spawn_cert_action` (`request_recheck()` після `certutil`-мутації). Override cert→red фліпає
   **лише** `Filtering`. Docs: DECISIONS.md, `diagrams/ui-status-indicator.md` (+SOURCES) + README,
   SERVICES.md §Іконка, CLAUDE.md, UI-SPEC.md. Без анімації вершин. Деталі — TASKS-DONE.md.
-- [x] T-192 — **зроблено 2026-09-08**. Патч-реліз `v0.3.1` (покриває Батч 3.12 + 3.14; закриває
-  T-186). Без бампу (`0.3.1` уже в `0e9b944`). CLAUDE.md «Project state»; `sinkhole_probe` — exit 1
-  на flaky `adguard`-canary (не блокує — `94.140.14.0/24` живий: `adguard-family` + `dns4eu*`
-  влучили в свої префікси в тому ж прогоні, `SINKHOLE_NETS` без змін); повний локальний гейт зелений;
-  `python assets/gen-icon.py` → чиста тека; MSIX перезібрано (`pack-msix.ps1`, test-signed,
-  `dist\dns-quorum-filter-0.3.1.msix` 17.4 MB); ручний чистий прогін MSIX (користувач); closing-advisor;
-  тег `v0.3.1` на docs-коміті → `release.yml` чернетка (неопубліковано). Деталі — TASKS-DONE.md.
+- [~] T-192 — **код і closing-advisor зроблено 2026-09-08; тег ЧЕКАЄ**. Патч-реліз `v0.3.1`
+  (покриває Батч 3.12 + 3.14; закриває T-186). Без бампу (`0.3.1` уже в `0e9b944`). CLAUDE.md
+  «Project state»; `sinkhole_probe` — exit 1 на flaky `adguard`-canary (не блокує —
+  `94.140.14.0/24` живий: `adguard-family` + `dns4eu*` влучили в свої префікси в тому ж прогоні,
+  `SINKHOLE_NETS` без змін); повний локальний гейт + CI (`25ef641`, closing-advisor фікс каденсу)
+  зелені; `python assets/gen-icon.py` → чиста тека; MSIX перезібрано (`pack-msix.ps1`, test-signed,
+  `dist\dns-quorum-filter-0.3.1.msix` 17.4 MB, з фіксом каденсу). **Ручний чистий прогін MSIX +
+  тег `v0.3.1` → `release.yml` — відкладено: користувач перевірятиме РАЗОМ із Батчем 3.13**
+  (не за ПК 2026-09-08). Деталі — TASKS-DONE.md.
 
 ## Фаза 4 — Рейтинговий фільтр «бульбашка» + інфраструктура топ-N списку по країнах
 
