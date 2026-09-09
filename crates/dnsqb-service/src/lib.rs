@@ -148,6 +148,7 @@ mod persist_dto;
 mod pipeline;
 mod query_log;
 mod quorum;
+mod rating_filter;
 mod reachability;
 mod timeout;
 mod tls;
@@ -214,6 +215,7 @@ pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
 pub use quorum::{
     is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict, VoterRecord, VoterVerdict,
 };
+pub use rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
 pub use reachability::{
     next_probe_delay, run_reachability_prober, verdict_from_probe_results, NetworkReachability,
     MARKERS, OFFLINE_CONFIRM_CYCLES,
