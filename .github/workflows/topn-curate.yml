@@ -42,6 +42,9 @@ jobs:
           TOPN: ${{ inputs.n }}
           MONTH: ${{ inputs.month }}
         run: |
+          # Clear the committed lists first so the artifact carries only what
+          # this run generated (and `if-no-files-found: error` can fire).
+          Remove-Item data/topn/*.txt, data/topn/*.txt.sha256 -ErrorAction SilentlyContinue
           $toolArgs = @("lists=$env:LISTS", "n=$env:TOPN")
           if ($env:MONTH.Trim()) { $toolArgs += "month=$env:MONTH" }
           cargo run --release --example curate_topn --locked -- @toolArgs

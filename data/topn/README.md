@@ -55,8 +55,8 @@ the `/admin/ui` credits footer.
 ## Regenerating
 
 `.github/workflows/topn-curate.yml` (`workflow_dispatch`) runs the curation
-tool and uploads the results as an artifact; a maintainer reviews the diff
-and commits it. Locally:
+tool for the requested lists in one job and uploads the results as an
+artifact; a maintainer reviews the diff and commits it. Locally:
 
 ```
 cargo run --release --example curate_topn -- lists=ua,global n=1000

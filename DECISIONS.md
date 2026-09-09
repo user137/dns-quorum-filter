@@ -1332,7 +1332,11 @@ origin→registrable (PSL) і пише сирий популярний набі�
 **Наслідки в коді:** `crates/dnsqb-service/examples/curate_topn.rs` — прибрано `screen_registrable`,
 `query_with_retry`, DoH-клієнт, baseline-константи, запити до пресетів; лишились fetch + PSL +
 `build_list` (чиста) + запис. `.github/workflows/topn-curate.yml` — без live-DNS, один job, швидко.
-Ліниве прибирання на клієнті — задача Батча 4.3 (з T-124–T-126).
+Ліниве прибирання на клієнті — задача Батча 4.3 (з T-124–T-126). **Для 4.3:** прибрані домени
+**не** можна тримати у завантаженому `<list>.txt` (atomic-swap на кожен refresh їх зітре) —
+потрібен окремий per-list локальний overlay у app-data; зона на момент матчу =
+`downloaded_list − removed_overlay`. Прибраний домен лишається прибраним і після вимкнення/
+ввімкнення фільтра (інакше зона щоразу «перевчає» ті самі домени).
 **Наслідки в доках:** SPEC.md §5.3 п.1 (гігієна = лінива рантайм), `data/topn/README.md` («NO
 content filtering here»), CONFIGURATION.md, CLAUDE.md (Commands). Перекриває опис T-108 у
 TASKS.md §"Фаза 4" від 2026-09-07.
