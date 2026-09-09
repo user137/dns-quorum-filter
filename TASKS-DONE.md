@@ -4578,3 +4578,68 @@ advisor Батча 3.13 (перед T-188): три-стан `cert-status` зам
     T-196 + SOURCES +T-196). Інші — без змін.
 - [ ] **T-190** — патч-реліз `v0.3.2` (бамп `0.3.1`→`0.3.2` + closing-advisor + MSIX + ручний
   прогін спільно з `v0.3.1` + тег).
+
+### Батч 4.1 — конвеєр курації топ-N + атрибуція (T-107, T-108, T-180; гейт T-120; зроблено 2026-09-09, kickoff plan+advisor + AskUserQuestion, closing-advisor; 6 комітів)
+
+Перший батч виконання Фази 4 після re-scope (Батч 4.0). **Проєктний бік — клієнтського коду
+немає** (крок конвеєра рейтинг-фільтра — Батч 4.3).
+
+**Kickoff-розвилки (AskUserQuestion + advisor 2026-09-09):**
+- Форма інструмента → **Rust example** `crates/dnsqb-service/examples/curate_topn.rs` (не Python).
+- Канал розповсюдження → **`data/topn/` у репо**, стабільні шляхи (не тег+`gh release`).
+- PSL → **без крейта**: ручний matcher (алгоритм publicsuffix.org — exception / `*` / implicit-`*`)
+  над пінованим `examples/public_suffix_list.dat` (`publicsuffix/list` @ `3955e3e`, 2026-09-08,
+  MPL-2.0). Плановий фолбек, благословлений advisor для dev-only тулзи з людино-ревʼюбельним
+  виходом; нуль `cargo deny` / SECURITY.md-возні.
+
+**T-107 — `curate_topn`.** Тягне CrUX top-бакет (`rank <= 1000`, host-only, cap N): per-country з
+`InternetHealthReport/crux-top-lists-country` (`<cc>/<yyyymm>.csv.gz`), `global` з
+`zakird/crux-top-lists` (`data/global/current.csv.gz`). `origin → registrable` через PSL, dedup +
+sort → `data/topn/<list>.txt` (з `#`-заголовком провенансу) + `<list>.txt.sha256` (формат
+`sha256sum`). `.github/workflows/topn-curate.yml` — `workflow_dispatch`, один job, артефакт →
+людський PR. **`ci.yml` += `cargo test --workspace --examples`** — `--lib --bins` не запускав
+`#[cfg(test)]` у прикладах (той самий клас, що колись сховав тест `dnsqb-tray/browser.rs`).
+
+**T-108 — переосмислено (DECISIONS.md 2026-09-09).** Перша ітерація фільтрувала список на етапі
+курації: для кожного з ~1000 registrable — two-baseline-gate + запит до кожного Security/Adult
+пресета, drop якщо блокується. Живий прогін показав: (а) Quad9 з dev-адреси віддає
+`error sending request` після сотень швидких запитів (рейтлімітинг/бан); (б) навіть на
+GitHub-раннерах частка помилок 0 % (`gb`) → 45 % (`global`), а пропущений через помилку домен у
+BLOCK-only бульбашці = **заблокований**, і файл цього не показує; (в) без списку відкинутого
+рев'ю наосліп. **Рішення:** курація **не робить DNS**. Гігієна → клієнт (Батч 4.3), **лінива під
+час роботи**: домен у зоні, який кворум блокує, клієнт прибирає з локального набору зони. Причина
+— 1000 DoH-запитів/резолвер/регенерація з однієї адреси = ризик бану; кворум усе одно стоїть далі
+по конвеєру; контентна політика лишається в кворумі, де нею керує користувач. `curate_topn`
+спрощено до fetch + PSL + `build_list` (чиста) + запис; `topn-curate.yml` — без live-DNS.
+
+**T-180 — атрибуція.** `<footer id="credits">` `/admin/ui`: Chrome UX Report (CC BY 4.0, © Google)
++ Public Suffix List (MPL-2.0), «нормалізовано до реєстрованих доменів». Тест `admin_ui`
+`index_html_carries_the_required_geoip_data_attributions` розширено (+CrUX +PSL). Repo-side
+(обовʼязкова частина CC BY 4.0 — тут розповсюджується похідний твір): `data/topn/README.md` з
+«changes made».
+
+**T-120 — гейт закрито.** `data/topn/{ua,us,de,pl,gb,global}.txt` опубліковано (CrUX 202608 /
+global current): registrable на список — ua 881, us 844, de 888, pl 828, gb 892, global 822;
+skipped no-registrable 0–1. `.sha256` звірені локально (`Get-FileHash` / `sha256sum`). `ua.txt`
+містить усі великі укр. сайти (privatbank / monobank / novaposhta / rozetka / olx / diia.gov.ua /
+prom / silpo / pravda / ukr.net), 332 `.ua`-домени.
+
+**Тести (`examples/curate_topn.rs` `#[cfg(test)]`, у CI через `--examples`):** PSL —
+`registrable_handles_multi_label_suffixes` (`.co.uk`/`.com.ua`/`.com.br`),
+`registrable_applies_wildcard_and_exception_rules` (`*.ck` / `!www.ck`),
+`registrable_is_none_for_a_bare_public_suffix_or_empty_input`,
+`registrable_uses_the_implicit_star_rule_for_an_unknown_tld`;
+`build_list_dedups_to_sorted_registrables_and_counts_skips`; `list_url_routes_global_and_country_separately`;
+`curated_file_body_is_comments_then_bare_domains`. Живий CrUX-fetch — не юніт (прецедент
+`topn_fp_probe`/`sinkhole_probe`).
+
+**Верифікація:** `fmt --check` / `clippy --workspace --all-targets -D warnings` / `test --workspace
+--lib --bins` / `--examples` / `--doc` / `cargo doc -D warnings` / `cargo deny check` — зелені.
+CI (`7a24ae3` і далі) — 7/7. `#![forbid(unsafe_code)]` цілий.
+
+**Звірка діаграм:** GAP 0 — нема зміни діаграмованого стану/DTO/flow; клієнтський крок конвеєра
+(де зʼявиться `decision_source = RATING_FILTER` + ліниве прибирання) — Батч 4.3.
+
+**Коміти:** `3f8a022` (`.gitignore /dist/`) · `8d2d726` (T-107/T-108 v1 tool + PSL + ci `--examples`)
+· `9c5f168` (workflow + retry-hardening + README) · `cad26d5` (fix workflow prep) · `7a24ae3`
+(T-180 footer + docs) · `<pending>` (T-108 redesign: no-DNS tool + datasets + DECISIONS + close).

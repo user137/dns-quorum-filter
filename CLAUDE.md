@@ -47,7 +47,16 @@ Reasons: T-106 (Cloudflare Radar is CC BY-NC — no cleanly-licensed ordinal per
 CrUX CC BY 4.0 is the candidate), T-104 (Ads FP ≈ 0 for the default, Adult "FP" mostly correct
 blocks + a blanket top-N exemption would un-block genuinely-adult popular sites), and a user
 design clarification. `VoterScopeView` / `LogEntry.voter_scope` removed (dead — nothing narrows
-the voter set). See DECISIONS.md 2026-09-07.** Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
+the voter set). See DECISIONS.md 2026-09-07.** **Батч 4.1 done 2026-09-09** (T-107/T-108/T-180,
+gate T-120; kickoff plan+advisor+AskUserQuestion, closing-advisor): `examples/curate_topn.rs` (no
+DNS — fetch CrUX top bucket + origin→registrable via a bundled pinned PSL, hand-rolled matcher, no
+crate) + `.github/workflows/topn-curate.yml` + first datasets `data/topn/{ua,us,de,pl,gb,global}.txt`
++ `.sha256` (raw popular set, no content filtering). `ci.yml` += `cargo test --workspace --examples`.
+**T-108 re-scoped to Батч 4.3** (DECISIONS.md 2026-09-09): hygiene is lazy client-side — an in-zone
+domain quorum blocks is removed from the local zone set, not a curation-time bulk scan (1000 DoH
+queries/resolver/regen risks the address being rate-limited; quorum runs anyway). T-180: CrUX
+CC BY 4.0 + PSL MPL-2.0 in the `/admin/ui` `#credits` footer + `data/topn/README.md`. No client
+pipeline code yet (Батч 4.3). Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
 (macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
 Батч 3.7): `.github/workflows/
@@ -684,15 +693,17 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   silently under-counts a voter if the provider rotates its block IP. `cargo test -p dnsqb-service
   --lib -- --ignored` also runs it as `#[ignore]`d live-verify tests (`quorum::tests::live_sinkhole_*`,
   plus `upstream`'s live-Quad9 test).
-- `cargo run --release --example curate_topn -- lists=ua,global n=1000` — T-107/T-108 Фаза 4
-  curation tool (live DNS, not CI, ~20-30 min/list). Fetches a CrUX top bucket (per-country from
+- `cargo run --example curate_topn -- lists=ua,global n=1000` — T-107 Фаза 4 curation tool
+  (**no DNS** — one HTTP GET per list, seconds). Fetches a CrUX top bucket (per-country from
   `InternetHealthReport/crux-top-lists-country`, or `global` from `zakird/crux-top-lists`),
   normalises origin→registrable via a bundled pinned PSL (`examples/public_suffix_list.dat`,
-  MPL-2.0), drops any registrable a Security-tier **or** Adult-tier preset blocks (T-108 hygiene;
-  Ads-tier is report-only — out-of-zone is already BLOCK), and writes `data/topn/<list>.txt` +
-  `.txt.sha256` (stable paths, `#` header for provenance). Normally run via
-  `.github/workflows/topn-curate.yml` (`workflow_dispatch`, per-list matrix) → artifact → human
-  PR. Example `#[cfg(test)]` modules now run in CI via `cargo test --workspace --examples`.
+  MPL-2.0), writes `data/topn/<list>.txt` + `.txt.sha256` (stable paths, `#` provenance header) —
+  the **raw** popular set, no content filtering. T-108 hygiene is lazy client-side (Батч 4.3): an
+  in-zone domain quorum blocks is removed from the local zone set — a curation-time bulk scan
+  (1000 DoH queries per resolver per regen) risks the address being rate-limited, and quorum runs
+  anyway (DECISIONS.md 2026-09-09). Normally run via `.github/workflows/topn-curate.yml`
+  (`workflow_dispatch`) → artifact → human PR. Example `#[cfg(test)]` modules run in CI via
+  `cargo test --workspace --examples`.
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`). Since Батч 3.7: `ci.yml` also

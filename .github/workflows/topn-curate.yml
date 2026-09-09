@@ -1,13 +1,10 @@
 name: Top-N curation
 
 # T-107: regenerates the per-list availability-zone files under data/topn/
-# (the Фаза 4 rating-filter "bubble" source). Manual only — it makes live DNS
-# queries to every built-in filtering preset for each candidate domain
-# (~20-30 min per 1000-row list), so it is NOT wired to push/PR. The output
-# is uploaded as an artifact; a human reviews the hygiene diff and commits it
-# via a normal PR (T-104 found genuinely-adult/gambling domains in the raw
-# top buckets — the drop pass needs an eye on it). A monthly `schedule:` can
-# be added once someone is on the hook to review its artifacts.
+# (the Фаза 4 rating-filter "bubble" source). Manual — a human reviews the
+# diff and commits it via a normal PR. The tool does NO DNS (it fetches a
+# CrUX popularity list and normalises origin→registrable); content hygiene is
+# a lazy runtime job in the client (T-108), not a curation-time scan.
 
 on:
   workflow_dispatch:
@@ -33,50 +30,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # inputs.lists (a string) -> a JSON array the curate job can matrix over.
-  prep:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.split.outputs.matrix }}
-    steps:
-      - id: split
-        shell: bash
-        env:
-          LISTS: ${{ inputs.lists }}
-        run: |
-          json=$(jq -cn --arg s "$LISTS" '
-            $s | split(",")
-               | map(gsub("[[:space:]]";"") | ascii_downcase)
-               | map(select(test("^([a-z]{2}|global)$")))
-               | unique')
-          if [ "$json" = "[]" ]; then
-            echo "::error::no valid list names in \"$LISTS\""
-            exit 1
-          fi
-          echo "matrix=$json" >> "$GITHUB_OUTPUT"
-          echo "lists: $json"
-
   curate:
-    needs: prep
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        list: ${{ fromJSON(needs.prep.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - name: Curate ${{ matrix.list }}
+      - name: Curate lists
         shell: pwsh
+        env:
+          LISTS: ${{ inputs.lists }}
+          TOPN: ${{ inputs.n }}
+          MONTH: ${{ inputs.month }}
         run: |
-          $args = @("lists=${{ matrix.list }}", "n=${{ inputs.n }}")
-          if ("${{ inputs.month }}".Trim()) { $args += "month=${{ inputs.month }}" }
-          cargo run --release --example curate_topn --locked -- @args
+          $toolArgs = @("lists=$env:LISTS", "n=$env:TOPN")
+          if ($env:MONTH.Trim()) { $toolArgs += "month=$env:MONTH" }
+          cargo run --release --example curate_topn --locked -- @toolArgs
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
-          name: topn-${{ matrix.list }}
+          name: topn-lists
           if-no-files-found: error
           path: |
-            data/topn/${{ matrix.list }}.txt
-            data/topn/${{ matrix.list }}.txt.sha256
+            data/topn/*.txt
+            data/topn/*.txt.sha256

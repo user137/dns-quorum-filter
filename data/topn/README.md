@@ -35,9 +35,12 @@ CrUX data is licensed **[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/
 
 **Changes made to the source data** (CC BY 4.0 §3(a)): origins are
 normalised to their registrable domain and deduplicated; only the top
-(`1000`) bucket is kept, capped at N rows; domains blocked by a
-Security-tier or Adult-tier filtering resolver at curation time are removed
-(hygiene pass, T-108). Each file's `#` header records the exact counts.
+(`1000`) bucket is kept, capped at N rows. **No content filtering is done
+here** — a list is the raw popular set. Dropping a domain that a
+Security/Adult resolver blocks is a lazy runtime job in the client (T-108):
+an in-zone domain still goes through the normal quorum pipeline, and if
+quorum blocks it the client removes it from its local zone set. Each file's
+`#` header records the counts.
 
 The `origin → registrable` step uses the **Public Suffix List**
 (`crates/dnsqb-service/examples/public_suffix_list.dat`, from
@@ -52,12 +55,11 @@ the `/admin/ui` credits footer.
 ## Regenerating
 
 `.github/workflows/topn-curate.yml` (`workflow_dispatch`) runs the curation
-tool per list and uploads the results as artifacts; a maintainer reviews the
-hygiene diff and commits it. Locally:
+tool and uploads the results as an artifact; a maintainer reviews the diff
+and commits it. Locally:
 
 ```
 cargo run --release --example curate_topn -- lists=ua,global n=1000
 ```
 
-Live DNS queries only, ~20–30 min per 1000-row list. See the tool's module
-doc for the method.
+Fast — one HTTP GET per list, no DNS. See the tool's module doc.
