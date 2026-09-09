@@ -46,6 +46,7 @@ use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
 use crate::query_log::{Decision, DecisionSource};
 use crate::quorum::{requires_quorum, resolve, QuorumVerdict, VoterRecord};
+use crate::rating_filter::ZoneLists;
 use crate::reachability::NetworkReachability;
 use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
 use crate::upstream::{DohClient, ProviderEntry};
@@ -102,6 +103,26 @@ pub struct UpstreamContext<'a> {
     /// and the offline fast path still wins above this (the baseline is
     /// unreachable too).
     pub filtering_paused: bool,
+    /// T-124 — the rating filter «bubble» (SPEC.md §5.3 step 5), or `None`
+    /// when it is disabled or has no lists loaded (the caller,
+    /// `dispatch::resolve_doh_request`, computes that). `Some` means: a
+    /// domain outside every zone is `BLOCK`ed here and quorum is never
+    /// consulted; a domain in a zone proceeds unchanged. Bundled here rather
+    /// than as a ninth `handle_query` parameter, for the
+    /// `clippy::too_many_arguments` reason [`CacheContext`] documents.
+    pub rating_filter: Option<RatingFilterView<'a>>,
+}
+
+/// The rating-filter «bubble» inputs for one query (T-124) — the zone list
+/// union and the lazy-hygiene removal overlay, taken as **two independent
+/// snapshots** because they have different single writers (the top-N
+/// refresher vs the pipeline). See [`crate::rating_filter`].
+#[derive(Clone, Copy)]
+pub struct RatingFilterView<'a> {
+    /// The union of every active availability-zone list.
+    pub lists: &'a ZoneLists,
+    /// Registrable domains dropped from the bubble by lazy hygiene (T-108).
+    pub removed: &'a std::collections::HashSet<String>,
 }
 
 /// SPEC.md §3.5's live `GeoIP` filter inputs for one query (T-76) — bundled
@@ -176,6 +197,16 @@ pub struct QueryLogMeta {
     ///
     /// [`geoip_country`]: Self::geoip_country
     pub resolved_ip_country: Option<String>,
+    /// T-108 lazy hygiene — set to `Some(registrable)` **only** when quorum
+    /// freshly blocked a domain that the rating filter had just admitted as
+    /// an exact in-zone registrable (SPEC.md §5.3, DECISIONS.md 2026-09-09).
+    /// It is an action signal for `dispatch::resolve_doh_request`, which
+    /// calls `AppState::record_zone_removal` with it — **not** a log field
+    /// (it is never written to the `LogEntry`). `None` on every other path,
+    /// including a subdomain block (quorum already re-blocks that every time
+    /// at no cost, so evicting the whole registrable would be pure
+    /// collateral).
+    pub zone_removal: Option<String>,
 }
 
 /// `Decision::Allowed` vs `Decision::Failed` from a resolved [`Message`] —
@@ -226,6 +257,7 @@ async fn baseline_passthrough_with_meta<C: DohClient + Sync>(
         voters: Vec::new(),
         geoip_country: None,
         resolved_ip_country,
+        zone_removal: None,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -255,6 +287,7 @@ fn offline_servfail_with_meta(
         voters: Vec::new(),
         geoip_country: None,
         resolved_ip_country: None,
+        zone_removal: None,
     };
     (
         PipelineOutcome::Response(build_servfail_response(query)),
@@ -282,6 +315,66 @@ fn blocklist_response_with_meta(
         // A blocklist response is synthesized (0.0.0.0/::, wire.rs), never
         // a real resolved IP - no country to report (T-161).
         resolved_ip_country: None,
+        zone_removal: None,
+    };
+    (
+        PipelineOutcome::Response(build_block_response(query, ttl)),
+        Some(meta),
+    )
+}
+
+/// Pipeline step 5's verdict (T-124, SPEC.md §5.3) — a small `Copy` enum so
+/// `handle_query` decides in one `match` without a large `Result` on the
+/// return.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RatingFilterStep {
+    /// The filter is disabled (or has no zones) — no effect.
+    Off,
+    /// The domain is inside a zone; `exact` is `true` when quorum blocking
+    /// it should also evict it via lazy hygiene (T-108) — i.e. `log_domain`
+    /// itself is the matched registrable, not a subdomain of it.
+    InZone { exact: bool },
+    /// The domain is outside every zone — `handle_query` returns a BLOCK and
+    /// never consults quorum.
+    OutOfZone,
+}
+
+/// Resolves step 5 against the bubble. Matches `log_domain` (trimmed,
+/// lowercased), never `domain` (which still has a trailing dot).
+fn rating_filter_step(view: Option<RatingFilterView<'_>>, log_domain: &str) -> RatingFilterStep {
+    let Some(rf) = view else {
+        return RatingFilterStep::Off;
+    };
+    match rf.lists.zone_match(log_domain, rf.removed) {
+        None => RatingFilterStep::OutOfZone,
+        Some(registrable) => RatingFilterStep::InZone {
+            exact: registrable == log_domain,
+        },
+    }
+}
+
+/// The rating filter «bubble»'s BLOCK (T-124, SPEC.md §5.3 step 5): the
+/// domain was outside every active availability zone, so quorum was never
+/// consulted. Synthesized `0.0.0.0`/`::` like a blocklist match; **not
+/// cached** — the zone changes under an enable/disable toggle and under lazy
+/// hygiene (T-108), so a cached BLOCK could outlive the reason for it (the
+/// same reason a `blocklist` match isn't cached either).
+fn rating_filter_block_with_meta(
+    query: &Message,
+    domain: String,
+    qtype: RecordType,
+    cache_config: &CacheConfig,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
+    let meta = QueryLogMeta {
+        domain,
+        qtype,
+        decision: Decision::Blocked,
+        decision_source: DecisionSource::RatingFilter,
+        voters: Vec::new(),
+        geoip_country: None,
+        resolved_ip_country: None,
+        zone_removal: None,
     };
     (
         PipelineOutcome::Response(build_block_response(query, ttl)),
@@ -330,6 +423,7 @@ fn cache_hit_response_with_meta(
                 voters: Vec::new(),
                 geoip_country: Some(country),
                 resolved_ip_country,
+                zone_removal: None,
             };
             return (
                 PipelineOutcome::Response(build_block_response(query, ttl)),
@@ -349,6 +443,7 @@ fn cache_hit_response_with_meta(
         voters: Vec::new(),
         geoip_country: None,
         resolved_ip_country,
+        zone_removal: None,
     };
     (
         PipelineOutcome::Response(response_from_cache_entry(query, entry, now)),
@@ -508,6 +603,16 @@ pub async fn handle_query<C: DohClient + Sync>(
         }
     }
 
+    // Step 5 — rating filter «bubble» (SPEC.md §5.3), below the cache read on
+    // purpose (SPEC.md §5.3 has the cache outrank the filter).
+    let zone_hit_exact = match rating_filter_step(upstream.rating_filter, &log_domain) {
+        RatingFilterStep::Off => false,
+        RatingFilterStep::InZone { exact } => exact,
+        RatingFilterStep::OutOfZone => {
+            return rating_filter_block_with_meta(query, log_domain, qtype, cache.config);
+        }
+    };
+
     let outcome = resolve(client, query, timeout_config, voters, baseline_url).await;
     if outcome.filters_unreachable {
         // T-155: every enabled voter failed to answer. The verdict rests on
@@ -522,32 +627,64 @@ pub async fn handle_query<C: DohClient + Sync>(
     match outcome.verdict {
         QuorumVerdict::NotApplicable => (PipelineOutcome::ProxyToSingleUpstream, None),
         QuorumVerdict::Block => {
-            let ttl = cache.config.block_verdict_ttl;
-            cache
-                .cache
-                .insert(key, CacheEntry::new(Verdict::Block, ttl))
-                .await;
-            let meta = QueryLogMeta {
-                domain: log_domain.clone(),
+            quorum_block_response_with_meta(
+                cache,
+                key,
+                query,
+                outcome,
+                log_domain,
                 qtype,
-                decision: Decision::Blocked,
-                decision_source: DecisionSource::Quorum,
-                voters: outcome.voters,
-                geoip_country: None,
-                // A quorum block response is synthesized (0.0.0.0/::), same
-                // as a blocklist match - no real resolved IP (T-161).
-                resolved_ip_country: None,
-            };
-            (
-                PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl))),
-                Some(meta),
+                zone_hit_exact,
             )
+            .await
         }
         QuorumVerdict::Allow => {
             quorum_allow_response_with_meta(cache, key, query, outcome, log_domain, qtype, geoip)
                 .await
         }
     }
+}
+
+/// The `QuorumVerdict::Block` branch of `handle_query`'s quorum step —
+/// extracted for `clippy::too_many_lines` like its `Allow` sibling. Caches
+/// the `Block` verdict, then applies lazy hygiene (T-108): when quorum
+/// blocked a domain the rating filter had just admitted as an *exact*
+/// in-zone registrable (`zone_hit_exact`), `zone_removal` carries it so
+/// `dispatch::resolve_doh_request` evicts it from the local bubble. A
+/// subdomain block leaves `zone_hit_exact` false — quorum re-blocks that at
+/// no cost, so evicting the whole registrable would be collateral
+/// (DECISIONS.md 2026-09-09).
+async fn quorum_block_response_with_meta(
+    cache: &CacheContext<'_>,
+    key: CacheKey,
+    query: &Message,
+    outcome: crate::quorum::QuorumOutcome,
+    log_domain: String,
+    qtype: RecordType,
+    zone_hit_exact: bool,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let ttl = cache.config.block_verdict_ttl;
+    cache
+        .cache
+        .insert(key, CacheEntry::new(Verdict::Block, ttl))
+        .await;
+    let zone_removal = zone_hit_exact.then(|| log_domain.clone());
+    let meta = QueryLogMeta {
+        domain: log_domain,
+        qtype,
+        decision: Decision::Blocked,
+        decision_source: DecisionSource::Quorum,
+        voters: outcome.voters,
+        geoip_country: None,
+        // A quorum block response is synthesized (0.0.0.0/::), same as a
+        // blocklist match - no real resolved IP (T-161).
+        resolved_ip_country: None,
+        zone_removal,
+    };
+    (
+        PipelineOutcome::Response(build_block_response(query, duration_to_ttl_secs(ttl))),
+        Some(meta),
+    )
 }
 
 /// The `QuorumVerdict::Allow` branch of `handle_query`'s quorum step —
@@ -608,6 +745,7 @@ async fn quorum_allow_response_with_meta(
         voters,
         geoip_country,
         resolved_ip_country,
+        zone_removal: None,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -689,6 +827,7 @@ async fn filters_unreachable_outcome<C: DohClient + Sync>(
         voters,
         geoip_country: None,
         resolved_ip_country,
+        zone_removal: None,
     };
     (PipelineOutcome::Response(message), Some(meta))
 }
@@ -959,8 +1098,8 @@ fn duration_to_ttl_secs(duration: Duration) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_query, invalidate_changed, CacheContext, GeoipFilter, PipelineOutcome,
-        UpstreamContext,
+        handle_query, invalidate_changed, CacheContext, GeoipFilter, PipelineOutcome, QueryLogMeta,
+        RatingFilterView, UpstreamContext,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::geoip::GeoipReader;
@@ -1205,6 +1344,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1259,6 +1399,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1297,6 +1438,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1351,6 +1493,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1385,6 +1528,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1428,6 +1572,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1485,6 +1630,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1534,6 +1680,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1566,6 +1713,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1608,6 +1756,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1645,6 +1794,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1687,6 +1837,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1720,6 +1871,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1764,6 +1916,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1803,6 +1956,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -1851,6 +2005,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2038,6 +2193,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2077,6 +2233,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2122,6 +2279,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2172,6 +2330,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2261,6 +2420,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2309,6 +2469,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2358,6 +2519,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: true,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2410,6 +2572,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: true,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2462,6 +2625,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: true,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2507,6 +2671,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: true,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2544,6 +2709,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Offline,
                 filtering_paused: true,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2590,6 +2756,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2636,6 +2803,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2679,6 +2847,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2736,6 +2905,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2764,6 +2934,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2804,6 +2975,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2850,6 +3022,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2895,6 +3068,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2941,6 +3115,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -2987,6 +3162,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -3018,6 +3194,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -3063,6 +3240,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3121,6 +3299,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3193,6 +3372,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3241,6 +3421,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3309,6 +3490,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3372,6 +3554,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3431,6 +3614,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: Some(&reader),
@@ -3488,6 +3672,7 @@ mod tests {
                 serve_baseline_fallback: toggle,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -3576,6 +3761,7 @@ mod tests {
                 serve_baseline_fallback: true,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -3617,6 +3803,7 @@ mod tests {
                 serve_baseline_fallback: true,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -3643,6 +3830,7 @@ mod tests {
             serve_baseline_fallback: false,
             reachability: crate::reachability::NetworkReachability::Offline,
             filtering_paused: false,
+            rating_filter: None,
         }
     }
 
@@ -3792,6 +3980,7 @@ mod tests {
                 serve_baseline_fallback: false,
                 reachability: crate::reachability::NetworkReachability::Online,
                 filtering_paused: false,
+                rating_filter: None,
             },
             &GeoipFilter {
                 reader: None,
@@ -3806,6 +3995,312 @@ mod tests {
             response.metadata.response_code,
             hickory_proto::op::ResponseCode::ServFail,
             "an online query resolves normally"
+        );
+    }
+
+    // ---- T-124/T-125/T-129/T-130/T-131: rating filter «bubble» (step 5) ----
+
+    use crate::rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
+    use std::collections::HashSet;
+
+    fn zone_of(domains: &[&str]) -> ZoneLists {
+        ZoneLists::new(vec![ZoneSource::new(
+            ZoneSourceKind::CountryTopN("ua".to_string()),
+            domains.iter().map(|d| (*d).to_string()),
+        )])
+    }
+
+    fn allowing_client() -> MockClient {
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(ip)),
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        }
+    }
+
+    fn blocking_client() -> MockClient {
+        // Both filtering voters NULL-block (0.0.0.0); baseline resolves.
+        let blocked = allow_message_with_ip(Ipv4Addr::UNSPECIFIED);
+        MockClient {
+            quad9: MockResponse::Instant(blocked.clone()),
+            adguard: MockResponse::Instant(blocked),
+            baseline: MockResponse::Instant(allow_message_with_ip(Ipv4Addr::new(1, 1, 1, 1))),
+            calls: AtomicU32::new(0),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_with_rating_filter<C: DohClient + Sync>(
+        query: &Message,
+        client: &C,
+        overrides: &OverrideLists,
+        cache: &Cache,
+        zone: &ZoneLists,
+        removed: &HashSet<String>,
+        enabled: bool,
+    ) -> (PipelineOutcome, Option<QueryLogMeta>) {
+        let view = (enabled && !zone.is_empty()).then_some(RatingFilterView {
+            lists: zone,
+            removed,
+        });
+        handle_query(
+            query,
+            client,
+            overrides,
+            &default_voters(),
+            &CacheContext {
+                cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
+                rating_filter: view,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await
+    }
+
+    // T-129 — a domain outside every zone is BLOCKed by step 5 and quorum is
+    // never consulted (the mock client would panic on any call) and the
+    // verdict is not cached.
+    #[tokio::test]
+    async fn out_of_zone_domain_is_blocked_without_consulting_quorum() {
+        let cache = Cache::new(&cache_config());
+        let zone = zone_of(&["rozetka.com.ua"]);
+        let removed = HashSet::new();
+        let query = query_for("nonsense-xyz.example.", RecordType::A);
+
+        let (outcome, meta) = run_with_rating_filter(
+            &query,
+            &MockClient::all_panic(),
+            &overrides_with(vec![]),
+            &cache,
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        let Some(answer) = response.answers.first() else {
+            panic!("expected a NULL-block A answer");
+        };
+        assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+        let Some(meta) = meta else {
+            panic!("a rating-filter block still logs a row");
+        };
+        assert_eq!(meta.decision_source, DecisionSource::RatingFilter);
+        assert_eq!(meta.decision, Decision::Blocked);
+        assert!(meta.voters.is_empty());
+        assert!(meta.zone_removal.is_none());
+        let Ok(key) = CacheKey::new("nonsense-xyz.example.", RecordType::A) else {
+            panic!("cache key");
+        };
+        assert!(
+            cache.get(&key).await.is_none(),
+            "a rating-filter block must not be cached"
+        );
+    }
+
+    // T-130 — a domain inside a zone is NOT force-ALLOWed; it flows through
+    // the normal quorum step, and a quorum block still blocks it.
+    #[tokio::test]
+    async fn in_zone_domain_continues_through_quorum_and_is_not_force_allowed() {
+        let cache = Cache::new(&cache_config());
+        let zone = zone_of(&["rozetka.com.ua"]);
+        let removed = HashSet::new();
+
+        // In zone + quorum allows -> allowed with the real upstream IP.
+        let (allow_outcome, _) = run_with_rating_filter(
+            &query_for("www.rozetka.com.ua.", RecordType::A),
+            &allowing_client(),
+            &overrides_with(vec![]),
+            &cache,
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+        let PipelineOutcome::Response(resp) = allow_outcome else {
+            panic!("expected a Response");
+        };
+        assert!(
+            matches!(resp.answers.first().map(|r| &r.data), Some(RData::A(a)) if a.0 == Ipv4Addr::new(1, 1, 1, 1)),
+            "an in-zone domain resolves through quorum, not a synthesized ALLOW"
+        );
+
+        // In zone + quorum blocks -> blocked by QUORUM (not RatingFilter).
+        let (block_outcome, meta) = run_with_rating_filter(
+            &query_for("shady.rozetka.com.ua.", RecordType::A),
+            &blocking_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+        assert!(matches!(block_outcome, PipelineOutcome::Response(_)));
+        let Some(meta) = meta else {
+            panic!("logs a row")
+        };
+        assert_eq!(
+            meta.decision_source,
+            DecisionSource::Quorum,
+            "an in-zone block comes from quorum, the filter just let it through"
+        );
+        assert_eq!(
+            meta.zone_removal, None,
+            "a subdomain block does not evict the whole registrable"
+        );
+    }
+
+    // T-131 — a user allowlist entry wins over the rating filter even when
+    // the domain is outside every zone (step 1 is above step 5).
+    #[tokio::test]
+    async fn user_allowlist_overrides_the_rating_filter() {
+        let cache = Cache::new(&cache_config());
+        let zone = zone_of(&["rozetka.com.ua"]);
+        let removed = HashSet::new();
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "off-list.example".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+
+        let (outcome, meta) = run_with_rating_filter(
+            &query_for("off-list.example.", RecordType::A),
+            &client,
+            &overrides,
+            &cache,
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+
+        let PipelineOutcome::Response(resp) = outcome else {
+            panic!("expected a Response");
+        };
+        assert!(
+            matches!(resp.answers.first().map(|r| &r.data), Some(RData::A(a)) if a.0 == baseline_ip),
+            "an allowlisted out-of-zone domain still resolves"
+        );
+        assert_eq!(
+            meta.map(|m| m.decision_source),
+            Some(DecisionSource::Allowlist)
+        );
+    }
+
+    // T-108 lazy hygiene — quorum blocking an *exact* in-zone registrable
+    // surfaces `zone_removal` for `dispatch` to evict; a subdomain block
+    // does not.
+    #[tokio::test]
+    async fn lazy_hygiene_surfaces_zone_removal_only_for_an_exact_registrable_block() {
+        let zone = zone_of(&["rozetka.com.ua"]);
+        let removed = HashSet::new();
+
+        let (_, exact_meta) = run_with_rating_filter(
+            &query_for("rozetka.com.ua.", RecordType::A),
+            &blocking_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+        assert_eq!(
+            exact_meta.and_then(|m| m.zone_removal),
+            Some("rozetka.com.ua".to_string()),
+            "quorum blocked the registrable itself -> evict it"
+        );
+
+        let (_, sub_meta) = run_with_rating_filter(
+            &query_for("promo.rozetka.com.ua.", RecordType::A),
+            &blocking_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+        assert_eq!(
+            sub_meta.and_then(|m| m.zone_removal),
+            None,
+            "a subdomain block leaves the registrable in the bubble"
+        );
+    }
+
+    // A domain already in the removal overlay is treated as out-of-zone by
+    // step 5 (the union of the two independent snapshots) — the state the
+    // lazy-hygiene loop reaches after an exact block.
+    #[tokio::test]
+    async fn a_removed_registrable_is_blocked_by_step_5_on_the_next_lookup() {
+        let zone = zone_of(&["rozetka.com.ua"]);
+        let mut removed = HashSet::new();
+        removed.insert("rozetka.com.ua".to_string());
+
+        let (outcome, meta) = run_with_rating_filter(
+            &query_for("rozetka.com.ua.", RecordType::A),
+            &MockClient::all_panic(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        assert_eq!(
+            meta.map(|m| m.decision_source),
+            Some(DecisionSource::RatingFilter),
+            "a removed registrable is now out-of-zone"
+        );
+    }
+
+    // Fork B — an enabled filter with an empty bubble is inert (the caller
+    // passes `None`), not a block-everything mode.
+    #[tokio::test]
+    async fn an_enabled_filter_with_no_lists_loaded_does_not_block() {
+        let empty_zone = ZoneLists::default();
+        let removed = HashSet::new();
+
+        let (outcome, meta) = run_with_rating_filter(
+            &query_for("anything.example.", RecordType::A),
+            &allowing_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &empty_zone,
+            &removed,
+            true,
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        assert_eq!(
+            meta.map(|m| m.decision_source),
+            Some(DecisionSource::Quorum),
+            "with no bubble the filter is skipped, quorum decides"
         );
     }
 }

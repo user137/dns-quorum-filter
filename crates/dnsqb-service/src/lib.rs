@@ -152,6 +152,8 @@ mod rating_filter;
 mod reachability;
 mod timeout;
 mod tls;
+mod topn_download;
+mod topn_updater;
 mod trust_store;
 mod upstream;
 mod watchdog;
@@ -209,7 +211,7 @@ pub use paths::{app_data_dir, PathsError};
 pub use pause_watch::{run_pause_watcher, PAUSE_POLL_INTERVAL};
 pub use pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
-    PipelineOutcome, QueryLogMeta,
+    PipelineOutcome, QueryLogMeta, RatingFilterView,
 };
 pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
 pub use quorum::{
@@ -222,6 +224,7 @@ pub use reachability::{
 };
 pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
 pub use tls::{load_or_generate_server_config, TlsError};
+pub use topn_updater::{load_zone_from_disk, run_topn_updater, TOPN_CHECK_INTERVAL};
 pub use trust_store::{
     ensure_installed, is_trusted, uninstall, TrustStoreError, TrustStoreOutcome,
 };

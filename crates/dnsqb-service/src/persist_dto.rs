@@ -83,6 +83,7 @@ pub(crate) enum PDecisionSource {
     Blocklist,
     Cache,
     Quorum,
+    RatingFilter,
     Geoip,
     BaselineFallback,
 }
@@ -139,6 +140,7 @@ impl From<DecisionSource> for PDecisionSource {
             DecisionSource::Blocklist => PDecisionSource::Blocklist,
             DecisionSource::Cache => PDecisionSource::Cache,
             DecisionSource::Quorum => PDecisionSource::Quorum,
+            DecisionSource::RatingFilter => PDecisionSource::RatingFilter,
             DecisionSource::Geoip => PDecisionSource::Geoip,
             DecisionSource::BaselineFallback => PDecisionSource::BaselineFallback,
         }
@@ -152,6 +154,7 @@ impl From<PDecisionSource> for DecisionSource {
             PDecisionSource::Blocklist => DecisionSource::Blocklist,
             PDecisionSource::Cache => DecisionSource::Cache,
             PDecisionSource::Quorum => DecisionSource::Quorum,
+            PDecisionSource::RatingFilter => DecisionSource::RatingFilter,
             PDecisionSource::Geoip => DecisionSource::Geoip,
             PDecisionSource::BaselineFallback => DecisionSource::BaselineFallback,
         }
@@ -348,6 +351,7 @@ mod tests {
             DecisionSource::Blocklist,
             DecisionSource::Cache,
             DecisionSource::Quorum,
+            DecisionSource::RatingFilter,
             DecisionSource::Geoip,
             DecisionSource::BaselineFallback,
         ];

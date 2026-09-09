@@ -64,11 +64,11 @@ pub enum Decision {
     Failed,
 }
 
-/// SPEC.md §6 `decision_source` column — six of the seven values the DTO
+/// SPEC.md §6 `decision_source` column — seven of the eight values the DTO
 /// (`admin::DecisionSourceView`) declares are producible so far
-/// (`CCTLD_BLOCK`/`RATING_FILTER` are still later-phase pipeline steps that
-/// don't exist yet). `Geoip` joined at T-76, `BaselineFallback` at T-155 —
-/// see this module's doc comment.
+/// (`CCTLD_BLOCK` is still a later-phase pipeline step that doesn't exist
+/// yet). `Geoip` joined at T-76, `BaselineFallback` at T-155,
+/// `RatingFilter` at T-124 — see this module's doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecisionSource {
     /// Matched an allowlist entry.
@@ -79,6 +79,11 @@ pub enum DecisionSource {
     Cache,
     /// Decided by a fresh quorum resolution.
     Quorum,
+    /// Blocked by the rating filter «bubble» (T-124, SPEC.md §5.3 step 5):
+    /// the domain was outside every active availability zone, so quorum was
+    /// never consulted. `voters` is always empty. Not cached — the zone can
+    /// change under a toggle or lazy hygiene.
+    RatingFilter,
     /// A quorum `Allow` (cached or fresh) was overridden by SPEC.md §3.5's
     /// live `GeoIP` filter (T-76) — the resolved IP matched a blocked
     /// country. `voters` is always empty here (see this module's own doc

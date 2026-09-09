@@ -843,8 +843,9 @@ impl From<Decision> for DecisionView {
 /// `GeoIp`/`BaselineFallback`, the last two added at T-76 / T-155) are
 /// producible before their own later-phase pipeline step exists (see
 /// [`DecisionSourceView::from`] below — a total match over the internal
-/// [`DecisionSource`], so `CcTldBlock`/`RatingFilter` can never actually be
-/// constructed by this conversion, only declared for the wire format).
+/// [`DecisionSource`], so `CcTldBlock` can never actually be constructed by
+/// this conversion, only declared for the wire format; `RatingFilter`
+/// became producible at T-124).
 ///
 /// `CcTldBlock`/`GeoIp` need an explicit `#[serde(rename)]` — automatic
 /// `SCREAMING_SNAKE_CASE` conversion would produce `CC_TLD_BLOCK`/`GEO_IP`,
@@ -873,6 +874,7 @@ impl From<DecisionSource> for DecisionSourceView {
             DecisionSource::Blocklist => Self::Blocklist,
             DecisionSource::Cache => Self::Cache,
             DecisionSource::Quorum => Self::Quorum,
+            DecisionSource::RatingFilter => Self::RatingFilter,
             DecisionSource::Geoip => Self::GeoIp,
             DecisionSource::BaselineFallback => Self::BaselineFallback,
         }
@@ -1793,16 +1795,17 @@ mod tests {
             json_of(&DecisionSourceView::from(DecisionSource::BaselineFallback)),
             "\"BASELINE_FALLBACK\""
         );
-        // The two remaining later-phase variants aren't producible from the
-        // internal 5-variant DecisionSource (see DecisionSourceView::from's
-        // own exhaustive match) - constructed directly here purely to pin
-        // their wire string, which the explicit #[serde(rename)] override on
-        // CcTldBlock exists for.
-        assert_eq!(json_of(&DecisionSourceView::CcTldBlock), "\"CCTLD_BLOCK\"");
+        // T-124: RatingFilter joined the producible side — asserted through
+        // the same From conversion.
         assert_eq!(
-            json_of(&DecisionSourceView::RatingFilter),
+            json_of(&DecisionSourceView::from(DecisionSource::RatingFilter)),
             "\"RATING_FILTER\""
         );
+        // CcTldBlock is still not producible from the internal
+        // DecisionSource (see DecisionSourceView::from's exhaustive match) —
+        // constructed directly here purely to pin its wire string, which the
+        // explicit #[serde(rename)] override exists for.
+        assert_eq!(json_of(&DecisionSourceView::CcTldBlock), "\"CCTLD_BLOCK\"");
     }
 
     #[test]

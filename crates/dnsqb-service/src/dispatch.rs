@@ -46,9 +46,10 @@ use crate::geoip_updater::{
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
-    PipelineOutcome, UpstreamContext,
+    PipelineOutcome, RatingFilterView, UpstreamContext,
 };
 use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
+use crate::rating_filter::ZoneLists;
 use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutConfig;
 use crate::upstream::{
@@ -67,6 +68,7 @@ use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Body;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -400,19 +402,17 @@ pub struct GeoipState {
     pub updated_at: Option<SystemTime>,
 }
 
-/// `AppState::new`'s `geoip` parameter (T-76) — pairs the initially-loaded
-/// `GeoipState` with the initially-configured blocked-country list so the
-/// constructor doesn't need an eighth parameter (same
-/// `clippy::too_many_arguments` reasoning as `pipeline::CacheContext`/
-/// `GeoipFilter`). `AppState::new` immediately splits this into two
-/// independently-swappable fields — see [`AppState::geoip`]/
-/// [`AppState::geoip_countries`]'s own doc comments for why they're kept
-/// separate rather than one field: `geoip` is swapped only by
-/// `geoip_updater::run_geoip_updater` after a database refresh,
-/// `geoip_countries` only by config load / `/admin/reset` (and, once T-77
-/// exists, an admin write route) — bundling them into one swappable value
-/// would mean a database refresh could silently wipe the user's country
-/// list, or vice versa.
+/// `AppState::new`'s `geoip` parameter (T-76) — the initially-loaded
+/// filter-data bundle, so the constructor doesn't grow one parameter per
+/// filter (same `clippy::too_many_arguments` reasoning as
+/// `pipeline::CacheContext`/`GeoipFilter`). Despite the name it now also
+/// carries the T-124 rating-filter zone: `AppState::new` immediately splits
+/// every field here into its own independently-swappable `RwLock<Arc<_>>`
+/// — see [`AppState::geoip`]/[`AppState::geoip_countries`]/
+/// [`AppState::rating_filter_zone`]'s own doc comments for why each has a
+/// single distinct writer (a `GeoIP` database refresh must not wipe the
+/// country list, a top-N list refresh must not wipe the lazy-hygiene
+/// removals, and so on).
 pub struct GeoipInit {
     /// The initially-loaded `GeoIP` database state (reader + when it was
     /// last refreshed).
@@ -424,6 +424,14 @@ pub struct GeoipInit {
     /// own `RwLock<Arc<_>>` so `run_geoip_updater` reads a fresh snapshot each
     /// cycle rather than holding the value it was spawned with.
     pub source: GeoipSource,
+    /// T-124/T-126 — the `[rating_filter]` table as loaded. `AppState`
+    /// carries it behind its own `RwLock<Arc<_>>` so `/admin/reset` can swap
+    /// it; the `run_topn_updater` task reads a fresh snapshot each cycle.
+    pub rating_filter_config: RatingFilterConfig,
+    /// T-124 — the availability-zone bubble built from whatever
+    /// `data/topn/*.txt` files were already on disk at startup (empty on a
+    /// fresh install, exactly like `database` before the first download).
+    pub rating_filter_zone: ZoneLists,
 }
 
 /// The two on-disk config files' paths, always resolved together from one
@@ -521,6 +529,13 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // the reachability prober is the sole writer, this path only reads which
     // baseline URL is currently active.
     let baseline = Arc::clone(&state.baseline.read());
+    // T-124: two independent `Arc::clone` snapshots (the zone `Arc` and the
+    // lazy-hygiene removal overlay have different single writers — the
+    // top-N refresher vs `record_zone_removal` — see their `AppState` doc
+    // comments), never held across the `.await`.
+    let rating_filter_config = state.rating_filter_config_snapshot();
+    let rating_filter_zone = state.rating_filter_zone_snapshot();
+    let rating_filter_removed = state.rating_filter_removed_snapshot();
     let cache_context = CacheContext {
         cache: &cache_state.cache,
         config: &cache_state.config,
@@ -529,12 +544,21 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         reader: geoip_state.reader.as_deref(),
         blocked_countries: &geoip_countries,
     };
+    // `Some` only when the filter is enabled *and* has a non-empty bubble
+    // (Fork B: an `enabled` filter with no lists loaded is inert, not a
+    // block-everything mode — the startup warning names that case).
+    let rating_filter_view = (rating_filter_config.enabled && !rating_filter_zone.is_empty())
+        .then_some(RatingFilterView {
+            lists: &rating_filter_zone,
+            removed: &rating_filter_removed,
+        });
     let upstream_context = UpstreamContext {
         timeout: &settings.timeout,
         baseline_url: baseline.current(),
         serve_baseline_fallback: settings.serve_baseline_when_filters_unreachable,
         reachability: state.reachability_snapshot(),
         filtering_paused: state.filtering_paused_snapshot(),
+        rating_filter: rating_filter_view,
     };
     let response = match handle_query(
         &query,
@@ -553,6 +577,13 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
             // `pipeline::QueryLogMeta`'s own doc comment for why the push
             // isn't inside `handle_query` itself.
             if let Some(meta) = meta {
+                // T-108 lazy hygiene: quorum blocked an exact in-zone
+                // registrable — drop it from the local bubble so the next
+                // lookup is a rating-filter BLOCK. Idempotent; not a log
+                // field (see `pipeline::QueryLogMeta::zone_removal`).
+                if let Some(registrable) = meta.zone_removal {
+                    state.record_zone_removal(registrable);
+                }
                 let latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
                 state.query_log.push(LogEntry {
                     timestamp: SystemTime::now(),
@@ -652,6 +683,34 @@ pub struct AppState<C: DohClient + Sync> {
     /// stays up). Plain `RwLock<bool>` for the same reason as `reachability`.
     /// Never held across `.await`.
     filtering_paused: RwLock<bool>,
+    /// T-124/T-126 — the `[rating_filter]` table as last loaded (SPEC.md
+    /// §5.3). Swapped only by `apply_admin_reset` after a config reload;
+    /// `run_topn_updater` reads a fresh snapshot each cycle. Same
+    /// `RwLock<Arc<_>>` shape as every other per-query state; never held
+    /// across `.await`.
+    rating_filter_config: RwLock<Arc<RatingFilterConfig>>,
+    /// T-124 — the availability-zone bubble (SPEC.md §5.3 step 5). Swapped
+    /// **only** by `topn_updater::run_topn_updater` after a successful list
+    /// refresh; read once per query by `pipeline::handle_query`. Kept
+    /// separate from `rating_filter_removed` below because the two have
+    /// different single writers — the same `geoip` / `geoip_countries`
+    /// split, for the same reason (a list refresh must not wipe the
+    /// lazy-hygiene removals).
+    rating_filter_zone: RwLock<Arc<ZoneLists>>,
+    /// T-108 — the lazy-hygiene overlay: registrable domains dropped from
+    /// the bubble because quorum blocked them at browse time (DECISIONS.md
+    /// 2026-09-09). **Only** writer is `record_zone_removal` (from
+    /// `resolve_doh_request` after a fresh quorum block of an in-zone
+    /// registrable); read once per query alongside `rating_filter_zone`.
+    /// In-memory only this phase — rebuilt lazily after a restart; a durable
+    /// store is Батч 4.5's job. Never held across `.await`.
+    rating_filter_removed: RwLock<Arc<HashSet<String>>>,
+    /// T-124 — wakes `run_topn_updater` out of its inter-cycle sleep when
+    /// `apply_admin_reset` reloads a hand-edited `[rating_filter]` table, so
+    /// new lists download within seconds rather than up to
+    /// `TOPN_CHECK_INTERVAL` later. Same one-permit `Notify` semantics as
+    /// `geoip_refresh_wake`.
+    rating_filter_refresh_wake: Arc<Notify>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -796,6 +855,10 @@ impl<C: DohClient + Sync> AppState<C> {
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
             geoip_source: RwLock::new(Arc::new(geoip.source)),
             geoip_refresh_wake: Arc::new(Notify::new()),
+            rating_filter_config: RwLock::new(Arc::new(geoip.rating_filter_config)),
+            rating_filter_zone: RwLock::new(Arc::new(geoip.rating_filter_zone)),
+            rating_filter_removed: RwLock::new(Arc::new(HashSet::new())),
+            rating_filter_refresh_wake: Arc::new(Notify::new()),
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             reachability: RwLock::new(NetworkReachability::default()),
@@ -893,6 +956,67 @@ impl<C: DohClient + Sync> AppState<C> {
     /// never held across `.await`.
     pub(crate) fn filtering_paused_snapshot(&self) -> bool {
         *self.filtering_paused.read()
+    }
+
+    /// One `Arc::clone` snapshot of the `[rating_filter]` table (T-124) —
+    /// `run_topn_updater` reads it at the top of every cycle so a
+    /// `/admin/reset` of a hand-edited table is picked up without a restart.
+    pub(crate) fn rating_filter_config_snapshot(&self) -> Arc<RatingFilterConfig> {
+        Arc::clone(&self.rating_filter_config.read())
+    }
+
+    /// Swaps in a `[rating_filter]` table after `apply_admin_reset` reloaded
+    /// `resolver_config.toml` (T-124). Sole writer; never touches the zone or
+    /// the removal overlay.
+    pub(crate) fn update_rating_filter_config(&self, config: RatingFilterConfig) {
+        *self.rating_filter_config.write() = Arc::new(config);
+    }
+
+    /// One `Arc::clone` snapshot of the availability-zone bubble (T-124) —
+    /// read once per query by `resolve_doh_request`, never held across
+    /// `.await`.
+    pub(crate) fn rating_filter_zone_snapshot(&self) -> Arc<ZoneLists> {
+        Arc::clone(&self.rating_filter_zone.read())
+    }
+
+    /// Swaps in a freshly-refreshed availability-zone bubble (T-124) — the
+    /// sole writer is `topn_updater::run_topn_updater`, after the new list
+    /// files have been verified and durably written. Never touches
+    /// `rating_filter_removed` (its own separate writer).
+    pub(crate) fn update_rating_filter_zone(&self, zone: ZoneLists) {
+        *self.rating_filter_zone.write() = Arc::new(zone);
+    }
+
+    /// One `Arc::clone` snapshot of the lazy-hygiene removal overlay
+    /// (T-108) — read once per query alongside the zone, never held across
+    /// `.await`.
+    pub(crate) fn rating_filter_removed_snapshot(&self) -> Arc<HashSet<String>> {
+        Arc::clone(&self.rating_filter_removed.read())
+    }
+
+    /// Records that quorum blocked an in-zone registrable, so the next
+    /// lookup treats it as out-of-zone (T-108, DECISIONS.md 2026-09-09).
+    /// Sole writer; idempotent (a set insert). `Arc::make_mut` clones the
+    /// set only on the rare call that actually adds a new entry.
+    pub(crate) fn record_zone_removal(&self, registrable: String) {
+        let mut guard = self.rating_filter_removed.write();
+        if guard.contains(&registrable) {
+            return;
+        }
+        Arc::make_mut(&mut guard).insert(registrable);
+    }
+
+    /// Wakes `run_topn_updater` out of its inter-cycle sleep (T-124) — fired
+    /// by `apply_admin_reset` after a config reload. Safe to call with no
+    /// updater running; the permit is simply never consumed.
+    pub(crate) fn wake_rating_filter_refresh(&self) {
+        self.rating_filter_refresh_wake.notify_one();
+    }
+
+    /// The `Notify` handle `run_topn_updater` parks on between cycles
+    /// (T-124), paired with [`Self::wake_rating_filter_refresh`].
+    pub(crate) fn rating_filter_refresh_wake_handle(&self) -> Arc<Notify> {
+        Arc::clone(&self.rating_filter_refresh_wake)
     }
 
     /// One `Arc::clone` snapshot of the baseline selector (T-154) — the hot
@@ -1444,6 +1568,13 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // the next 24h check or a restart.
     state.update_geoip_source(geoip_source);
     state.wake_geoip_refresh();
+    // T-124: reload the `[rating_filter]` table too and wake `run_topn_updater`
+    // so a hand-edited list set takes effect on the next refresh, not at a
+    // restart — the same completeness gap the reloads above close. The zone
+    // itself and the lazy-hygiene removals are left untouched (the updater
+    // rebuilds the zone; a removal must survive a reload).
+    state.update_rating_filter_config(config.rating_filter);
+    state.wake_rating_filter_refresh();
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -2954,9 +3085,9 @@ mod tests {
         admin_status, content_type_is_dns_message, parse_log_query, read_watchdog_view,
         resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
         GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
-        PersistTarget, RuntimeInit, WatchdogState, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH,
-        ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT,
-        MAX_MESSAGE_SIZE, ROUTES,
+        PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
+        ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT,
+        DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
@@ -3608,6 +3739,8 @@ mod tests {
                 database: GeoipState::default(),
                 blocked_countries: Vec::new(),
                 source: GeoipSource::DbIpLite,
+                rating_filter_config: RatingFilterConfig::default(),
+                rating_filter_zone: ZoneLists::default(),
             },
             QueryLog::default(),
             persist,
@@ -3637,6 +3770,8 @@ mod tests {
                 database,
                 blocked_countries: Vec::new(),
                 source: GeoipSource::DbIpLite,
+                rating_filter_config: RatingFilterConfig::default(),
+                rating_filter_zone: ZoneLists::default(),
             },
             QueryLog::default(),
             PersistTarget {
@@ -4992,6 +5127,8 @@ mod tests {
                 // from the fixture file's own [geoip] table.
                 blocked_countries: Vec::new(),
                 source: GeoipSource::DbIpLite,
+                rating_filter_config: RatingFilterConfig::default(),
+                rating_filter_zone: ZoneLists::default(),
             },
             QueryLog::default(),
             PersistTarget {
@@ -5270,6 +5407,8 @@ mod tests {
                 database: GeoipState::default(),
                 blocked_countries: Vec::new(),
                 source: GeoipSource::DbIpLite,
+                rating_filter_config: RatingFilterConfig::default(),
+                rating_filter_zone: ZoneLists::default(),
             },
             QueryLog::default(),
             PersistTarget {
@@ -6277,6 +6416,44 @@ mod tests {
             start.elapsed() < std::time::Duration::from_secs(1),
             "wake_geoip_refresh must leave a permit on geoip_refresh_wake_handle()"
         );
+    }
+
+    // T-124: the same "wake reaches the updater's Notify" property for the
+    // top-N list refresher.
+    #[tokio::test(start_paused = true)]
+    async fn wake_rating_filter_refresh_reaches_the_handle_the_updater_parks_on() {
+        let state = state_with(no_op_client());
+        let wake = state.rating_filter_refresh_wake_handle();
+        state.wake_rating_filter_refresh();
+        let start = tokio::time::Instant::now();
+        wake.notified().await;
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    // T-108/advisor: the lazy-hygiene overlay and the zone `Arc` have
+    // independent single writers on independent locks — a removal recorded
+    // concurrently with a zone swap is not lost (the failure mode of folding
+    // `removed` into the `ZoneLists` `Arc`).
+    #[test]
+    fn a_zone_removal_survives_a_concurrent_zone_swap() {
+        let state = state_with(no_op_client());
+        state.record_zone_removal("a.example".to_string());
+        // A full zone refresh lands (updater's sole write) — it must not
+        // touch the removal overlay.
+        state.update_rating_filter_zone(ZoneLists::new(vec![
+            crate::rating_filter::ZoneSource::new(
+                crate::rating_filter::ZoneSourceKind::Global,
+                ["b.example".to_string()],
+            ),
+        ]));
+        state.record_zone_removal("c.example".to_string());
+
+        let removed = state.rating_filter_removed_snapshot();
+        assert!(removed.contains("a.example"), "pre-swap removal survives");
+        assert!(removed.contains("c.example"), "post-swap removal recorded");
+        // Idempotent — re-recording is a no-op.
+        state.record_zone_removal("a.example".to_string());
+        assert_eq!(state.rating_filter_removed_snapshot().len(), 2);
     }
 
     #[test]

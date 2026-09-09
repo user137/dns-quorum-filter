@@ -28,12 +28,12 @@
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, init_logging, load_maxmind_credentials,
     load_or_generate_server_config, load_persisted_cache, load_persisted_query_log,
-    migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater, run_pause_watcher,
-    run_query_log_persister, run_reachability_prober, serve, write_pid_file, AppState, BindError,
-    Cache, CacheInit, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError,
-    InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig, OverrideLists, OverridesState,
-    PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit,
-    TimeoutConfig,
+    load_zone_from_disk, migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater,
+    run_pause_watcher, run_query_log_persister, run_reachability_prober, run_topn_updater, serve,
+    write_pid_file, AppState, BindError, Cache, CacheInit, CacheState, GeoipInit, GeoipReader,
+    GeoipSource, GeoipState, GuardError, InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig,
+    OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient,
+    ResolverConfig, RuntimeInit, TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -153,21 +153,12 @@ async fn main() {
     // `None` under the same "no app-data directory" tolerance every other
     // persisted file in this function already applies.
     let geoip_path = app_data.as_deref().map(|dir| dir.join("geoip.mmdb"));
-    let geoip_database = load_geoip_state(geoip_path.as_deref());
-    // T-76: the blocked-country list starts from whatever resolver_config.
-    // toml's own [geoip] table resolved to (empty by default, SPEC.md
-    // §3.5) - bundled with `geoip_database` into one `GeoipInit` (see that
-    // type's own doc comment for why `AppState::new` splits it into two
-    // independently-swapped fields rather than taking it as a single value).
-    // T-163: the GeoIP source (DB-IP Lite / MaxMind) now lives on `AppState`
-    // so it can be swapped at runtime — resolved here, once, and handed to the
-    // constructor via `GeoipInit`. `run_geoip_updater` re-reads it from the
-    // shared state each cycle rather than taking it as a spawn argument.
-    let geoip = GeoipInit {
-        database: geoip_database,
-        blocked_countries: resolver_config.geoip.blocked_countries.clone(),
-        source: load_geoip_source(app_data.as_deref()),
-    };
+    // `GeoipInit` bundles the startup filter state `AppState::new` splits
+    // into its own fields (see that type's doc): T-76 blocked-country list,
+    // T-163 database source, T-124 the rating-filter zone from disk.
+    let rating_filter_active =
+        resolver_config.rating_filter.enabled && !resolver_config.rating_filter.lists.is_empty();
+    let geoip = build_geoip_init(app_data.as_deref(), geoip_path.as_deref(), &resolver_config);
 
     // T-146: seed the query log from encrypted `query-log.enc` when
     // `persist_query_log` is set; `flusher` feeds the background persister.
@@ -207,7 +198,7 @@ async fn main() {
     state.restore_cache(cache_restore).await;
     spawn_query_log_persister(&state, query_log_flusher);
     spawn_cache_persister(&state, cache_flusher);
-    spawn_public_http_tasks(&state, geoip_path);
+    spawn_public_http_tasks(&state, geoip_path, app_data.clone(), rating_filter_active);
 
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
@@ -289,10 +280,18 @@ fn spawn_cache_persister(
 ///
 /// - the `GeoIP` database updater (T-75 — `db-ip.com` / `download.maxmind.com`),
 ///   skipped with a warning if no app-data directory resolved `geoip_path`;
+/// - the top-N availability-zone list updater (T-124 —
+///   `raw.githubusercontent.com`), spawned only when `[rating_filter]` is
+///   enabled with a non-empty list set and an app-data directory exists;
 /// - the network-reachability prober (T-152 — a few `generate_204`-class
 ///   markers), deliberately **not** wired to `/health` or any watchdog
 ///   channel, so a network outage can never read as a dead service.
-fn spawn_public_http_tasks(state: &Arc<AppState<ReqwestDohClient>>, geoip_path: Option<PathBuf>) {
+fn spawn_public_http_tasks(
+    state: &Arc<AppState<ReqwestDohClient>>,
+    geoip_path: Option<PathBuf>,
+    app_data: Option<PathBuf>,
+    rating_filter_active: bool,
+) {
     match (geoip_path, reqwest::Client::builder().build()) {
         (Some(path), Ok(client)) => {
             tokio::spawn(run_geoip_updater(client, path, Arc::clone(state)));
@@ -303,6 +302,24 @@ fn spawn_public_http_tasks(state: &Arc<AppState<ReqwestDohClient>>, geoip_path: 
         (None, _) => {
             tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
         }
+    }
+    match (
+        rating_filter_active,
+        app_data,
+        reqwest::Client::builder().build(),
+    ) {
+        (true, Some(dir), Ok(client)) => {
+            tokio::spawn(run_topn_updater(client, dir, Arc::clone(state)));
+        }
+        (true, _, Err(err)) => {
+            tracing::error!("failed to build the top-N list update HTTP client: {err}");
+        }
+        (true, None, _) => {
+            tracing::warn!(
+                "no app-data directory available, top-N availability-zone lists cannot refresh"
+            );
+        }
+        (false, _, _) => {}
     }
     match reqwest::Client::builder().build() {
         Ok(client) => {
@@ -524,6 +541,30 @@ fn load_geoip_state(path: Option<&Path>) -> GeoipState {
 /// Runs the one-time pre-T-163 `geoip_maxmind.toml` → credential-store
 /// migration first; a migration failure is logged and non-fatal (the load
 /// below then simply finds no stored credentials).
+/// Builds the startup [`GeoipInit`] bundle (T-76 / T-163 / T-124). Also
+/// emits the Fork-B warning once: an `enabled` rating filter with no lists is
+/// inert, not a block-everything mode (SPEC.md §5.3).
+fn build_geoip_init(
+    app_data: Option<&Path>,
+    geoip_path: Option<&Path>,
+    resolver_config: &ResolverConfig,
+) -> GeoipInit {
+    let rf = &resolver_config.rating_filter;
+    if rf.enabled && rf.lists.is_empty() {
+        tracing::warn!(
+            "[rating_filter] is enabled but its `lists` is empty - the filter is inert until at \
+             least one country/global list is selected"
+        );
+    }
+    GeoipInit {
+        database: load_geoip_state(geoip_path),
+        blocked_countries: resolver_config.geoip.blocked_countries.clone(),
+        source: load_geoip_source(app_data),
+        rating_filter_config: rf.clone(),
+        rating_filter_zone: load_zone_from_disk(app_data, rf),
+    }
+}
+
 fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
     let Some(dir) = app_data else {
         return GeoipSource::DbIpLite;
