@@ -41,6 +41,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --lib --bins --locked
+      # `--lib --bins` skips the `#[cfg(test)]` modules inside examples/ (the
+      # `curate_topn` PSL matcher's tests live there — T-107). Pure, no
+      # network. The live probes (topn_fp_probe, sinkhole_probe, …) have no
+      # test module, so this is a no-op for them.
+      - run: cargo test --workspace --examples --locked
 
   lint:
     runs-on: windows-latest
