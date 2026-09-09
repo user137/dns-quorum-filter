@@ -104,7 +104,16 @@ const SECOND_BASELINE_URL: &str = BASELINE_CHAIN[1];
 
 const DEFAULT_LISTS: &[&str] = &["ua", "us", "de", "pl", "gb", "global"];
 const DEFAULT_TOP_N: usize = 1000;
+/// Delay between two candidate domains.
 const PER_DOMAIN_DELAY: Duration = Duration::from_millis(150);
+/// Delay between the individual DoH queries fired for one candidate (~12 of
+/// them: 2 baselines + every built-in preset) — spreads the burst so a
+/// public resolver doesn't rate-limit a run of thousands of domains.
+const INTER_QUERY_DELAY: Duration = Duration::from_millis(40);
+/// Attempts per DoH query before a candidate is skipped ([`query_with_retry`]).
+const QUERY_ATTEMPTS: u32 = 3;
+/// First retry backoff; doubles each attempt (500 ms → 1 s → 2 s).
+const QUERY_BACKOFF_BASE: Duration = Duration::from_millis(500);
 /// Months to walk back from the current system month looking for the newest
 /// published `<yyyymm>.csv.gz` (country lists only).
 const MONTH_LOOKBACK: u32 = 12;
@@ -408,33 +417,61 @@ async fn curate_list(
     report
 }
 
+/// Retries one DoH query up to [`QUERY_ATTEMPTS`] times over transient
+/// transport failures (`error sending request`, connect timeout, an upstream
+/// resolver rate-limiting a burst) with a widening backoff. Curation fires
+/// ~10 k queries per list; without this, one flaky send drops the whole
+/// domain and biases the dataset. A resolver-level `NXDOMAIN`/`SERVFAIL` is
+/// a real answer, not an error, and is returned on the first try.
+async fn query_with_retry(
+    client: &ReqwestDohClient,
+    url: &str,
+    query: &Message,
+) -> Result<Message, Box<dyn Error>> {
+    let mut backoff = QUERY_BACKOFF_BASE;
+    let mut attempt = 1u32;
+    loop {
+        match client.query(url, query).await {
+            Ok(msg) => return Ok(msg),
+            Err(err) => {
+                if attempt >= QUERY_ATTEMPTS {
+                    return Err(err.into());
+                }
+                tokio::time::sleep(backoff).await;
+                backoff *= 2;
+                attempt += 1;
+            }
+        }
+    }
+}
+
 async fn screen_registrable(
     client: &ReqwestDohClient,
     registrable: &str,
     presets: &[ProviderSpec],
 ) -> Result<Screen, Box<dyn Error>> {
+    let unresolvable = || Screen {
+        resolvable: false,
+        drop_reason: None,
+        ads_blocked: false,
+    };
     let query = build_a_query(registrable)?;
-    let baseline = client.query(BASELINE_DOH_URL, &query).await?;
+
+    let baseline = query_with_retry(client, BASELINE_DOH_URL, &query).await?;
     if baseline.metadata.response_code != ResponseCode::NoError {
-        return Ok(Screen {
-            resolvable: false,
-            drop_reason: None,
-            ads_blocked: false,
-        });
+        return Ok(unresolvable());
     }
-    let second = client.query(SECOND_BASELINE_URL, &query).await?;
+    tokio::time::sleep(INTER_QUERY_DELAY).await;
+    let second = query_with_retry(client, SECOND_BASELINE_URL, &query).await?;
     if second.metadata.response_code != ResponseCode::NoError {
-        return Ok(Screen {
-            resolvable: false,
-            drop_reason: None,
-            ads_blocked: false,
-        });
+        return Ok(unresolvable());
     }
 
     let mut drop_reason: Option<Category> = None;
     let mut ads_blocked = false;
     for spec in presets {
-        let response = client.query(&spec.doh_url, &query).await?;
+        tokio::time::sleep(INTER_QUERY_DELAY).await;
+        let response = query_with_retry(client, &spec.doh_url, &query).await?;
         if !is_blocked(
             spec.block_signature,
             &response,
