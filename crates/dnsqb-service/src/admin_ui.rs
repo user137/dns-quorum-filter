@@ -195,6 +195,18 @@ mod tests {
             credits.contains("GeoLite2") && credits.contains("maxmind.com"),
             "MaxMind GeoLite2 attribution must be in the #credits footer (T-80 advanced mode)"
         );
+        // T-180: CrUX (rating-filter "bubble" popularity source) is CC BY 4.0
+        // and its attribution must ride in the same footer. The PSL line
+        // (MPL-2.0) is required for the same reason - it is used to derive
+        // the published lists.
+        assert!(
+            credits.contains("Chrome UX Report") && credits.contains("Google"),
+            "CrUX attribution must be in the #credits footer (T-180, CC BY 4.0)"
+        );
+        assert!(
+            credits.contains("publicsuffix.org") && credits.contains("MPL 2.0"),
+            "Public Suffix List attribution must be in the #credits footer (T-180)"
+        );
     }
 
     #[test]

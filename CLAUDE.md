@@ -684,6 +684,15 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   silently under-counts a voter if the provider rotates its block IP. `cargo test -p dnsqb-service
   --lib -- --ignored` also runs it as `#[ignore]`d live-verify tests (`quorum::tests::live_sinkhole_*`,
   plus `upstream`'s live-Quad9 test).
+- `cargo run --release --example curate_topn -- lists=ua,global n=1000` — T-107/T-108 Фаза 4
+  curation tool (live DNS, not CI, ~20-30 min/list). Fetches a CrUX top bucket (per-country from
+  `InternetHealthReport/crux-top-lists-country`, or `global` from `zakird/crux-top-lists`),
+  normalises origin→registrable via a bundled pinned PSL (`examples/public_suffix_list.dat`,
+  MPL-2.0), drops any registrable a Security-tier **or** Adult-tier preset blocks (T-108 hygiene;
+  Ads-tier is report-only — out-of-zone is already BLOCK), and writes `data/topn/<list>.txt` +
+  `.txt.sha256` (stable paths, `#` header for provenance). Normally run via
+  `.github/workflows/topn-curate.yml` (`workflow_dispatch`, per-list matrix) → artifact → human
+  PR. Example `#[cfg(test)]` modules now run in CI via `cargo test --workspace --examples`.
 
 All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
 conformance step and `coverage` (both `continue-on-error: true`). Since Батч 3.7: `ci.yml` also
