@@ -4716,13 +4716,30 @@ in-zone Allow резолвиться через кворум; in-zone субдо
 --workspace --lib --bins` (709 + 30) / conformance (18) / `--doc` / `cargo doc -D warnings` /
 `cargo deny check` — зелені. Жодного нового крейта. `#![forbid(unsafe_code)]` цілий.
 
+**Closing-advisor (2026-09-09):**
+- **Пауза не зачіпає бульбашку — підтверджено читанням, не припущенням.** `pipeline.rs:526`
+  `if upstream.filtering_paused || !any_enabled` — top-level ранній `return
+  baseline_passthrough_with_meta`, вище читання кешу (`:592`) і кроку 5 (`:608`). Тумблер
+  «Призупинити фільтрацію» → бульбашка не опитується. Маршрут enable/disable Батча 4.4 торкнеться
+  цього порядку — факт зафіксовано тут.
+- **Живий димний тест — НЕ прогнано** (ручний, не CI). Замість нього статична звірка ланцюга
+  завантаження проти опублікованих артефактів Батча 4.1: `TOPN_RAW_BASE` owner збігається з
+  `git remote`; `curl -I` на `ua.txt.sha256` → 200, `Content-Length: 73` = локальний файл
+  байт-у-байт; усі 6 sidecar-дайджестів (`ua/us/de/pl/gb/global`) відтворюються свіжим
+  `sha256sum` цілого файлу (з `#`-хедером); формат `<64hex>  <name>` — рівно те, що читає
+  `verify_sha256` (перший токен). Клас збою «неправильний сегмент шляху / формат sidecar» —
+  виключено. Незачеплено: оркестрація `refresh_one_list` end-to-end (streamed `fetch_bounded`
+  під `MAX_TOPN_BYTES` → `write_atomic` у `<app-data>/topn/` → `parse_list`→`ZoneSource`→
+  `update_rating_filter_zone` swap) — той самий непокритий shell, що вже має прецедент
+  `geoip_updater`.
+
 **Звірка діаграм:** `diagrams/rating-filter.md` перевиведено з коду (SOURCES += file-refs;
 flowchart += лінива-гігієна петля + Fork-B гілка; «інтерпретація» → «розвʼязано при T-124»);
 `diagrams/README.md` індекс, `diagrams/ui-dto-model.md` (`RatingFilterConfig` += `lists`),
 `diagrams/ui-status-indicator.md` (Ф5→Ф4). GAP 0.
 
 **Коміти:** `2fc0478` (T-126 config) · `4132bad` (T-124a pure module) · `b17a95b` (T-124
-pipeline + updater + lazy hygiene) · `<pending>` (docs + closing-advisor).
+pipeline + updater + lazy hygiene) · `b4d2ca5` (docs) · `<pending>` (closing-advisor нотатки).
 
 **Примітка про CI:** `docs`-джоб CI упав на `4132bad` — `rating_filter.rs` мав intra-doc-лінки
 на `topn_updater`/`topn_download`, яких у тому коміті ще не було; `b17a95b` додав обидва модулі
