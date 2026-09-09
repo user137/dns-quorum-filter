@@ -167,6 +167,14 @@ pub enum ConfigError {
     /// silently letting the file override a shipped preset's endpoint.
     #[error("provider {0:?} is a built-in preset - do not override its url/category/signature")]
     BuiltinPresetOverride(String),
+    /// A `[rating_filter]` `lists` entry isn't a two-letter code or the
+    /// literal `"global"` (T-124/T-126, SPEC.md §5.3) — rejected at load for
+    /// the same reason as [`ConfigError::InvalidCountryCode`]: a `"uka"` typo
+    /// would silently match no published list and the operator would believe
+    /// the bubble covers a country it never loads. A country code, not a
+    /// domain name — safe to echo.
+    #[error("[rating_filter] list {0:?} is not a two-letter country code or \"global\"")]
+    InvalidRatingFilterList(String),
 }
 
 /// Upper bound on `resolver_config.toml`'s on-disk size, checked in
@@ -253,6 +261,29 @@ pub struct GeoipConfig {
     pub blocked_countries: Vec<String>,
 }
 
+/// The `[rating_filter]` table (T-124/T-126, SPEC.md §5.3) — the opt-in
+/// availability-zone "bubble". `Vec<String>`, like [`GeoipConfig`], so
+/// [`ResolverConfig`] stays `Clone`-not-`Copy`.
+///
+/// **Default is off, mandatory** (SPEC.md §5.3, Відкриті питання п.8): an
+/// enabled-out-of-the-box mode that blocks almost the whole internet is an
+/// unacceptable surprise. An `enabled = true` with an empty (or
+/// not-yet-downloaded) `lists` is **not** a load error — the filter is
+/// simply inert until at least one list is present (same "graceful, warn,
+/// don't brick a hand-edited file" posture as `GeoIP`'s `reader: None`
+/// before the first successful fetch).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RatingFilterConfig {
+    /// Whether the rating filter runs as pipeline step 5 (SPEC.md §5.3).
+    /// Default `false`.
+    pub enabled: bool,
+    /// The availability-zone lists whose union forms the bubble — validated
+    /// lowercase two-letter country codes and/or the literal `"global"`
+    /// (see [`ConfigError::InvalidRatingFilterList`]), deduplicated, order
+    /// preserved. Empty by default.
+    pub lists: Vec<String>,
+}
+
 /// Resolver config, loaded once at startup (T-144). No longer `Copy` as of
 /// T-76 — `geoip.blocked_countries` is a `Vec<String>`, so this type is
 /// `Clone` only now (every other field stays individually `Copy`, so a
@@ -320,6 +351,10 @@ pub struct ResolverConfig {
     /// indicator. Only `Allow` verdicts are persisted, and an entry whose TTL
     /// elapsed during downtime is dropped on restore (see `cache_persist_dto`).
     pub persist_cache: bool,
+    /// T-124/T-126 — the `[rating_filter]` availability-zone "bubble"
+    /// (SPEC.md §5.3). Default off. No admin route yet (Батч 4.4); carried
+    /// through every config rewrite the same way `limits` is.
+    pub rating_filter: RatingFilterConfig,
 }
 
 impl Default for ResolverConfig {
@@ -336,6 +371,7 @@ impl Default for ResolverConfig {
             serve_baseline_when_filters_unreachable: false,
             persist_query_log: false,
             persist_cache: false,
+            rating_filter: RatingFilterConfig::default(),
         }
     }
 }
@@ -430,6 +466,7 @@ impl ResolverConfig {
         for raw in &file.geoip.blocked_countries {
             blocked_countries.push(validate_country_code(raw)?);
         }
+        let rating_filter_lists = validate_rating_filter_lists(&file.rating_filter.lists)?;
 
         Ok(Self {
             port: file.port,
@@ -448,6 +485,10 @@ impl ResolverConfig {
             serve_baseline_when_filters_unreachable: file.serve_baseline_when_filters_unreachable,
             persist_query_log: file.persist_query_log,
             persist_cache: file.persist_cache,
+            rating_filter: RatingFilterConfig {
+                enabled: file.rating_filter.enabled,
+                lists: rating_filter_lists,
+            },
         })
     }
 
@@ -489,6 +530,10 @@ impl ResolverConfig {
             geoip: GeoipConfigFile {
                 blocked_countries: self.geoip.blocked_countries.clone(),
             },
+            rating_filter: RatingFilterConfigFile {
+                enabled: self.rating_filter.enabled,
+                lists: self.rating_filter.lists.clone(),
+            },
             limits: LimitsConfigFile {
                 max_concurrent_connections: self.limits.max_concurrent_connections,
                 handshake_timeout_ms: duration_as_millis_u32(self.limits.handshake_timeout),
@@ -511,6 +556,29 @@ pub(crate) fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
     } else {
         Err(ConfigError::InvalidCountryCode(raw.to_string()))
     }
+}
+
+/// Validates the `[rating_filter] lists` entries (T-124/T-126): each is a
+/// lowercased two-letter alphabetic code or the literal `"global"`; the
+/// result is lowercased and deduplicated with first-seen order preserved.
+/// A malformed entry is [`ConfigError::InvalidRatingFilterList`] — a
+/// hand-edited file gets a loud error, not a silently-dropped list, the same
+/// discipline [`validate_country_code`] applies. Unlike the `[geoip]` codes
+/// these stay lowercase: the published list files are `data/topn/<lc>.txt`.
+pub(crate) fn validate_rating_filter_lists(raw: &[String]) -> Result<Vec<String>, ConfigError> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for entry in raw {
+        let lc = entry.to_ascii_lowercase();
+        let valid =
+            lc == "global" || (lc.len() == 2 && lc.bytes().all(|byte| byte.is_ascii_lowercase()));
+        if !valid {
+            return Err(ConfigError::InvalidRatingFilterList(entry.clone()));
+        }
+        if !out.contains(&lc) {
+            out.push(lc);
+        }
+    }
+    Ok(out)
 }
 
 /// Turns the parsed `[[providers]]` entries into the live [`ProviderEntry`]
@@ -590,6 +658,8 @@ struct ResolverConfigFile {
     providers: Vec<ProviderFileEntry>,
     cache: CacheConfigFile,
     geoip: GeoipConfigFile,
+    /// T-124/T-126 — see [`ResolverConfig::rating_filter`].
+    rating_filter: RatingFilterConfigFile,
     /// T-169 — see [`ResolverConfig::limits`].
     limits: LimitsConfigFile,
 }
@@ -671,6 +741,10 @@ impl Default for ResolverConfigFile {
             geoip: GeoipConfigFile {
                 blocked_countries: defaults.geoip.blocked_countries,
             },
+            rating_filter: RatingFilterConfigFile {
+                enabled: defaults.rating_filter.enabled,
+                lists: defaults.rating_filter.lists,
+            },
             limits: LimitsConfigFile::default(),
         }
     }
@@ -715,6 +789,19 @@ struct GeoipConfigFile {
     blocked_countries: Vec<String>,
 }
 
+/// TOML-facing shape for [`RatingFilterConfig`] (T-124/T-126) — a plain,
+/// hand-editable `[rating_filter]` table, same "graceful partial, loud typo"
+/// split every other nested table here uses. List-entry validation
+/// (two-letter code or `"global"`, dedup) happens in [`ResolverConfig::load`]
+/// via [`validate_rating_filter_lists`], not here — this struct only
+/// round-trips the raw strings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct RatingFilterConfigFile {
+    enabled: bool,
+    lists: Vec<String>,
+}
+
 /// TOML-facing shape for `cache::CacheConfig` (T-153) — seconds as `u64`,
 /// mirroring how `ResolverConfigFile.timeout_ms` is a plain integer while the
 /// live `TimeoutConfig` holds a real `Duration`. `CacheConfig` itself stays
@@ -745,7 +832,9 @@ impl Default for CacheConfigFile {
 
 #[cfg(test)]
 mod tests {
-    use super::{CacheConfig, ConfigError, GeoipConfig, LimitsConfig, ResolverConfig};
+    use super::{
+        CacheConfig, ConfigError, GeoipConfig, LimitsConfig, RatingFilterConfig, ResolverConfig,
+    };
     use crate::timeout::TimeoutMode;
     use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
     use std::fs;
@@ -806,6 +895,7 @@ mod tests {
                 serve_baseline_when_filters_unreachable: false,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
             }
         );
     }
@@ -1056,6 +1146,10 @@ mod tests {
             serve_baseline_when_filters_unreachable: true,
             persist_query_log: true,
             persist_cache: true,
+            rating_filter: RatingFilterConfig {
+                enabled: true,
+                lists: vec!["ua".to_string(), "global".to_string()],
+            },
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -1165,6 +1259,82 @@ mod tests {
     fn load_rejects_a_misspelled_persist_cache_key() {
         let (_dir, path) = temp_config_path();
         if let Err(err) = fs::write(&path, "persist_cahce = true\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    // T-124/T-126: [rating_filter] - default OFF and empty, a hand-edited
+    // table with valid lists round-trips, a bad list entry / a misspelled
+    // key are both loud load-time errors (not a silently-inert filter).
+
+    #[test]
+    fn rating_filter_is_off_and_empty_by_default() {
+        let (_dir, path) = temp_config_path();
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a missing file must still load: {err}"),
+        };
+        assert_eq!(config.rating_filter, RatingFilterConfig::default());
+        assert!(!config.rating_filter.enabled);
+        assert!(config.rating_filter.lists.is_empty());
+    }
+
+    #[test]
+    fn load_of_a_rating_filter_table_lowercases_and_dedups_its_lists() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[rating_filter]\nenabled = true\nlists = [\"UA\", \"global\", \"ua\"]\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a valid [rating_filter] table must load: {err}"),
+        };
+        assert!(config.rating_filter.enabled);
+        assert_eq!(
+            config.rating_filter.lists,
+            vec!["ua".to_string(), "global".to_string()],
+            "codes lowercased, order preserved, duplicate dropped"
+        );
+    }
+
+    #[test]
+    fn rating_filter_enabled_with_no_lists_is_not_a_load_error() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[rating_filter]\nenabled = true\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => {
+                assert!(config.rating_filter.enabled);
+                assert!(config.rating_filter.lists.is_empty());
+            }
+            Err(err) => panic!("an enabled-but-empty filter must still load: {err}"),
+        }
+    }
+
+    #[test]
+    fn load_rejects_a_bad_rating_filter_list_entry() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[rating_filter]\nlists = [\"uka\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidRatingFilterList(entry)) if entry == "uka"
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_rating_filter_key() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[rating_filter]\nenbaled = true\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(

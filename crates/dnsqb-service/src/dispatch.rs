@@ -35,7 +35,8 @@ use crate::admission::ConnectionGate;
 use crate::baseline_selector::BaselineSelector;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
-    validate_country_code, ConfigError, GeoipConfig, LimitsConfig, ResolverConfig,
+    validate_country_code, ConfigError, GeoipConfig, LimitsConfig, RatingFilterConfig,
+    ResolverConfig,
 };
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
@@ -321,6 +322,10 @@ pub struct PersistTarget {
     /// `[limits]` table on save — the same cross-field-read requirement the
     /// three fields above already have.
     pub limits: LimitsConfig,
+    /// T-124/T-126 — the `[rating_filter]` table (SPEC.md §5.3). No admin
+    /// route this batch (Батч 4.4), so like `limits` it's set once at
+    /// startup and carried through every config rewrite verbatim.
+    pub rating_filter: RatingFilterConfig,
     /// Where `resolver_config.toml`/`overrides.toml` live, or `None` if no
     /// app-data directory was available at startup (same tolerance
     /// `main.rs` already applies to loading them) — an admin write with no
@@ -1165,6 +1170,9 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                // T-124/T-126 cross-field read: not admin-mutable, carried
+                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
+                rating_filter: state.persist.rating_filter.clone(),
                 limits: state.persist.limits,
             };
             match config.save(&paths.config) {
@@ -1686,6 +1694,9 @@ fn apply_cache_config<C: DohClient + Sync>(
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                // T-124/T-126 cross-field read: not admin-mutable, carried
+                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
+                rating_filter: state.persist.rating_filter.clone(),
                 limits: state.persist.limits,
                 providers,
                 cache: new_config,
@@ -1833,6 +1844,9 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                // T-124/T-126 cross-field read: not admin-mutable, carried
+                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
+                rating_filter: state.persist.rating_filter.clone(),
                 limits: state.persist.limits,
                 providers,
                 cache: cache_config,
@@ -2208,6 +2222,9 @@ where
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
+                // T-124/T-126 cross-field read: not admin-mutable, carried
+                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
+                rating_filter: state.persist.rating_filter.clone(),
                 limits: state.persist.limits,
                 providers: after.clone(),
                 cache: cache_config,
@@ -2949,7 +2966,7 @@ mod tests {
         WatchdogStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
-    use crate::config::{LimitsConfig, ResolverConfig};
+    use crate::config::{LimitsConfig, RatingFilterConfig, ResolverConfig};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
@@ -3553,6 +3570,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: None,
             },
@@ -3625,6 +3643,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: None,
             },
@@ -3917,6 +3936,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig {
                     max_concurrent_connections: 2,
                     ..LimitsConfig::default()
@@ -3971,6 +3991,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: true,
                 persist_cache: true,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: None,
             },
@@ -4287,6 +4308,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -4335,6 +4357,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -4385,6 +4408,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: true,
                 persist_cache: true,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -4437,6 +4461,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -4496,6 +4521,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
@@ -4657,6 +4683,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
@@ -4716,6 +4743,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
@@ -4772,6 +4800,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
@@ -4885,6 +4914,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
@@ -4968,6 +4998,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path,
@@ -5071,6 +5102,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: None,
             },
@@ -5178,6 +5210,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: None,
             },
@@ -5243,6 +5276,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
@@ -5352,6 +5386,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
@@ -5550,6 +5585,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -5594,6 +5630,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -5733,6 +5770,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
@@ -5832,6 +5870,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: config_path.clone(),
@@ -6062,6 +6101,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
@@ -6522,6 +6562,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -6566,6 +6607,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: path.clone(),
@@ -7261,6 +7303,7 @@ mod tests {
                 port: 8443,
                 persist_query_log: false,
                 persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
                 paths: Some(PersistPaths {
                     config: dir.path().join("resolver_config.toml"),
