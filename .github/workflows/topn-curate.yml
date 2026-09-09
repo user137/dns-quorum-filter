@@ -41,13 +41,16 @@ jobs:
     steps:
       - id: split
         shell: bash
+        env:
+          LISTS: ${{ inputs.lists }}
         run: |
-          json=$(printf '%s' "${{ inputs.lists }}" \
-            | tr ',' '\n' | tr -d '[:space:]' | tr 'A-Z' 'a-z' \
-            | grep -E '^([a-z]{2}|global)$' | sort -u \
-            | jq -R . | jq -cs .)
+          json=$(jq -cn --arg s "$LISTS" '
+            $s | split(",")
+               | map(gsub("[[:space:]]";"") | ascii_downcase)
+               | map(select(test("^([a-z]{2}|global)$")))
+               | unique')
           if [ "$json" = "[]" ]; then
-            echo "::error::no valid list names in '${{ inputs.lists }}'"
+            echo "::error::no valid list names in \"$LISTS\""
             exit 1
           fi
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
