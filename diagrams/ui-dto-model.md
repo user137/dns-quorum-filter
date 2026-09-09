@@ -281,7 +281,9 @@ classDiagram
         +List~String~ blocked_tlds
     }
     class RatingFilterConfig {
+        <<config::RatingFilterConfig, T-124/T-126>>
         +bool enabled
+        +List~String~ lists
     }
 
     LogEntry "1" --> "many" VoterResult : voters

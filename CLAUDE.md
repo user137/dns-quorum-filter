@@ -55,8 +55,22 @@ crate) + `.github/workflows/topn-curate.yml` + first datasets `data/topn/{ua,us,
 **T-108 re-scoped to Батч 4.3** (DECISIONS.md 2026-09-09): hygiene is lazy client-side — an in-zone
 domain quorum blocks is removed from the local zone set, not a curation-time bulk scan (1000 DoH
 queries/resolver/regen risks the address being rate-limited; quorum runs anyway). T-180: CrUX
-CC BY 4.0 + PSL MPL-2.0 in the `/admin/ui` `#credits` footer + `data/topn/README.md`. No client
-pipeline code yet (Батч 4.3). Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
+CC BY 4.0 + PSL MPL-2.0 in the `/admin/ui` `#credits` footer + `data/topn/README.md`.
+**Батч 4.3 done 2026-09-09** (T-124/T-125/T-126 + T-129/T-130/T-131; T-108 folded in; kickoff
+plan+advisor, closing-advisor): the client rating filter is live. `[rating_filter]` config table
+(default OFF); `rating_filter` module (pure `ZoneLists::zone_match` — suffix-walk over the zone
+union, **no runtime PSL**: the published lists are already registrable-only); `topn_download` +
+`topn_updater` (`run_topn_updater` — one HTTPS GET per selected list per 24h from
+`raw.githubusercontent.com`, sha256-sidecar verify, atomic-swap, mirrors `geoip_*`); pipeline
+**step 5** in `handle_query` (below cache, above quorum) — out-of-zone → NULL BLOCK
+`DecisionSource::RatingFilter` (not cached), in-zone → unchanged. **Lazy hygiene (T-108):** a
+fresh quorum block of an *exact* in-zone registrable surfaces `QueryLogMeta.zone_removal` →
+`dispatch` calls `AppState::record_zone_removal` (in-memory overlay, own lock; subdomain block
+records nothing). `AppState` += `rating_filter_config` / `rating_filter_zone` /
+`rating_filter_removed` / `rating_filter_refresh_wake` (the `geoip`/`geoip_countries` split
+pattern). `/admin/reset` reloads the table + wakes the updater. **No admin route** — the UI card
++ status field are Батч 4.4. Overlay persistence is Батч 4.5. Next: Батч 4.4 (rating-filter UI).
+Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
 (macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
 Батч 3.7): `.github/workflows/
@@ -242,7 +256,7 @@ Modules under `crates/dnsqb-service/src/`:
 | Module | Responsibility |
 |---|---|
 | `admission` | T-169 — `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()` (cumulative), `active()` (max − available, live). Lives on `AppState` (`connection_gate()`); `main.rs`'s accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling; `live_stats` reads both counters into `AdminStats` |
-| `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability }` — T-154/T-155/T-152 bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read (instant SERVFAIL, no fan-out/cache, mode-independent). `outcome.filters_unreachable` (T-155) → `filters_unreachable_outcome` → `DecisionSource::BaselineFallback` (toggle on = baseline answer mode-invariant; off = mode's own verdict, relabelled), never cached |
+| `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability, filtering_paused, rating_filter }` bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read. `outcome.filters_unreachable` (T-155) → `DecisionSource::BaselineFallback`, never cached. **Step 5 rating filter (T-124):** `rating_filter_step` after the cache read, before `resolve` — `RatingFilterView { lists, removed }` snapshots; out-of-zone → `rating_filter_block_with_meta` (`DecisionSource::RatingFilter`, **not cached**); in-zone exact + quorum `Block` → `QueryLogMeta.zone_removal` (lazy-hygiene action signal, not a log field) |
 | `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature, &Message, &[SinkholeNet])` (3 heuristics `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`, **+ T-175 sinkhole-prefix branch**: an A/AAAA answer inside a preset's `upstream::sinkhole_nets_for(id)` prefix (v4 or v6; IPv4-mapped AAAA unwrapped) → `Signal::NeedsBaseline`, composes with the signature); `is_blocked` / `known_signal` also carry the `&[SinkholeNet]` param; early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
 | `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 30s only when both Online, else recheck 3s — so a building outage still probes fast); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
@@ -251,7 +265,10 @@ Modules under `crates/dnsqb-service/src/`:
 | `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host) / `is_valid_provider_id`; T-175 `SinkholeNet` (`IpAddr`+prefix, `v4()`/`v6()`, no `Default`, `contains` = XOR+`leading_zeros`) + `SINKHOLE_NETS` + `sinkhole_nets_for(id)` (builtin-only); `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
-| `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (6 producible: +`BaselineFallback` T-155 — the one variant whose `voters` is **not** empty), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
+| `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (7 producible: +`BaselineFallback` T-155 — the one whose `voters` is **not** empty; +`RatingFilter` T-124), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
+| `rating_filter` | T-124 — pure step-5 core (SPEC.md §5.3). `ZoneSourceKind` (`CountryTopN(cc)`/`Global`, open enum — 4.2/4.5 additive), `ZoneSource { kind, registrables: HashSet }`, `ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — one suffix walk, both the membership test and the exact-match identity for lazy hygiene; a hit on any suffix in the union and not in `removed` = in zone. **No PSL** — the published lists are registrable-only, and `curate_topn` skips bare public suffixes (`overrides::suffix_matches` precedent) |
+| `topn_download` | T-124 pure helpers — `TOPN_RAW_BASE` (`raw.githubusercontent.com/.../data/topn/`, the T-105 stable-URL contract), `list_url`/`sha256_sidecar_url`, `parse_list` (skip `#`/blank, lowercase, dedup), `verify_sha256` (sha256sum-style first token, 64 hex; a malformed sidecar never matches). Mirrors `geoip_download` |
+| `topn_updater` | T-124 — `run_topn_updater` (`loop { refresh_all_lists; park_until_due }`, `TOPN_CHECK_INTERVAL` 24h, `Notify` wake on `/admin/reset`); `refresh_one_list` fetch→verify→`paths::write_atomic(<app-data>/topn/<list>.txt)`→`parse_list`→`ZoneSource`; failed list keeps last-known-good. `load_zone_from_disk` seeds the bubble at startup (empty on fresh install, like `load_geoip_state(None)`). Spawned by `main.rs` only when `[rating_filter]` is enabled + non-empty. **No DNS.** Mirrors `geoip_updater` |
 | `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (T-169 — `LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
 | `encrypted_file` | T-146 pure AEAD codec: `seal`/`open` over `XChaCha20Poly1305`; 6-byte cleartext header (`DQF1` / `FileKind` / version) is the AAD, validated **before** the AEAD open (`UnsupportedVersion` distinct from `Decrypt`); `EncryptedFileError` payload-free |
 | `persist_dto` | T-146 serde mirrors of `LogEntry` (`SystemTime`↔u64 millis, `RecordType`↔u16, `error_kind` `&'static str` re-interned through a closed set); `PersistedFileV1` wrapper (struct, additive); `to_json`/`from_json` |
@@ -455,6 +472,16 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
+- **Rating filter (T-124)** — (a) enabling it from a disabled state by hand-editing
+  `resolver_config.toml` + `POST /admin/reset` reloads the table but does **not** start
+  `run_topn_updater` (it's spawned once at startup, gated on `[rating_filter]` being enabled +
+  non-empty) — needs a service restart, like `[limits]`. (b) Enabling leaves **already-cached**
+  domains reachable until their `block_verdict_ttl` / positive TTL expires (cache is step 4, above
+  the filter — SPEC §5.3 "кеш … завжди переважають цей фільтр"); a cache clear on the enable route
+  is where 4.4 would add one. (c) The lazy-hygiene removal overlay is **in-memory only** —
+  rebuilt lazily after a restart (each removed domain re-blocked by quorum on first re-query);
+  durable storage is Батч 4.5. (d) No `rating_filter` field on `AdminStatusResponse` yet
+  (Батч 4.4) — an `enabled`-but-inert filter is only visible as a startup `tracing::warn`.
 - **Encrypted query-log persistence (T-146)** — best-effort scrub only (no defence vs VSS shadow
   copies / SSD wear-levelling, same honesty as `key_store::overwrite_with_zeros`); a hard crash
   loses ≤60s of the log tail (periodic full-snapshot rewrite, not append-only — deliberate); an
@@ -1451,9 +1478,10 @@ Two long-running processes:
 2. Blocklist        → BLOCK
 3. ccTLD block (5.2)→ BLOCK on domain-suffix match, no network call
 4. Cache            → cached quorum verdict, if present
-5. Rating filter (5.3, opt-in, default-OFF) → BLOCK if domain outside the allowed zones
-                       (curated per-country top-N ∪ gov ∪ edu ∪ personal learned list §5.1.1 ∪
-                       user allowlist); in-zone → proceed unchanged, NEVER force-ALLOW
+5. Rating filter (5.3, opt-in, default-OFF; T-124 BUILT) → BLOCK (not cached) if domain outside
+                       every active zone (curated per-country top-N ∪ global ∪ [gov/edu/personal
+                       — 4.2/4.5] minus lazy-hygiene removals); in-zone → proceed unchanged,
+                       NEVER force-ALLOW. Runtime host→registrable = suffix-walk, no PSL
 6. Quorum           → query the enabled voter set, OR-logic
 7. GeoIP (3.5)      → applied live to cached or fresh ALLOW responses, never cached itself
 ```
@@ -1482,11 +1510,15 @@ There is **no "voter scope" step** — §5.1 (top-sites excluded from Ads/Adult 
 - **GeoIP verdict is never cached alongside the quorum verdict** — it's a cheap local mmap lookup
   applied live on every read (cached or fresh) so a change to the blocked-country list takes effect
   immediately without cache invalidation logic (SPEC.md §3.5).
-- **Rating filter «bubble» (§5.3, Фаза 4) can only BLOCK, never force-ALLOW.** A domain inside the
-  allowed zones just continues through the normal pipeline (quorum → GeoIP) rather than skipping
-  it. Out-of-zone → BLOCK, quorum never runs. Opt-in, default-OFF (mandatory, not a judgment).
-  §5.1 (a separate always-on top-N voter-scope exemption) was removed — the bubble is the only
-  top-sites mechanism (T-179).
+- **Rating filter «bubble» (§5.3, T-124 BUILT) can only BLOCK, never force-ALLOW.** A domain inside
+  the allowed zones just continues through the normal pipeline (quorum → GeoIP) rather than skipping
+  it. Out-of-zone → BLOCK, quorum never runs, **not cached**. Opt-in, default-OFF (mandatory, not
+  a judgment). §5.1 (a separate always-on top-N voter-scope exemption) was removed — the bubble is
+  the only top-sites mechanism (T-179). Runtime host→registrable is a **suffix walk over the zone
+  set, not a PSL** (the published lists are already registrable-only). Lazy hygiene (T-108): a
+  fresh quorum block of an *exact* in-zone registrable evicts it from an **in-memory** removal
+  overlay (own lock, separate from the zone `Arc`); a subdomain block evicts nothing. Overlay
+  persistence is Батч 4.5.
 - Timeout handling is one of three configurable modes — `fail-open` (default), `fail-closed`,
   `degraded` — not a single hardcoded policy (SPEC.md §3.3).
 - Default upstream set on first run (`DEFAULT_PROVIDER_IDS`, decided T-170 / DECISIONS.md

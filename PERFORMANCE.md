@@ -25,7 +25,7 @@ about, not a coordinated attack.
 | 2. Blocklist | O(n) linear scan, same function, same pass | n = blocklist entries |
 | 3. ccTLD block | not implemented (Фаза 5, TASKS.md T-115) | — |
 | 4. Cache | O(1) amortized, `moka` concurrent hash map lookup | bounded by `max_capacity` (10 000) |
-| 5. Rating filter «bubble» | not implemented (Фаза 4) | — |
+| 5. Rating filter «bubble» (T-124) | O(L) suffix walk over the query host's labels, each step an O(1) `HashSet` lookup against the zone union and the removal overlay; zero network | L = labels in the host (≤ ~10) — independent of zone size |
 | 6. Quorum | O(k) parallel fan-out, `FuturesUnordered` | k = enabled providers, ≤10 (SPEC.md §3.4) |
 | 7. GeoIP | O(1) effectively — bounded-depth binary lookup over the IP address's bit prefix, `maxminddb` mmap read | independent of blocked-country-list size |
 

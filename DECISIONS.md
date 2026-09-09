@@ -1340,3 +1340,43 @@ origin→registrable (PSL) і пише сирий популярний набі�
 **Наслідки в доках:** SPEC.md §5.3 п.1 (гігієна = лінива рантайм), `data/topn/README.md` («NO
 content filtering here»), CONFIGURATION.md, CLAUDE.md (Commands). Перекриває опис T-108 у
 TASKS.md §"Фаза 4" від 2026-09-07.
+
+---
+
+## 2026-09-09 — T-108/T-124: overlay лінивої гігієни — in-memory, окремий lock, exact-match
+
+**Контекст:** запис вище (той самий день) намітив «окремий per-list локальний overlay у
+app-data; зона = `downloaded_list − removed_overlay`; прибране лишається прибраним і після
+вимкнення/ввімкнення фільтра». При реалізації в Батчі 4.3 (T-124) три деталі уточнено —
+closing-advisor kickoff.
+
+**Рішення:**
+- **Єдиний overlay, не per-list.** «Per-list» додавало б сенсу лише для granularity «пере-додати
+  домен, якщо нова версія списку його все одно викинула» — маргінально. Вимоги, що справді
+  важать (пережити refresh списку; пережити тумблер), задовольняє один набір registrable-рядків.
+- **In-memory, не на диску (цей батч).** `AppState::rating_filter_removed:
+  RwLock<Arc<HashSet<String>>>`, не персистується. Після рестарту відновлюється ліниво: перший
+  запит раніше-прибраного домену знову йде в кворум → блокується → знову прибрано (один
+  round-trip, той самий прийнятний tradeoff, що T-97 «свіжий Block після рестарту»). Так уникнуто
+  нового споживача `persistence-key` і нового on-disk сховища browsing-derived даних —
+  **персистенція overlay відкладена в Батч 4.5** (його шифроване персональне сховище — природне
+  місце).
+- **Окремий lock від зони.** `rating_filter_zone` (`RwLock<Arc<ZoneLists>>`) і
+  `rating_filter_removed` — окремі поля з окремими єдиними писарями (updater vs
+  `record_zone_removal`). Той самий `geoip` / `geoip_countries` split — щоб refresh списку не
+  зітер прибирання, і навпаки. **Не** `Arc::make_mut` на спільному `ZoneLists` (гонка + deep-copy
+  кожного `HashSet` на кожне прибирання).
+- **Exact-match only.** Прибирати домен лише коли кворум заблокував **сам registrable**
+  (`log_domain == matched_registrable`). Блок субдомену (`sub.example.co.uk` — один malware-хост)
+  → нічого не прибирати: кворум і так блокує його щоразу за нуль ціни, а виселення цілого
+  `example.co.uk` (легітимний топ-сайт) — чистий мінус.
+
+**Причина:** мінімальна поверхня для батча без UI; жодного нового крипто/on-disk-сховища
+browsing-даних до Батча 4.5, який його й проєктує; lock-модель — уже благословлений у CLAUDE.md
+патерн; exact-match прибирає хибне over-blocking.
+
+**Наслідки:** `AppState` (три поля + accessors), `pipeline::handle_query` крок 5 +
+`QueryLogMeta::zone_removal` (action-сигнал, не лог-поле), `dispatch::resolve_doh_request`
+(`record_zone_removal`). SPEC.md §5.3 п.1, CONFIGURATION.md, CLAUDE.md. Кеш (крок 4) вище
+фільтра, тож свіжий кворумний Block маскує ефект прибирання до спливу `block_verdict_ttl` — це
+правильно за SPEC §5.3, зафіксовано як known limitation.

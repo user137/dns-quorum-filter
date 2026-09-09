@@ -4643,3 +4643,87 @@ CI (`7a24ae3` і далі) — 7/7. `#![forbid(unsafe_code)]` цілий.
 **Коміти:** `3f8a022` (`.gitignore /dist/`) · `8d2d726` (T-107/T-108 v1 tool + PSL + ci `--examples`)
 · `9c5f168` (workflow + retry-hardening + README) · `cad26d5` (fix workflow prep) · `7a24ae3`
 (T-180 footer + docs) · `<pending>` (T-108 redesign: no-DNS tool + datasets + DECISIONS + close).
+
+---
+
+### Батч 4.3 — клієнтський рейтинг-фільтр: крок 5 конвеєра + top-N updater + лінива гігієна (T-124, T-125, T-126, T-129, T-130, T-131; T-108 folded; зроблено 2026-09-09, kickoff plan+advisor + closing-advisor; 4 коміти)
+
+Рейтинг-фільтр «бульбашка» (SPEC.md §5.3) живий end-to-end у `dnsqb-service`. UI — Батч 4.4.
+
+**Kickoff-рішення (plan-mode + advisor 2026-09-09):**
+- **Рантайм origin→registrable — suffix-walk по набору зони, БЕЗ PSL.** `curate_topn` уже звів
+  списки до registrable; рантайм зводить домен запиту прогулянкою по суфіксах проти самого набору
+  (прецедент `overrides::suffix_matches`). Жодного 334 КБ `.dat` у бінарі сервісу (T-105).
+- **Overlay лінивої гігієни — in-memory, окремий lock, exact-match** (advisor; DECISIONS.md
+  2026-09-09 ×2). Не персистується цей батч; переживає тумблер; відновлюється ліниво після
+  рестарту. Окреме поле від зони (взірець `geoip`/`geoip_countries`) — різні єдині писарі.
+  Прибирати лише коли кворум блокує **сам registrable** (`log_domain == matched_registrable`);
+  блок субдомену нічого не прибирає.
+- **`enabled` без завантажених списків → фільтр інертний + warn** (Fork B), не block-everything.
+- **Без `n`/cap у `[rating_filter]`** (advisor) — обрізання = довільна підмножина без користі
+  (висновок Батча 4.1).
+
+**T-126 — `[rating_filter]` конфіг-таблиця** (`config.rs`). `RatingFilterConfig { enabled: bool
+(дефолт false), lists: Vec<String> }` + `RatingFilterConfigFile` TOML-дзеркало. Валідація:
+кожен `lists`-елемент — 2 літери або `"global"`, lowercase, dedup; невалідний → loud
+`ConfigError::InvalidRatingFilterList`; `enabled` без `lists` — **не** помилка. Проведено через
+`PersistTarget` + усі 4 config-rewrite сайти `dispatch.rs` (cross-field-read, взірець `limits`).
+
+**T-124a — `rating_filter` модуль (чисте ядро).** `ZoneSourceKind` (`CountryTopN(cc)`/`Global`,
+відкритий enum — 4.2/4.5 адитивні), `ZoneSource { kind, registrables: HashSet }`,
+`ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — **один прохід**:
+suffix-walk, повертає перший суфікс у ∪ і не в `removed`; це і членство (`.is_some()`), і
+exact-match ідентичність для гігієни. 8 тестів (Happy/Boundary/Misuse/State/N-арність).
+
+**T-124b — завантаження + updater + `AppState`.** `topn_download` (чисте: `TOPN_RAW_BASE` =
+`raw.githubusercontent.com/user137/.../data/topn/`, `list_url`/`sha256_sidecar_url`, `parse_list`,
+`verify_sha256`) + `topn_updater` (`run_topn_updater` — `loop { refresh_all_lists; park_until_due }`,
+`TOPN_CHECK_INTERVAL` 24 год, `Notify`-wake; `refresh_one_list` fetch→verify→`write_atomic`→parse;
+провал списку → last-known-good). `load_zone_from_disk` засіває bubble при старті. `AppState` +=
+`rating_filter_config`/`rating_filter_zone`/`rating_filter_removed`/`rating_filter_refresh_wake`
+(+ accessors). `main.rs` — `build_geoip_init` (bundle-хелпер, тримає `AppState::new` на 7 аргах) +
+спавн `run_topn_updater` лише коли `[rating_filter]` увімкнений + непорожній.
+
+**T-124c + T-125 + T-129/130/131 — крок 5 + гігієна.** `pipeline::handle_query`: `rating_filter_step`
+після кешу, перед `resolve`. `RatingFilterView { lists, removed }` (два незалежні знімки) в
+`UpstreamContext`. Поза-зони → `rating_filter_block_with_meta` (`DecisionSource::RatingFilter`,
+`voters: []`, **не кешується** — як blocklist). У зоні → тече далі; ніколи force-ALLOW (T-125).
+`quorum_block_response_with_meta` (винесено з `handle_query` для `too_many_lines`) — при
+`zone_hit_exact` кладе `QueryLogMeta.zone_removal` (action-сигнал, **не** лог-поле);
+`dispatch::resolve_doh_request` викликає `record_zone_removal`. `DecisionSource::RatingFilter` —
+`query_log` + `admin::DecisionSourceView::from` арм + `persist_dto` (обидва напрями `query-log.enc`).
+`apply_admin_reset` перечитує таблицю + `wake_rating_filter_refresh`.
+
+**Тести:** T-129 (`out_of_zone_domain_is_blocked_without_consulting_quorum` — mock панікує,
+не кешується) · T-130 (`in_zone_domain_continues_through_quorum_and_is_not_force_allowed` —
+in-zone Allow резолвиться через кворум; in-zone субдомен Block → `DecisionSource::Quorum`,
+`zone_removal: None`) · T-131 (`user_allowlist_overrides_the_rating_filter`) ·
+`lazy_hygiene_surfaces_zone_removal_only_for_an_exact_registrable_block` ·
+`a_removed_registrable_is_blocked_by_step_5_on_the_next_lookup` ·
+`an_enabled_filter_with_no_lists_loaded_does_not_block` (Fork B) ·
+`a_zone_removal_survives_a_concurrent_zone_swap` (advisor — окремі lock'и) ·
+`wake_rating_filter_refresh_reaches_the_handle_the_updater_parks_on` ·
+`topn_download` 5 тестів · `config.rs` 5 нових round-trip/validation тестів ·
+`admin`/`persist_dto` DecisionSource round-trip розширено.
+
+**Known limitations** (CLAUDE.md): (a) увімкнути фільтр із вимкненого стану правкою файлу + reset
+не запускає `run_topn_updater` — потрібен рестарт (як `[limits]`); (b) увімкнення лишає
+вже-кешовані домени доступними до спливу TTL (кеш — крок 4, вище фільтра — правильно за SPEC
+§5.3); (c) overlay in-memory — відновлюється ліниво після рестарту, персистенція = Батч 4.5;
+(d) нема `rating_filter` поля в `/admin/status` (Батч 4.4).
+
+**Верифікація:** `fmt --check` / `clippy --workspace --all-targets -D warnings` / `test
+--workspace --lib --bins` (709 + 30) / conformance (18) / `--doc` / `cargo doc -D warnings` /
+`cargo deny check` — зелені. Жодного нового крейта. `#![forbid(unsafe_code)]` цілий.
+
+**Звірка діаграм:** `diagrams/rating-filter.md` перевиведено з коду (SOURCES += file-refs;
+flowchart += лінива-гігієна петля + Fork-B гілка; «інтерпретація» → «розвʼязано при T-124»);
+`diagrams/README.md` індекс, `diagrams/ui-dto-model.md` (`RatingFilterConfig` += `lists`),
+`diagrams/ui-status-indicator.md` (Ф5→Ф4). GAP 0.
+
+**Коміти:** `2fc0478` (T-126 config) · `4132bad` (T-124a pure module) · `b17a95b` (T-124
+pipeline + updater + lazy hygiene) · `<pending>` (docs + closing-advisor).
+
+**Примітка про CI:** `docs`-джоб CI упав на `4132bad` — `rating_filter.rs` мав intra-doc-лінки
+на `topn_updater`/`topn_download`, яких у тому коміті ще не було; `b17a95b` додав обидва модулі
+→ резолвиться. `main` зелений після `b17a95b`.

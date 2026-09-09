@@ -11,7 +11,7 @@ run-time-поведінки зміщується на нього, ritual ниж�
 | [`ui-navigation.md`](ui-navigation.md) | Вкладки GUI, що на кожній, фазове маркування | §6, §8, §8.1, §3.3-3.5, §5, §5.1.1, §5.2, §5.3 |
 | [`ui-dto-model.md`](ui-dto-model.md) | DTO-типи каналу UI↔Backend (class diagram) | §5, §5.1.1, §5.2, §5.3, §6, §8, §3.3-3.5, §4 |
 | [`ui-status-indicator.md`](ui-status-indicator.md) | Умови індикатора стану (не automaton — незалежні прапорці) + колір трей-іконки за станом (T-191) | §8, §8.1, §3.3, §5.3, §7, ВП№10 |
-| [`rating-filter.md`](rating-filter.md) | Рейтинговий фільтр «бульбашка» (Ф4): позиція в конвеєрі + 4 джерела зон (flowchart) | §5.3, §5.1.1, §5, §5.2, §6, ВП№8 |
+| [`rating-filter.md`](rating-filter.md) | Рейтинговий фільтр «бульбашка» (Ф4): позиція в конвеєрі + джерела зон + лінива гігієна (flowchart); крок 5 збудовано T-124 | §5.3, §5.1.1, §5, §5.2, §6, ВП№8 + `rating_filter.rs`/`pipeline.rs`/`topn_updater.rs` |
 | [`watchdog-state.md`](watchdog-state.md) | Автомат живучості/рестарту watchdog (на напрям): Healthy → … → GaveUp | §7, §7.1 |
 | [`watchdog-channels.md`](watchdog-channels.md) | Три канали живучості + шар голосування (flowchart — канали незалежні) | §7, §7.1 |
 | [`process-lifecycle.md`](process-lifecycle.md) | Життя 3 процесів: бутстрап (watcher → tray → service), точки входу, пауза/вихід/відновлення (Батч 3.12) | §7, §7.1, §1, §2, §6 |
