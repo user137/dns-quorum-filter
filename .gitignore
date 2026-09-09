@@ -1,6 +1,10 @@
 /target/
 /crates/dnsqb-ui/gen/
 
+# Local MSIX pack output (packaging/pack-msix.ps1). Never committed — the
+# authoritative .msix/.cer are release.yml artifacts. Kept out of `git add -A`.
+/dist/
+
 # Python bytecode cache
 __pycache__/
 *.pyc
