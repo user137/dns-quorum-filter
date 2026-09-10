@@ -1452,11 +1452,19 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   і decode-fail в один `Request`. `ci.yml` build-test += `cargo test --test admin_client`
   (бо `--lib --bins` пропускає `tests/`). Знахідка: `tls::server_config_from_certified_key`
   — `pub(crate)`, харнес дублює ~10 рядків `rustls`-збірки → до 4-B/T-210.
-- [ ] T-202 — `dnsqb-tray`: виокремити routing `handle_menu_event` у чисту
+- [x] T-202 — `dnsqb-tray`: виокремити routing `handle_menu_event` у чисту
   `menu_action_for(id) -> MenuAction` (+ тест таблицею, ~15 пунктів меню → дії) і
   `format_uninstall_report(&UninstallReport) -> String` (+ прямий тест). Патерн — як
   `dnsqb-tray/status.rs`. `main.rs` 823 прод LOC, 0 тестів; mis-wire меню їде мовчки.
   ≈½–1 день. (1.4-A)
+  — **готово 2026-09-10** (plan+advisor до старту): `menu_action_for` (13-варіантний
+  `MenuAction`, `Unknown` = старий `_ => {}`), `handle_menu_event` → тонкий делегатор
+  `match menu_action_for(id)` без wildcard — arm-и **дослівно** ті самі, той самий порядок
+  (git diff — чиста механічна заміна ключа). Звірено 1:1: `build_menu` будує 12 id → усі 12
+  обробляються, множини ідентичні, mis-wire сьогодні немає. `format_uninstall_report` вже
+  була окремою `fn`. `#[cfg(test)] mod tests` у `main.rs` (перший там): табличний тест
+  keyed на **літеральних** id-рядках (не константах) + Unknown-кейси + мапінг
+  `ArtifactOutcome`→фраза + незалежність полів; 37 tray bin-тестів (+5).
 - [ ] T-203 — `dnsqb-watcher`: виокремити `fn observe(pipe, service_hb, watcher_hb, health)
   -> ChannelObs` + тест мапінгу двох heartbeat-файлів на правильні напрямки. Ядро
   (`LoopDriver::tick`) уже покрите; нетестований залишок — побудова `ChannelObs` із сирих

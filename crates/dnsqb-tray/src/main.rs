@@ -351,6 +351,61 @@ fn build_menu(app_data: &Path) -> (Menu, MenuItem) {
     (menu, pause_resume)
 }
 
+/// Which menu item was clicked — the pure `id -> intent` half of
+/// [`handle_menu_event`], split out (T-202) so the routing is table-testable:
+/// a mis-typed id constant, or a menu item added with no matching handler,
+/// otherwise rides silently in an 823-line binary. Every side effect (confirm
+/// dialogs, thread spawns, `control_flow`) stays in `handle_menu_event`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuAction {
+    /// Open `/admin/ui` in the default browser.
+    OpenSettings,
+    /// `POST /admin/reset` — clear the verdict cache and the query log.
+    ResetCacheAndLog,
+    /// Show the "Про програму" dialog.
+    ShowAbout,
+    /// Re-enter the first-run setup wizard.
+    RunSetupWizard,
+    /// Install the local TLS cert into `CurrentUser\Root` (behind a confirm).
+    InstallCert,
+    /// Remove the local TLS cert from the trust store (behind a confirm).
+    UninstallCert,
+    /// Regenerate the local TLS cert and re-install it (behind a confirm).
+    RotateCert,
+    /// Clear the trusted cert + stored secrets, wipe app-data, quit the app.
+    RemoveAllLocalState,
+    /// Pause filtering if it is running, resume it if paused (`stop.flag`).
+    TogglePause,
+    /// Relaunch the watchdog if it stopped.
+    RestoreSupervision,
+    /// Stop the service, the watchdog and this tray.
+    QuitApp,
+    /// Exit only this tray process; leave the service filtering.
+    HideIcon,
+    /// An id with no handler — preserves the old catch-all `_ => {}`.
+    Unknown,
+}
+
+/// Maps a `muda` menu-item id to its [`MenuAction`]. Pure and total.
+#[must_use]
+fn menu_action_for(id: &str) -> MenuAction {
+    match id {
+        OPEN_SETTINGS_ID => MenuAction::OpenSettings,
+        RESTART_ID => MenuAction::ResetCacheAndLog,
+        ABOUT_ID => MenuAction::ShowAbout,
+        SETUP_WIZARD_ID => MenuAction::RunSetupWizard,
+        INSTALL_CERT_ID => MenuAction::InstallCert,
+        UNINSTALL_CERT_ID => MenuAction::UninstallCert,
+        ROTATE_CERT_ID => MenuAction::RotateCert,
+        REMOVE_ALL_ID => MenuAction::RemoveAllLocalState,
+        PAUSE_RESUME_ID => MenuAction::TogglePause,
+        RESTORE_SUPERVISION_ID => MenuAction::RestoreSupervision,
+        QUIT_APP_ID => MenuAction::QuitApp,
+        CLOSE_ID => MenuAction::HideIcon,
+        _ => MenuAction::Unknown,
+    }
+}
+
 fn handle_menu_event(
     id: &str,
     app_data: &Path,
@@ -358,18 +413,18 @@ fn handle_menu_event(
     control_flow: &mut ControlFlow,
     trust: &TrustState,
 ) {
-    match id {
-        OPEN_SETTINGS_ID => {
+    match menu_action_for(id) {
+        MenuAction::OpenSettings => {
             browser::open_in_default_browser(&format!("https://127.0.0.1:{port}/admin/ui"));
         }
-        RESTART_ID => {
+        MenuAction::ResetCacheAndLog => {
             spawn_admin_action(app_data.to_path_buf(), port, "reset", |client| async move {
                 client.reset().await.map(|_response| ())
             });
         }
-        ABOUT_ID => show_about_dialog(),
-        SETUP_WIZARD_ID => run_setup_wizard(app_data, port, trust),
-        INSTALL_CERT_ID => {
+        MenuAction::ShowAbout => show_about_dialog(),
+        MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust),
+        MenuAction::InstallCert => {
             if confirm_install_cert() {
                 let cert_path = app_data.join("cert.pem");
                 spawn_cert_action(
@@ -380,7 +435,7 @@ fn handle_menu_event(
                 );
             }
         }
-        UNINSTALL_CERT_ID => {
+        MenuAction::UninstallCert => {
             if confirm_uninstall_cert() {
                 spawn_cert_action(
                     "uninstall",
@@ -390,7 +445,7 @@ fn handle_menu_event(
                 );
             }
         }
-        ROTATE_CERT_ID => {
+        MenuAction::RotateCert => {
             if confirm_rotate_cert() {
                 spawn_cert_action(
                     "rotate",
@@ -400,7 +455,7 @@ fn handle_menu_event(
                 );
             }
         }
-        REMOVE_ALL_ID => {
+        MenuAction::RemoveAllLocalState => {
             if confirm_remove_all_local_state() {
                 spawn_remove_all_and_quit(app_data.to_path_buf());
             }
@@ -411,7 +466,7 @@ fn handle_menu_event(
         // supervising it. Resume = remove the flag; `ensure_sibling_running` is
         // an idempotent no-op unless both the service and watcher died during
         // the pause. The label the user clicked tells us which.
-        PAUSE_RESUME_ID => {
+        MenuAction::TogglePause => {
             if stop_flag_is_set(app_data) {
                 clear_stop_flag(app_data);
                 ensure_sibling_running(app_data, InstanceRole::Service);
@@ -425,14 +480,14 @@ fn handle_menu_event(
         // T-185: bring the watchdog back if it stopped (idempotent — a no-op
         // when a watcher is already running). This is the only actionable
         // recovery for a dead watcher; there is no automatic one yet.
-        RESTORE_SUPERVISION_ID => {
+        MenuAction::RestoreSupervision => {
             ensure_sibling_running(app_data, InstanceRole::Watcher);
         }
         // T-185: quit the whole app. Write both flags and exit the tray; the
         // watcher picks up `quit.flag` on its next tick, stops the service and
         // exits itself. `stop.flag` covers the gap so nothing is respawned in
         // between.
-        QUIT_APP_ID => {
+        MenuAction::QuitApp => {
             if confirm_quit() {
                 if let Err(err) = set_stop_flag(app_data) {
                     tracing::warn!("could not write stop.flag: {err}");
@@ -446,8 +501,8 @@ fn handle_menu_event(
         // "Сховати іконку" only exits this process — dnsqb-service and the
         // watcher keep running, filtering stays on. "Вийти з DNS Quorum
         // Filter" above is the one that stops everything.
-        CLOSE_ID => *control_flow = ControlFlow::Exit,
-        _ => {}
+        MenuAction::HideIcon => *control_flow = ControlFlow::Exit,
+        MenuAction::Unknown => {}
     }
 }
 
@@ -820,4 +875,104 @@ fn confirm_quit() -> bool {
         .set_buttons(rfd::MessageButtons::YesNo)
         .show();
     result == rfd::MessageDialogResult::Yes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_uninstall_report, menu_action_for, MenuAction};
+    use dnsqb_service::{ArtifactOutcome, UninstallReport};
+
+    // Keyed on the literal id strings `build_menu` passes to
+    // `MenuItem::with_id`, NOT the `*_ID` constants — so a constant silently
+    // changing value is caught here even though a constant-keyed table would
+    // still pass (it would reference the same changed constant on both sides).
+    #[test]
+    fn menu_action_for_maps_each_built_menu_id_to_its_action() {
+        let cases = [
+            ("open-settings", MenuAction::OpenSettings),
+            ("restart", MenuAction::ResetCacheAndLog),
+            ("about", MenuAction::ShowAbout),
+            ("setup-wizard", MenuAction::RunSetupWizard),
+            ("install-cert", MenuAction::InstallCert),
+            ("uninstall-cert", MenuAction::UninstallCert),
+            ("rotate-cert", MenuAction::RotateCert),
+            ("remove-all-local-state", MenuAction::RemoveAllLocalState),
+            ("pause-resume-filtering", MenuAction::TogglePause),
+            ("restore-supervision", MenuAction::RestoreSupervision),
+            ("quit-app", MenuAction::QuitApp),
+            ("close", MenuAction::HideIcon),
+        ];
+        for (id, expected) in cases {
+            assert_eq!(menu_action_for(id), expected, "id {id:?}");
+        }
+    }
+
+    #[test]
+    fn menu_action_for_unrecognised_ids_are_unknown() {
+        for id in ["", "not-a-real-id", "open-setting", "OPEN-SETTINGS", "quit"] {
+            assert_eq!(menu_action_for(id), MenuAction::Unknown, "id {id:?}");
+        }
+    }
+
+    fn report_of(outcome: ArtifactOutcome) -> UninstallReport {
+        UninstallReport {
+            cert: outcome,
+            tls_key: outcome,
+            persistence_key: outcome,
+            maxmind_creds: outcome,
+        }
+    }
+
+    #[test]
+    fn uninstall_report_has_one_labelled_line_per_artifact() {
+        let text = format_uninstall_report(&report_of(ArtifactOutcome::Removed));
+        assert_eq!(text.lines().count(), 4);
+        for label in [
+            "Сертифікат",
+            "TLS-ключ",
+            "Ключ шифрування",
+            "Креденшели MaxMind",
+        ] {
+            assert!(text.contains(label), "missing label {label}");
+        }
+    }
+
+    #[test]
+    fn uninstall_report_maps_each_outcome_to_its_phrase() {
+        assert!(
+            format_uninstall_report(&report_of(ArtifactOutcome::Removed))
+                .lines()
+                .all(|line| line.ends_with(": видалено"))
+        );
+        assert!(
+            format_uninstall_report(&report_of(ArtifactOutcome::NotPresent))
+                .lines()
+                .all(|line| line.ends_with(": не було встановлено"))
+        );
+        assert!(
+            format_uninstall_report(&report_of(ArtifactOutcome::Failed("x")))
+                .lines()
+                .all(|line| line.ends_with(": НЕ ВДАЛОСЯ видалити"))
+        );
+    }
+
+    #[test]
+    fn uninstall_report_renders_each_field_independently() {
+        let text = format_uninstall_report(&UninstallReport {
+            cert: ArtifactOutcome::Removed,
+            tls_key: ArtifactOutcome::NotPresent,
+            persistence_key: ArtifactOutcome::Failed("secret store error"),
+            maxmind_creds: ArtifactOutcome::Removed,
+        });
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "Сертифікат: видалено",
+                "TLS-ключ: не було встановлено",
+                "Ключ шифрування: НЕ ВДАЛОСЯ видалити",
+                "Креденшели MaxMind: видалено",
+            ]
+        );
+    }
 }
