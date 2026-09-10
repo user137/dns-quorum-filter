@@ -727,7 +727,10 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
 - `cargo test --workspace --lib --bins` — unit tests. **`--bins` is required, not optional** —
   `dnsqb-tray` / `dnsqb-watcher` are `[[bin]]`-only crates with no `[lib]` target, so `--lib` alone
   never compiles or runs their `#[cfg(test)]` modules (caught when `dnsqb-tray/src/browser.rs`'s
-  test turned out to have never run in CI). **`cargo test ... --bins` builds the *test-harness*
+  test turned out to have never run in CI). **`--lib --bins` also runs no `tests/` integration
+  binary** — that is a third target class; each needs its own `cargo test --test <name>` line in
+  CI (`conformance` and `admin_client` are the two wired in — T-201's `tests/admin_client.rs`
+  would not have run without adding its line). **`cargo test ... --bins` builds the *test-harness*
   exes, NOT the runnable `target/debug/<name>.exe`** — before a manual end-to-end smoke after a
   `main.rs` edit, run `cargo build --workspace` or you'll run a stale binary (cost real time in
   Батч 3.3: the watcher worked but the service showed no `service.hb` because its exe predated the
