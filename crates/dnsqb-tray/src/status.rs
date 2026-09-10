@@ -341,6 +341,10 @@ mod tests {
         stats: AdminStats,
     ) -> AdminStatusResponse {
         AdminStatusResponse {
+            // T-204: the tray does not consume `hero_state` (it keeps its own
+            // `from_response` ranking — DECISIONS.md 2026-09-07/08); a fixture
+            // value is enough.
+            hero_state: dnsqb_service::HeroStateView::Protected,
             active_providers,
             timeout_mode: TimeoutMode::FailOpen,
             timeout_ms: 2000,

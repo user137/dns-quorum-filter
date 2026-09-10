@@ -1424,3 +1424,57 @@ browsing-даних до Батча 4.5, який його й проєктує; 
   жоден шлях не сіє `.lists` повз `validate_rating_filter_lists` (load `config.rs:490`,
   маршрут `dispatch.rs:2157`, reset перечитує з диска).
 - CLAUDE.md «Known limitations» / CONFIGURATION.md — оновити в Коміті 6.
+
+---
+
+## 2026-09-10 — T-204 (знахідка 3-B): вирішальна логіка hero `/admin/ui` — на сервер; обсяг «Максимум»
+
+**Контекст:** пріоритетні сходи hero-статусу `/admin/ui` (watchdog > offline >
+paused > 0-voters > cert), guard масового перемикача фільтрації (не вмикати
+дорослу категорію без воутера) і fold стану категорій жили в `main.js` і
+верифікувалися **лише** `assert!(MAIN_JS.contains("…"))`. Жоден рядок не
+виконувався в тестах (свідомо немає JS-тулчейну) — форма «тест проходить, не
+доводячи властивість» (урок T-59) на поверхні, що вмикає/вимикає фільтрацію.
+Питання обсягу: чи тягнути сюди cert-гілку (потребує кешу `is_trusted`, інакше
++2 `certutil` на кожен 2 с-poll `/admin/status`).
+
+**Рішення:** перенести вирішальну логіку на сервер як обчислені поля DTO —
+`AdminStatusResponse.hero_state: HeroStateView` (чиста `admin::compute_hero_state`),
+`ProvidersResponse.{category_states, master_switch_targets}` (чисті
+`category_filter_views` / `master_switch_targets`). `main.js` → чистий рендер
+(`HERO_PRESENTATION` мапа). **Обсяг «Максимум»** (рішення користувача через
+AskUserQuestion): cert-гілка теж на сервер → окремим комітом наперед зроблено
+**T-211** (кеш `trust_store::is_trusted` у `AppState.cert_trust:
+RwLock<Option<CertTrustView>>`, фоновий 60 с-poll `cert_watch`). `hero_state` —
+влада **лише** для hero `/admin/ui`: трей (`status.rs::from_response`) тримає
+власний, свідомо інший ранкінг (Paused вище watchdog — див. запис 2026-09-07 /
+2026-09-08 T-193).
+
+**Причина:** патерн у репо вже двічі застосовано (`rating_filter_is_active` «єдина
+влада» на сервері; `dnsqb-tray/status.rs` виокремлення чистих функцій) — це
+рефактор за наявним патерном, не нова архітектура. «Максимум» бо T-204 і так
+ставить cert-trust на 2 с-poll `/admin/status` — передумова кешування T-211 вже
+виконана, тож半-міра лишила б клієнтську cert-гілку єдиним нетестованим шматком.
+`cert: None` («фоновий poll ще не дав відповіді») → `Protected`, **не**
+`CertUnknown` (advisor — трей зробив цю саму помилку до `TrustState::is_confirmed`,
+T-188: свіжа інсталяція не має читатися як «зламано»). `SERVICE_UNREACHABLE`
+лишається клієнтським — сервер не може повідомити про власну недоступність.
+
+**Наслідки:**
+- `admin.rs`: `+HeroStateView` (8 варіантів, `SCREAMING_SNAKE`), `+CategoryToggleState`
+  / `CategoryFilterView`, `+CATEGORY_ORDER`, чисті `compute_hero_state` /
+  `category_filter_views` / `master_switch_targets`. `AdminStatusResponse.hero_state`
+  **без `#[serde(default)]`** — консистентно з рештою полів; версіонування DTO —
+  окремо T-205 / 3-A (ризик прийнято як низький: MSIX атомарний, path-deps +
+  `Cargo.lock`).
+- `dispatch.rs`: обидва білдери `AdminStatusResponse` кличуть `compute_hero_state`;
+  `providers_view` заповнює 2 нові поля.
+- `main.js`: `computeProtectionState` → `HERO_PRESENTATION` + `heroPresentation()`;
+  `renderError` → `SERVICE_UNREACHABLE`; видалено `certTrust` / `refreshCertStatus`
+  / fetch `/admin/cert-status` / visibilitychange; `categoryState()` →
+  `categoryStateFrom(data)`; `flipAllCategories` ітерує `data.master_switch_targets`.
+- `admin_ui.rs`: 4 `contains`-тести перенацілено на рендер-звʼязку; вирішальні
+  ассерти → `admin::hero_and_category_tests` (15 нових Rust-тестів).
+- SPEC.md §8/§8.1, UI-SPEC.md §3.1/§4, `diagrams/ui-status-indicator.md` —
+  індикатор обчислюється сервером; DTO-таблиці += 3 поля.
+- T-210 (демоут внутрішніх re-exports) лишається опційним хвостом, не зроблено тут.

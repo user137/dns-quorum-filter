@@ -1479,7 +1479,7 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 
 ### RV.2 — архітектура / консистентність (після RV.1)
 
-- [ ] T-204 — **`major`.** Вирішальна логіка `/admin/ui` (обчислення hero-state, guard
+- [x] T-204 — **`major`.** Вирішальна логіка `/admin/ui` (обчислення hero-state, guard
   master-switch, стан-машина картки rating-filter) живе в `main.js` і верифікується лише
   `assert!(MAIN_JS.contains("…"))` — керівна поверхня, логічний баг їде мовчки (рекурентний
   урок T-59, масштабований). Перенести справді *вирішальну* логіку на сервер як обчислені
@@ -1487,6 +1487,27 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `admin.rs`; `main.js` → чистий рендер; чиста презентація лишається в JS. Патерн —
   `rating_filter_is_active` «єдина влада» + `status.rs` виокремлення. **Власний
   plan+advisor** (арх-зміна, торкається DTO/публічного API). ≈1–2 дні. (3-B / 1.2-A)
+  — **готово 2026-09-10** (plan+advisor kickoff+closing; обсяг «Максимум» — рішення
+  користувача — вкл. cert, тож T-211 зроблено окремим комітом перед цим). `admin.rs`:
+  `HeroStateView` (8 варіантів) + чиста `compute_hero_state(watchdog, network, paused,
+  has_active_provider, cert) -> HeroStateView` — сходи **дослівно** ті самі, що старий
+  `computeProtectionState` (watchdog > offline > paused > 0-voters > cert); `cert: None`
+  (ще не перевіряли) → `Protected`, не `CertUnknown` (advisor — та сама помилка, що T-188
+  виправив у треї). `SERVICE_UNREACHABLE` лишається клієнтським (сервер не бачить власної
+  недоступності). `ProvidersResponse` += `category_states: Vec<CategoryFilterView>`
+  (`Off`/`Partial`/`On` fold — колишній `categoryState()`) + `master_switch_targets:
+  Vec<Category>` (категорії з ≥1 сконфіг. воутером — guard проти opt-in дорослого, T-170).
+  Обидва білдери `AdminStatusResponse` кличуть `compute_hero_state`; `providers_view`
+  заповнює нові поля. `main.js`: `computeProtectionState` (77 р.) → `HERO_PRESENTATION`
+  const-мапа + `heroPresentation()`; `renderError` → літеральний `SERVICE_UNREACHABLE`;
+  видалено `certTrust`/`refreshCertStatus`/клієнтський fetch `/admin/cert-status`
+  (+visibilitychange); `categoryState()` → `categoryStateFrom(data)`; `flipAllCategories`
+  ітерує `data.master_switch_targets`. `admin_ui.rs`: 4 `contains`-тести перенацілено на
+  рендер-звʼязку — **вирішальні** ассерти тепер у `admin.rs::hero_and_category_tests` (15
+  тестів: сходи, паузо-не-зелений, `None`→Protected, folds, adult-guard, serde round-trip).
+  **Межа влади:** `hero_state` — тільки для hero `/admin/ui`; трей тримає власний ранкінг
+  (`status.rs::from_response`, Paused вище watchdog — DECISIONS.md 2026-09-07/08).
+  Гейт: 741 lib + 37 tray + 3 watcher + 7 admin_client + 18 conformance, clippy/fmt/doc.
 - [ ] T-205 — Версіонувати адмін-DTO: `#[serde(default)]` на additive-полях
   `AdminStatusResponse` + `schema_version: u32`; `AdminClient` логує warning на розбіжність
   версій, не падає. Зараз це єдиний крос-процесний контракт репо без версіонування

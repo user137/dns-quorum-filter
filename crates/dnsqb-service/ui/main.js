@@ -21,97 +21,79 @@ const timeoutConfigBody = document.getElementById("timeout-config-body");
 const ratingFilterBody = document.getElementById("rating-filter-body");
 const ratingFilterBadge = document.getElementById("rating-filter-badge");
 
-// T-188: the last GET /admin/cert-status result (CertTrustView), or null
-// until the first fetch. Fetched on load and re-fetched after an install
-// click - NOT on the 2s poll (each call is two certutil spawns server-side).
-let certTrust = null;
-
-// T-176: the basic view's one large element. Computed from the conditions
-// diagrams/ui-status-indicator.md defines (the subset this page can see) in
-// that same priority order - a failed fetch (`reachable=false`) is the worst
-// case and outranks everything, then watchdog, then network, then "no
-// provider active", then (T-188) the local cert trust state, then healthy.
-// Pure - takes the status object + cert-trust string, returns
-// {cls,state,detail,action?}.
-function computeProtectionState(status, reachable, cert) {
-  if (!reachable) {
-    return {
-      cls: "is-bad",
-      state: "Не захищено",
-      detail: "Служба фільтрації не відповідає. Перевірте, чи вона запущена.",
-    };
-  }
-  if (status.watchdog === "GAVE_UP") {
-    return {
-      cls: "is-bad",
-      state: "Служба зупинилась",
-      detail: "Автоматичний перезапуск не вдався. Перезапустіть застосунок вручну.",
-    };
-  }
-  if (status.watchdog === "RESTARTING") {
-    return {
-      cls: "is-warn",
-      state: "Відновлення…",
-      detail: "Службу фільтрації перезапускають. Зачекайте кілька секунд.",
-    };
-  }
-  if (status.network === "OFFLINE") {
-    return {
-      cls: "is-warn",
-      state: "Немає інтернету",
-      detail: "Резолвінг призупинено, доки не відновиться зв'язок.",
-    };
-  }
-  // T-193: the tray paused filtering. The service is up and answering, so
-  // nothing above fires - but every query is going through the unfiltered
-  // baseline. Ranked here (offline > paused > 0-voters) to match the pipeline
-  // fast-path order, so a pause never reads as green "Захищено".
-  if (status.paused) {
-    return {
-      cls: "is-warn",
-      state: "Фільтрацію призупинено",
-      detail:
-        "DNS працює, але без фільтра: quorum і GeoIP вимкнено. Ваші власні " +
-        "списки блокування та дозволу діють. Відновіть через меню іконки в треї.",
-    };
-  }
-  if (!status.active_providers || status.active_providers.length === 0) {
-    return {
-      cls: "is-bad",
-      state: "Не захищено",
-      detail: "Фільтрація вимкнена — жоден провайдер не активний.",
-    };
-  }
-  // T-188: filtering itself is up, but the local cert isn't trusted, so the
-  // browser can't reach /admin/ui without a warning and (more importantly) may
-  // not be sending DNS through this service at all. Distinct from "can't tell"
-  // (UNKNOWN) - trust_store::is_trusted's own "unknown != untrusted" contract.
-  if (cert === "NOT_TRUSTED") {
-    return {
-      cls: "is-bad",
-      state: "Сертифікат не встановлено",
-      detail:
-        "Локальний сертифікат не додано до довірених кореневих сертифікатів. " +
-        "Без цього браузер не довірятиме сторінці налаштувань.",
-      action: "install-cert",
-    };
-  }
-  if (cert === "UNKNOWN") {
-    return {
-      cls: "is-warn",
-      state: "Сертифікат не перевірено",
-      detail: "Не вдалося перевірити стан локального сертифіката.",
-    };
-  }
-  const blocked = status.stats ? status.stats.blocked : 0;
-  return {
+// T-176 / T-204: the basic view's one large element. The decisive priority
+// ladder (watchdog > offline > paused > 0-voters > cert) moved to the server
+// (admin.rs::compute_hero_state, finding 3-B) and arrives as
+// `status.hero_state`; this file only maps that enum to presentation. The one
+// case the server can't report is its own unreachability - when the
+// /admin/status fetch itself fails, renderError() renders SERVICE_UNREACHABLE
+// directly.
+const HERO_PRESENTATION = {
+  SERVICE_UNREACHABLE: {
+    cls: "is-bad",
+    state: "Не захищено",
+    detail: "Служба фільтрації не відповідає. Перевірте, чи вона запущена.",
+  },
+  WATCHDOG_GAVE_UP: {
+    cls: "is-bad",
+    state: "Служба зупинилась",
+    detail: "Автоматичний перезапуск не вдався. Перезапустіть застосунок вручну.",
+  },
+  WATCHDOG_RESTARTING: {
+    cls: "is-warn",
+    state: "Відновлення…",
+    detail: "Службу фільтрації перезапускають. Зачекайте кілька секунд.",
+  },
+  OFFLINE: {
+    cls: "is-warn",
+    state: "Немає інтернету",
+    detail: "Резолвінг призупинено, доки не відновиться зв'язок.",
+  },
+  PAUSED: {
+    cls: "is-warn",
+    state: "Фільтрацію призупинено",
+    detail:
+      "DNS працює, але без фільтра: quorum і GeoIP вимкнено. Ваші власні " +
+      "списки блокування та дозволу діють. Відновіть через меню іконки в треї.",
+  },
+  NO_PROVIDERS: {
+    cls: "is-bad",
+    state: "Не захищено",
+    detail: "Фільтрація вимкнена — жоден провайдер не активний.",
+  },
+  CERT_NOT_TRUSTED: {
+    cls: "is-bad",
+    state: "Сертифікат не встановлено",
+    detail:
+      "Локальний сертифікат не додано до довірених кореневих сертифікатів. " +
+      "Без цього браузер не довірятиме сторінці налаштувань.",
+    action: "install-cert",
+  },
+  CERT_UNKNOWN: {
+    cls: "is-warn",
+    state: "Сертифікат не перевірено",
+    detail: "Не вдалося перевірити стан локального сертифіката.",
+  },
+  PROTECTED: {
     cls: "is-ok",
     state: "Захищено",
-    detail:
-      blocked > 0
-        ? `Фільтрація працює. За поточний журнал заблоковано ${blocked}.`
-        : "Фільтрація працює.",
-  };
+    detail: "Фільтрація працює.",
+  },
+};
+
+// Map `status.hero_state` to {cls,state,detail,action?}. The only
+// presentation logic left here: the PROTECTED detail gains the blocked count
+// (a number the server already sends in `stats`, formatted client-side).
+function heroPresentation(heroState, stats) {
+  const base = HERO_PRESENTATION[heroState] || HERO_PRESENTATION.SERVICE_UNREACHABLE;
+  const blocked = stats ? stats.blocked : 0;
+  if (heroState === "PROTECTED" && blocked > 0) {
+    return {
+      ...base,
+      detail: `Фільтрація працює. За поточний журнал заблоковано ${blocked}.`,
+    };
+  }
+  return base;
 }
 
 const HERO_MARK = { "is-ok": "✓", "is-bad": "✕", "is-warn": "↺" };
@@ -150,9 +132,11 @@ function renderProtectionHero(state) {
   protectionHero.appendChild(box);
 }
 
-// T-188: POST /admin/install-cert, then re-check and re-render. On failure,
-// point the user at the tray item (which surfaces the certutil error in a
-// dialog) rather than trying to show it here.
+// T-188: POST /admin/install-cert, then re-render. On failure, point the user
+// at the tray item (which surfaces the certutil error in a dialog) rather than
+// trying to show it here. T-204/T-211: the route pokes the server's cert-trust
+// cache synchronously, so the very next refresh() (2s poll or the one below)
+// shows the flipped hero - no separate cert fetch needed.
 async function installCertFromHero(button) {
   button.disabled = true;
   const original = button.textContent;
@@ -166,7 +150,7 @@ async function installCertFromHero(button) {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
-    await refreshCertStatus();
+    await refresh();
   } catch (_err) {
     button.disabled = false;
     button.textContent = "Не вдалося — скористайтеся пунктом трея";
@@ -174,22 +158,6 @@ async function installCertFromHero(button) {
       button.textContent = original;
     }, 4000);
   }
-}
-
-// T-188: fetch GET /admin/cert-status into the module-level `certTrust`, then
-// re-render (refresh() recomputes the hero from it). Called on load and after
-// an install click - never on the 2s poll.
-async function refreshCertStatus() {
-  try {
-    const response = await fetch("/admin/cert-status");
-    if (response.ok) {
-      const body = await response.json();
-      certTrust = body.trusted;
-    }
-  } catch (_err) {
-    /* leave the previous value; the hero just doesn't gain the cert branch */
-  }
-  await refresh();
 }
 
 async function getStatus() {
@@ -294,7 +262,7 @@ function renderTimeoutConfig(status) {
 }
 
 function render(status) {
-  renderProtectionHero(computeProtectionState(status, true, certTrust));
+  renderProtectionHero(heroPresentation(status.hero_state, status.stats));
   // T-128: the always-visible rating-filter «bubble» badge. On the 2s poll
   // path (unlike the #rating-filter-body card) so it can't go stale; a
   // no-op empty div whenever the bubble is off, which is the common case.
@@ -341,7 +309,9 @@ function render(status) {
 }
 
 function renderError(err) {
-  renderProtectionHero(computeProtectionState(null, false, certTrust));
+  // The /admin/status fetch failed - the one hero state the server can't
+  // report about itself (T-204).
+  renderProtectionHero(HERO_PRESENTATION.SERVICE_UNREACHABLE);
   appBody.textContent = "";
   const panel = document.createElement("div");
   panel.className = "error-panel";
@@ -368,17 +338,10 @@ async function refresh() {
 }
 
 refresh();
-// T-188: cert-trust is fetched on load and after an install click - NOT on
-// the 2s poll (each call is two certutil spawns server-side). Also re-fetch
-// when the tab regains focus, so a tray-side "Видалити сертифікат" while this
-// page sat in the background is picked up without a full reload - the hero is
-// the primary install affordance in the MSIX flow (closing-advisor).
-refreshCertStatus();
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) {
-    refreshCertStatus();
-  }
-});
+// T-204: cert-trust used to be its own GET here (+ a visibilitychange
+// re-fetch). It is now a field of `status.hero_state`, computed server-side
+// from a cache the background `cert_watch` poll keeps warm (T-211), so the
+// 2s poll below picks up a tray-side "Видалити сертифікат" on its own.
 // `in_flight` (a live count of requests being resolved right now) is
 // otherwise only ever sampled at the instant of a toggle click - a page
 // that only re-renders on user action would show it near-permanently 0,
@@ -1950,17 +1913,13 @@ async function setCategoryEnabled(category, enabled) {
   return response.json();
 }
 
-// "on" | "off" | "partial" for one category, from the live voter list.
-function categoryState(providers, key) {
-  const inCat = providers.filter((entry) => entry.category === key);
-  if (inCat.length === 0) {
-    return "off";
-  }
-  const on = inCat.filter((entry) => entry.enabled).length;
-  if (on === 0) {
-    return "off";
-  }
-  return on === inCat.length ? "on" : "partial";
+// "on" | "off" | "partial" for one category. T-204: the fold moved to the
+// server (admin.rs::category_filter_views); this reads `data.category_states`
+// (CategoryToggleState, SCREAMING_SNAKE) and lowercases it for the render
+// helpers below. A category the server didn't list ⇒ "off".
+function categoryStateFrom(data, key) {
+  const row = (data.category_states || []).find((entry) => entry.category === key);
+  return row ? row.state.toLowerCase() : "off";
 }
 
 // Built via DOM methods, no user text - but kept construction-style for
@@ -2047,25 +2006,23 @@ async function flipCategory(category, enabled) {
   }
 }
 
-// The master switch flips all three categories to the same target. Sequential
-// (not Promise.all): each POST rewrites resolver_config.toml under
+// The master switch flips every allowed category to the same target.
+// Sequential (not Promise.all): each POST rewrites resolver_config.toml under
 // persist_lock, and a partial failure must be reported, not swallowed.
-async function flipAllCategories(enabled, providers) {
-  const configured = providers || [];
+//
+// T-204: `targets` is `status.master_switch_targets` - the categories with a
+// configured voter, computed server-side (admin.rs::master_switch_targets).
+// The guard that keeps the master switch from opting a user into adult
+// filtering with a preset they never chose (T-170 / DECISIONS.md 2026-09-06)
+// now lives there, Rust-tested, instead of being re-derived here.
+async function flipAllCategories(enabled, targets) {
   const failed = [];
-  for (const cat of CATEGORY_META) {
-    // Only flip a category that already has a configured voter. The empty
-    // ADULT_CONTENT auto-add (opendns-familyshield) is reserved for the
-    // explicit adult toggle - turning the master switch on must never opt the
-    // user into adult filtering with a provider they never chose
-    // (DEFAULT_PROVIDER_IDS / T-170: adult stays opt-in, off by default).
-    if (!configured.some((entry) => entry.category === cat.key)) {
-      continue;
-    }
+  for (const key of targets || []) {
     try {
-      await setCategoryEnabled(cat.key, enabled);
+      await setCategoryEnabled(key, enabled);
     } catch (_err) {
-      failed.push(cat.name);
+      const meta = CATEGORY_META.find((cat) => cat.key === key);
+      failed.push(meta ? meta.name : key);
     }
   }
   await refreshProviders();
@@ -2088,7 +2045,7 @@ function renderFilterControls(data) {
       toggleControl(
         anyOn,
         false,
-        (want) => flipAllCategories(want, providers),
+        (want) => flipAllCategories(want, data.master_switch_targets),
         "Фільтрація",
       ),
       true,
@@ -2096,7 +2053,7 @@ function renderFilterControls(data) {
   );
 
   CATEGORY_META.forEach((cat) => {
-    const state = categoryState(providers, cat.key);
+    const state = categoryStateFrom(data, cat.key);
     const sub =
       state === "partial"
         ? `${cat.sub}. Увімкнено частково — натисніть, щоб увімкнути всі`

@@ -377,28 +377,26 @@ mod tests {
         );
     }
 
-    // T-188 — the protection hero gains a cert-trust branch: it fetches
-    // GET /admin/cert-status, distinguishes NOT_TRUSTED (with an install
-    // action) from UNKNOWN, and the install button POSTs the real route.
+    // T-188 / T-204 — the cert-trust branch of the hero moved to the server
+    // (admin.rs::compute_hero_state, tested there). `main.js` now only renders
+    // the CERT_NOT_TRUSTED / CERT_UNKNOWN presentation and wires the install
+    // button; it must NOT fetch /admin/cert-status any more (T-211 made that a
+    // pure cache read that the 2s status poll already carries).
     #[test]
-    fn main_js_wires_the_cert_trust_hero_branch_and_install_action() {
-        assert!(
-            MAIN_JS.contains("/admin/cert-status"),
-            "the hero must fetch the cert-trust state"
-        );
+    fn main_js_renders_the_cert_hero_states_without_its_own_cert_fetch() {
+        for key in ["CERT_NOT_TRUSTED", "CERT_UNKNOWN"] {
+            assert!(
+                MAIN_JS.contains(key),
+                "HERO_PRESENTATION must carry a {key} row"
+            );
+        }
         assert!(
             MAIN_JS.contains("/admin/install-cert"),
             "the install button must call the real route"
         );
-        for token in ["NOT_TRUSTED", "UNKNOWN"] {
-            assert!(
-                MAIN_JS.contains(token),
-                "the hero must treat {token} as its own distinct cert state"
-            );
-        }
         assert!(
-            !MAIN_JS.contains("setInterval(refreshCertStatus"),
-            "cert-status must not be polled - each call is two certutil spawns server-side"
+            !MAIN_JS.contains("/admin/cert-status") && !MAIN_JS.contains("refreshCertStatus"),
+            "the page must not fetch cert-status itself - it rides on status.hero_state"
         );
     }
 
@@ -428,54 +426,62 @@ mod tests {
         );
     }
 
-    // T-176 — the hero status is computed from the same conditions
-    // diagrams/ui-status-indicator.md defines (the subset this page sees):
-    // watchdog, network, and whether any provider is active.
+    // T-176 / T-204 (finding 3-B) — the decisive hero priority ladder
+    // (watchdog > offline > paused > 0-voters > cert) moved to the server
+    // (admin.rs::compute_hero_state, executed by
+    // `admin::hero_and_category_tests`, not just asserted to exist as text —
+    // the T-59 lesson). `main.js` must only *render* `status.hero_state`
+    // through the HERO_PRESENTATION lookup, never re-derive the ladder.
     #[test]
-    fn main_js_computes_the_hero_from_watchdog_network_and_provider_state() {
-        for token in [
-            "computeProtectionState",
-            "GAVE_UP",
-            "RESTARTING",
+    fn main_js_renders_the_hero_from_the_server_computed_state() {
+        assert!(
+            MAIN_JS.contains("heroPresentation(status.hero_state"),
+            "render() must map status.hero_state, not recompute it"
+        );
+        assert!(
+            !MAIN_JS.contains("computeProtectionState")
+                && !MAIN_JS.contains(r#"status.watchdog === "GAVE_UP""#),
+            "the client must not carry the priority ladder any more"
+        );
+        // Every server variant needs a presentation row (plus the
+        // client-only SERVICE_UNREACHABLE synthesised on a failed fetch).
+        for key in [
+            "SERVICE_UNREACHABLE",
+            "WATCHDOG_GAVE_UP",
+            "WATCHDOG_RESTARTING",
             "OFFLINE",
-            "active_providers",
+            "PAUSED",
+            "NO_PROVIDERS",
+            "CERT_NOT_TRUSTED",
+            "CERT_UNKNOWN",
+            "PROTECTED",
         ] {
             assert!(
-                MAIN_JS.contains(token),
-                "the hero state computation must consider {token}"
+                MAIN_JS.contains(key),
+                "HERO_PRESENTATION must have a {key} row"
             );
         }
     }
 
-    // T-193 — a tray pause keeps the service up, so nothing else in
-    // computeProtectionState fires; without this branch the hero would read
-    // green "Захищено" while every query is unfiltered. It ranks between
-    // OFFLINE and the 0-providers case, matching the pipeline fast-path order.
+    // T-193 / T-204 — the paused hero must name the state and not read as
+    // green. (That a pause *outranks* the 0-voters case is the server's job
+    // now — `admin::hero_and_category_tests::hero_state_offline_outranks_paused`
+    // and the paused-not-protected test.)
     #[test]
-    fn main_js_hero_has_a_dedicated_paused_state() {
-        let Some((_, after)) = MAIN_JS.split_once("function computeProtectionState(") else {
-            panic!("computeProtectionState must exist");
+    fn main_js_hero_has_a_dedicated_paused_presentation() {
+        let Some((_, after)) = MAIN_JS.split_once("PAUSED: {") else {
+            panic!("HERO_PRESENTATION.PAUSED must exist");
         };
-        let Some((body, _)) = after.split_once("\nfunction ") else {
-            panic!("computeProtectionState must be a bounded function");
+        let Some((row, _)) = after.split_once("},") else {
+            panic!("the PAUSED row must be a bounded object literal");
         };
         assert!(
-            body.contains("Фільтрацію призупинено"),
-            "the paused hero must name the state, not read as green"
+            row.contains("Фільтрацію призупинено"),
+            "the paused hero must name the state plainly"
         );
-        // Anchor on the branch guards themselves, not bare tokens - a comment
-        // mentioning "OFFLINE" or "active_providers" must not be able to shift
-        // these positions and silently weaken the ordering check.
-        let offline_at = body
-            .find(r#"status.network === "OFFLINE""#)
-            .unwrap_or(usize::MAX);
-        let paused_at = body.find("if (status.paused)").unwrap_or(0);
-        let providers_at = body
-            .find("status.active_providers.length === 0")
-            .unwrap_or(usize::MAX);
         assert!(
-            offline_at < paused_at && paused_at < providers_at,
-            "offline must outrank paused, which must outrank the 0-providers case"
+            row.contains("is-warn"),
+            "paused is a warning, not the green is-ok class"
         );
     }
 
@@ -501,15 +507,16 @@ mod tests {
         );
     }
 
-    // T-176 closing-advisor — the master switch ("Фільтрація" on) must never
-    // create a voter. On a default install ADULT_CONTENT is empty, and
-    // set-category-enabled auto-adds opendns-familyshield when that category is
-    // switched on with none configured - a path reserved for the explicit adult
-    // toggle. flipAllCategories must skip a category with zero configured
-    // voters, so turning filtering back on can't silently enable adult
-    // filtering (DEFAULT_PROVIDER_IDS / T-170: adult stays opt-in).
+    // T-176 closing-advisor / T-204 — the master switch must never create a
+    // voter: turning it on must not opt a user into adult filtering with a
+    // preset they never chose (set-category-enabled auto-adds
+    // opendns-familyshield to an empty ADULT_CONTENT). That guard is now the
+    // server's `master_switch_targets` (admin.rs), executed by
+    // `admin::hero_and_category_tests::master_switch_targets_excludes_a_
+    // category_with_no_configured_voter`. `main.js` must iterate that field,
+    // not re-derive membership.
     #[test]
-    fn main_js_master_switch_only_flips_categories_that_already_have_a_voter() {
+    fn main_js_master_switch_iterates_the_server_target_list() {
         let Some((_, after)) = MAIN_JS.split_once("async function flipAllCategories(") else {
             panic!("flipAllCategories must exist");
         };
@@ -517,12 +524,12 @@ mod tests {
             panic!("flipAllCategories must be a bounded function");
         };
         assert!(
-            body.contains("entry.category === cat.key"),
-            "the master switch must check category membership before flipping"
+            MAIN_JS.contains("flipAllCategories(want, data.master_switch_targets)"),
+            "the master switch must be driven by the server's target list"
         );
         assert!(
-            body.contains("continue"),
-            "a category with no configured voter must be skipped, not created"
+            !body.contains("entry.category === cat.key"),
+            "the client must not re-derive category membership any more"
         );
     }
 

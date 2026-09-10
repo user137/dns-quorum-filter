@@ -140,6 +140,11 @@ pub struct AdminStatusResponse {
     /// T-127/T-128 — the rating-filter «bubble» status, always present so the
     /// header badge / tray tooltip can render it without a second fetch.
     pub rating_filter: RatingFilterStatusView,
+    /// T-204 (finding 3-B) — the `/admin/ui` protection-hero state, computed
+    /// server-side by [`compute_hero_state`] so its priority ladder is
+    /// Rust-tested. `main.js` renders it; it does not re-derive the ordering.
+    /// See [`HeroStateView`] for the authority boundary vs. the tray.
+    pub hero_state: HeroStateView,
 }
 
 /// T-96 / T-97 — the passive "this store is written to disk (encrypted)"
@@ -192,6 +197,84 @@ pub struct ZoneListStatusView {
     pub list: String,
     /// How many registrable domains this list currently contributes.
     pub domains: usize,
+}
+
+/// The `/admin/ui` protection-hero state, computed **on the server** (T-204,
+/// finding 3-B) so the priority ladder — the decisive "is the user protected
+/// right now?" logic — is Rust-tested rather than only asserted to textually
+/// exist in `main.js` (`admin_ui.rs`'s `MAIN_JS.contains(...)`, the T-59
+/// "test passes without proving the property" shape). `main.js` maps this
+/// enum to presentation (headline, CSS class, detail copy); the ordering
+/// lives in [`compute_hero_state`].
+///
+/// **Authority boundary:** this is the authority for the `/admin/ui` hero
+/// *only*. `dnsqb-tray/status.rs::from_response` keeps its own, deliberately
+/// different ranking (Paused above the watchdog states, because a pause makes
+/// `watchdog-state.json` go stale by design — DECISIONS.md 2026-09-07 /
+/// 2026-09-08); do **not** "unify" the tray onto this field.
+///
+/// There is no `SERVICE_UNREACHABLE` variant — the server cannot observe its
+/// own unreachability (if `/admin/status` answered, the fetch worked);
+/// `main.js` synthesises that case client-side when the fetch itself fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum HeroStateView {
+    /// The watchdog spent its restart budget — the service is stopped,
+    /// awaiting manual recovery.
+    WatchdogGaveUp,
+    /// The watchdog is mid-restart.
+    WatchdogRestarting,
+    /// The machine has no internet — resolution is paused (T-152).
+    Offline,
+    /// The user paused filtering from the tray (T-193); DNS works, unfiltered.
+    Paused,
+    /// No voter is enabled — every query goes through the unfiltered baseline
+    /// (a legitimate user choice, shown, not treated as failure).
+    NoProviders,
+    /// Filtering is up, but the local `cert.pem` is not trusted, so the
+    /// browser may not be sending DNS through this service at all (T-188).
+    CertNotTrusted,
+    /// Filtering is up, but the cert-trust check could not answer (T-188 —
+    /// "unknown ≠ untrusted").
+    CertUnknown,
+    /// Filtering is up and nothing above fired.
+    Protected,
+}
+
+/// The `/admin/ui` protection-hero priority ladder (T-204) — the exact order
+/// `main.js`'s `computeProtectionState` used before this logic moved to the
+/// server, mirroring `pipeline::handle_query`'s own fast-path order
+/// (offline → paused → no-voters). `cert` is [`None`] until the background
+/// [`crate::cert_watch::run_cert_trust_watch`] poll has produced a reading —
+/// treated as "surface no cert warning", never a fabricated one (the same
+/// "unknown ≠ not-yet-known" contract as the tray's `TrustState`, T-188).
+#[must_use]
+pub(crate) fn compute_hero_state(
+    watchdog: Option<WatchdogStatusView>,
+    network: NetworkStatusView,
+    paused: bool,
+    has_active_provider: bool,
+    cert: Option<CertTrustView>,
+) -> HeroStateView {
+    match watchdog {
+        Some(WatchdogStatusView::GaveUp) => return HeroStateView::WatchdogGaveUp,
+        Some(WatchdogStatusView::Restarting) => return HeroStateView::WatchdogRestarting,
+        None => {}
+    }
+    if network == NetworkStatusView::Offline {
+        return HeroStateView::Offline;
+    }
+    if paused {
+        return HeroStateView::Paused;
+    }
+    if !has_active_provider {
+        return HeroStateView::NoProviders;
+    }
+    match cert {
+        Some(CertTrustView::NotTrusted) => HeroStateView::CertNotTrusted,
+        Some(CertTrustView::Unknown) => HeroStateView::CertUnknown,
+        Some(CertTrustView::Trusted) | None => HeroStateView::Protected,
+    }
 }
 
 /// T-152 DTO form of [`crate::NetworkReachability`] — a genuine projection
@@ -426,10 +509,96 @@ pub struct ProvidersResponse {
     /// user-chosen state, not a failure — but the UI must show it, not bury
     /// it). `add`/`remove`/`set-enabled` can all reach it in one request.
     pub filtering_active: bool,
+    /// T-204 (finding 3-B) — each filtering category's aggregate toggle state
+    /// (`Off`/`Partial`/`On`), computed server-side by [`category_filter_views`]
+    /// so `main.js`'s basic-view toggles render it rather than re-derive the
+    /// fold. In [`CATEGORY_ORDER`].
+    pub category_states: Vec<CategoryFilterView>,
+    /// T-204 (finding 3-B) — the categories the basic-view **master switch** is
+    /// allowed to flip: those with ≥1 configured voter, enabled or not
+    /// ([`master_switch_targets`]). The switch iterates exactly this set, so
+    /// turning it on can never opt a user into adult filtering with a preset
+    /// they never chose (T-170 / DECISIONS.md 2026-09-06).
+    pub master_switch_targets: Vec<Category>,
     /// Whether the change that produced this response was written to disk —
     /// same convention as [`OverrideListsResponse::persisted`]. Always `true`
     /// for a plain `GET`.
     pub persisted: bool,
+}
+
+/// One filtering category's aggregate toggle state for the `/admin/ui` basic
+/// view (T-204) — the three-way fold `main.js`'s `categoryState()` did
+/// client-side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CategoryToggleState {
+    /// No configured voter in this category, or every configured voter is
+    /// disabled.
+    Off,
+    /// Some but not all configured voters are enabled.
+    Partial,
+    /// Every configured voter is enabled.
+    On,
+}
+
+/// One row of [`ProvidersResponse::category_states`] (T-204).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CategoryFilterView {
+    /// The category.
+    pub category: Category,
+    /// Its aggregate toggle state, from the live voter list.
+    pub state: CategoryToggleState,
+}
+
+/// The category display / fold order for the `/admin/ui` basic view — matches
+/// `main.js`'s former `PROVIDER_CATEGORY_ORDER` and the [`Category`] enum's
+/// own declaration order.
+const CATEGORY_ORDER: [Category; 3] = [
+    Category::Security,
+    Category::AdsTrackers,
+    Category::AdultContent,
+];
+
+/// Per-category aggregate toggle state (T-204) — the fold `main.js` did
+/// client-side in `categoryState()`. In [`CATEGORY_ORDER`].
+#[must_use]
+pub(crate) fn category_filter_views(entries: &[ProviderEntry]) -> Vec<CategoryFilterView> {
+    CATEGORY_ORDER
+        .iter()
+        .map(|&category| {
+            let total = entries
+                .iter()
+                .filter(|entry| entry.spec.category == category)
+                .count();
+            let enabled = entries
+                .iter()
+                .filter(|entry| entry.spec.category == category && entry.enabled)
+                .count();
+            let state = if total == 0 || enabled == 0 {
+                CategoryToggleState::Off
+            } else if enabled == total {
+                CategoryToggleState::On
+            } else {
+                CategoryToggleState::Partial
+            };
+            CategoryFilterView { category, state }
+        })
+        .collect()
+}
+
+/// The categories a bulk "master switch" flip is allowed to touch (T-204) —
+/// those with **≥1 configured voter**, enabled or not. The `/admin/ui` master
+/// switch iterates exactly this set, so turning it on can never opt a user
+/// into adult filtering with a preset they never added (T-170 / DECISIONS.md
+/// 2026-09-06 — the empty-`ADULT_CONTENT` auto-add is reserved for the
+/// explicit adult toggle). In [`CATEGORY_ORDER`].
+#[must_use]
+pub(crate) fn master_switch_targets(entries: &[ProviderEntry]) -> Vec<Category> {
+    CATEGORY_ORDER
+        .iter()
+        .copied()
+        .filter(|&category| entries.iter().any(|entry| entry.spec.category == category))
+        .collect()
 }
 
 impl ProviderView {
@@ -2131,6 +2300,272 @@ mod maxmind_dto_tests {
         assert_eq!(
             MaxmindRefreshHealth::from(MaxmindHealth::AuthRejected),
             MaxmindRefreshHealth::AuthRejected
+        );
+    }
+}
+
+/// T-204 (finding 3-B) — the decisive `/admin/ui` logic that used to live only
+/// in `main.js` and was checked only by `MAIN_JS.contains(...)`. These tests
+/// are the point of the refactor: the priority ladder and the master-switch
+/// adult-opt-in guard are now executed, not just asserted to exist as text.
+#[cfg(test)]
+mod hero_and_category_tests {
+    use super::{
+        category_filter_views, compute_hero_state, master_switch_targets, AdminStatusResponse,
+        CategoryToggleState, CertTrustView, HeroStateView, NetworkStatusView, WatchdogStatusView,
+    };
+    use crate::upstream::{BlockSignature, Category, ProviderEntry, ProviderSpec};
+
+    fn entry(category: Category, enabled: bool) -> ProviderEntry {
+        ProviderEntry {
+            spec: ProviderSpec {
+                id: format!("{category:?}-{enabled}").to_lowercase(),
+                display_name: "fixture".to_string(),
+                doh_url: "https://example.invalid/dns-query".to_string(),
+                category,
+                block_signature: BlockSignature::NullIpOrNxdomain,
+            },
+            enabled,
+        }
+    }
+
+    /// The all-clear reading, used as the base each ladder test perturbs one
+    /// axis of.
+    fn all_clear() -> HeroStateView {
+        compute_hero_state(
+            None,
+            NetworkStatusView::Online,
+            false,
+            true,
+            Some(CertTrustView::Trusted),
+        )
+    }
+
+    #[test]
+    fn hero_state_protected_when_all_clear() {
+        assert_eq!(all_clear(), HeroStateView::Protected);
+    }
+
+    #[test]
+    fn hero_state_is_paused_when_filtering_paused_even_if_providers_active() {
+        // The regression this whole task exists to prevent: a pause must never
+        // read as green "Захищено".
+        let state = compute_hero_state(
+            None,
+            NetworkStatusView::Online,
+            true,
+            true,
+            Some(CertTrustView::Trusted),
+        );
+        assert_eq!(state, HeroStateView::Paused);
+    }
+
+    #[test]
+    fn hero_state_watchdog_gave_up_outranks_everything() {
+        // Every lower-priority axis also tripped — GaveUp still wins.
+        let state = compute_hero_state(
+            Some(WatchdogStatusView::GaveUp),
+            NetworkStatusView::Offline,
+            true,
+            false,
+            Some(CertTrustView::NotTrusted),
+        );
+        assert_eq!(state, HeroStateView::WatchdogGaveUp);
+    }
+
+    #[test]
+    fn hero_state_restarting_outranks_offline_and_below() {
+        let state = compute_hero_state(
+            Some(WatchdogStatusView::Restarting),
+            NetworkStatusView::Offline,
+            true,
+            false,
+            None,
+        );
+        assert_eq!(state, HeroStateView::WatchdogRestarting);
+    }
+
+    #[test]
+    fn hero_state_offline_outranks_paused() {
+        // Matches `pipeline::handle_query`'s fast-path order (offline > paused).
+        let state = compute_hero_state(
+            None,
+            NetworkStatusView::Offline,
+            true,
+            true,
+            Some(CertTrustView::Trusted),
+        );
+        assert_eq!(state, HeroStateView::Offline);
+    }
+
+    #[test]
+    fn hero_state_no_providers_outranks_the_cert_branch() {
+        // A cert problem must not mask "0 voters" — both are is-bad, but the
+        // 0-voters copy is the actionable one.
+        let state = compute_hero_state(
+            None,
+            NetworkStatusView::Online,
+            false,
+            false,
+            Some(CertTrustView::NotTrusted),
+        );
+        assert_eq!(state, HeroStateView::NoProviders);
+    }
+
+    #[test]
+    fn hero_state_cert_not_trusted_and_unknown_are_distinct_and_last() {
+        assert_eq!(
+            compute_hero_state(
+                None,
+                NetworkStatusView::Online,
+                false,
+                true,
+                Some(CertTrustView::NotTrusted)
+            ),
+            HeroStateView::CertNotTrusted
+        );
+        assert_eq!(
+            compute_hero_state(
+                None,
+                NetworkStatusView::Online,
+                false,
+                true,
+                Some(CertTrustView::Unknown)
+            ),
+            HeroStateView::CertUnknown
+        );
+    }
+
+    #[test]
+    fn hero_state_is_protected_before_the_first_cert_check_completes() {
+        // `None` = the background poll hasn't produced a reading yet; it must
+        // NOT manufacture a `CertUnknown` warn state (T-188's "unknown ≠
+        // not-yet-known" — the tray made this exact mistake once).
+        let state = compute_hero_state(None, NetworkStatusView::Online, false, true, None);
+        assert_eq!(state, HeroStateView::Protected);
+    }
+
+    #[test]
+    fn hero_state_view_wire_strings_are_screaming_snake_case() {
+        let json = |v: &HeroStateView| match serde_json::to_string(v) {
+            Ok(s) => s,
+            Err(err) => panic!("must serialize: {err}"),
+        };
+        assert_eq!(json(&HeroStateView::WatchdogGaveUp), "\"WATCHDOG_GAVE_UP\"");
+        assert_eq!(json(&HeroStateView::Paused), "\"PAUSED\"");
+        assert_eq!(json(&HeroStateView::CertNotTrusted), "\"CERT_NOT_TRUSTED\"");
+        assert_eq!(json(&HeroStateView::Protected), "\"PROTECTED\"");
+    }
+
+    #[test]
+    fn admin_status_response_round_trips_the_new_hero_state_field() {
+        // A JSON body carrying `hero_state` decodes; the field survives the
+        // round trip. (Guards the wire contract `dnsqb-tray`/`dnsqb-watcher`
+        // read.)
+        let json = serde_json::json!({
+            "hero_state": "PAUSED",
+            "active_providers": [],
+            "timeout_mode": "fail_open",
+            "timeout_ms": 2000,
+            "serve_baseline_when_filters_unreachable": false,
+            "network": "ONLINE",
+            "paused": true,
+            "baseline_endpoint": "PRIMARY",
+            "port": 8443,
+            "stats": {
+                "total": 0, "blocked": 0, "degraded_window": 0, "degraded_events": 0,
+                "in_flight": 0, "rejected_connections": 0, "active_connections": 0
+            },
+            "watchdog": null,
+            "persisted": true,
+            "encrypted_persistence": { "query_log": false, "cache": false },
+            "rating_filter": {
+                "enabled": false, "active": false, "lists": [],
+                "available_lists": [], "loaded": []
+            }
+        });
+        let parsed: AdminStatusResponse = match serde_json::from_value(json) {
+            Ok(parsed) => parsed,
+            Err(err) => panic!("must decode: {err}"),
+        };
+        assert_eq!(parsed.hero_state, HeroStateView::Paused);
+    }
+
+    #[test]
+    fn category_state_is_partial_when_some_but_not_all_voters_enabled() {
+        let entries = [
+            entry(Category::Security, true),
+            entry(Category::Security, false),
+        ];
+        let views = category_filter_views(&entries);
+        let security = views
+            .iter()
+            .find(|v| v.category == Category::Security)
+            .map(|v| v.state);
+        assert_eq!(security, Some(CategoryToggleState::Partial));
+    }
+
+    #[test]
+    fn category_state_is_off_when_no_voters_or_all_disabled() {
+        // All-disabled → Off.
+        let all_off = [entry(Category::AdsTrackers, false)];
+        assert_eq!(
+            category_filter_views(&all_off)
+                .iter()
+                .find(|v| v.category == Category::AdsTrackers)
+                .map(|v| v.state),
+            Some(CategoryToggleState::Off)
+        );
+        // No voter at all → Off, and every category is still present in order.
+        let views = category_filter_views(&[]);
+        assert_eq!(views.len(), 3);
+        assert!(views.iter().all(|v| v.state == CategoryToggleState::Off));
+        assert_eq!(
+            views.iter().map(|v| v.category).collect::<Vec<_>>(),
+            vec![
+                Category::Security,
+                Category::AdsTrackers,
+                Category::AdultContent
+            ]
+        );
+    }
+
+    #[test]
+    fn category_state_is_on_when_every_configured_voter_is_enabled() {
+        let entries = [
+            entry(Category::Security, true),
+            entry(Category::Security, true),
+        ];
+        assert_eq!(
+            category_filter_views(&entries)
+                .iter()
+                .find(|v| v.category == Category::Security)
+                .map(|v| v.state),
+            Some(CategoryToggleState::On)
+        );
+    }
+
+    #[test]
+    fn master_switch_targets_excludes_a_category_with_no_configured_voter() {
+        // The adult-opt-in guard: with only Security + Ads voters, a bulk
+        // "master switch" flip must never touch ADULT_CONTENT.
+        let entries = [
+            entry(Category::Security, true),
+            entry(Category::AdsTrackers, false),
+        ];
+        let targets = master_switch_targets(&entries);
+        assert_eq!(targets, vec![Category::Security, Category::AdsTrackers]);
+        assert!(!targets.contains(&Category::AdultContent));
+    }
+
+    #[test]
+    fn master_switch_targets_includes_a_category_whose_voters_are_all_disabled() {
+        // The guard keys on "configured", not "enabled" — a category the user
+        // added but turned off is still a legitimate master-switch target.
+        let entries = [entry(Category::AdultContent, false)];
+        assert_eq!(
+            master_switch_targets(&entries),
+            vec![Category::AdultContent]
         );
     }
 }

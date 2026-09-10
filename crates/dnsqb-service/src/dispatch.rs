@@ -22,14 +22,14 @@
 //! watchdog channel 3 — SPEC.md §7.1 #10) is on this listener too.
 
 use crate::admin::{
-    compute_stats, unix_millis, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    BaselineEndpointView, CacheConfigUpdate, CacheConfigView, CertStatusResponse, CertTrustView,
-    DatabaseSource, EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest,
-    HealthGeoip, HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse,
-    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView,
-    OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
-    ProviderStatusView, RatingFilterConfigUpdate, RatingFilterStatusView,
-    UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
+    category_filter_views, compute_hero_state, compute_stats, master_switch_targets, unix_millis,
+    AdminConfigUpdate, AdminStats, AdminStatusResponse, BaselineEndpointView, CacheConfigUpdate,
+    CacheConfigView, CertStatusResponse, CertTrustView, DatabaseSource, EncryptedPersistenceView,
+    GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip, HealthResponse, InstallCertResponse,
+    LogEntryView, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
+    MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest, OverrideDomainView,
+    OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView, RatingFilterConfigUpdate,
+    RatingFilterStatusView, UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -1273,19 +1273,30 @@ fn rating_filter_status_view<C: DohClient + Sync>(state: &AppState<C>) -> Rating
 fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> AdminStatusResponse {
     let settings = *state.runtime.read();
     let entries = state.query_log.snapshot(SystemTime::now());
+    let active_providers = ProviderStatusView::active_from(&state.providers.read());
+    let network = NetworkStatusView::from(state.reachability_snapshot());
+    let paused = state.filtering_paused_snapshot();
+    let watchdog = read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now());
     AdminStatusResponse {
-        active_providers: ProviderStatusView::active_from(&state.providers.read()),
+        hero_state: compute_hero_state(
+            watchdog,
+            network,
+            paused,
+            !active_providers.is_empty(),
+            state.cert_trust_snapshot(),
+        ),
+        active_providers,
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
-        network: NetworkStatusView::from(state.reachability_snapshot()),
-        paused: state.filtering_paused_snapshot(),
+        network,
+        paused,
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
         port: state.persist.port,
         stats: live_stats(state, &entries),
-        watchdog: read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now()),
+        watchdog,
         persisted,
         encrypted_persistence: EncryptedPersistenceView {
             query_log: state.persist.persist_query_log,
@@ -1392,13 +1403,23 @@ fn apply_admin_config<C: DohClient + Sync>(
         }
         None => false,
     };
+    let active_providers = ProviderStatusView::active_from(&state.providers.read());
+    let network = NetworkStatusView::from(state.reachability_snapshot());
+    let paused = state.filtering_paused_snapshot();
     AdminStatusResponse {
-        active_providers: ProviderStatusView::active_from(&state.providers.read()),
+        hero_state: compute_hero_state(
+            watchdog,
+            network,
+            paused,
+            !active_providers.is_empty(),
+            state.cert_trust_snapshot(),
+        ),
+        active_providers,
         timeout_mode: settings.timeout.mode,
         timeout_ms: timeout_ms(settings.timeout.duration),
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
-        network: NetworkStatusView::from(state.reachability_snapshot()),
-        paused: state.filtering_paused_snapshot(),
+        network,
+        paused,
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -2518,6 +2539,10 @@ fn providers_view(entries: &[ProviderEntry], persisted: bool) -> crate::admin::P
         // browsing history is exposed to (CLAUDE.md: keep this visible).
         third_party_count: enabled_count + 1,
         filtering_active: enabled_count > 0,
+        // T-204: the basic-view category folds + master-switch guard, computed
+        // here so `main.js` renders them rather than re-deriving the logic.
+        category_states: category_filter_views(entries),
+        master_switch_targets: master_switch_targets(entries),
         persisted,
     }
 }

@@ -1,9 +1,11 @@
 SOURCES: SPEC.md §8, §8.1, §3.3, §3.7, §5.3, §7; "Відкриті питання" №10; CLAUDE.md
 (dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-111, T-127,
-T-128, T-152, T-176, T-188, T-191, T-193, T-196; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
+T-128, T-152, T-176, T-188, T-191, T-193, T-196, T-204, T-211; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
 "Меню"; UI-SPEC.md §2.1, §3.1; `diagrams/onboarding.md`, `diagrams/process-lifecycle.md`;
-DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08 (T-191 — колір іконки; T-188 — онбординг +
-hero cert-гілка; T-193 — пауза = нефільтрований baseline + `AdminStatusResponse.paused`).
+`crates/dnsqb-service/src/admin.rs` (`compute_hero_state`, `HeroStateView`);
+DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08, 2026-09-10 (T-191 — колір іконки; T-188 — онбординг +
+hero cert-гілка; T-193 — пауза = нефільтрований baseline + `AdminStatusResponse.paused`;
+T-204 — сходи hero обчислюються на сервері як `AdminStatusResponse.hero_state`).
 
 # Індикатор стану — умови, не автомат переходів
 
@@ -88,30 +90,36 @@ flowchart TD
   рахуються.
 - **Умова 1 (браузер не використовує локальний DoH)** — не реалізовано, блоковано на T-134's ще
   не спроєктованому domain→fixed-IP canary-механізмі.
-- **Hero-статус `/admin/ui` (T-176)** — базовий вигляд піднімає цей індикатор у єдиний великий
-  блок угорі (UI-SPEC.md §3.1): «Захищено» (умова 6) / «Служба зупинилась» / «Відновлення…»
-  (умова 2) / «Немає інтернету» (умова 3) / **«Фільтрацію призупинено» (умова 3a, T-193 —
-  `status.paused`, `is-warn`)** / «Не захищено» (умова 4, або сервіс не відповідає). Той самий
-  набір обчислюваних умов і той самий порядок пріоритету, що тут — T-176 **не змінює умови**,
-  лише робить їх помітними нетех-користувачу. Умови 1 і 5 у hero не показуються
-  (1 — не реалізована; 5 — лишається суфіксом-деградацією, як у трей-tooltip).
+- **Hero-статус `/admin/ui` (T-176; T-204)** — базовий вигляд піднімає цей індикатор у єдиний
+  великий блок угорі (UI-SPEC.md §3.1): «Захищено» (умова 6) / «Служба зупинилась» /
+  «Відновлення…» (умова 2) / «Немає інтернету» (умова 3) / **«Фільтрацію призупинено» (умова 3a,
+  T-193 — `is-warn`)** / «Не захищено» (умова 4, або сервіс не відповідає). Той самий набір
+  умов і той самий порядок пріоритету, що тут — T-176/T-204 **не змінюють умови**. **T-204
+  (знахідка 3-B):** сходи обчислює **сервер** — `AdminStatusResponse.hero_state: HeroStateView`
+  (8 варіантів) через чисту `admin::compute_hero_state(watchdog, network, paused,
+  has_active_provider, cert)`, викликану з обох білдерів статусу (як `rating_filter_is_active`).
+  `main.js` лише мапить `hero_state` на презентацію (`HERO_PRESENTATION`) — сходи більше не
+  живуть у JS. Rust-тести: `admin::hero_and_category_tests` (паузо-не-зелений, `GaveUp` вище
+  всього, offline > paused, cert не маскує 0-voters, `None`→`PROTECTED`). Умови 1 і 5 у hero не
+  показуються (1 — не реалізована; 5 — суфікс-деградація). `SERVICE_UNREACHABLE` синтезує клієнт
+  на невдалому fetch — єдиний стан, який сервер не бачить про себе.
 - **Пауза (умова 3a, T-193)** — реалізовано в конвеєрі й hero: `dnsqb-service` сам читає
   `stop.flag` (полер `pause_watch` → `AppState.filtering_paused`), `handle_query` віддає
   нефільтрований baseline тією ж гілкою, що й «0 voters» (без кешу). `GET /admin/status.paused`
-  несе стан; `computeProtectionState` вставляє гілку `status.paused` **між** `OFFLINE` (умова 3)
-  і 0-voters (умова 4). Трей-tooltip `TrayStatus::Paused` (читається прямо з `stop.flag`)
+  несе стан. **T-204:** `compute_hero_state` ставить `PAUSED` **між** `OFFLINE` (умова 3) і
+  `NO_PROVIDERS` (умова 4). Трей-tooltip `TrayStatus::Paused` (читається прямо з `stop.flag`)
   навпаки ранжується вище за все — свідома пауза не має читатись як збій; навмисна розбіжність
-  порядку hero-vs-tray (DECISIONS.md 2026-09-08).
-- **Cert-гілка hero (T-188, Батч 3.13)** — `computeProtectionState(status, reachable, certTrust)`
-  вставляє одну гілку **після** умови 4 (0 voters), **перед** «Захищено»: `certTrust ==
-  NOT_TRUSTED` → `is-bad` «Сертифікат не встановлено» + кнопка «Встановити сертифікат»
-  (`POST /admin/install-cert`); `certTrust == UNKNOWN` → `is-warn` «Сертифікат не перевірено»
-  (окремо — `certutil` не відповів, «unknown ≠ untrusted»); `null` (ще не fetched) → гілка
-  пропускається. Джерело — `GET /admin/cert-status` (`CertTrustView`), окремий fetch раз на
-  завантаженні + після install-кліку, **не** на 2-с поллі. Це те саме, що робить override
-  трей-іконки нижче, але для hero: cert-довіра — ортогональний вхід, не нова умова верхнього
-  рівня й не зміна порядку 2026-09-02 / 09-03. Порядок відносно watchdog/network/0-voters той
-  самий: cert-проблема нижча за них (сервіс досяжний, фільтрація йде — cert лише робить
+  порядку hero-vs-tray (DECISIONS.md 2026-09-08). `hero_state` **не** консумується треєм.
+- **Cert-гілка hero (T-188, Батч 3.13; T-204/T-211)** — `compute_hero_state` ставить дві гілки
+  **після** умови 4 (0 voters), **перед** `PROTECTED`: `cert == Some(NotTrusted)` →
+  `CERT_NOT_TRUSTED` (`is-bad` «Сертифікат не встановлено» + кнопка → `POST /admin/install-cert`);
+  `cert == Some(Unknown)` → `CERT_UNKNOWN` (`is-warn` «Сертифікат не перевірено» — `certutil` не
+  відповів, «unknown ≠ untrusted»); `cert == None` (фоновий poll ще не дав відповіді) → гілка
+  пропускається (`PROTECTED`, не warn — T-188-урок, трей робив цю помилку до
+  `TrustState::is_confirmed`). Джерело — кеш `AppState.cert_trust` (T-211, фоновий 60 с-poll
+  `cert_watch` + синхронний poke із install/uninstall-маршрутів); `main.js` більше **не**
+  fetch-ить `/admin/cert-status`. Cert-довіра — ортогональний вхід, не нова умова верхнього
+  рівня; нижча за watchdog/network/0-voters (сервіс досяжний, фільтрація йде — cert лише робить
   браузерний DoH ненадійним).
 
 Повна версія індикатора (умови 1–5 як окремі конкуруючі стани з єдиним індикатором, не суфіксом)

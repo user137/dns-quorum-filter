@@ -162,11 +162,12 @@ mod wire;
 
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    BaselineEndpointView, DatabaseSource, EncryptedPersistenceView, HealthGeoip, HealthResponse,
-    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
-    MaxmindRefreshHealth, NetworkStatusView, ProviderAddRequest, ProviderRemoveRequest,
-    ProviderSetEnabledRequest, ProviderStatusView, ProviderView, ProvidersResponse,
-    RatingFilterConfigUpdate, RatingFilterStatusView, WatchdogStatusView, ZoneListStatusView,
+    BaselineEndpointView, CategoryFilterView, CategoryToggleState, DatabaseSource,
+    EncryptedPersistenceView, HealthGeoip, HealthResponse, HeroStateView, MaxmindCredentialCheck,
+    MaxmindCredentialsRequest, MaxmindCredentialsView, MaxmindRefreshHealth, NetworkStatusView,
+    ProviderAddRequest, ProviderRemoveRequest, ProviderSetEnabledRequest, ProviderStatusView,
+    ProviderView, ProvidersResponse, RatingFilterConfigUpdate, RatingFilterStatusView,
+    WatchdogStatusView, ZoneListStatusView,
 };
 pub use admission::ConnectionGate;
 pub use baseline_selector::{
