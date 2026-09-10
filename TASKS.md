@@ -1420,7 +1420,7 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   vote==Dead + !any_channel_degraded → ChannelDegraded` (перший операнд `||`, рядок ~55 —
   зараз тестується лише другий). ~4 рядки. (1.3-A)
   — **готово 2026-09-10**: додано assert для першого `||`-операнда (vote-Dead), 725 unit passed.
-- [ ] T-200 — `upstream.rs`: закрити leak-вектор `UpstreamError::Http`. Рішення вже задане
+- [x] T-200 — `upstream.rs`: закрити leak-вектор `UpstreamError::Http`. Рішення вже задане
   доктриною репо (`SECURITY.md:160` — payload-несучий бік для файлів/URL з доменами):
   прибрати `{0}` з `#[error("HTTP request to upstream failed: {0}")]` (Display перестає
   рендерити URL), лишити `#[source] reqwest::Error` (ланцюг для дебагера). **Перевірити
@@ -1431,6 +1431,12 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `reqwest::Error` від запиту на `127.0.0.1:1` з `?dns=<base64>`) не містять ні URL, ні
   підрядка `dns=` (еталон — `overrides::tests::…never_contains_the_raw_toml_input`).
   Рекурентний баг-клас проєкту (витік домену в логи, T-29). (1.1-B)
+  — **готово 2026-09-10**: probe підтвердив — pre-fix і Display, і Debug несли
+  `127.0.0.1:1` + `dns=`. `{0}` прибрано з **усіх трьох** варіантів (`Encode`/`Decode`
+  теж несуть `ProtoError` з доменним лейблом — урок `overrides::InvalidEntry`), знято
+  `Debug` з derive + рукописний `impl Debug` (лише імʼя варіанта). `#[source]`
+  лишено, задокументовано в doc-коментарі як свідоме рішення. Тест
+  `http_error_display_and_debug_never_carry_the_request_url`; 726 unit passed.
 - [ ] T-201 — Інтеграційний тест-модуль `AdminClient` round-trip + error-мапінг проти
   ефемерного `serve()` з тестовим cert (`serve` уже генерик і тестовний). `AdminClient`
   споживають `dnsqb-tray` **і** `dnsqb-watcher`, зараз 0 тестів між клієнтом і сервером.

@@ -509,19 +509,49 @@ pub trait DohClient {
 }
 
 /// Errors from a single upstream `DoH` round-trip.
-#[derive(Debug, thiserror::Error)]
+///
+/// `Display` **and** `Debug` are deliberately payload-free (T-200, SPEC.md
+/// Наскрізні вимоги: no domain names in service logs). A `DoH` request URL
+/// embeds the base64url-encoded query — i.e. the domain name — and
+/// `reqwest::Error`'s own `Display`/`Debug` render that URL (in a `url:`
+/// field for `Debug`); `ProtoError` can render a malformed domain label the
+/// same way. Redacting only `Display` would leave the leak open through
+/// `Debug` (the `overrides::InvalidEntry` lesson — a sibling representation
+/// reopens what one field's redaction closed), so `Debug` is hand-written
+/// too, variant-name only.
+///
+/// The wrapped error stays reachable via [`std::error::Error::source`] for an
+/// interactive debugger. No logging path in this crate walks the source
+/// chain — `quorum::error_kind` maps to a `&'static str` instead — so
+/// `{err:#}` / a manual `.source()` walk must not be introduced on this type
+/// without revisiting that.
+#[derive(thiserror::Error)]
 pub enum UpstreamError {
     /// The outgoing query could not be wire-encoded.
-    #[error("encoding outgoing query failed: {0}")]
+    #[error("encoding outgoing query failed")]
     Encode(#[source] ProtoError),
     /// The HTTP request itself failed (network, TLS, non-2xx status).
-    #[error("HTTP request to upstream failed: {0}")]
+    #[error("HTTP request to upstream failed")]
     Http(#[source] reqwest::Error),
     /// The response body was not a well-formed DNS wire-format message —
     /// e.g. `dns.quad9.net`'s HTML error page when HTTP/2 isn't negotiated
     /// (DECISIONS.md 2026-08-25, T-20).
-    #[error("decoding upstream response failed: {0}")]
+    #[error("decoding upstream response failed")]
     Decode(#[source] ProtoError),
+}
+
+impl std::fmt::Debug for UpstreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // See the type's doc comment: never fall through to the wrapped
+        // error's `Debug`, which renders the domain-carrying request URL /
+        // label.
+        let variant = match self {
+            Self::Encode(_) => "Encode",
+            Self::Http(_) => "Http",
+            Self::Decode(_) => "Decode",
+        };
+        write!(f, "UpstreamError::{variant}")
+    }
 }
 
 /// [`DohClient`] backed by a real `reqwest::Client` (T-24).
@@ -576,7 +606,7 @@ mod tests {
     use super::{
         all_builtin_presets, builtin_preset, is_valid_provider_id, validate_provider_url,
         BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec, ProviderUrlError,
-        ReqwestDohClient, SinkholeNet, DEFAULT_PROVIDER_IDS,
+        ReqwestDohClient, SinkholeNet, UpstreamError, DEFAULT_PROVIDER_IDS,
     };
     use hickory_proto::op::{Message, Query};
     use hickory_proto::rr::{DNSClass, Name, RecordType};
@@ -881,5 +911,56 @@ mod tests {
         if let Err(err) = result {
             panic!("expected a decoded DNS response, got: {err}");
         }
+    }
+
+    // T-200 (1.1-B): a real `UpstreamError::Http` built from a failed request
+    // whose URL carries `?dns=<base64url of the wire query>` — its `Display`
+    // and `Debug` must render neither the request URL nor the `dns=` param
+    // (the base64 hides the literal domain, so asserting the domain's absence
+    // would be vacuous; the URL and the param name are the observable leak).
+    // Regression guard for the recurring "domain in a service log" bug class
+    // (T-29) — `reqwest::Error`'s own `Display`/`Debug` do render that URL, so
+    // before T-200 both of these assertions failed.
+    #[tokio::test]
+    async fn http_error_display_and_debug_never_carry_the_request_url() {
+        let client = match ReqwestDohClient::new() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        let mut question = Query::new();
+        match Name::from_str("secret-leak-probe.example.") {
+            Ok(name) => question.set_name(name),
+            Err(err) => panic!("valid fixture name: {err}"),
+        };
+        question.set_query_type(RecordType::A);
+        let mut query = Message::query();
+        query.add_query(question);
+
+        // Port 1 on loopback: nothing listens, so `.send()` fails before any
+        // response — a genuine `reqwest::Error` carrying the full request URL.
+        let Err(err) = client.query("https://127.0.0.1:1/dns-query", &query).await else {
+            panic!("a request to 127.0.0.1:1 must fail");
+        };
+        assert!(
+            matches!(err, UpstreamError::Http(_)),
+            "expected UpstreamError::Http, got a different variant"
+        );
+
+        let display = format!("{err}");
+        let debug = format!("{err:?}");
+        for (label, rendered) in [("Display", &display), ("Debug", &debug)] {
+            assert!(
+                !rendered.contains("127.0.0.1:1"),
+                "{label} leaked the request URL: {rendered}"
+            );
+            assert!(
+                !rendered.contains("dns="),
+                "{label} leaked the dns= query parameter: {rendered}"
+            );
+        }
+        assert_eq!(display, "HTTP request to upstream failed");
+        // `#[source]` is retained on purpose — the wrapped `reqwest::Error` is
+        // still reachable for an interactive debugger; nothing logs the chain.
+        assert!(std::error::Error::source(&err).is_some());
     }
 }
