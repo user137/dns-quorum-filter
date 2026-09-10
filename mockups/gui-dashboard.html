@@ -3,7 +3,8 @@
   і три категорійні перемикачі) плюс розкриття «Розширені», трей-підказки й
   перший запуск. Артборди A–D затверджено користувачем 2026-09-06.
   Артборд E (рейтинговий фільтр «бульбашка» — T-127/T-128, Батч 4.4) доданий
-  2026-09-10, чекає окремого затвердження. Локальний файл — відкривається
+  2026-09-10, вибір зон перероблено на пошук + список за відгуком користувача;
+  чекає окремого затвердження. Локальний файл — відкривається
   будь-яким браузером, без збірки; має перемикач теми зверху.
   Ground-truth для UI-SPEC.md §2/§3 і diagrams/ui-navigation.md.
   Попередній повнофункційний макет (вкладковий, до T-149) — в історії git.
@@ -234,15 +235,56 @@
   .rf-card .rf-head { display: flex; align-items: center; gap: 0.5rem; }
   .rf-card .rf-title { flex: 1 1 auto; font-size: 12.5px; font-weight: 700; }
   .rf-card .rf-desc { font-size: 11px; color: var(--text-muted); margin: 0.35rem 0 0; }
-  .rf-card .rf-zones { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0 0; }
-  .rf-card .rf-zone {
-    font-size: 11px; padding: 0.12rem 0.5rem; border-radius: 999px;
-    border: 1px solid var(--line); color: var(--text-muted); cursor: pointer;
+  .rf-card .rf-sub {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text-muted); margin: 0.7rem 0 0.35rem;
   }
-  .rf-card .rf-zone.on {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  /* Zone selection = search-to-add combobox + a removable list below
+     (the "add recipients" pattern: Gmail label picker, GitHub reviewers,
+     Shopify shipping-zone editor). Scales past a chip grid as the curated
+     country catalogue grows. */
+  .rf-combo { position: relative; }
+  .rf-combo input {
+    width: 100%; box-sizing: border-box;
+    font-size: 12px; padding: 0.4rem 0.55rem 0.4rem 1.7rem;
+    border: 1px solid var(--line); border-radius: 7px;
+    background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='6' cy='6' r='4.2'/%3E%3Cpath d='M9.4 9.4L13 13'/%3E%3C/svg%3E") 0.5rem center no-repeat;
+    color: var(--text);
   }
+  .rf-menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 3px); z-index: 5;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--surface-raised);
+    box-shadow: 0 6px 18px rgba(0,0,0,.14); overflow: hidden;
+  }
+  .rf-opt {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem;
+    font-size: 12px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+  }
+  .rf-opt:last-child { border-bottom: none; }
+  .rf-opt.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .rf-opt .box {
+    width: 13px; height: 13px; border-radius: 3px; border: 1.5px solid var(--line);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 9px; color: #fff; flex: none;
+  }
+  .rf-opt.picked .box { background: var(--accent); border-color: var(--accent); }
+  .rf-opt .nm { flex: 1 1 auto; }
+  .rf-opt .ct { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .rf-picked { list-style: none; margin: 0.45rem 0 0; padding: 0; }
+  .rf-picked li {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft); font-size: 12px;
+  }
+  .rf-picked li:last-child { border-bottom: none; }
+  .rf-picked .nm { flex: 1 1 auto; font-weight: 600; }
+  .rf-picked .meta { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .rf-picked .meta.loading { color: var(--warn); }
+  .rf-picked .x {
+    border: none; background: none; cursor: pointer; color: var(--text-muted);
+    font-size: 14px; line-height: 1; padding: 0 0.2rem;
+  }
+  .rf-picked .x:hover { color: var(--bad); }
+  .rf-empty { font-size: 11px; color: var(--text-muted); margin: 0.45rem 0 0; }
   /* Always-visible activity badge — rendered by the 2s status poll, sits
      right under the hero, gone entirely when the filter is off. */
   .rf-badge {
@@ -771,10 +813,18 @@
       Картка <code>#rating-filter-body</code> живе всередині <code>&lt;details&gt;</code> «Розширені» (нішева фіча — §5.3).
       Перемикач <strong>не</strong> звичайний checkbox серед інших рядків: окремий обрамлений блок із власним
       заголовком і <strong>обовʼязковим кроком підтвердження</strong> при увімкненні — «буде недоступна переважна
-      більшість інтернету». Дефолт — <strong>вимкнено, без винятків</strong>. Вибір зон (країни + «глобальний топ») —
-      чекбокси, які рендеряться зі <code>status.rating_filter.available_lists</code>, тобто із сервера.
-      Індикатор активності (T-128) — окремий бейдж одразу під hero, <strong>завжди видимий</strong> поки фільтр
-      увімкнено (не лише в налаштуваннях), плюс суфікс у підказці трею.
+      більшість інтернету». Дефолт — <strong>вимкнено, без винятків</strong>.
+    </p>
+    <p class="rationale">
+      <strong>Вибір зон — за відгуком: пошук + «накидування» списку.</strong> Поле з підказкою зверху (як
+      «Кому» в пошті / рецензенти в GitHub / вибір країни в Stripe), випадний чеклист доступних зон,
+      обрані — стовпчиком нижче, кожна з лічильником доменів і хрестиком. Каталог країн росте (CrUX —
+      ~100 країн; Батч 4.2 додасть держ/науково-освітні зони), тож фіксована сітка з 6 чіпів не масштабується.
+      Поки зон мало — фокус у полі одразу показує весь список, тобто це фактично ті самі чекбокси, лише в
+      контейнері, який витримає зростання. Список і чеклист рендеряться зі
+      <code>status.rating_filter.available_lists</code> (код + назва) — новий датасет = правка однієї
+      константи на сервері, нуль змін у клієнті. Індикатор активності (T-128) — бейдж одразу під hero,
+      <strong>завжди видимий</strong> поки фільтр увімкнено, плюс суфікс у підказці трею.
     </p>
     <div class="frames">
 
@@ -795,12 +845,53 @@
                   <span class="rf-title">Обмежити інтернет обраними зонами</span>
                   <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
                 </div>
-                <p class="rf-desc">Дозволяє резолвити лише сайти з курованих списків популярних доменів. Усе інше → блок. Опційно, дефолт вимкнено.</p>
+                <p class="rf-desc">Дозволяє резолвити лише сайти з курованих списків популярних доменів. Усе інше → блок. Опційно, дефолт вимкнено. Оберіть зони заздалегідь — вони застосуються, щойно ввімкнете.</p>
+                <div class="rf-sub">Зони доступності</div>
+                <div class="rf-combo">
+                  <input type="text" placeholder="Додати зону — країна або «глобальний топ»…" aria-label="Пошук зони">
+                </div>
+                <p class="rf-empty">Ще нічого не обрано.</p>
               </div>
-              <div class="subhead">GeoIP</div>
-              <div class="mini-row" style="border:none"><span class="g" style="color:var(--text-muted);font-size:11px">…решта карток «Розширених» без змін…</span></div>
             </div>
           </details>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Пошук зон — випадний чеклист</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Рейтинговий фільтр «бульбашка»</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Обмежити інтернет обраними зонами</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <div class="rf-sub">Зони доступності</div>
+                <div class="rf-combo">
+                  <input type="text" value="" placeholder="Додати зону…" aria-label="Пошук зони" aria-expanded="true">
+                  <div class="rf-menu" role="listbox">
+                    <div class="rf-opt picked" role="option" aria-selected="true"><span class="box">✓</span><span class="nm">Україна</span><span class="ct">881</span></div>
+                    <div class="rf-opt active" role="option"><span class="box"></span><span class="nm">США</span><span class="ct">—</span></div>
+                    <div class="rf-opt" role="option"><span class="box"></span><span class="nm">Німеччина</span><span class="ct">—</span></div>
+                    <div class="rf-opt" role="option"><span class="box"></span><span class="nm">Польща</span><span class="ct">—</span></div>
+                    <div class="rf-opt" role="option"><span class="box"></span><span class="nm">Велика Британія</span><span class="ct">—</span></div>
+                    <div class="rf-opt" role="option"><span class="box"></span><span class="nm">Глобальний топ</span><span class="ct">—</span></div>
+                  </div>
+                </div>
+                <ul class="rf-picked">
+                  <li><span class="nm">Україна</span><span class="meta">881 домен</span><button class="x" type="button" aria-label="Прибрати Україну">×</button></li>
+                </ul>
+              </div>
+            </div>
+          </details>
+          <p style="font-size:11px;color:var(--frame-muted);margin:.5rem .2rem 0">↑ 6 зон доступно → фокус у полі показує весь список. Виросте до десятків — той самий контрол, лише набираєш назву.</p>
         </div>
       </div>
 
@@ -821,18 +912,16 @@
                   <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
                 </div>
                 <div class="notice warn" style="margin:.5rem 0 0">Увімкнення заблокує <strong>переважну більшість інтернету</strong> — доступними лишаться лише сайти з обраних зон нижче. Дефолт — вимкнено.</div>
-                <div class="rf-zones">
-                  <span class="rf-zone on">Україна</span>
-                  <span class="rf-zone">США</span>
-                  <span class="rf-zone">Німеччина</span>
-                  <span class="rf-zone">Польща</span>
-                  <span class="rf-zone">Велика Британія</span>
-                  <span class="rf-zone">Глобальний топ</span>
-                </div>
                 <div class="mini-row" style="border:none;margin-top:.5rem;justify-content:flex-end;gap:.4rem">
                   <button class="textbtn" type="button">Скасувати</button>
                   <button class="copybtn" type="button" style="font-size:11px">Підтвердити ввімкнення</button>
                 </div>
+                <div class="rf-sub">Зони доступності</div>
+                <div class="rf-combo"><input type="text" placeholder="Додати зону…" aria-label="Пошук зони"></div>
+                <ul class="rf-picked">
+                  <li><span class="nm">Україна</span><span class="meta">881 домен</span><button class="x" type="button" aria-label="Прибрати">×</button></li>
+                  <li><span class="nm">Глобальний топ</span><span class="meta">2 140 доменів</span><button class="x" type="button" aria-label="Прибрати">×</button></li>
+                </ul>
               </div>
             </div>
           </details>
@@ -846,7 +935,7 @@
           <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.4rem">
             <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
           </div>
-          <span class="rf-badge on"><span class="dot"></span>Рейтинговий фільтр «бульбашка» активний · 881 домен у зоні</span>
+          <span class="rf-badge on"><span class="dot"></span>Рейтинговий фільтр «бульбашка» активний</span>
           <details class="advanced" open>
             <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
             <div class="advanced-body">
@@ -856,16 +945,13 @@
                   <span class="rf-title">Обмежити інтернет обраними зонами</span>
                   <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
                 </div>
-                <p class="rf-desc">Активний. У зоні — <strong>ua</strong> (881 домен). Поза зоною → блок, кворум не опитується.</p>
-                <div class="rf-zones">
-                  <span class="rf-zone on">Україна</span>
-                  <span class="rf-zone">США</span>
-                  <span class="rf-zone">Німеччина</span>
-                  <span class="rf-zone">Польща</span>
-                  <span class="rf-zone">Велика Британія</span>
-                  <span class="rf-zone">Глобальний топ</span>
-                </div>
-                <div class="mini-row" style="border:none;margin-top:.5rem;justify-content:flex-end"><button class="copybtn" type="button" style="font-size:11px">Зберегти зони</button></div>
+                <p class="rf-desc">Активний. Поза обраними зонами → блок, кворум не опитується.</p>
+                <div class="rf-sub">Зони доступності</div>
+                <div class="rf-combo"><input type="text" placeholder="Додати зону…" aria-label="Пошук зони"></div>
+                <ul class="rf-picked">
+                  <li><span class="nm">Україна</span><span class="meta">881 домен</span><button class="x" type="button" aria-label="Прибрати">×</button></li>
+                  <li><span class="nm">Глобальний топ</span><span class="meta">2 140 доменів</span><button class="x" type="button" aria-label="Прибрати">×</button></li>
+                </ul>
               </div>
             </div>
           </details>
@@ -893,7 +979,12 @@
                   <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
                 </div>
                 <div class="notice warn" style="margin:.5rem 0 0">Фільтр увімкнено, але жоден список ще не завантажено — фільтрація поки <strong>не діє</strong>. Оновиться автоматично за кілька секунд.</div>
-                <div class="rf-zones"><span class="rf-zone on">Україна</span><span class="rf-zone on">Глобальний топ</span><span class="rf-zone">США</span></div>
+                <div class="rf-sub">Зони доступності</div>
+                <div class="rf-combo"><input type="text" placeholder="Додати зону…" aria-label="Пошук зони"></div>
+                <ul class="rf-picked">
+                  <li><span class="nm">Україна</span><span class="meta loading">завантажується…</span><button class="x" type="button" aria-label="Прибрати">×</button></li>
+                  <li><span class="nm">Глобальний топ</span><span class="meta loading">завантажується…</span><button class="x" type="button" aria-label="Прибрати">×</button></li>
+                </ul>
               </div>
             </div>
           </details>
@@ -910,8 +1001,10 @@
       <li>Головний перемикач при вимкненні — гасити всі категорії (як показано), чи питати підтвердження?</li>
       <li>Журнал: залишити прев'ю в базовому + повний у «Розширених», чи повний одразу під прев'ю?</li>
       <li>«для досвідчених» на розділі «Розширені» — залишити цей ярлик чи прибрати?</li>
-      <li>Артборд E: назва перемикача «Обмежити інтернет обраними зонами» — ок, чи інакше? Текст бейджа активності («…активний · N доменів у зоні») — потрібне число N чи достатньо «активний»?</li>
+      <li>Артборд E: вибір зон — пошук + чеклист + список із хрестиками (як показано, за відгуком). Обраний варіант проти фіксованих чіпів — ок? Назва перемикача «Обмежити інтернет обраними зонами» — ок?</li>
+      <li>Артборд E: обрані зони — окремим стовпчиком під полем (як показано), чи чіпами-токенами всередині самого поля (як «Кому» в пошті)? Стовпчик обрано, бо кожна зона несе лічильник / стан «завантажується».</li>
       <li>Артборд E: підтвердження при ввімкненні — inline-крок (як показано), чи модальний діалог <code>rfd</code>, як у «Повністю видалити»?</li>
+      <li>Артборд E: бейдж активності — просто «активний» (як показано) чи з числом доменів у зоні?</li>
     </ul>
   </section>
 </div>
