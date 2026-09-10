@@ -621,8 +621,16 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
   folded into **T-70** (the packaged uninstaller). Also `key_store::overwrite_with_zeros` before
   unlinking a migrated plaintext file is a best-effort scrub only — no defence against VSS shadow
   copies or SSD wear-levelling.
-- **Admin-channel fuzz (T-58, narrowed)** covers `parse_pattern` / `wire_bytes_from_get` /
-  `/admin/config` POST body only — other routes and the `/dns-query` POST body are not fuzzed.
+- **Fuzz coverage (T-58, widened since)** — `overrides::parse_pattern`, `wire::decode_wire_message`,
+  a dedicated `/admin/config` POST-body pass, **and**
+  `dispatch::serve_never_panics_on_arbitrary_input_for_any_documented_route`: a proptest driven by
+  `ROUTES` itself, so every route not in `FUZZ_EXCLUDED_ROUTES` is exercised — each route's GET
+  query pair and each non-GET body, **`/dns-query` POST included** (`application/dns-message` +
+  arbitrary bytes; the `decode`-branch reachability is pinned by a temporary `panic!()` per that
+  test's comment). Still outside the fuzz surface: the two excluded mutating routes
+  (`/admin/uninstall-local-state`, `/admin/install-cert` — real `certutil` / trust-store mutation;
+  method + content-type gate tests only) and the upstream/quorum response-decode path (the property
+  runs against a benign mock client).
 - **The status indicator (T-56, narrowed)** — watchdog state is built (T-95: tray
   `ServiceRestarting`/`ServiceGaveUp` + `/admin/status.watchdog`); browser-DoH-usage detection
   (indicator condition 1) is still unbuilt (blocked on T-134). The full single-indicator UI (all
