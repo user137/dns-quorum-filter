@@ -43,8 +43,8 @@ use dnsqb_service::{
 #[cfg(windows)]
 use dnsqb_service::{
     is_stale, quit_flag_is_set, read_heartbeat_file, read_watchdog_state, touch_heartbeat_file,
-    write_watchdog_state, AdminClient, ChannelObs, Direction, Effect, HeartbeatPipeClient,
-    LoopDriver, WatchdogState, STATE_FILE_NAME,
+    write_watchdog_state, AdminClient, ChannelObs, Direction, Effect, HeartbeatFile,
+    HeartbeatPipeClient, LoopDriver, PidCheck, WatchdogState, STATE_FILE_NAME,
 };
 #[cfg(windows)]
 use std::time::SystemTime;
@@ -175,6 +175,40 @@ fn watchdog_state_is_fresh(app_data: &Path) -> bool {
     }
 }
 
+/// The peer heartbeat file channel 2 **reads** in the `watcher -> service`
+/// direction. The watcher touches its own `watcher.hb` and must read
+/// `service.hb`, never the reverse — a swapped file makes the watcher read
+/// its own beacon and always vote the service alive (review 1.4-B / T-203).
+#[cfg(windows)]
+fn peer_heartbeat_path(app_data: &Path) -> std::path::PathBuf {
+    app_data.join(format!("{}.hb", InstanceRole::Service.as_str()))
+}
+
+/// Fold this tick's three raw channel readings (and the optional PID check)
+/// into the [`ChannelObs`] the 2-of-3 vote consumes. Pure: the async pings
+/// run in the loop, this is only the "raw reads -> observation" mapping the
+/// vote depends on, split out so it is testable without the loop (review
+/// 1.4-B / T-203). Channel 3 always exists in this direction, so
+/// `health_signal` is always `Some` (unlike [`Direction::ServiceToWatcher`]).
+#[cfg(windows)]
+fn observe(
+    ipc_answered: bool,
+    peer_hb: &std::io::Result<HeartbeatFile>,
+    health_ok: bool,
+    pid: Option<PidCheck>,
+    now: SystemTime,
+) -> ChannelObs {
+    ChannelObs {
+        ipc_signal: ipc_answered,
+        file_signal: match peer_hb {
+            Ok(hb) => hb.marker_ok && !is_stale(now, hb.mtime, WATCHDOG_CHANNEL_FRESH),
+            Err(_) => false,
+        },
+        health_signal: Some(health_ok),
+        pid,
+    }
+}
+
 /// The `watcher -> service` decision loop (SPEC.md §7): 2-of-3 silent vote over
 /// channels 1 (IPC ping/pong), 2 (`service.hb` age) and 3 (`GET /health`); on a
 /// confirmed-dead service, respawn it by absolute sibling path. Rewrites
@@ -189,7 +223,7 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
         _ => LoopDriver::new(Direction::WatcherToService),
     };
 
-    let service_hb = app_data.join(format!("{}.hb", InstanceRole::Service.as_str()));
+    let service_hb = peer_heartbeat_path(&app_data);
     let mut pipe: Option<HeartbeatPipeClient> = None;
     let mut admin: Option<AdminClient> = None;
     let mut seq: u64 = 0;
@@ -244,10 +278,7 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
         if let Err(err) = touch_heartbeat_file(&app_data, InstanceRole::Watcher) {
             tracing::warn!("could not touch watcher.hb: {err}");
         }
-        let file_signal = match read_heartbeat_file(&service_hb) {
-            Ok(hb) => hb.marker_ok && !is_stale(now, hb.mtime, WATCHDOG_CHANNEL_FRESH),
-            Err(_) => false,
-        };
+        let file_read = read_heartbeat_file(&service_hb);
 
         // Channel 3: GET /health through the cert-pinned client. Rebuilt after a
         // respawn (§7.1 #10 — the trust anchor can change under a rotation).
@@ -267,12 +298,7 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
             None
         };
 
-        let obs = ChannelObs {
-            ipc_signal,
-            file_signal,
-            health_signal: Some(health_signal),
-            pid,
-        };
+        let obs = observe(ipc_signal, &file_read, health_signal, pid, now);
         apply_watchdog_effects(
             driver.tick(now, &obs).effects,
             &app_data,
@@ -334,4 +360,73 @@ fn apply_watchdog_effects(
 #[cfg(not(windows))]
 async fn run_watcher_to_service_watchdog(_app_data: std::path::PathBuf, _port: u16) {
     tracing::error!("dnsqb-watcher heartbeat is not implemented on this platform (Фаза 6)");
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::{observe, peer_heartbeat_path, WATCHDOG_CHANNEL_FRESH};
+    use dnsqb_service::{HeartbeatFile, PidCheck};
+    use std::path::Path;
+    use std::time::{Duration, SystemTime};
+
+    // review 1.4-B: the one silent-bug risk is reading the wrong `.hb`. This
+    // loop is the `watcher -> service` direction: it must read the *service's*
+    // beacon, not its own.
+    #[test]
+    fn peer_heartbeat_path_names_the_service_file_not_the_watcher_file() {
+        let path = peer_heartbeat_path(Path::new("app-data"));
+        assert!(path.ends_with("service.hb"), "got {path:?}");
+        assert!(
+            !path.to_string_lossy().contains("watcher.hb"),
+            "must not read its own beacon: {path:?}"
+        );
+    }
+
+    fn at(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    fn hb(marker_ok: bool, mtime: SystemTime) -> HeartbeatFile {
+        HeartbeatFile {
+            marker_ok,
+            role: None,
+            mtime,
+        }
+    }
+
+    #[test]
+    fn observe_file_signal_is_true_only_for_a_fresh_well_marked_peer_heartbeat() {
+        let now = at(1_000_000);
+        let fresh = now; // 0s old, threshold (WATCHDOG_CHANNEL_FRESH) is 10s
+        let stale = at(1_000_000 - WATCHDOG_CHANNEL_FRESH.as_secs() - 5);
+
+        assert!(observe(false, &Ok(hb(true, fresh)), false, None, now).file_signal);
+        assert!(!observe(false, &Ok(hb(true, stale)), false, None, now).file_signal);
+        assert!(!observe(false, &Ok(hb(false, fresh)), false, None, now).file_signal);
+        assert!(
+            !observe(
+                false,
+                &Err(std::io::Error::from(std::io::ErrorKind::NotFound)),
+                false,
+                None,
+                now,
+            )
+            .file_signal
+        );
+    }
+
+    #[test]
+    fn observe_passes_the_other_three_channels_through_unchanged() {
+        let now = at(1_000_000);
+        let obs = observe(true, &Ok(hb(true, now)), false, Some(PidCheck::Alive), now);
+        assert!(obs.ipc_signal);
+        // Channel 3 exists in this direction — always `Some`, carrying the raw bool.
+        assert_eq!(obs.health_signal, Some(false));
+        assert_eq!(obs.pid, Some(PidCheck::Alive));
+
+        let obs = observe(false, &Ok(hb(true, now)), true, None, now);
+        assert!(!obs.ipc_signal);
+        assert_eq!(obs.health_signal, Some(true));
+        assert_eq!(obs.pid, None);
+    }
 }

@@ -1465,10 +1465,17 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   була окремою `fn`. `#[cfg(test)] mod tests` у `main.rs` (перший там): табличний тест
   keyed на **літеральних** id-рядках (не константах) + Unknown-кейси + мапінг
   `ArtifactOutcome`→фраза + незалежність полів; 37 tray bin-тестів (+5).
-- [ ] T-203 — `dnsqb-watcher`: виокремити `fn observe(pipe, service_hb, watcher_hb, health)
+- [x] T-203 — `dnsqb-watcher`: виокремити `fn observe(pipe, service_hb, watcher_hb, health)
   -> ChannelObs` + тест мапінгу двох heartbeat-файлів на правильні напрямки. Ядро
   (`LoopDriver::tick`) уже покрите; нетестований залишок — побудова `ChannelObs` із сирих
   читань. <1 год. (1.4-B)
+  — **готово 2026-09-10** (та сама 1:1-дисципліна; окремий advisor не потрібен per його
+  вказівку): дві чисті `#[cfg(windows)]` fn — `peer_heartbeat_path` (читає `service.hb`,
+  не `watcher.hb` — суть 1.4-B) і `observe(ipc, &io::Result<HeartbeatFile>, health, pid,
+  now) -> ChannelObs` (folds `marker_ok && !is_stale`). git diff — заміна ключа/винесення,
+  логіка `file_signal` та `ChannelObs {…}` дослівно ті самі, `now` той самий. 3 нові
+  bin-тести (`dnsqb-watcher` мав 0): напрям файлу, `file_signal` лише для свіжого+маркованого,
+  прохід решти 3 каналів.
 
 ### RV.2 — архітектура / консистентність (після RV.1)
 
