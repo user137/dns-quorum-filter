@@ -1,8 +1,10 @@
 <!--
   Макет `/admin/ui` після T-176 (Батч 3.10) — базовий вигляд (стан + головний
   і три категорійні перемикачі) плюс розкриття «Розширені», трей-підказки й
-  перший запуск. Затверджено користувачем 2026-09-06. Локальний файл —
-  відкривається будь-яким браузером, без збірки; має перемикач теми зверху.
+  перший запуск. Артборди A–D затверджено користувачем 2026-09-06.
+  Артборд E (рейтинговий фільтр «бульбашка» — T-127/T-128, Батч 4.4) доданий
+  2026-09-10, чекає окремого затвердження. Локальний файл — відкривається
+  будь-яким браузером, без збірки; має перемикач теми зверху.
   Ground-truth для UI-SPEC.md §2/§3 і diagrams/ui-navigation.md.
   Попередній повнофункційний макет (вкладковий, до T-149) — в історії git.
 -->
@@ -220,6 +222,37 @@
   }
   .notice.warn { background: var(--warn-soft); color: var(--warn); }
   .notice.ok { background: var(--good-soft); color: var(--good); }
+
+  /* T-127/T-128: rating-filter «bubble» — the enable control is deliberately
+     NOT one more mini-row switch. A framed block with its own heading, a full
+     confirm step on turn-on, and a warning it can't be missed. */
+  .rf-card {
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+    border-radius: 8px; padding: 0.6rem 0.7rem; margin: 0.4rem 0 0.2rem;
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+  }
+  .rf-card .rf-head { display: flex; align-items: center; gap: 0.5rem; }
+  .rf-card .rf-title { flex: 1 1 auto; font-size: 12.5px; font-weight: 700; }
+  .rf-card .rf-desc { font-size: 11px; color: var(--text-muted); margin: 0.35rem 0 0; }
+  .rf-card .rf-zones { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.5rem 0 0; }
+  .rf-card .rf-zone {
+    font-size: 11px; padding: 0.12rem 0.5rem; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--text-muted); cursor: pointer;
+  }
+  .rf-card .rf-zone.on {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  }
+  /* Always-visible activity badge — rendered by the 2s status poll, sits
+     right under the hero, gone entirely when the filter is off. */
+  .rf-badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    font-size: 11px; font-weight: 600; padding: 0.2rem 0.55rem;
+    border-radius: 999px; margin: 0 0 0.55rem;
+  }
+  .rf-badge.on { background: var(--good-soft); color: var(--good); }
+  .rf-badge.pending { background: var(--warn-soft); color: var(--warn); }
+  .rf-badge .dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
 
   .stat-row { display: flex; flex-wrap: wrap; gap: 1.3rem; }
   .stat { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -730,6 +763,146 @@
     </div>
   </section>
 
+  <!-- ============ ARTBOARD E ============ -->
+  <section class="board">
+    <h2>Артборд E</h2>
+    <p class="board-title">Рейтинговий фільтр «бульбашка» — картка + індикатор активності (Батч 4.4)</p>
+    <p class="rationale">
+      Картка <code>#rating-filter-body</code> живе всередині <code>&lt;details&gt;</code> «Розширені» (нішева фіча — §5.3).
+      Перемикач <strong>не</strong> звичайний checkbox серед інших рядків: окремий обрамлений блок із власним
+      заголовком і <strong>обовʼязковим кроком підтвердження</strong> при увімкненні — «буде недоступна переважна
+      більшість інтернету». Дефолт — <strong>вимкнено, без винятків</strong>. Вибір зон (країни + «глобальний топ») —
+      чекбокси, які рендеряться зі <code>status.rating_filter.available_lists</code>, тобто із сервера.
+      Індикатор активності (T-128) — окремий бейдж одразу під hero, <strong>завжди видимий</strong> поки фільтр
+      увімкнено (не лише в налаштуваннях), плюс суфікс у підказці трею.
+    </p>
+    <div class="frames">
+
+      <div class="device">
+        <div class="cap">Вимкнено (стан за замовчуванням)</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <!-- фільтр вимкнено → бейджа немає взагалі -->
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Рейтинговий фільтр «бульбашка»</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Обмежити інтернет обраними зонами</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <p class="rf-desc">Дозволяє резолвити лише сайти з курованих списків популярних доменів. Усе інше → блок. Опційно, дефолт вимкнено.</p>
+              </div>
+              <div class="subhead">GeoIP</div>
+              <div class="mini-row" style="border:none"><span class="g" style="color:var(--text-muted);font-size:11px">…решта карток «Розширених» без змін…</span></div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Клік на перемикач — крок підтвердження</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Рейтинговий фільтр «бульбашка»</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Обмежити інтернет обраними зонами</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <div class="notice warn" style="margin:.5rem 0 0">Увімкнення заблокує <strong>переважну більшість інтернету</strong> — доступними лишаться лише сайти з обраних зон нижче. Дефолт — вимкнено.</div>
+                <div class="rf-zones">
+                  <span class="rf-zone on">Україна</span>
+                  <span class="rf-zone">США</span>
+                  <span class="rf-zone">Німеччина</span>
+                  <span class="rf-zone">Польща</span>
+                  <span class="rf-zone">Велика Британія</span>
+                  <span class="rf-zone">Глобальний топ</span>
+                </div>
+                <div class="mini-row" style="border:none;margin-top:.5rem;justify-content:flex-end;gap:.4rem">
+                  <button class="textbtn" type="button">Скасувати</button>
+                  <button class="copybtn" type="button" style="font-size:11px">Підтвердити ввімкнення</button>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Увімкнено — бейдж активності під hero</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.4rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <span class="rf-badge on"><span class="dot"></span>Рейтинговий фільтр «бульбашка» активний · 881 домен у зоні</span>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Рейтинговий фільтр «бульбашка»</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Обмежити інтернет обраними зонами</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <p class="rf-desc">Активний. У зоні — <strong>ua</strong> (881 домен). Поза зоною → блок, кворум не опитується.</p>
+                <div class="rf-zones">
+                  <span class="rf-zone on">Україна</span>
+                  <span class="rf-zone">США</span>
+                  <span class="rf-zone">Німеччина</span>
+                  <span class="rf-zone">Польща</span>
+                  <span class="rf-zone">Велика Британія</span>
+                  <span class="rf-zone">Глобальний топ</span>
+                </div>
+                <div class="mini-row" style="border:none;margin-top:.5rem;justify-content:flex-end"><button class="copybtn" type="button" style="font-size:11px">Зберегти зони</button></div>
+              </div>
+            </div>
+          </details>
+          <div style="margin-top:.5rem">
+            <div class="tray-chip" style="display:inline-block"><div class="tt"><span class="dot g"></span>DNS Quorum Filter — захищає · рейтинг-фільтр активний</div><div class="when">суфікс у підказці трею, поки бульбашка ввімкнена</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Увімкнено, але списки ще не завантажені (Fork B)</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.4rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <span class="rf-badge pending"><span class="dot"></span>Рейтинговий фільтр увімкнено — списки завантажуються</span>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Рейтинговий фільтр «бульбашка»</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Обмежити інтернет обраними зонами</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Рейтинговий фільтр"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <div class="notice warn" style="margin:.5rem 0 0">Фільтр увімкнено, але жоден список ще не завантажено — фільтрація поки <strong>не діє</strong>. Оновиться автоматично за кілька секунд.</div>
+                <div class="rf-zones"><span class="rf-zone on">Україна</span><span class="rf-zone on">Глобальний топ</span><span class="rf-zone">США</span></div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
   <section class="board" style="margin-bottom:0">
     <h2>Відкриті питання до затвердження</h2>
     <ul style="max-width:70ch;color:var(--frame-muted);padding-left:1.1rem">
@@ -737,6 +910,8 @@
       <li>Головний перемикач при вимкненні — гасити всі категорії (як показано), чи питати підтвердження?</li>
       <li>Журнал: залишити прев'ю в базовому + повний у «Розширених», чи повний одразу під прев'ю?</li>
       <li>«для досвідчених» на розділі «Розширені» — залишити цей ярлик чи прибрати?</li>
+      <li>Артборд E: назва перемикача «Обмежити інтернет обраними зонами» — ок, чи інакше? Текст бейджа активності («…активний · N доменів у зоні») — потрібне число N чи достатньо «активний»?</li>
+      <li>Артборд E: підтвердження при ввімкненні — inline-крок (як показано), чи модальний діалог <code>rfd</code>, як у «Повністю видалити»?</li>
     </ul>
   </section>
 </div>
