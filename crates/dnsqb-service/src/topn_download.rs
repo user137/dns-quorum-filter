@@ -21,6 +21,16 @@ use sha2::{Digest, Sha256};
 pub(crate) const TOPN_RAW_BASE: &str =
     "https://raw.githubusercontent.com/user137/dns-quorum-filter/main/data/topn/";
 
+/// Every availability-zone list the repository currently publishes (T-105) —
+/// the set a client may select in `[rating_filter] lists`. Part of the same
+/// distribution contract as [`TOPN_RAW_BASE`]: adding a curated dataset means
+/// editing this list (and shipping `data/topn/<code>.txt` + its sidecar), and
+/// nothing on the client side. Surfaced on `GET /admin/status`
+/// ([`crate::admin::RatingFilterStatusView::available_lists`]) so the
+/// `/admin/ui` zone-config card renders its checkboxes from the server, not a
+/// hard-coded copy in the page's JavaScript.
+pub(crate) const AVAILABLE_TOPN_LISTS: &[&str] = &["ua", "us", "de", "pl", "gb", "global"];
+
 /// Upper bound on one list download. A published list is ~1000 rows of
 /// ~40 bytes plus a short `#` header — well under 64 KiB; this is generous
 /// headroom, not a measured limit (same spirit as

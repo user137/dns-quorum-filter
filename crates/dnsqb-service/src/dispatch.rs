@@ -28,7 +28,8 @@ use crate::admin::{
     HealthGeoip, HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse,
     MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView,
     OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
-    ProviderStatusView, UninstallLocalStateResponse, WatchdogStatusView,
+    ProviderStatusView, RatingFilterConfigUpdate, RatingFilterStatusView,
+    UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -52,6 +53,7 @@ use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTR
 use crate::rating_filter::ZoneLists;
 use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutConfig;
+use crate::topn_download::AVAILABLE_TOPN_LISTS;
 use crate::upstream::{
     all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
     EMPTY_ADULT_CATEGORY_DEFAULT_PRESET,
@@ -107,6 +109,7 @@ const ADMIN_GEOIP_ADD_PATH: &str = "/admin/geoip/add";
 const ADMIN_GEOIP_REMOVE_PATH: &str = "/admin/geoip/remove";
 const ADMIN_GEOIP_MAXMIND_PATH: &str = "/admin/geoip/maxmind";
 const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
+const ADMIN_RATING_FILTER_PATH: &str = "/admin/rating-filter";
 const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
 const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
 const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
@@ -147,6 +150,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_GEOIP_REMOVE_PATH, &[Method::POST]),
     (ADMIN_GEOIP_MAXMIND_PATH, &[Method::GET, Method::POST]),
     (ADMIN_GEOIP_MAXMIND_CLEAR_PATH, &[Method::POST]),
+    (ADMIN_RATING_FILTER_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_PATH, &[Method::GET]),
     (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_REMOVE_PATH, &[Method::POST]),
@@ -546,8 +550,11 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     };
     // `Some` only when the filter is enabled *and* has a non-empty bubble
     // (Fork B: an `enabled` filter with no lists loaded is inert, not a
-    // block-everything mode — the startup warning names that case).
-    let rating_filter_view = (rating_filter_config.enabled && !rating_filter_zone.is_empty())
+    // block-everything mode — the startup warning names that case). The
+    // predicate is `rating_filter_is_active`, the one function
+    // `RatingFilterStatusView` also reports through, so the status badge can
+    // never claim "active" while this passes `None`.
+    let rating_filter_view = rating_filter_is_active(&rating_filter_config, &rating_filter_zone)
         .then_some(RatingFilterView {
             lists: &rating_filter_zone,
             removed: &rating_filter_removed,
@@ -965,9 +972,13 @@ impl<C: DohClient + Sync> AppState<C> {
         Arc::clone(&self.rating_filter_config.read())
     }
 
-    /// Swaps in a `[rating_filter]` table after `apply_admin_reset` reloaded
-    /// `resolver_config.toml` (T-124). Sole writer; never touches the zone or
-    /// the removal overlay.
+    /// Swaps in a `[rating_filter]` table (T-124/T-127). Two writers:
+    /// `apply_admin_reset` (after reloading a hand-edited `resolver_config.toml`)
+    /// and `apply_rating_filter_change` (the `POST /admin/rating-filter`
+    /// route). Both hold `persist_lock` across the swap-then-`config.save`, so
+    /// their in-memory and on-disk writes stay ordered the same way (see
+    /// `persist_lock`'s own doc comment). Never touches the zone or the
+    /// removal overlay — each has its own single writer.
     pub(crate) fn update_rating_filter_config(&self, config: RatingFilterConfig) {
         *self.rating_filter_config.write() = Arc::new(config);
     }
@@ -1006,9 +1017,11 @@ impl<C: DohClient + Sync> AppState<C> {
         Arc::make_mut(&mut guard).insert(registrable);
     }
 
-    /// Wakes `run_topn_updater` out of its inter-cycle sleep (T-124) — fired
-    /// by `apply_admin_reset` after a config reload. Safe to call with no
-    /// updater running; the permit is simply never consumed.
+    /// Wakes `run_topn_updater` out of its inter-cycle sleep (T-124/T-127) —
+    /// fired by `apply_admin_reset` after a config reload and by
+    /// `apply_rating_filter_change` after a `POST /admin/rating-filter`, so a
+    /// fresh enable / list change downloads within seconds. Safe to call with
+    /// no updater running; the permit is simply never consumed.
     pub(crate) fn wake_rating_filter_refresh(&self) {
         self.rating_filter_refresh_wake.notify_one();
     }
@@ -1184,6 +1197,44 @@ fn read_watchdog_view(paths: Option<&PersistPaths>, now: SystemTime) -> Option<W
     }
 }
 
+/// Whether the rating-filter «bubble» (SPEC.md §5.3 step 5) is actually
+/// gating queries: the toggle is on **and** the loaded bubble contributes at
+/// least one domain. The single authority for this — [`resolve_doh_request`]
+/// calls it to decide whether `handle_query` gets a
+/// [`RatingFilterView`] at all, and [`rating_filter_status_view`] calls it
+/// for `GET /admin/status`, so the header badge and the pipeline can never
+/// disagree. `enabled && !active` is Fork B (on, but no list downloaded yet
+/// — inert, with a startup `tracing::warn`).
+pub(crate) fn rating_filter_is_active(config: &RatingFilterConfig, zone: &ZoneLists) -> bool {
+    config.enabled && !zone.is_empty()
+}
+
+/// Builds the always-present [`RatingFilterStatusView`] from `state`'s live
+/// `[rating_filter]` config and loaded bubble — shared by every
+/// [`AdminStatusResponse`] builder.
+fn rating_filter_status_view<C: DohClient + Sync>(state: &AppState<C>) -> RatingFilterStatusView {
+    let config = state.rating_filter_config_snapshot();
+    let zone = state.rating_filter_zone_snapshot();
+    let loaded = zone
+        .sources()
+        .iter()
+        .map(|source| ZoneListStatusView {
+            list: source.kind().list_code(),
+            domains: source.len(),
+        })
+        .collect();
+    RatingFilterStatusView {
+        enabled: config.enabled,
+        active: rating_filter_is_active(&config, &zone),
+        lists: config.lists.clone(),
+        available_lists: AVAILABLE_TOPN_LISTS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+        loaded,
+    }
+}
+
 /// Builds the current [`AdminStatusResponse`] from `state` — shared by
 /// `GET /admin/status` and the response [`apply_admin_config`] echoes back
 /// after a `POST /admin/config`. `persisted` is the caller's to state
@@ -1209,6 +1260,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
             query_log: state.persist.persist_query_log,
             cache: state.persist.persist_cache,
         },
+        rating_filter: rating_filter_status_view(state),
     }
 }
 
@@ -1327,6 +1379,7 @@ fn apply_admin_config<C: DohClient + Sync>(
             query_log: state.persist.persist_query_log,
             cache: state.persist.persist_cache,
         },
+        rating_filter: rating_filter_status_view(state),
     }
 }
 
@@ -2075,6 +2128,124 @@ where
         let code = validate_country_code(&request.country)?;
         Ok(current.iter().filter(|c| **c != code).cloned().collect())
     }) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Applies a `POST /admin/rating-filter` update (T-127): validates the list
+/// codes, swaps in the new `[rating_filter]` table, wakes `run_topn_updater`
+/// so the selection downloads within seconds, and — when the filter ends up
+/// **on** after a change that altered `enabled` or `lists` — rebuilds the
+/// verdict cache so an already-cached ALLOW can't outlive the tightened
+/// bubble until its TTL (cache is step 4, above the filter's step 5). Then
+/// persists the whole `resolver_config.toml` (cross-field read, exactly as
+/// [`apply_geoip_change`]) and returns the resulting status.
+///
+/// `state.persist_lock` is held for the whole validate-swap-persist sequence
+/// — shared with every other writer of `resolver_config.toml` (see
+/// `persist_lock`'s own doc comment). The cache rebuild happens inside that
+/// guard too: it is a cheap `Arc` swap, and keeping it there makes "config
+/// changed" and "cache cleared" atomic to a concurrent reader. The response
+/// is built by [`admin_status`] *after* the guard drops — every field it
+/// reports was already committed, and it avoids a blocking watchdog-file read
+/// under the lock (the reason [`apply_admin_config`] reads that file first).
+fn apply_rating_filter_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: &RatingFilterConfigUpdate,
+) -> Result<AdminStatusResponse, ConfigError> {
+    let lists = crate::config::validate_rating_filter_lists(&update.lists)?;
+    let new_config = RatingFilterConfig {
+        enabled: update.enabled,
+        lists,
+    };
+
+    let persisted = {
+        let _persist_guard = state.persist_lock.lock();
+        let old_config = state.rating_filter_config_snapshot();
+        let changed =
+            new_config.enabled != old_config.enabled || new_config.lists != old_config.lists;
+        state.update_rating_filter_config(new_config.clone());
+        state.wake_rating_filter_refresh();
+        // One rule, no asymmetry to explain: clear on any change that leaves
+        // the filter on (a turn-on, or a `lists` edit while already on). A
+        // no-op POST or a turn-off leaves the cache untouched. `Arc` swap,
+        // not `Cache::clear()` — same "a racing query can't tear a
+        // half-cleared cache" reasoning as `apply_admin_reset`.
+        if new_config.enabled && changed {
+            let cache_config = state.cache.read().config;
+            *state.cache.write() = Arc::new(CacheState {
+                cache: Cache::new(&cache_config),
+                config: cache_config,
+            });
+        }
+        let runtime = *state.runtime.read();
+        let cache_config = state.cache.read().config;
+        let providers = state.providers_snapshot();
+        let blocked_countries = state.geoip_countries.read().as_ref().clone();
+        match state.persist.paths.as_ref() {
+            Some(paths) => {
+                let config = ResolverConfig {
+                    port: state.persist.port,
+                    timeout_mode: runtime.timeout.mode,
+                    timeout_ms: timeout_ms(runtime.timeout.duration),
+                    serve_baseline_when_filters_unreachable: runtime
+                        .serve_baseline_when_filters_unreachable,
+                    // T-146/T-97/T-169 cross-field read: not touched here, but
+                    // this write rewrites the whole file.
+                    persist_query_log: state.persist.persist_query_log,
+                    persist_cache: state.persist.persist_cache,
+                    rating_filter: new_config,
+                    limits: state.persist.limits,
+                    providers,
+                    cache: cache_config,
+                    geoip: GeoipConfig { blocked_countries },
+                };
+                match config.save(&paths.config) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        tracing::warn!(
+                            "failed to persist an admin rating-filter change to disk: {err}"
+                        );
+                        false
+                    }
+                }
+            }
+            None => false,
+        }
+    };
+    Ok(admin_status(state, persisted))
+}
+
+/// `POST /admin/rating-filter` (T-127) — method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check. Same CSRF gate and body-size cap
+/// as the other admin writes; a malformed list code is `400`
+/// ([`crate::config::validate_rating_filter_lists`]).
+async fn serve_admin_rating_filter<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(update) = serde_json::from_slice::<RatingFilterConfigUpdate>(&collected.to_bytes())
+    else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_rating_filter_change(state, &update) {
         Ok(response) => json_response(&response),
         Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
@@ -3056,6 +3227,7 @@ where
         ADMIN_GEOIP_REMOVE_PATH => serve_admin_geoip_remove(req, &state).await,
         ADMIN_GEOIP_MAXMIND_PATH => serve_admin_geoip_maxmind(req, &state).await,
         ADMIN_GEOIP_MAXMIND_CLEAR_PATH => serve_admin_geoip_maxmind_clear(req, &state).await,
+        ADMIN_RATING_FILTER_PATH => serve_admin_rating_filter(req, &state).await,
         ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
         ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
         ADMIN_PROVIDERS_REMOVE_PATH => serve_admin_providers_remove(req, &state).await,
@@ -3082,10 +3254,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_status, content_type_is_dns_message, parse_log_query, read_watchdog_view,
-        resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
-        GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
-        PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
+        admin_status, content_type_is_dns_message, parse_log_query, rating_filter_is_active,
+        read_watchdog_view, resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState,
+        DohRequestError, GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState,
+        PersistPaths, PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
         ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT,
         DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
@@ -3094,7 +3266,7 @@ mod tests {
         CertStatusResponse, CertTrustView, DecisionView, GeoipCountriesResponse,
         GeoipCountryRequest, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
         MaxmindCredentialsView, OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
-        WatchdogStatusView,
+        WatchdogStatusView, ZoneListStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::{LimitsConfig, RatingFilterConfig, ResolverConfig};
@@ -6456,6 +6628,263 @@ mod tests {
         assert_eq!(state.rating_filter_removed_snapshot().len(), 2);
     }
 
+    // ---- T-127: POST /admin/rating-filter ----
+
+    /// Seeds `state`'s live bubble with a one-domain `ua` source, so
+    /// `rating_filter_is_active` (and the status `active` field) can be
+    /// non-`false` in a test with no `run_topn_updater` running.
+    fn seed_ua_zone(state: &AppState<MockClient>) {
+        state.update_rating_filter_zone(ZoneLists::new(vec![
+            crate::rating_filter::ZoneSource::new(
+                crate::rating_filter::ZoneSourceKind::CountryTopN("ua".to_string()),
+                ["rozetka.com.ua".to_string()],
+            ),
+        ]));
+    }
+
+    async fn rating_filter_post(
+        state: Arc<AppState<MockClient>>,
+        enabled: bool,
+        lists: &[&str],
+    ) -> AdminStatusResponse {
+        let body = serde_json::json!({
+            "enabled": enabled,
+            "lists": lists,
+        });
+        let response = match serve(admin_post_json("/admin/rating-filter", &body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a valid POST must be 200"
+        );
+        let bytes = body_bytes(response).await;
+        match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+            Ok(status) => status,
+            Err(err) => panic!("response must decode as AdminStatusResponse: {err}"),
+        }
+    }
+
+    // Happy path: turning the bubble on with a list that is already loaded
+    // makes both `enabled` and `active` true, and the status echoes the
+    // available list set for the zone-config card to render.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_enables_the_bubble_and_the_status_reflects_it() {
+        let state = state_with(no_op_client());
+        seed_ua_zone(&state);
+        let status = rating_filter_post(Arc::clone(&state), true, &["ua"]).await;
+        assert!(status.rating_filter.enabled);
+        assert!(
+            status.rating_filter.active,
+            "a seeded non-empty bubble + enabled ⇒ active"
+        );
+        assert_eq!(status.rating_filter.lists, vec!["ua".to_string()]);
+        assert!(
+            status
+                .rating_filter
+                .available_lists
+                .contains(&"global".to_string()),
+            "the card renders its checkboxes from available_lists"
+        );
+        assert_eq!(
+            status.rating_filter.loaded,
+            vec![ZoneListStatusView {
+                list: "ua".to_string(),
+                domains: 1,
+            }]
+        );
+    }
+
+    // Security & boundary: the echoed `lists` is the normalized form
+    // (lowercased, deduplicated), never the raw request — same discipline as
+    // `serve_admin_geoip_remove`.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_normalizes_and_dedups_the_list() {
+        let state = state_with(no_op_client());
+        let status = rating_filter_post(state, true, &["UA", "global", "ua"]).await;
+        assert_eq!(
+            status.rating_filter.lists,
+            vec!["ua".to_string(), "global".to_string()]
+        );
+    }
+
+    // Security & boundary: a malformed list code is a loud 400, not a
+    // silently-dropped entry.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_rejects_a_malformed_list_code() {
+        let state = state_with(no_op_client());
+        let body = serde_json::json!({ "enabled": true, "lists": ["ukr"] });
+        let response = match serve(admin_post_json("/admin/rating-filter", &body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Security & boundary: the JSON content-type gate is the CSRF defense —
+    // a request without it never reaches the handler.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_rejects_a_missing_content_type() {
+        let Ok(json) = serde_json::to_vec(&serde_json::json!({ "enabled": true, "lists": [] }))
+        else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/rating-filter")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    // Misuse & fool: enabling with no lists is Fork B — inert, not an error.
+    // `enabled` is true, `active` is false, and the pipeline gate agrees.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_enabled_with_no_lists_is_inert_not_an_error() {
+        let state = state_with(no_op_client());
+        let status = rating_filter_post(Arc::clone(&state), true, &[]).await;
+        assert!(status.rating_filter.enabled);
+        assert!(
+            !status.rating_filter.active,
+            "enabled but no list loaded ⇒ inert (Fork B)"
+        );
+        assert!(
+            !rating_filter_is_active(
+                &state.rating_filter_config_snapshot(),
+                &state.rating_filter_zone_snapshot(),
+            ),
+            "the status `active` and the pipeline gate must agree"
+        );
+    }
+
+    // The turn-on clears the verdict cache so an ALLOW cached at step 4
+    // (above the filter) can't outlive the new bubble until its TTL.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_clears_the_cache_when_it_turns_the_filter_on() {
+        let state = state_with(no_op_client());
+        seed_ua_zone(&state);
+        let Ok(key) = CacheKey::new("cached-allow.test", RecordType::A) else {
+            panic!("valid fixture domain");
+        };
+        let before = Arc::clone(&state.cache.read());
+        before
+            .cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    std::time::Duration::from_secs(300),
+                ),
+            )
+            .await;
+
+        let _ = rating_filter_post(Arc::clone(&state), true, &["ua"]).await;
+
+        let after = Arc::clone(&state.cache.read());
+        assert!(
+            after.cache.get(&key).await.is_none(),
+            "turning the bubble on must clear the verdict cache"
+        );
+    }
+
+    // A turn-*off* leaves the cache alone — there is nothing the bubble now
+    // hides, and clearing it would be a gratuitous cold start.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_does_not_clear_the_cache_on_a_turn_off() {
+        let state = state_with(no_op_client());
+        let Ok(key) = CacheKey::new("still-cached.test", RecordType::A) else {
+            panic!("valid fixture domain");
+        };
+        let before = Arc::clone(&state.cache.read());
+        before
+            .cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    std::time::Duration::from_secs(300),
+                ),
+            )
+            .await;
+
+        let _ = rating_filter_post(Arc::clone(&state), false, &["ua"]).await;
+
+        let after = Arc::clone(&state.cache.read());
+        assert!(
+            after.cache.get(&key).await.is_some(),
+            "a turn-off must not clear the cache"
+        );
+    }
+
+    // Error path: the change live-applies and persists to disk when a config
+    // path is set, and reloads with the same `[rating_filter]` table.
+    #[tokio::test]
+    async fn serve_admin_rating_filter_persists_a_change_to_disk_when_a_config_path_is_set() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let status = rating_filter_post(state, true, &["ua", "global"]).await;
+        assert!(
+            status.persisted,
+            "a config path is set, so the write must land"
+        );
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert!(loaded.rating_filter.enabled);
+        assert_eq!(
+            loaded.rating_filter.lists,
+            vec!["ua".to_string(), "global".to_string()]
+        );
+    }
+
+    // The one predicate `resolve_doh_request` and `GET /admin/status` both
+    // read: on ⇔ (enabled ∧ non-empty bubble).
+    #[test]
+    fn rating_filter_is_active_matches_the_enabled_and_non_empty_rule() {
+        let on = RatingFilterConfig {
+            enabled: true,
+            lists: vec!["ua".to_string()],
+        };
+        let off = RatingFilterConfig::default();
+        let empty = ZoneLists::default();
+        let full = ZoneLists::new(vec![crate::rating_filter::ZoneSource::new(
+            crate::rating_filter::ZoneSourceKind::Global,
+            ["example.com".to_string()],
+        )]);
+        assert!(
+            !rating_filter_is_active(&on, &empty),
+            "enabled but empty ⇒ inert"
+        );
+        assert!(rating_filter_is_active(&on, &full));
+        assert!(!rating_filter_is_active(&off, &full), "disabled ⇒ inert");
+    }
+
     #[test]
     fn maxmind_health_starts_not_applicable_and_tracks_source_changes() {
         let state = state_with(no_op_client());
@@ -7395,6 +7824,7 @@ mod tests {
         ("/admin/geoip/remove", &[Method::POST]),
         ("/admin/geoip/maxmind", &[Method::GET, Method::POST]),
         ("/admin/geoip/maxmind/clear", &[Method::POST]),
+        ("/admin/rating-filter", &[Method::POST]),
         ("/admin/providers", &[Method::GET]),
         ("/admin/providers/add", &[Method::POST]),
         ("/admin/providers/remove", &[Method::POST]),

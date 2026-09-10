@@ -338,6 +338,13 @@ mod tests {
                 query_log: false,
                 cache: false,
             },
+            rating_filter: dnsqb_service::RatingFilterStatusView {
+                enabled: false,
+                active: false,
+                lists: Vec::new(),
+                available_lists: Vec::new(),
+                loaded: Vec::new(),
+            },
         }
     }
 

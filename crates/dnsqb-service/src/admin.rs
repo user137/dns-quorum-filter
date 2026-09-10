@@ -137,6 +137,9 @@ pub struct AdminStatusResponse {
     /// [`AdminStatusResponse`] stays under `clippy::struct_excessive_bools`
     /// without an `#[allow]`.
     pub encrypted_persistence: EncryptedPersistenceView,
+    /// T-127/T-128 — the rating-filter «bubble» status, always present so the
+    /// header badge / tray tooltip can render it without a second fetch.
+    pub rating_filter: RatingFilterStatusView,
 }
 
 /// T-96 / T-97 — the passive "this store is written to disk (encrypted)"
@@ -150,6 +153,45 @@ pub struct EncryptedPersistenceView {
     /// `persist_cache` — the quorum-verdict cache is sealed to `cache.enc`
     /// (SPEC.md §4).
     pub cache: bool,
+}
+
+/// T-127/T-128 — the always-present rating-filter «bubble» status
+/// (SPEC.md §5.3). `enabled` mirrors the toggle; `active` is the single
+/// authoritative "is step 5 gating queries right now?" answer — computed by
+/// [`crate::dispatch::rating_filter_is_active`], the same function
+/// `resolve_doh_request` uses to decide whether the pipeline gets a
+/// `RatingFilterView` at all, so the badge can never disagree with the
+/// pipeline. `enabled` without `active` is Fork B (enabled, but no list
+/// downloaded yet — inert).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RatingFilterStatusView {
+    /// `[rating_filter].enabled` — the toggle's live position (T-128).
+    pub enabled: bool,
+    /// `enabled` **and** the loaded bubble is non-empty — step 5 is actually
+    /// blocking out-of-zone queries.
+    pub active: bool,
+    /// The selected list codes, normalized (lowercase, deduplicated) exactly
+    /// as [`crate::config::validate_rating_filter_lists`] returns them.
+    pub lists: Vec<String>,
+    /// Every list code a client may select — the T-105 distribution contract
+    /// (`crate::topn_download::AVAILABLE_TOPN_LISTS`). The zone-config card
+    /// renders its checkboxes from this, so a new dataset is one server-side
+    /// const edit, not a client change.
+    pub available_lists: Vec<String>,
+    /// Per-source domain counts for the lists actually loaded from disk — an
+    /// exact count each, never a cross-source sum (a domain in both a country
+    /// list and `global` would be double-counted). Empty until
+    /// `run_topn_updater`'s first successful download.
+    pub loaded: Vec<ZoneListStatusView>,
+}
+
+/// One loaded availability-zone list in [`RatingFilterStatusView::loaded`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneListStatusView {
+    /// The list code (`"ua"` … `"global"`).
+    pub list: String,
+    /// How many registrable domains this list currently contributes.
+    pub domains: usize,
 }
 
 /// T-152 DTO form of [`crate::NetworkReachability`] — a genuine projection
@@ -456,6 +498,22 @@ pub struct SetCategoryEnabledRequest {
     pub category: Category,
     /// Desired state for every voter in that category.
     pub enabled: bool,
+}
+
+/// `POST /admin/rating-filter`'s body (T-127) — a full replace of the
+/// `[rating_filter]` table, never a partial patch (same convention as
+/// [`AdminConfigUpdate`]). `lists` is validated and normalized server-side by
+/// [`crate::config::validate_rating_filter_lists`]; a malformed entry is a
+/// `400`. Enabling with an empty `lists` is allowed (Fork B — inert, not an
+/// error), so the UI can persist the toggle and the list selection
+/// independently.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RatingFilterConfigUpdate {
+    /// Desired position of the «bubble» toggle.
+    pub enabled: bool,
+    /// The availability-zone list codes to load (two-letter country codes or
+    /// `"global"`), in preference order.
+    pub lists: Vec<String>,
 }
 
 /// One override-list entry as shown to a client (T-47) — a projection of
@@ -1439,6 +1497,31 @@ impl AdminClient {
                 self.base_url
             ))
             .json(&SetCategoryEnabledRequest { category, enabled })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// Sets the `[rating_filter]` «bubble» toggle and its list selection in one
+    /// `resolver_config.toml` write (T-127). Returns the resulting
+    /// [`AdminStatusResponse`] — `rating_filter.active` reflects whether the
+    /// selected lists are already loaded.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, a list
+    /// code is malformed (`400`), or the response doesn't decode.
+    pub async fn set_rating_filter(
+        &self,
+        enabled: bool,
+        lists: Vec<String>,
+    ) -> Result<AdminStatusResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/rating-filter", self.base_url))
+            .json(&RatingFilterConfigUpdate { enabled, lists })
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)

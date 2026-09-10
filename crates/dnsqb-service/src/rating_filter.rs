@@ -44,6 +44,20 @@ pub enum ZoneSourceKind {
     Global,
 }
 
+impl ZoneSourceKind {
+    /// The list code this source was loaded from — a country code for
+    /// [`Self::CountryTopN`], the literal `"global"` for [`Self::Global`].
+    /// Matches an entry of `[rating_filter] lists` and of
+    /// [`crate::topn_download::AVAILABLE_TOPN_LISTS`].
+    #[must_use]
+    pub fn list_code(&self) -> String {
+        match self {
+            Self::CountryTopN(cc) => cc.clone(),
+            Self::Global => "global".to_string(),
+        }
+    }
+}
+
 /// One loaded availability-zone list: its provenance plus the set of
 /// registrable domains it contributes to the bubble.
 #[derive(Debug, Clone)]

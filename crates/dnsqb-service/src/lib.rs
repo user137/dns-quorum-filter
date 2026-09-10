@@ -165,7 +165,7 @@ pub use admin::{
     MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
     MaxmindRefreshHealth, NetworkStatusView, ProviderAddRequest, ProviderRemoveRequest,
     ProviderSetEnabledRequest, ProviderStatusView, ProviderView, ProvidersResponse,
-    WatchdogStatusView,
+    RatingFilterConfigUpdate, RatingFilterStatusView, WatchdogStatusView, ZoneListStatusView,
 };
 pub use admission::ConnectionGate;
 pub use baseline_selector::{
