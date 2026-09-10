@@ -2611,9 +2611,22 @@ function renderRatingFilter(status) {
     return { text: "—", loading: false };
   }
 
+  // Codes to display: the server's available set in its canonical order,
+  // plus any already-picked code the client has no catalogue entry for. A
+  // hand-edited resolver_config.toml can carry a well-formed code outside
+  // AVAILABLE_TOPN_LISTS (validate_rating_filter_lists checks shape, not
+  // membership) - it must still show as a removable row, never a silently
+  // hidden zone gating the user's traffic ("never a fake 0/0", Три Б).
+  function displayCodes() {
+    const extra = [...picked].filter(
+      (code) => !rf.available_lists.includes(code),
+    );
+    return rf.available_lists.concat(extra);
+  }
+
   function renderPicked() {
     pickedList.textContent = "";
-    const codes = rf.available_lists.filter((code) => picked.has(code));
+    const codes = displayCodes().filter((code) => picked.has(code));
     emptyLine.hidden = codes.length > 0;
     codes.forEach((code) => {
       const li = document.createElement("li");
@@ -2647,7 +2660,7 @@ function renderRatingFilter(status) {
 
   function visibleCodes() {
     const query = input.value.trim().toLowerCase();
-    return rf.available_lists.filter((code) => {
+    return displayCodes().filter((code) => {
       if (!query) {
         return true;
       }
@@ -2756,6 +2769,7 @@ function renderRatingFilter(status) {
       renderMenu();
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
+      openMenu();
       activeIndex = Math.max(activeIndex - 1, 0);
       renderMenu();
     } else if (event.key === "Enter") {

@@ -572,6 +572,11 @@ mod tests {
             MAIN_JS.contains("setRatingFilter(false,"),
             "turning the bubble off must be immediate (no confirm), unlike turn-on"
         );
+        assert!(
+            MAIN_JS.contains("!rf.available_lists.includes(code)"),
+            "a picked code outside available_lists (hand-edited config) must still \
+             render as a removable row, not be silently hidden"
+        );
     }
 
     // T-128 — the activity badge div is present in the basic view but nothing
