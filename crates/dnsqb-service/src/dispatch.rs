@@ -3335,9 +3335,10 @@ mod tests {
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
-        CertStatusResponse, CertTrustView, DecisionView, GeoipCountriesResponse,
-        GeoipCountryRequest, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
-        MaxmindCredentialsView, OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest,
+        CategoryToggleState, CertStatusResponse, CertTrustView, DecisionView,
+        GeoipCountriesResponse, GeoipCountryRequest, HeroStateView, LogQueryResponse,
+        MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
+        OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest, ProvidersResponse,
         WatchdogStatusView, ZoneListStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
@@ -3345,7 +3346,7 @@ mod tests {
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
-    use crate::upstream::{doh_get_url, DohClient, ProviderEntry, UpstreamError};
+    use crate::upstream::{doh_get_url, Category, DohClient, ProviderEntry, UpstreamError};
     use crate::watchdog::state::{WatchdogStateFile, WatchdogTarget, STATE_SCHEMA_VERSION};
     use crate::write_watchdog_state;
     use bytes::Bytes;
@@ -4297,6 +4298,94 @@ mod tests {
             panic!("response body must decode as AdminStatusResponse");
         };
         assert!(status.paused);
+    }
+
+    // T-204: the `admin_status` builder wires `admin::compute_hero_state` — its
+    // ladder is unit-tested in `admin::hero_and_category_tests`, but nothing
+    // there proves this route feeds it the live `paused` / cert-trust values.
+    // (`state_with` has `paths: None` ⇒ `cert_trust` is `None` ⇒ the fresh
+    // reading is `Protected`, not a cert warning.)
+    #[tokio::test]
+    async fn serve_admin_status_hero_state_tracks_the_live_pause_and_cert_flags() {
+        async fn hero_of(state: Arc<AppState<MockClient>>) -> HeroStateView {
+            let Ok(req) = Request::builder()
+                .method(Method::GET)
+                .uri("/admin/status")
+                .body(Full::new(Bytes::new()))
+            else {
+                panic!("fixture request must build");
+            };
+            let response = match serve(req, state).await {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            let bytes = body_bytes(response).await;
+            match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+                Ok(status) => status.hero_state,
+                Err(err) => panic!("must decode: {err}"),
+            }
+        }
+
+        let state = state_with(no_op_client());
+        assert_eq!(
+            hero_of(Arc::clone(&state)).await,
+            HeroStateView::Protected,
+            "default fixture: providers active, not paused, cert unread"
+        );
+
+        state.update_cert_trust(CertTrustView::NotTrusted);
+        assert_eq!(
+            hero_of(Arc::clone(&state)).await,
+            HeroStateView::CertNotTrusted
+        );
+
+        state.update_filtering_paused(true);
+        assert_eq!(
+            hero_of(state).await,
+            HeroStateView::Paused,
+            "pause outranks the cert branch"
+        );
+    }
+
+    // T-204: `providers_view` wires `admin::{category_filter_views,
+    // master_switch_targets}` into `GET /admin/providers`. The pure fns are
+    // unit-tested in `admin::hero_and_category_tests`; this proves the route
+    // carries them, with the default voter set (Security + Ads enabled, no
+    // adult voter).
+    #[tokio::test]
+    async fn serve_admin_providers_carries_the_category_folds_and_master_switch_targets() {
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/providers")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let bytes = body_bytes(response).await;
+        let Ok(providers) = serde_json::from_slice::<ProvidersResponse>(&bytes) else {
+            panic!("response body must decode as ProvidersResponse");
+        };
+        assert_eq!(
+            providers
+                .category_states
+                .iter()
+                .map(|view| (view.category, view.state))
+                .collect::<Vec<_>>(),
+            vec![
+                (Category::Security, CategoryToggleState::On),
+                (Category::AdsTrackers, CategoryToggleState::On),
+                (Category::AdultContent, CategoryToggleState::Off),
+            ]
+        );
+        assert_eq!(
+            providers.master_switch_targets,
+            vec![Category::Security, Category::AdsTrackers],
+            "no adult voter configured ⇒ the master switch can't touch ADULT_CONTENT"
+        );
     }
 
     // T-169: `GET /admin/status` surfaces the live `ConnectionGate` reject
