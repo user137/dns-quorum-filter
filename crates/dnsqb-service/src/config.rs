@@ -50,6 +50,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheConfig;
 use crate::timeout::TimeoutMode;
+use crate::topn_download::AVAILABLE_TOPN_LISTS;
 use crate::upstream::{
     builtin_preset, is_valid_provider_id, validate_provider_url, BlockSignature, Category,
     ProviderEntry, ProviderSpec,
@@ -167,14 +168,22 @@ pub enum ConfigError {
     /// silently letting the file override a shipped preset's endpoint.
     #[error("provider {0:?} is a built-in preset - do not override its url/category/signature")]
     BuiltinPresetOverride(String),
-    /// A `[rating_filter]` `lists` entry isn't a two-letter code or the
-    /// literal `"global"` (T-124/T-126, SPEC.md §5.3) — rejected at load for
-    /// the same reason as [`ConfigError::InvalidCountryCode`]: a `"uka"` typo
-    /// would silently match no published list and the operator would believe
-    /// the bubble covers a country it never loads. A country code, not a
-    /// domain name — safe to echo.
+    /// A `[rating_filter]` `lists` entry isn't shaped like a two-letter code
+    /// or the literal `"global"` (T-124/T-126, SPEC.md §5.3) — a `"uka"`
+    /// typo. Rejected at load for the same reason as
+    /// [`ConfigError::InvalidCountryCode`]. A country code, not a domain
+    /// name — safe to echo.
     #[error("[rating_filter] list {0:?} is not a two-letter country code or \"global\"")]
     InvalidRatingFilterList(String),
+    /// A `[rating_filter]` `lists` entry is well-formed but names no
+    /// distributed zone list — it isn't in
+    /// [`crate::topn_download::AVAILABLE_TOPN_LISTS`] (T-127, DECISIONS.md
+    /// 2026-09-10). `topn_updater` downloads from a fixed URL, so such a code
+    /// could only ever be permanent inert Fork B (`enabled`, nothing to
+    /// load); a loud rejection beats a config that loads and silently never
+    /// filters. Safe to echo.
+    #[error("[rating_filter] list {0:?} is not a distributed zone list")]
+    UnknownRatingFilterList(String),
 }
 
 /// Upper bound on `resolver_config.toml`'s on-disk size, checked in
@@ -558,21 +567,31 @@ pub(crate) fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
     }
 }
 
-/// Validates the `[rating_filter] lists` entries (T-124/T-126): each is a
-/// lowercased two-letter alphabetic code or the literal `"global"`; the
-/// result is lowercased and deduplicated with first-seen order preserved.
-/// A malformed entry is [`ConfigError::InvalidRatingFilterList`] — a
-/// hand-edited file gets a loud error, not a silently-dropped list, the same
-/// discipline [`validate_country_code`] applies. Unlike the `[geoip]` codes
-/// these stay lowercase: the published list files are `data/topn/<lc>.txt`.
+/// Validates the `[rating_filter] lists` entries (T-124/T-126, tightened by
+/// T-127): the result is lowercased and deduplicated with first-seen order
+/// preserved. Two ordered checks, each with its own error so a hand-edited
+/// file names the actual mistake:
+/// 1. shape — a lowercase two-letter code or `"global"`, else
+///    [`ConfigError::InvalidRatingFilterList`] (a `"uka"` typo);
+/// 2. membership in [`AVAILABLE_TOPN_LISTS`], else
+///    [`ConfigError::UnknownRatingFilterList`] (well-formed, but no such
+///    dataset — `topn_updater`'s download URL is fixed, so it could only
+///    ever be inert; DECISIONS.md 2026-09-10).
+///
+/// After this, `lists ⊆ available_lists` is a guaranteed invariant for every
+/// consumer. Unlike the `[geoip]` codes these stay lowercase: the published
+/// list files are `data/topn/<lc>.txt`.
 pub(crate) fn validate_rating_filter_lists(raw: &[String]) -> Result<Vec<String>, ConfigError> {
     let mut out: Vec<String> = Vec::with_capacity(raw.len());
     for entry in raw {
         let lc = entry.to_ascii_lowercase();
-        let valid =
+        let well_formed =
             lc == "global" || (lc.len() == 2 && lc.bytes().all(|byte| byte.is_ascii_lowercase()));
-        if !valid {
+        if !well_formed {
             return Err(ConfigError::InvalidRatingFilterList(entry.clone()));
+        }
+        if !AVAILABLE_TOPN_LISTS.contains(&lc.as_str()) {
+            return Err(ConfigError::UnknownRatingFilterList(entry.clone()));
         }
         if !out.contains(&lc) {
             out.push(lc);
@@ -1328,6 +1347,20 @@ mod tests {
         assert!(matches!(
             ResolverConfig::load(&path),
             Err(ConfigError::InvalidRatingFilterList(entry)) if entry == "uka"
+        ));
+    }
+
+    // T-127: a well-formed code that names no distributed dataset is a
+    // distinct, loud rejection — not silently accepted then never loaded.
+    #[test]
+    fn load_rejects_a_rating_filter_list_code_with_no_dataset() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[rating_filter]\nlists = [\"fr\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::UnknownRatingFilterList(entry)) if entry == "fr"
         ));
     }
 

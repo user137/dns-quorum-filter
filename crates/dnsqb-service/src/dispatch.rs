@@ -6710,24 +6710,21 @@ mod tests {
         );
     }
 
-    // Boundary: `validate_rating_filter_lists` checks *shape* (a 2-letter
-    // lowercase code or `"global"`), not membership in `AVAILABLE_TOPN_LISTS`.
-    // A well-formed code for a dataset that isn't distributed (`"fr"`) is
-    // accepted and echoed — so `lists ⊄ available_lists` is a representable
-    // state, which is why the zone-config card renders the union of the two
-    // (main.js `displayCodes`), never just `available_lists`.
+    // T-127: `validate_rating_filter_lists` gates on `AVAILABLE_TOPN_LISTS`
+    // membership, not just shape. A well-formed code for a dataset that isn't
+    // distributed (`"fr"`) is a 400 — same as a malformed code — so
+    // `lists ⊆ available_lists` holds for every consumer. (main.js still
+    // renders the union defensively, for a config file edited before this
+    // check existed.)
     #[tokio::test]
-    async fn serve_admin_rating_filter_accepts_a_well_formed_code_outside_the_available_set() {
+    async fn serve_admin_rating_filter_rejects_a_code_with_no_dataset() {
         let state = state_with(no_op_client());
-        let status = rating_filter_post(state, true, &["fr"]).await;
-        assert_eq!(status.rating_filter.lists, vec!["fr".to_string()]);
-        assert!(
-            !status
-                .rating_filter
-                .available_lists
-                .contains(&"fr".to_string()),
-            "`fr` is well-formed but not a distributed dataset"
-        );
+        let body = serde_json::json!({ "enabled": true, "lists": ["fr"] });
+        let response = match serve(admin_post_json("/admin/rating-filter", &body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     // Security & boundary: a malformed list code is a loud 400, not a

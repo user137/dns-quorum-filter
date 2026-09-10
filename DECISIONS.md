@@ -1380,3 +1380,47 @@ browsing-даних до Батча 4.5, який його й проєктує; 
 (`record_zone_removal`). SPEC.md §5.3 п.1, CONFIGURATION.md, CLAUDE.md. Кеш (крок 4) вище
 фільтра, тож свіжий кворумний Block маскує ефект прибирання до спливу `block_verdict_ttl` — це
 правильно за SPEC §5.3, зафіксовано як known limitation.
+
+## 2026-09-10 — T-127: `validate_rating_filter_lists` звужено до членства в `AVAILABLE_TOPN_LISTS`
+
+**Контекст:** Батч 4.3 (`c64e1db`) валідував `[rating_filter] lists` лише за
+**формою** (два малих латинських літери або `"global"`). Код правильної форми, але
+без датасету (`"fr"`), проходив і на завантаженні конфігу, і в
+`POST /admin/rating-filter`. `topn_updater` качає з фіксованого URL
+(`raw.githubusercontent.com/<репо>/main/data/topn/<код>.txt`) — такий код 404-иться
+щоцикл, дає 0 доменів, і `lists = ["fr"]` осідає у вічному Fork B
+(«увімкнено, списки завантажуються») без жодної підказки чому. UI до `6289903`
+взагалі ховав такий код (перебирав тільки `available_lists`) — зона в конфізі,
+а в картці її не видно й не прибрати.
+
+**Рішення:** `validate_rating_filter_lists` тепер робить дві впорядковані перевірки —
+(1) форма → `ConfigError::InvalidRatingFilterList` (друкарська помилка `"uka"`),
+(2) членство в `topn_download::AVAILABLE_TOPN_LISTS` → новий
+`ConfigError::UnknownRatingFilterList` (форма правильна, датасету нема). Обидва —
+`400` на маршруті (як уже сьогодні з `"ukr"`) / гучна помилка старту на завантаженні.
+Після цього `lists ⊆ available_lists` — гарантований інваріант для всіх споживачів.
+Обʼєднання в `main.js` (`displayCodes`) **лишається навмисно** — оборонний код для
+конфіга, відредагованого до цієї перевірки: без нього такий файл втрачає єдиний
+видимий спосіб прибрати погану зону.
+
+**Причина:** URL завантаження фіксований, тож код поза `AVAILABLE_TOPN_LISTS` не
+може запрацювати ніколи — тільки постійний інертний Fork B. Конфіг, що гучно не
+завантажується, строго кращий за той, що завантажується й мовчки не фільтрує (той
+самий принцип «hard TOML cutover, no shim», T-144/T-145). Фіча default-OFF і їй
+кілька днів — реальний конфіг із таким кодом майже гіпотетичний. Дві перевірки, а
+не одна: `"uka"` (не та довжина) і `"fr"` (нема датасету) — різні помилки оператора
+з різними виправленнями, тож різні повідомлення.
+
+**Наслідки:**
+- `config.rs`: `+ConfigError::UnknownRatingFilterList`, `validate_rating_filter_lists`
+  двоетапна, `use crate::topn_download::AVAILABLE_TOPN_LISTS`. Тести:
+  `load_rejects_a_rating_filter_list_code_with_no_dataset`; `dispatch` —
+  `serve_admin_rating_filter_rejects_a_code_with_no_dataset` (був
+  `..._accepts_a_well_formed_code_outside_the_available_set`).
+- `AVAILABLE_TOPN_LISTS` тепер гейтить **завантаження конфігу**, не лише вибір у UI:
+  **додати** код — сумісно назад, **прибрати** — ламна зміна (конфіг, що досі обрав
+  прибраний код, не завантажиться). Зафіксовано в doc-коментарі константи.
+- `ResolverConfig::save` пише `self.rating_filter.lists` без ревалідації — безпечно:
+  жоден шлях не сіє `.lists` повз `validate_rating_filter_lists` (load `config.rs:490`,
+  маршрут `dispatch.rs:2157`, reset перечитує з диска).
+- CLAUDE.md «Known limitations» / CONFIGURATION.md — оновити в Коміті 6.

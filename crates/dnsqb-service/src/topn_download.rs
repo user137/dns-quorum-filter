@@ -29,6 +29,13 @@ pub(crate) const TOPN_RAW_BASE: &str =
 /// ([`crate::admin::RatingFilterStatusView::available_lists`]) so the
 /// `/admin/ui` zone-config card renders its checkboxes from the server, not a
 /// hard-coded copy in the page's JavaScript.
+///
+/// Since T-127 this also gates config *loading*
+/// ([`crate::config::validate_rating_filter_lists`]): a `[rating_filter]
+/// lists` entry outside this set is a hard error. So **adding** a code is
+/// backward-compatible, but **removing** one is a breaking change — a
+/// `resolver_config.toml` that still selects the retired code will fail to
+/// load until the operator edits it.
 pub(crate) const AVAILABLE_TOPN_LISTS: &[&str] = &["ua", "us", "de", "pl", "gb", "global"];
 
 /// Upper bound on one list download. A published list is ~1000 rows of
