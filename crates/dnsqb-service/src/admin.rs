@@ -1415,7 +1415,7 @@ pub enum AdminClientError {
 /// A small `reqwest`-based client for `dnsqb-service`'s admin channel,
 /// pinned to the exact self-signed leaf certificate this service instance
 /// persists (see the module doc comment for why that validates). The whole
-/// public surface a caller (e.g. `dnsqb-ui`'s Tauri commands) needs —
+/// public surface a caller (`dnsqb-tray`, `dnsqb-watcher`) needs —
 /// `reqwest` itself never has to appear in that caller's own dependency
 /// graph (T-52 plan: avoids two crates having to track matching `reqwest`
 /// versions/features just to pass `Client`/`Certificate` values around).
