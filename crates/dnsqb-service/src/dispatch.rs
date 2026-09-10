@@ -690,6 +690,18 @@ pub struct AppState<C: DohClient + Sync> {
     /// stays up). Plain `RwLock<bool>` for the same reason as `reachability`.
     /// Never held across `.await`.
     filtering_paused: RwLock<bool>,
+    /// T-211 — the last observed trust state of the local `cert.pem` in
+    /// `CurrentUser\Root`, refreshed on a slow background poll
+    /// (`cert_watch::run_cert_trust_watch`) so `GET /admin/cert-status` and
+    /// `admin::compute_hero_state` (T-204) read a cached value instead of
+    /// spawning two `certutil` processes per call. `None` = never checked
+    /// (fresh start; an in-memory `AppState` with no `cert.pem` path) —
+    /// distinct from `Some(Unknown)` ("checked, `certutil` could not
+    /// answer"), the same "unknown ≠ not-yet-known" contract the tray's
+    /// `status::TrustState::is_confirmed` keeps (T-188). Plain
+    /// `RwLock<Option<_>>` — a `Copy` enum, like `reachability` /
+    /// `filtering_paused`. Never held across `.await`.
+    cert_trust: RwLock<Option<CertTrustView>>,
     /// T-124/T-126 — the `[rating_filter]` table as last loaded (SPEC.md
     /// §5.3). Swapped only by `apply_admin_reset` after a config reload;
     /// `run_topn_updater` reads a fresh snapshot each cycle. Same
@@ -870,6 +882,7 @@ impl<C: DohClient + Sync> AppState<C> {
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             reachability: RwLock::new(NetworkReachability::default()),
             filtering_paused: RwLock::new(false),
+            cert_trust: RwLock::new(None),
             query_log,
             // Read the `Copy` cap out of `persist` before it moves on the next line.
             gate: ConnectionGate::new(persist.limits.max_concurrent_connections),
@@ -963,6 +976,24 @@ impl<C: DohClient + Sync> AppState<C> {
     /// never held across `.await`.
     pub(crate) fn filtering_paused_snapshot(&self) -> bool {
         *self.filtering_paused.read()
+    }
+
+    /// Publishes a fresh cert-trust reading (T-211). The sole background
+    /// writer is `cert_watch::run_cert_trust_watch`; `/admin/install-cert`
+    /// and `/admin/uninstall-local-state` also poke it synchronously with the
+    /// outcome they just produced, so the `/admin/ui` hero doesn't lag a poll
+    /// cycle behind an action taken on this channel.
+    pub(crate) fn update_cert_trust(&self, trust: CertTrustView) {
+        *self.cert_trust.write() = Some(trust);
+    }
+
+    /// The last cert-trust reading, or `None` if the background poll hasn't
+    /// completed one yet (T-211). `admin::compute_hero_state` treats `None`
+    /// as "surface no cert warning"; `GET /admin/cert-status` collapses it to
+    /// [`CertTrustView::Unknown`] on the wire — a caller can't act on "not
+    /// yet checked" any differently from "checked, inconclusive".
+    pub(crate) fn cert_trust_snapshot(&self) -> Option<CertTrustView> {
+        *self.cert_trust.read()
     }
 
     /// One `Arc::clone` snapshot of the `[rating_filter]` table (T-124) —
@@ -2985,6 +3016,17 @@ where
     }
     let app_data_dir = state.persist.paths.as_ref().map(PersistPaths::app_data_dir);
     let report = crate::local_state::remove_all(app_data_dir.as_deref());
+    // T-211: a removed (or already-absent) cert is no longer trusted — poke
+    // the cache so the hero reflects it without waiting for the next poll. A
+    // *failed* removal leaves the cert where it was, so don't touch the
+    // cache then; the background poll reconciles.
+    match report.cert {
+        crate::local_state::ArtifactOutcome::Removed
+        | crate::local_state::ArtifactOutcome::NotPresent => {
+            state.update_cert_trust(CertTrustView::NotTrusted);
+        }
+        crate::local_state::ArtifactOutcome::Failed(_) => {}
+    }
     json_response(&UninstallLocalStateResponse::from(report))
 }
 
@@ -3002,28 +3044,27 @@ fn cert_pem_path<C: DohClient + Sync>(state: &AppState<C>) -> Option<PathBuf> {
 
 /// `GET /admin/cert-status` (T-188) — is the local `cert.pem` the certificate
 /// currently trusted in `CurrentUser\Root`? Read-only, no CSRF gate (same as
-/// `GET /admin/status`); the `/admin/ui` protection hero and the tray's
-/// first-run wizard both consult it before offering to install. Method
-/// allowlisting happens centrally in [`serve`]'s `ROUTES` check.
+/// `GET /admin/status`). Method allowlisting happens centrally in [`serve`]'s
+/// `ROUTES` check.
 ///
-/// Three-state, never a bare bool: [`crate::trust_store::is_trusted`]'s
-/// contract says an unreadable `cert.pem` (a fresh install before
-/// `dnsqb-service` has generated it, or a broken `certutil`) is "unknown",
-/// never "untrusted" — collapsing them would tell a user whose check is broken
-/// to reinstall a cert that may already be trusted. An in-memory state with no
-/// `cert.pem` path is [`CertTrustView::Unknown`] for the same reason, which
-/// also keeps this route from spawning a real `certutil` under
-/// `serve_enforces_the_route_table_it_matched_above` (its fixture state has
-/// `paths: None`).
+/// Since T-211 this is a pure read of [`AppState::cert_trust_snapshot`] — the
+/// cache the background `cert_watch::run_cert_trust_watch` poll (and a
+/// synchronous poke from `/admin/install-cert` /
+/// `/admin/uninstall-local-state`) keeps warm — so it no longer spawns a
+/// `certutil` process per call, which is why it's no longer in
+/// `FUZZ_EXCLUDED_ROUTES`.
+///
+/// Three-state on the wire, never a bare bool: [`crate::trust_store::is_trusted`]'s
+/// contract says an unreadable `cert.pem` (a fresh install before the poll has
+/// run, or a broken `certutil`) is "unknown", never "untrusted" — collapsing
+/// them would tell a user whose check is broken to reinstall a cert that may
+/// already be trusted. The cache's `None` ("no reading yet") collapses to
+/// [`CertTrustView::Unknown`] here too — a caller can't act on it any
+/// differently.
 fn serve_admin_cert_status<C: DohClient + Sync>(state: &AppState<C>) -> Response<Full<Bytes>> {
-    let trusted = match cert_pem_path(state) {
-        Some(cert_path) => match crate::trust_store::is_trusted(&cert_path) {
-            Ok(true) => CertTrustView::Trusted,
-            Ok(false) => CertTrustView::NotTrusted,
-            Err(_) => CertTrustView::Unknown,
-        },
-        None => CertTrustView::Unknown,
-    };
+    let trusted = state
+        .cert_trust_snapshot()
+        .unwrap_or(CertTrustView::Unknown);
     json_response(&CertStatusResponse { trusted })
 }
 
@@ -3065,9 +3106,15 @@ where
     match tokio::task::spawn_blocking(move || crate::trust_store::ensure_installed(&cert_path))
         .await
     {
-        Ok(Ok(outcome)) => json_response(&InstallCertResponse {
-            outcome: outcome.into(),
-        }),
+        Ok(Ok(outcome)) => {
+            // T-211: both `Installed` and `AlreadyInstalled` mean the cert is
+            // now trusted — poke the cache so the `/admin/ui` hero flips
+            // immediately instead of waiting up to `CERT_TRUST_POLL_INTERVAL`.
+            state.update_cert_trust(CertTrustView::Trusted);
+            json_response(&InstallCertResponse {
+                outcome: outcome.into(),
+            })
+        }
         // A `certutil` failure or a join error — both map to 500; the UI copy
         // tells the user to fall back to the tray's own "Встановити
         // сертифікат" item, which surfaces the underlying error in a dialog.
@@ -3474,23 +3521,18 @@ mod tests {
     ///   nothing.
     /// - `/admin/install-cert` (T-188) — same, `trust_store::ensure_installed`
     ///   mutates `CurrentUser\Root`.
-    /// - `/admin/cert-status` (T-188) — a GET, so nothing else excludes it,
-    ///   but its handler calls `trust_store::is_trusted` = two `certutil`
-    ///   spawns per case; harmless to the store but a real subprocess cost on
-    ///   every one of `Config::with_cases`' 64 cases that lands on it (the
-    ///   60-second hang CLAUDE.md records for T-70). Its `paths: None` fixture
-    ///   answer under `serve_enforces_the_route_table_it_matched_above` is
-    ///   `Unknown` with no spawn, so routing is still proven there.
     ///
-    /// Method-gating for all three is proven by
+    /// `/admin/cert-status` (T-188) *used* to be here for the same reason —
+    /// its handler spawned two `certutil` processes per case — but since T-211
+    /// it is a pure read of `AppState::cert_trust_snapshot()`, so the fuzz
+    /// property now covers it like any other GET.
+    ///
+    /// Method-gating for both is proven by
     /// `serve_matches_the_documented_admin_route_allowlist` +
     /// `serve_enforces_the_route_table_it_matched_above`, plus each route's
     /// own gate tests below.
-    const FUZZ_EXCLUDED_ROUTES: &[&str] = &[
-        ADMIN_UNINSTALL_LOCAL_STATE_PATH,
-        ADMIN_CERT_STATUS_PATH,
-        ADMIN_INSTALL_CERT_PATH,
-    ];
+    const FUZZ_EXCLUDED_ROUTES: &[&str] =
+        &[ADMIN_UNINSTALL_LOCAL_STATE_PATH, ADMIN_INSTALL_CERT_PATH];
 
     fn fuzzable_routes() -> impl Iterator<Item = &'static (&'static str, &'static [Method])> {
         ROUTES
@@ -7735,16 +7777,36 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 
-    // T-188: `/admin/cert-status` + `/admin/install-cert`. The success path of
-    // either would spawn a real `certutil.exe` (see `FUZZ_EXCLUDED_ROUTES`'s
-    // comment), so — like T-70's route above — only the paths that answer
-    // *before* `trust_store` is touched are exercised through `serve()` here.
-    // `/admin/cert-status` is read-only: with `state_with`'s `paths: None` it
-    // returns `Unknown` and spawns nothing, matching `trust_store::
-    // is_trusted`'s "unknown ≠ untrusted" contract.
+    // T-188 / T-211: `/admin/install-cert`'s success path spawns a real
+    // `certutil.exe` (see `FUZZ_EXCLUDED_ROUTES`), so — like T-70's route
+    // above — only the paths that answer *before* `trust_store` is touched
+    // are exercised through `serve()` here. `/admin/cert-status` since T-211
+    // is a pure read of the `AppState` cert-trust cache: `None` (never
+    // polled — `state_with` never spawns the watch) collapses to `Unknown`
+    // on the wire; a poke sets it.
 
     #[tokio::test]
-    async fn serve_admin_cert_status_is_unknown_when_the_state_has_no_persist_paths() {
+    async fn serve_admin_cert_status_reads_the_cached_trust_state() {
+        let state = state_with(no_op_client());
+
+        let uncached = cert_status_of(&state).await;
+        assert_eq!(
+            uncached,
+            CertTrustView::Unknown,
+            "no reading yet ⇒ Unknown on the wire"
+        );
+
+        for trust in [
+            CertTrustView::Trusted,
+            CertTrustView::NotTrusted,
+            CertTrustView::Unknown,
+        ] {
+            state.update_cert_trust(trust);
+            assert_eq!(cert_status_of(&state).await, trust);
+        }
+    }
+
+    async fn cert_status_of(state: &Arc<AppState<MockClient>>) -> CertTrustView {
         let Ok(req) = Request::builder()
             .method(Method::GET)
             .uri(ADMIN_CERT_STATUS_PATH)
@@ -7752,7 +7814,7 @@ mod tests {
         else {
             panic!("fixture request must build");
         };
-        let response = match serve(req, state_with(no_op_client())).await {
+        let response = match serve(req, Arc::clone(state)).await {
             Ok(response) => response,
             Err(err) => match err {},
         };
@@ -7761,7 +7823,7 @@ mod tests {
         let Ok(parsed) = serde_json::from_slice::<CertStatusResponse>(&bytes) else {
             panic!("body must decode as CertStatusResponse");
         };
-        assert_eq!(parsed.trusted, CertTrustView::Unknown);
+        parsed.trusted
     }
 
     #[tokio::test]

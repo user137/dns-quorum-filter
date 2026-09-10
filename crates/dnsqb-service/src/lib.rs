@@ -128,6 +128,7 @@ mod cache_persist;
 mod cache_persist_dto;
 mod cert;
 mod cert_rotation;
+mod cert_watch;
 mod config;
 mod dispatch;
 mod encrypted_file;
@@ -179,6 +180,7 @@ pub use cache::{
 pub use cache_persist::{load_persisted_cache, run_cache_persister, CacheInit};
 pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
 pub use cert_rotation::{rotate_certificate, RotationError, RotationReport};
+pub use cert_watch::{run_cert_trust_watch, CERT_TRUST_POLL_INTERVAL};
 pub use config::{ConfigError, GeoipConfig, LimitsConfig, RatingFilterConfig, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,

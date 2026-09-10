@@ -1514,10 +1514,21 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `dnsqb-service/src/main.rs` у lib як `pub fn run(...)`; демоутнути внутрішні re-exports
   (`pipeline::handle_query`, `wire::*`, `quorum::*` тощо) у `pub(crate)` — звузити публічну
   поверхню (~60 груп `pub use`, наслідок lib+bin в одному пакеті). (4-B)
-- [ ] T-211 — *(опційно)* Кешувати `trust_store::is_trusted` у `AppState` на N с (патерн
+- [x] T-211 — Кешувати `trust_store::is_trusted` у `AppState` на N с (патерн
   `status::spawn_trust_watch`), щоб `GET /admin/cert-status` не спавнив 2 `certutil` на
   кожен виклик. Добре пом'якшено вже (`127.0.0.1`, ConnectionGate, `CREATE_NO_WINDOW`) —
   робити лише якщо `cert-status` піде на частий poll. (2-B)
+  — **готово 2026-09-10** (окремий коміт перед T-204, per advisor; T-204 «Максимум»
+  ставить cert-trust на 2 с-poll `/admin/status`, тож передумова «частий poll» тепер
+  виконана). Новий `cert_watch` модуль — `run_cert_trust_watch(cert_path, state)`
+  детачнутий 60 с-loop через `spawn_blocking(is_trusted)` → `AppState.cert_trust:
+  RwLock<Option<CertTrustView>>` (`None` = ще не перевіряли ≠ `Some(Unknown)` —
+  контракт `TrustState::is_confirmed`, T-188). `serve_admin_cert_status` → чисте
+  читання `cert_trust_snapshot()` (`None`→`UNKNOWN` на дроті), прибрано з
+  `FUZZ_EXCLUDED_ROUTES`. `/admin/install-cert` (→`Trusted`) та
+  `/admin/uninstall-local-state` (→`NotTrusted`, якщо cert-artefact не `Failed`)
+  синхронно поки́дають кеш, щоб hero не лагав. `main.rs`: `spawn_flag_watchers`
+  (виокремлено з `main()` разом із `run_pause_watcher` — `too_many_lines`).
 
 ### RV.3 — документаційні фікси DOC MAP (окремий docs-only коміт)
 

@@ -327,11 +327,14 @@ cache when it leaves the filter on; **not** in `FUZZ_EXCLUDED_ROUTES`);
 `POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
 `resolver_config.toml`);
 `GET /admin/cert-status` (T-188 — `CertStatusResponse { trusted: CertTrustView }`, three-state
-`TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate; `is_trusted` on `<app-data>/cert.pem`,
-`None` persist-paths → `UNKNOWN` with no `certutil` spawn) + `POST /admin/install-cert` (T-188 —
+`TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate. **T-211:** now a pure read of
+`AppState.cert_trust` (`RwLock<Option<CertTrustView>>` — `None` "never checked" ≠ `Some(Unknown)`,
+collapses to `UNKNOWN` on the wire), a cache kept warm by the detached `cert_watch::run_cert_trust_watch`
+60 s poll (`spawn_blocking(is_trusted)` on `<app-data>/cert.pem`); `/admin/install-cert` →
+`Trusted` and `/admin/uninstall-local-state` → `NotTrusted` poke it synchronously. No longer spawns
+`certutil` per call → **removed from `FUZZ_EXCLUDED_ROUTES`**) + `POST /admin/install-cert` (T-188 —
 `ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
-`CurrentUser\Root` like `/admin/uninstall-local-state`; **both** in `FUZZ_EXCLUDED_ROUTES` —
-`cert-status` GET = 2 `certutil` spawns/case);
+`CurrentUser\Root` like `/admin/uninstall-local-state`; **stays** in `FUZZ_EXCLUDED_ROUTES` — mutating);
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
 **not** an admin route: `GET /health` (T-86, watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind

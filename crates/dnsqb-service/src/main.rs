@@ -28,12 +28,13 @@
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, bind_listener, init_logging, load_maxmind_credentials,
     load_or_generate_server_config, load_persisted_cache, load_persisted_query_log,
-    load_zone_from_disk, migrate_legacy_credentials_file, run_cache_persister, run_geoip_updater,
-    run_pause_watcher, run_query_log_persister, run_reachability_prober, run_topn_updater, serve,
-    write_pid_file, AppState, BindError, Cache, CacheInit, CacheState, GeoipInit, GeoipReader,
-    GeoipSource, GeoipState, GuardError, InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig,
-    OverrideLists, OverridesState, PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient,
-    ResolverConfig, RuntimeInit, TimeoutConfig,
+    load_zone_from_disk, migrate_legacy_credentials_file, run_cache_persister,
+    run_cert_trust_watch, run_geoip_updater, run_pause_watcher, run_query_log_persister,
+    run_reachability_prober, run_topn_updater, serve, write_pid_file, AppState, BindError, Cache,
+    CacheInit, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError,
+    InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig, OverrideLists, OverridesState,
+    PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit,
+    TimeoutConfig,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -209,22 +210,37 @@ async fn main() {
     // (SPEC.md §7.1 #7), so the service-side direction acts and logs but never
     // persists.
     spawn_watchdog_tasks(app_data.as_deref());
-
-    // T-193: observe the tray's "Призупинити фільтрацію" flag (`stop.flag`) and
-    // publish it onto `AppState` so `handle_query` serves the unfiltered
-    // baseline while paused — the service stays up. Detached like the other
-    // background loops; not in `spawn_public_http_tasks` (that is for tasks
-    // that talk to third parties over their own `reqwest::Client`).
-    match app_data.as_deref() {
-        Some(dir) => {
-            tokio::spawn(run_pause_watcher(dir.to_path_buf(), Arc::clone(&state)));
-        }
-        None => {
-            tracing::warn!("no app-data directory — tray pause (stop.flag) will not be observed");
-        }
-    }
+    spawn_flag_watchers(&state, app_data.as_deref());
 
     serve_until_shutdown(listener, acceptor, state, resolver_config.limits).await;
+}
+
+/// The two detached loops that poll an app-data marker and publish a `Copy`
+/// value onto [`AppState`], read once per query on the hot path:
+///
+/// - T-193 — `run_pause_watcher` observes the tray's "Призупинити фільтрацію"
+///   flag (`stop.flag`) so `handle_query` serves the unfiltered baseline while
+///   paused (the service stays up).
+/// - T-211 — `run_cert_trust_watch` keeps the cert-trust reading warm so `GET
+///   /admin/cert-status` (and the `/admin/ui` hero, T-204) never spawn
+///   `certutil` on the request path.
+///
+/// Not in [`spawn_public_http_tasks`] — neither talks to a third party over a
+/// `reqwest::Client`. Both are skipped with no app-data directory (an
+/// in-memory dev run).
+fn spawn_flag_watchers(state: &Arc<AppState<ReqwestDohClient>>, app_data: Option<&Path>) {
+    let Some(dir) = app_data else {
+        tracing::warn!(
+            "no app-data directory — tray pause (stop.flag) and cert-trust status \
+             will not be observed"
+        );
+        return;
+    };
+    tokio::spawn(run_pause_watcher(dir.to_path_buf(), Arc::clone(state)));
+    tokio::spawn(run_cert_trust_watch(
+        dir.join("cert.pem"),
+        Arc::clone(state),
+    ));
 }
 
 /// The shared heartbeat tick for both watchdog directions (SPEC.md §7.1 #8).
