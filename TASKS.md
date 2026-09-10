@@ -1402,9 +1402,11 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 
 ### RV.1 — тест-покриття (робити першими)
 
-- [ ] T-197 — Тест `query_with_timeout` `Errored`-гілки (`timeout.rs`): мок-`DohClient`
+- [x] T-197 — Тест `query_with_timeout` `Errored`-гілки (`timeout.rs`): мок-`DohClient`
   повертає `Err(UpstreamError::Decode(_))` → `assert!(matches!(outcome,
   VoterOutcome::Errored(_)))`. Покриті лише `Responded`/`TimedOut`. Чистий тест-add. (1.1-C)
+  — **готово 2026-09-10**: `FailingClient` (патерн `quorum::AdGuardErrorsClient`,
+  `std::future::ready`), `upstream_error_yields_errored_not_timed_out`; 723 unit passed.
 - [ ] T-198 — `wire.rs`: негативний юніт `decode_wire_message` (обрізані/сміттєві байти →
   `Err`) + `proptest` non-panic на довільному `&[u8]` (патерн `overrides::parse_pattern`
   / `wire_bytes_from_get_never_panics`). **1.1-D(b) знято** — `attach_edns` НЕ мертвий код:

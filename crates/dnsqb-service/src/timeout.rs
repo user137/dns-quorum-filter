@@ -155,4 +155,34 @@ mod tests {
         .await;
         assert!(matches!(outcome, VoterOutcome::TimedOut));
     }
+
+    struct FailingClient;
+
+    impl DohClient for FailingClient {
+        fn query(
+            &self,
+            _url: &str,
+            _query: &Message,
+        ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> {
+            std::future::ready(Err(UpstreamError::Decode(
+                "mock decode failure".to_string().into(),
+            )))
+        }
+    }
+
+    // An upstream that answers with an *error* (not a timeout) must surface as
+    // `Errored`, not `TimedOut` — `quorum::combine` interprets the two
+    // differently under `FailClosed`/`Degraded`, so folding one into the other
+    // would be a silent regression this module's own tests wouldn't catch.
+    #[tokio::test(start_paused = true)]
+    async fn upstream_error_yields_errored_not_timed_out() {
+        let outcome = query_with_timeout(
+            &FailingClient,
+            "https://example.invalid",
+            &Message::query(),
+            Duration::from_secs(2),
+        )
+        .await;
+        assert!(matches!(outcome, VoterOutcome::Errored(_)));
+    }
 }
