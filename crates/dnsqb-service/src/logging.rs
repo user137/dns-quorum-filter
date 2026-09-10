@@ -3,10 +3,12 @@
 //! `windows_subsystem = "windows"` (T-181) removed the console, so a release
 //! build otherwise produces no diagnostics at all. [`init`] points `tracing`
 //! at one INFO-level file per binary — `<app-data>/logs/<role>.log` — rotated
-//! once on startup when it has grown past [`MAX_LOG_BYTES`] (crude, but
-//! dependency-free and enough to bound a long-running watcher without runtime
-//! machinery). Debug builds additionally keep stdout, so `cargo run` is
-//! unchanged.
+//! to `.log.old` once at each process start if it already exceeds
+//! [`MAX_LOG_BYTES`]. There is no in-process ceiling: a binary that runs for
+//! days (the watcher) keeps appending to one `<role>.log` until it next
+//! restarts — acceptable only because every log site in this workspace is a
+//! rare lifecycle/error event, not a hot path. Debug builds additionally keep
+//! stdout, so `cargo run` is unchanged.
 //!
 //! **No domain names reach `tracing`** anywhere in this workspace — every
 //! network-path error site logs a coarse `error_kind()` label, never a raw
@@ -19,8 +21,11 @@ use std::fs::{self, File, OpenOptions};
 use std::path::Path;
 use std::sync::Arc;
 
-/// Rotate the log on startup once it passes this size: rename to
-/// `<role>.log.old` (replacing any previous `.old`), then open fresh.
+/// Size threshold checked **once, at process start** (from [`init`] via
+/// `prepare_log_file`): if `<role>.log` already exceeds it, rename to
+/// `<role>.log.old` (replacing any previous `.old`) and open fresh. Not a
+/// live cap — nothing re-checks the size while the process runs, so a
+/// long-lived binary's `<role>.log` grows unbounded until its next restart.
 pub const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 
 /// Install the process-global `tracing` subscriber for a binary.
