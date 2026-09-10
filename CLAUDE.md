@@ -741,9 +741,14 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   rustdoc gate, required. `lib.rs` carries `#![allow(rustdoc::private_intra_doc_links)]` (never
   published, always built with `--document-private-items`) — fix a broken link, don't add a second
   one-off `#[allow]`.
-- `cargo test --workspace --doc` — doctest gate, required. Zero doctests exist yet
-  (`~/.claude/rules/rust.md`'s "key functions must include code examples" is not met anywhere) —
-  the step exists so the first one is actually run.
+- `cargo test --workspace --doc` — doctest gate, required, and **now has teeth** (T-207, Батч RV):
+  8 runnable `# Examples` on pure leaf functions of the `lib.rs` re-export surface
+  (`normalize_domain`, `min_rrset_ttl`, `negative_cache_ttl`, `should_serve_stale`, `next_backoff`,
+  `channel_status`, `ZoneLists::zone_match`, `SinkholeNet::contains`). The `min_rrset_ttl` /
+  `negative_cache_ttl` examples construct `hickory_proto` `Record`/`SOA` values — the one place a
+  doctest depends on a transitive dep's constructor API. `--lib --bins` does **not** run doctests
+  — run `cargo test --workspace --doc --locked` before a push that touches a `pub` re-export's
+  doc comment.
 - `cargo run --example sinkhole_probe` — T-175 recalibrator (live, not CI): each sinkhole-preset
   canary must still resolve inside its `SINKHOLE_NETS` prefix (A + AAAA), the provider's own site
   must not; non-zero exit if a prefix looks stale. **Run before a release** — a hard-coded prefix

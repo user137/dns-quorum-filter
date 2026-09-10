@@ -22,6 +22,18 @@ pub const BACKOFF_CAP: Duration = Duration::from_secs(16);
 
 /// Backoff wait before the `attempt`-th restart, 1-indexed. `attempt == 0` is
 /// treated as `1`; any attempt beyond the schedule returns [`BACKOFF_CAP`].
+///
+/// # Examples
+///
+/// ```
+/// use dnsqb_service::{next_backoff, BACKOFF_CAP};
+/// use std::time::Duration;
+///
+/// assert_eq!(next_backoff(1), Duration::from_secs(1));
+/// assert_eq!(next_backoff(0), next_backoff(1)); // 0 is treated as the first attempt
+/// assert_eq!(next_backoff(3), Duration::from_secs(4));
+/// assert_eq!(next_backoff(99), BACKOFF_CAP); // past the schedule: capped
+/// ```
 #[must_use]
 pub fn next_backoff(attempt: u32) -> Duration {
     let index = attempt.saturating_sub(1) as usize;

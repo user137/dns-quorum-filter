@@ -19,6 +19,16 @@ pub enum ChannelStatus {
 }
 
 /// Map a channel's consecutive-miss count to its [`ChannelStatus`].
+///
+/// # Examples
+///
+/// ```
+/// use dnsqb_service::{channel_status, ChannelStatus, MISS_THRESHOLD};
+///
+/// assert_eq!(channel_status(0), ChannelStatus::Signal);
+/// assert_eq!(channel_status(MISS_THRESHOLD - 1), ChannelStatus::Signal);
+/// assert_eq!(channel_status(MISS_THRESHOLD), ChannelStatus::NoSignal);
+/// ```
 #[must_use]
 pub fn channel_status(consecutive_misses: u32) -> ChannelStatus {
     if consecutive_misses >= MISS_THRESHOLD {

@@ -137,6 +137,27 @@ impl ZoneLists {
     /// This is both the membership test (`.is_some()`) and, for lazy
     /// hygiene, the identity of what to remove (`Some(r)` with
     /// `host == r` ⇒ quorum blocked the registrable itself).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dnsqb_service::{ZoneLists, ZoneSource, ZoneSourceKind};
+    /// use std::collections::HashSet;
+    ///
+    /// let zones = ZoneLists::new(vec![ZoneSource::new(
+    ///     ZoneSourceKind::Global,
+    ///     ["example.com".to_string()],
+    /// )]);
+    /// let removed = HashSet::new();
+    ///
+    /// // A subdomain resolves to the registrable that put it in the bubble.
+    /// assert_eq!(zones.zone_match("www.example.com", &removed), Some("example.com"));
+    /// // Out of zone.
+    /// assert_eq!(zones.zone_match("elsewhere.test", &removed), None);
+    /// // Lazy-hygiene removal takes the registrable back out.
+    /// let removed = HashSet::from(["example.com".to_string()]);
+    /// assert_eq!(zones.zone_match("www.example.com", &removed), None);
+    /// ```
     #[must_use]
     pub fn zone_match<'h>(&self, host: &'h str, removed: &HashSet<String>) -> Option<&'h str> {
         let mut candidate = host.strip_suffix('.').unwrap_or(host);

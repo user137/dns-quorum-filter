@@ -285,6 +285,22 @@ use hickory_proto::ProtoError;
 /// minimum (CNAME chain included), see `cache::chain_cache_ttl` (T-36)
 /// instead, which is deliberately a different function with a different
 /// precondition.
+///
+/// # Examples
+///
+/// ```
+/// use dnsqb_service::min_rrset_ttl;
+/// use hickory_proto::rr::rdata::A;
+/// use hickory_proto::rr::{Name, RData, Record};
+/// use std::net::Ipv4Addr;
+///
+/// let rrset = [
+///     Record::from_rdata(Name::root(), 300, RData::A(A(Ipv4Addr::new(1, 2, 3, 4)))),
+///     Record::from_rdata(Name::root(), 60, RData::A(A(Ipv4Addr::new(1, 2, 3, 5)))),
+/// ];
+/// assert_eq!(min_rrset_ttl(&rrset), Some(60));
+/// assert_eq!(min_rrset_ttl(&[]), None);
+/// ```
 #[must_use]
 pub fn min_rrset_ttl(records: &[Record]) -> Option<u32> {
     records.iter().map(|r| r.ttl).min()
@@ -292,6 +308,17 @@ pub fn min_rrset_ttl(records: &[Record]) -> Option<u32> {
 
 /// RFC 2308 (T-35): negative-caching TTL is bounded by the zone's SOA MINIMUM,
 /// not an arbitrary constant (SPEC.md §3.1, §4.1).
+///
+/// # Examples
+///
+/// ```
+/// use dnsqb_service::negative_cache_ttl;
+/// use hickory_proto::rr::rdata::SOA;
+/// use hickory_proto::rr::Name;
+///
+/// let soa = SOA::new(Name::root(), Name::root(), 1, 7200, 3600, 1_209_600, 900);
+/// assert_eq!(negative_cache_ttl(&soa), 900);
+/// ```
 #[must_use]
 pub fn negative_cache_ttl(soa: &SOA) -> u32 {
     soa.minimum
@@ -313,6 +340,16 @@ pub fn negative_cache_ttl(soa: &SOA) -> u32 {
 /// # Errors
 ///
 /// Returns `Err` if `input` is not a syntactically valid domain name.
+///
+/// # Examples
+///
+/// ```
+/// use dnsqb_service::normalize_domain;
+///
+/// assert_eq!(normalize_domain("Example.COM.").unwrap(), "example.com");
+/// assert_eq!(normalize_domain("bücher.example").unwrap(), "xn--bcher-kva.example");
+/// assert!(normalize_domain("not a domain").is_err());
+/// ```
 pub fn normalize_domain(input: &str) -> Result<String, ProtoError> {
     let ascii = Name::from_utf8(input)?.to_ascii().to_ascii_lowercase();
     Ok(ascii.trim_end_matches('.').to_string())
@@ -322,6 +359,18 @@ pub fn normalize_domain(input: &str) -> Result<String, ProtoError> {
 /// fresh upstream error, layered on top of (not instead of) `fail-open` —
 /// `fail-closed`/`degraded` don't get this fallback (SPEC.md §3.3, §4.1,
 /// TASKS.md T-28).
+///
+/// # Examples
+///
+/// ```
+/// use dnsqb_service::should_serve_stale;
+///
+/// // fail-open, the entry has expired, and the upstream just failed: serve stale.
+/// assert!(should_serve_stale(true, true, true));
+/// // any leg missing — including fail-closed / degraded (first arg) — no fallback.
+/// assert!(!should_serve_stale(false, true, true));
+/// assert!(!should_serve_stale(true, false, true));
+/// ```
 #[must_use]
 pub fn should_serve_stale(
     fail_open: bool,

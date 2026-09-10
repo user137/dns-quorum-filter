@@ -1540,11 +1540,17 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   → Response` доводить, що вердикт таки потрапив у кеш (урок T-59: сам лічильник = 6 проходить
   і для «один виклик fan-out'нув на 6»). `PERFORMANCE.md` «No request coalescing» + SPEC.md §4
   булет «без single-flight — свідомо». **`moka::get_with` не додано.** Гейт: 754 lib.
-- [ ] T-207 — Doc-тести з прикладами на ~8 чистих leaf-функцій re-export поверхні `lib.rs`
-  (`normalize_domain`, `min_rrset_ttl`, `negative_cache_ttl`, `next_backoff`,
-  `channel_status`, `SinkholeNet::contains`, `ZoneLists::zone_match`, …). Активує дрімаючий
-  гейт `cargo test --workspace --doc`; виконує `~/.claude/rules/rust.md` §10 (нуль
-  doc-тестів у всьому `src/` зараз). ≈½ дня. (4-A)
+- [x] T-207 — Doc-тести з прикладами на 8 чистих leaf-функцій re-export поверхні `lib.rs`
+  (4-A) — **готово 2026-09-11**. `# Examples` на `normalize_domain`, `min_rrset_ttl`,
+  `negative_cache_ttl`, `should_serve_stale` (lib.rs), `next_backoff` (watchdog::backoff),
+  `channel_status` (watchdog::channel), `ZoneLists::zone_match` (rating_filter),
+  `SinkholeNet::contains` (upstream — через re-export `sinkhole_nets_for`, бо `SinkholeNet::v4/v6`
+  приватні). Дрімаючий гейт `cargo test --workspace --doc` тепер має зуби: 9 doc-тестів (8 нових
+  + наявний `admission::ConnectionGate`). `min_rrset_ttl`/`negative_cache_ttl` конструюють
+  `hickory_proto` `Record`/`SOA` — єдине місце, де doc-тест залежить від конструктор-API
+  транзитивної залежності (перевірено емпірично, що doctest її бачить). **Гейт розширено:
+  `cargo test --workspace --doc --locked` тепер частина обов'язкового набору** — `--lib --bins`
+  його не запускає. CLAUDE.md Commands оновлено. Гейт: 754 lib + 9 doc + clippy/fmt/rustdoc.
 - [ ] T-208 — `#[derive(Debug)]` на `pipeline::RatingFilterView`; рукописний терсний
   `impl Debug` на `dispatch::GeoipState` (`maxminddb::Reader` не є `Debug` → «reader:
   <present/absent>»). `rust.md` §3. (`overrides::InvalidEntry` — уже має рукописний

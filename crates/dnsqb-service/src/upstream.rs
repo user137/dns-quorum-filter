@@ -328,6 +328,20 @@ impl SinkholeNet {
     /// `<< 32` / `<< 128` overflow path and nothing about `WIDTH - prefix` to
     /// prove safe from the line (a panic on the query-serving path would be a
     /// watchdog restart loop). Max `prefix` ⇒ exact-address match only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use dnsqb_service::sinkhole_nets_for;
+    /// use std::net::IpAddr;
+    ///
+    /// // `adguard`'s block network is 94.140.14.0/24 (T-175).
+    /// let nets = sinkhole_nets_for("adguard");
+    /// let inside: IpAddr = "94.140.14.14".parse().unwrap();
+    /// let outside: IpAddr = "192.0.2.1".parse().unwrap();
+    /// assert!(nets.iter().any(|net| net.contains(inside)));
+    /// assert!(!nets.iter().any(|net| net.contains(outside)));
+    /// ```
     #[must_use]
     pub fn contains(&self, ip: IpAddr) -> bool {
         match (self.addr, ip) {
