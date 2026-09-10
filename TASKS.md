@@ -1531,12 +1531,15 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `ProvidersResponse` без T-204-полів) + `serve_admin_status_returns_the_default_live_settings`
   += перевірка стемпа. Гейт: 747 lib + 37 tray + 3 watcher + 7 admin_client + 18 conformance,
   clippy/fmt/doc.
-- [ ] T-206 — Характеризаційний тест cache-stampede
-  (`two_concurrent_misses_for_the_same_key_each_run_quorum`: спільний `AppState`,
-  `MockClient` з `AtomicU32`, `tokio::join!`, `assert_eq!(client.calls(), 2 * voters)`) +
-  рядок у `PERFORMANCE.md` / SPEC.md §4 «свідомо без single-flight — на масштабі однієї
-  машини множення несуттєве». **НЕ додавати `moka::get_with`.** (3-C / 1.1-A) *(review-
-  вердикт: stampede прийнятний для PET; тест фіксує поведінку, доку фіксує рішення)*
+- [x] T-206 — Характеризаційний тест cache-stampede (3-C / 1.1-A) — **готово 2026-09-11**.
+  `pipeline::tests::two_concurrent_misses_for_the_same_key_each_run_quorum`: спільний `Cache`,
+  новий `StampedeClient` (`AtomicU32` + `tokio::task::yield_now` — щоб два `handle_query` під
+  `tokio::join!` на current-thread обидва пройшли cache-miss до першого запису; `std::future::ready`
+  так не інтерлівить), `assert_eq!(calls, 2 * (voters + 1))` — обидва промахи роблять повний
+  fan-out (voters + завжди-запитуваний baseline) + follow-up виклик `MockClient::all_panic()
+  → Response` доводить, що вердикт таки потрапив у кеш (урок T-59: сам лічильник = 6 проходить
+  і для «один виклик fan-out'нув на 6»). `PERFORMANCE.md` «No request coalescing» + SPEC.md §4
+  булет «без single-flight — свідомо». **`moka::get_with` не додано.** Гейт: 754 lib.
 - [ ] T-207 — Doc-тести з прикладами на ~8 чистих leaf-функцій re-export поверхні `lib.rs`
   (`normalize_domain`, `min_rrset_ttl`, `negative_cache_ttl`, `next_backoff`,
   `channel_status`, `SinkholeNet::contains`, `ZoneLists::zone_match`, …). Активує дрімаючий

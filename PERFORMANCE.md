@@ -148,6 +148,21 @@ per-address connect deadline) — every such socket resolves (success, error, or
 that window, so this isn't unbounded *growth*, but the peak concurrent count during a burst scales
 linearly with concurrent in-flight queries and has no ceiling of its own today.
 
+### No request coalescing (deliberate)
+
+`moka` does not de-duplicate concurrent misses, and this project adds no single-flight layer of
+its own (`moka` offers `get_with` / `try_get_with`; not used). N simultaneous misses for the same
+`CacheKey` — the same domain *and* qtype inside the ~200 ms fan-out window — each run the full
+quorum fan-out: `N × (enabled voters + baseline)` outbound calls instead of one. On a single local
+resolver this is immaterial: a browser's A + AAAA + HTTPS burst is three *different* keys (not a
+stampede), and a genuine same-key stampede needs several browsers or many tabs waking together
+(laptop resume) — N ≈ 2–5, transient, once. The privacy cost is nil (the upstreams see the query
+either way); the load cost is a handful of extra HTTP/2 requests on that one resume. Adding
+`get_with` would put a coalesced computation path in the hot code whose cancellation-safety would
+have to be proved, for a benefit that doesn't exist at this scale — revisit only if a multi-user
+deployment appears. Pinned by `pipeline::tests::two_concurrent_misses_for_the_same_key_each_run_quorum`
+(finding 3-C).
+
 ## Measured
 
 Methodology and harness: `examples/load_test.rs` (`cargo run --example load_test`, not run in

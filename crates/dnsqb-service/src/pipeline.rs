@@ -1294,6 +1294,32 @@ mod tests {
         }
     }
 
+    /// Counts every upstream call and yields once before answering, so two
+    /// concurrent `handle_query` calls for the same key both get past the
+    /// cache-miss check before either writes its verdict — the interleaving a
+    /// plain `std::future::ready` mock can't produce under `tokio::join!` on a
+    /// current-thread runtime. Only the cache-stampede characterization test
+    /// (T-206 / finding 3-C) uses it.
+    struct StampedeClient {
+        calls: AtomicU32,
+        answer: Message,
+    }
+
+    impl DohClient for StampedeClient {
+        fn query(
+            &self,
+            _url: &str,
+            _query: &Message,
+        ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> + Send {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let answer = self.answer.clone();
+            async move {
+                tokio::task::yield_now().await;
+                Ok(answer)
+            }
+        }
+    }
+
     fn cache_config() -> CacheConfig {
         CacheConfig::default()
     }
@@ -1726,6 +1752,96 @@ mod tests {
             client.calls.load(Ordering::SeqCst),
             calls_after_miss,
             "second call must be a cache hit, no additional upstream calls"
+        );
+    }
+
+    // T-206 / finding 3-C: `moka` does no single-flight and this project
+    // deliberately adds none (PERFORMANCE.md "No request coalescing" / SPEC.md
+    // §4). Two concurrent misses for the *same* `CacheKey` therefore each run
+    // the full quorum fan-out. Pinned here so a future refactor either keeps
+    // this or has to consciously revisit it, rather than changing the
+    // amplification factor silently.
+    #[tokio::test]
+    async fn two_concurrent_misses_for_the_same_key_each_run_quorum() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let voters = default_voters();
+        let voter_count = u32::try_from(voters.len()).unwrap_or(0);
+        let client = StampedeClient {
+            calls: AtomicU32::new(0),
+            answer: allow_message_with_ip(Ipv4Addr::new(93, 184, 216, 34)),
+        };
+
+        let query = query_for("example.com.", RecordType::A);
+        let cache_cfg = cache_config();
+        let timeout_cfg = timeout_config();
+        let cache_ctx = CacheContext {
+            cache: &cache,
+            config: &cache_cfg,
+        };
+        let upstream_ctx = UpstreamContext {
+            timeout: &timeout_cfg,
+            baseline_url: BASELINE_URL,
+            serve_baseline_fallback: false,
+            reachability: crate::reachability::NetworkReachability::Online,
+            filtering_paused: false,
+            rating_filter: None,
+        };
+        let geoip = GeoipFilter {
+            reader: None,
+            blocked_countries: &[],
+        };
+
+        let (first, second) = tokio::join!(
+            handle_query(
+                &query,
+                &client,
+                &overrides,
+                &voters,
+                &cache_ctx,
+                &upstream_ctx,
+                &geoip
+            ),
+            handle_query(
+                &query,
+                &client,
+                &overrides,
+                &voters,
+                &cache_ctx,
+                &upstream_ctx,
+                &geoip
+            ),
+        );
+        assert!(matches!(first.0, PipelineOutcome::Response(_)));
+        assert!(matches!(second.0, PipelineOutcome::Response(_)));
+
+        // Each concurrent miss fanned out to every enabled voter *and* the
+        // always-queried baseline (`quorum::resolve`'s doc comment) — no
+        // coalescing on the shared key.
+        assert_eq!(
+            client.calls.load(Ordering::SeqCst),
+            2 * (voter_count + 1),
+            "no single-flight: both concurrent misses each ran the full fan-out"
+        );
+
+        // ...and the verdict did land in the cache. A follow-up call with a
+        // panic-on-contact client must be served from it — this is what
+        // separates "two misses each ran quorum" from "the count happened to
+        // match for another reason" (the T-59 lesson).
+        let sealed_client = MockClient::all_panic();
+        let (third, _meta) = handle_query(
+            &query,
+            &sealed_client,
+            &overrides,
+            &voters,
+            &cache_ctx,
+            &upstream_ctx,
+            &geoip,
+        )
+        .await;
+        assert!(
+            matches!(third, PipelineOutcome::Response(_)),
+            "the stampede's Allow verdict must have populated the shared cache"
         );
     }
 
