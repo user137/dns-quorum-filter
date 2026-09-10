@@ -1437,11 +1437,21 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `Debug` з derive + рукописний `impl Debug` (лише імʼя варіанта). `#[source]`
   лишено, задокументовано в doc-коментарі як свідоме рішення. Тест
   `http_error_display_and_debug_never_carry_the_request_url`; 726 unit passed.
-- [ ] T-201 — Інтеграційний тест-модуль `AdminClient` round-trip + error-мапінг проти
+- [x] T-201 — Інтеграційний тест-модуль `AdminClient` round-trip + error-мапінг проти
   ефемерного `serve()` з тестовим cert (`serve` уже генерик і тестовний). `AdminClient`
   споживають `dnsqb-tray` **і** `dnsqb-watcher`, зараз 0 тестів між клієнтом і сервером.
   Покрити: URL/метод/DTO-узгодження, `AdminClientError`-мапінг (сервіс лежить / не той
   cert / non-200 / зламаний JSON). ≈½ дня. (1.2-B)
+  — **готово 2026-09-10** (пройшло `advisor` до старту): `tests/admin_client.rs` — 7
+  тестів, кожен піднімає реальний TLS-`serve()` на ефемерному loopback-порту з
+  `generate_self_signed_cert`, пінить `AdminClient`. Покрито: `status`/`health`/`apply`
+  round-trip + DTO-декод справжнім хендлером; `CertRead` (нема `cert.pem`), `ClientBuild`
+  (зіпсований PEM-конверт — «not a pem» рядок `Certificate::from_pem` мовчки терпить),
+  `Request` (порт мертвий; non-2xx через `remove_provider` невідомого id). **Не покрито:**
+  `200`+не-JSON — жоден роут такого не віддає, `error_for_status` усе одно зводить non-2xx
+  і decode-fail в один `Request`. `ci.yml` build-test += `cargo test --test admin_client`
+  (бо `--lib --bins` пропускає `tests/`). Знахідка: `tls::server_config_from_certified_key`
+  — `pub(crate)`, харнес дублює ~10 рядків `rustls`-збірки → до 4-B/T-210.
 - [ ] T-202 — `dnsqb-tray`: виокремити routing `handle_menu_event` у чисту
   `menu_action_for(id) -> MenuAction` (+ тест таблицею, ~15 пунктів меню → дії) і
   `format_uninstall_report(&UninstallReport) -> String` (+ прямий тест). Патерн — як
@@ -1509,3 +1519,7 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 - [ ] T-215 — `crates/dnsqb-service/src/logging.rs:22–24` — уточнити doc: ротація «once per
   process start, not continuously» (імʼя `MAX_LOG_BYTES` натякає на постійну межу, якої
   немає — довготривалий watcher пише необмежений `.log` до рестарту). (3-D)
+- [ ] T-216 — CLAUDE.md «Commands» — нотатка про `cargo test --workspace --lib --bins`
+  пояснює лише *чому обовʼязковий `--bins`*, але не згадує, що `--lib --bins` так само
+  пропускає `tests/` integration-бінарники (третя категорія). Виявлено у T-201: новий
+  `tests/admin_client.rs` не запускався б у CI без окремого рядка. (знахідка T-201)

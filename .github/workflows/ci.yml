@@ -46,6 +46,10 @@ jobs:
       # network. The live probes (topn_fp_probe, sinkhole_probe, …) have no
       # test module, so this is a no-op for them.
       - run: cargo test --workspace --examples --locked
+      # `--lib --bins` also skips `tests/` integration binaries. `conformance`
+      # has its own job; `admin_client` (T-201 — AdminClient ↔ serve() over
+      # real TLS) is named explicitly here.
+      - run: cargo test --test admin_client -p dnsqb-service --locked
 
   lint:
     runs-on: windows-latest
