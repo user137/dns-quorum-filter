@@ -1392,3 +1392,108 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   Нова build-залежність → вет у `SECURITY.md` + `deny.toml` (нова ліцензія ймовірна).
   `#![forbid(unsafe_code)]` має лишитися цілим (перевірити — деякі resource-крейти чисті).
   Дрібна, self-contained; plan не потрібен, closing-advisor опційно.
+
+## Батч RV — ремедіація внутрішнього код-ревʼю (2026-09-10)
+
+Джерело: `review/00-MAP.md` … `review/05-BACKLOG.md` (6-фазне read-only ревʼю коду,
+2026-09-10, HEAD `0ecab35`). Жодного `blocker`, жодного баг-класу коректності — усе
+нижче загартовування. Порядок: **RV.1 (тести) → RV.2 (арх/консистентність) → RV.3
+(доку)**. Кожна задача = свій коміт; пауза й звіт між задачами. ID знахідки в дужках.
+
+### RV.1 — тест-покриття (робити першими)
+
+- [ ] T-197 — Тест `query_with_timeout` `Errored`-гілки (`timeout.rs`): мок-`DohClient`
+  повертає `Err(UpstreamError::Decode(_))` → `assert!(matches!(outcome,
+  VoterOutcome::Errored(_)))`. Покриті лише `Responded`/`TimedOut`. Чистий тест-add. (1.1-C)
+- [ ] T-198 — `wire.rs`: негативний юніт `decode_wire_message` (обрізані/сміттєві байти →
+  `Err`) + `proptest` non-panic на довільному `&[u8]` (патерн `overrides::parse_pattern`
+  / `wire_bytes_from_get_never_panics`). **1.1-D(b) знято** — `attach_edns` НЕ мертвий код:
+  його викликає `tests/conformance/rfc_6891.rs`, і на його не-використання спирається
+  аргумент ECS-non-target у `rfc_7871.rs` (Правило 1 — перевірено перед виконанням). (1.1-D)
+- [ ] T-199 — `watchdog/transition.rs`: додати `assert_eq!` у
+  `verifying_pid_routes_on_the_check_result` для `VerifyingPid + PidCheck::Alive +
+  vote==Dead + !any_channel_degraded → ChannelDegraded` (перший операнд `||`, рядок ~55 —
+  зараз тестується лише другий). ~4 рядки. (1.3-A)
+- [ ] T-200 — `upstream.rs`: закрити leak-вектор `UpstreamError::Http`. Рішення вже задане
+  доктриною репо (`SECURITY.md:160` — payload-несучий бік для файлів/URL з доменами):
+  прибрати `{0}` з `#[error("HTTP request to upstream failed: {0}")]` (Display перестає
+  рендерити URL), лишити `#[source] reqwest::Error` (ланцюг для дебагера). **Перевірити
+  Debug-шлях** (`#[derive(Debug)]` досі рендерить внутрішній `reqwest::Error` через
+  `{err:?}` — акцидентний leak-шлях у цьому проєкті саме Debug, `overrides.rs` gotcha):
+  якщо тече — рукописний терсний `impl Debug` (прецедент `overrides::InvalidEntry`).
+  + характеризаційний тест: `Display` **і** `Debug` `UpstreamError::Http` (з реального
+  `reqwest::Error` від запиту на `127.0.0.1:1` з `?dns=<base64>`) не містять ні URL, ні
+  підрядка `dns=` (еталон — `overrides::tests::…never_contains_the_raw_toml_input`).
+  Рекурентний баг-клас проєкту (витік домену в логи, T-29). (1.1-B)
+- [ ] T-201 — Інтеграційний тест-модуль `AdminClient` round-trip + error-мапінг проти
+  ефемерного `serve()` з тестовим cert (`serve` уже генерик і тестовний). `AdminClient`
+  споживають `dnsqb-tray` **і** `dnsqb-watcher`, зараз 0 тестів між клієнтом і сервером.
+  Покрити: URL/метод/DTO-узгодження, `AdminClientError`-мапінг (сервіс лежить / не той
+  cert / non-200 / зламаний JSON). ≈½ дня. (1.2-B)
+- [ ] T-202 — `dnsqb-tray`: виокремити routing `handle_menu_event` у чисту
+  `menu_action_for(id) -> MenuAction` (+ тест таблицею, ~15 пунктів меню → дії) і
+  `format_uninstall_report(&UninstallReport) -> String` (+ прямий тест). Патерн — як
+  `dnsqb-tray/status.rs`. `main.rs` 823 прод LOC, 0 тестів; mis-wire меню їде мовчки.
+  ≈½–1 день. (1.4-A)
+- [ ] T-203 — `dnsqb-watcher`: виокремити `fn observe(pipe, service_hb, watcher_hb, health)
+  -> ChannelObs` + тест мапінгу двох heartbeat-файлів на правильні напрямки. Ядро
+  (`LoopDriver::tick`) уже покрите; нетестований залишок — побудова `ChannelObs` із сирих
+  читань. <1 год. (1.4-B)
+
+### RV.2 — архітектура / консистентність (після RV.1)
+
+- [ ] T-204 — **`major`.** Вирішальна логіка `/admin/ui` (обчислення hero-state, guard
+  master-switch, стан-машина картки rating-filter) живе в `main.js` і верифікується лише
+  `assert!(MAIN_JS.contains("…"))` — керівна поверхня, логічний баг їде мовчки (рекурентний
+  урок T-59, масштабований). Перенести справді *вирішальну* логіку на сервер як обчислені
+  поля `AdminStatusResponse` (`hero_state: HeroStateView`, `master_switch_allowed: bool`) у
+  `admin.rs`; `main.js` → чистий рендер; чиста презентація лишається в JS. Патерн —
+  `rating_filter_is_active` «єдина влада» + `status.rs` виокремлення. **Власний
+  plan+advisor** (арх-зміна, торкається DTO/публічного API). ≈1–2 дні. (3-B / 1.2-A)
+- [ ] T-205 — Версіонувати адмін-DTO: `#[serde(default)]` на additive-полях
+  `AdminStatusResponse` + `schema_version: u32`; `AdminClient` логує warning на розбіжність
+  версій, не падає. Зараз це єдиний крос-процесний контракт репо без версіонування
+  (на відміну від `encrypted_file` VERSION / `PersistedFileV1` / `FRAME_VERSION` /
+  `STATE_SCHEMA_VERSION`). Вплив низький (MSIX атомарний), фікс ≈ derive-атрибути. (3-A)
+- [ ] T-206 — Характеризаційний тест cache-stampede
+  (`two_concurrent_misses_for_the_same_key_each_run_quorum`: спільний `AppState`,
+  `MockClient` з `AtomicU32`, `tokio::join!`, `assert_eq!(client.calls(), 2 * voters)`) +
+  рядок у `PERFORMANCE.md` / SPEC.md §4 «свідомо без single-flight — на масштабі однієї
+  машини множення несуттєве». **НЕ додавати `moka::get_with`.** (3-C / 1.1-A) *(review-
+  вердикт: stampede прийнятний для PET; тест фіксує поведінку, доку фіксує рішення)*
+- [ ] T-207 — Doc-тести з прикладами на ~8 чистих leaf-функцій re-export поверхні `lib.rs`
+  (`normalize_domain`, `min_rrset_ttl`, `negative_cache_ttl`, `next_backoff`,
+  `channel_status`, `SinkholeNet::contains`, `ZoneLists::zone_match`, …). Активує дрімаючий
+  гейт `cargo test --workspace --doc`; виконує `~/.claude/rules/rust.md` §10 (нуль
+  doc-тестів у всьому `src/` зараз). ≈½ дня. (4-A)
+- [ ] T-208 — `#[derive(Debug)]` на `pipeline::RatingFilterView`; рукописний терсний
+  `impl Debug` на `dispatch::GeoipState` (`maxminddb::Reader` не є `Debug` → «reader:
+  <present/absent>»). `rust.md` §3. (`overrides::InvalidEntry` — уже має рукописний
+  редагувальний `Debug`, не чіпати.) Хвилини. (4-C)
+- [ ] T-209 — `dispatch.rs:1397/1789`: замінити мовчазний `Err(_) => status_response(500/400)`
+  на `tracing::debug!` з `&'static str` міткою («status response serialization failed» /
+  «admin log query parse failed»). Приватнісно безпечно (serde/parse, без доменів). Хвилини. (2-C)
+- [ ] T-210 — *(опційно, лише разом із T-204)* Перенести оркестрацію
+  `dnsqb-service/src/main.rs` у lib як `pub fn run(...)`; демоутнути внутрішні re-exports
+  (`pipeline::handle_query`, `wire::*`, `quorum::*` тощо) у `pub(crate)` — звузити публічну
+  поверхню (~60 груп `pub use`, наслідок lib+bin в одному пакеті). (4-B)
+- [ ] T-211 — *(опційно)* Кешувати `trust_store::is_trusted` у `AppState` на N с (патерн
+  `status::spawn_trust_watch`), щоб `GET /admin/cert-status` не спавнив 2 `certutil` на
+  кожен виклик. Добре пом'якшено вже (`127.0.0.1`, ConnectionGate, `CREATE_NO_WINDOW`) —
+  робити лише якщо `cert-status` піде на частий poll. (2-B)
+
+### RV.3 — документаційні фікси DOC MAP (окремий docs-only коміт)
+
+- [ ] T-212 — CLAUDE.md «Known limitations in shipped code» — оновити застарілий bullet про
+  admin-channel fuzz (T-58): `/dns-query` POST body **уже** фазиться
+  (`serve_never_panics_on_arbitrary_input_for_any_documented_route`, кермований `ROUTES`). (1.2-C)
+- [ ] T-213 — `SECURITY.md` таблиця залежностей — додати рядок accepted-risk для
+  `aws-lc-sys` v0.44.0. Перевірено `cargo tree -e no-dev --target x86_64-pc-windows-msvc
+  -i aws-lc-sys`: у ship-графі (← `aws-lc-rs` ← `rcgen`+`rustls`+`rustls-webpki`), лінкується
+  в усі 3 бінарники; `ring` у ship-графі немає. Найбільша `unsafe` C-поверхня в shipped
+  binary; `#![forbid(unsafe_code)]` first-party інтакт; продакшн-альтернативи в `rustls` нема. (2-A)
+- [ ] T-214 — `crates/dnsqb-service/src/admin.rs:1185` — прибрати згадку `dnsqb-ui` / Tauri
+  з doc-коментаря `AdminClient` (канал видалено T-149; споживачі — `dnsqb-tray` + `dnsqb-watcher`). (2-D)
+- [ ] T-215 — `crates/dnsqb-service/src/logging.rs:22–24` — уточнити doc: ротація «once per
+  process start, not continuously» (імʼя `MAX_LOG_BYTES` натякає на постійну межу, якої
+  немає — довготривалий watcher пише необмежений `.log` до рестарту). (3-D)
