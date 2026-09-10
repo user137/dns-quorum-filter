@@ -1415,10 +1415,11 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   — **готово 2026-09-10**: `decode_wire_message_rejects_truncated_and_garbage_bytes`
   (< 12-байт заголовок + QDCOUNT=1 без секції питання) + `..._never_panics_on_arbitrary_bytes`
   (`proptest`, 64 кейси, `0..4096`); 725 unit passed.
-- [ ] T-199 — `watchdog/transition.rs`: додати `assert_eq!` у
+- [x] T-199 — `watchdog/transition.rs`: додати `assert_eq!` у
   `verifying_pid_routes_on_the_check_result` для `VerifyingPid + PidCheck::Alive +
   vote==Dead + !any_channel_degraded → ChannelDegraded` (перший операнд `||`, рядок ~55 —
   зараз тестується лише другий). ~4 рядки. (1.3-A)
+  — **готово 2026-09-10**: додано assert для першого `||`-операнда (vote-Dead), 725 unit passed.
 - [ ] T-200 — `upstream.rs`: закрити leak-вектор `UpstreamError::Http`. Рішення вже задане
   доктриною репо (`SECURITY.md:160` — payload-несучий бік для файлів/URL з доменами):
   прибрати `{0}` з `#[error("HTTP request to upstream failed: {0}")]` (Display перестає

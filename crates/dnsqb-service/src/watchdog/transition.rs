@@ -219,6 +219,21 @@ mod tests {
             ),
             S::ChannelDegraded
         );
+        // T-199 (1.3-A): the *first* `||` operand at transition.rs — a live,
+        // matching PID but a vote that still reads `Dead` (no channel flagged
+        // degraded) also holds us in ChannelDegraded, not Healthy. Only the
+        // `any_channel_degraded` operand was exercised above.
+        assert_eq!(
+            transition(
+                S::VerifyingPid,
+                &TransitionInput {
+                    pid: Some(PidCheck::Alive),
+                    vote: Liveness::Dead,
+                    ..input()
+                }
+            ),
+            S::ChannelDegraded
+        );
         assert_eq!(
             transition(
                 S::VerifyingPid,
