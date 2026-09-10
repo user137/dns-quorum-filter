@@ -4,43 +4,46 @@
    no sidebar/nav shell here). Ported verbatim from the deleted
    dnsqb-ui/ui/index.html's inline <style> block - moved to its own file so
    /admin/ui can ship a strict CSP (no 'unsafe-inline') from the start. */
-/* Palette: Nord (nordtheme.com) — a named arctic palette. Light theme uses
-   Snow Storm neutrals with Frost/Aurora hues darkened for contrast on white;
-   dark theme is Nord's native Polar Night surfaces + Frost accent + Aurora
-   status colours. Kept in sync with mockups/gui-dashboard.html. */
+/* Palette: Catppuccin (catppuccin.com) — Latte for the light theme, Mocha
+   for the dark one. A named, designed light/dark pair (WCAG AAA for body
+   text on base). Surfaces, text and accent are exact Catppuccin values; the
+   light status hues (--good / --warn) are darkened a step so their text
+   still clears AA on the pale --*-soft backgrounds, and the dark --*-soft
+   tints are hand-mixed low-chroma surfaces (Catppuccin ships no soft set).
+   Kept in sync with mockups/gui-dashboard.html. */
 :root {
-  --paper: #ffffff;
+  --paper: #eff1f5;
   --surface-raised: #ffffff;
-  --line: #d3d9e3;
-  --line-soft: #e3e7ee;
-  --text: #2e3440;
-  --text-muted: #5c6672;
-  --accent: #5e81ac;
-  --accent-strong: #4c6f9c;
-  --good: #4a7a3a;
-  --good-soft: #e7f0e1;
-  --bad: #b0424f;
-  --bad-soft: #f7e6e8;
-  --warn: #9a6b16;
-  --warn-soft: #f6edda;
+  --line: #ccd0da;
+  --line-soft: #e6e9ef;
+  --text: #4c4f69;
+  --text-muted: #5c5f77;
+  --accent: #8839ef;
+  --accent-strong: #7a2fd6;
+  --good: #2c6e20;
+  --good-soft: #e4efdd;
+  --bad: #d20f39;
+  --bad-soft: #fce4e9;
+  --warn: #8a6400;
+  --warn-soft: #f8ecd3;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #2e3440;
-    --surface-raised: #353b49;
-    --line: #434c5e;
-    --line-soft: #3b4252;
-    --text: #eceff4;
-    --text-muted: #9aa4b6;
-    --accent: #88c0d0;
-    --accent-strong: #8fbcbb;
-    --good: #a3be8c;
-    --good-soft: #333c30;
-    --bad: #d6868d;
-    --bad-soft: #382a2c;
-    --warn: #ebcb8b;
-    --warn-soft: #3a3423;
+    --paper: #1e1e2e;
+    --surface-raised: #313244;
+    --line: #45475a;
+    --line-soft: #313244;
+    --text: #cdd6f4;
+    --text-muted: #a6adc8;
+    --accent: #cba6f7;
+    --accent-strong: #b4befe;
+    --good: #a6e3a1;
+    --good-soft: #24352a;
+    --bad: #f38ba8;
+    --bad-soft: #3a2530;
+    --warn: #f9e2af;
+    --warn-soft: #3a3327;
     color-scheme: dark;
   }
 }
