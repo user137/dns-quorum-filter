@@ -1557,9 +1557,13 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `maxminddb::Reader::Debug` (друкує весь mmdb-буфер), тож `reader: "present"/"absent"` +
   `updated_at`. (`overrides::InvalidEntry` не чіпано — уже має рукописний редагувальний `Debug`.)
   Гейт: 748 lib + 37 tray + 3 watcher, clippy/fmt.
-- [ ] T-209 — `dispatch.rs:1397/1789`: замінити мовчазний `Err(_) => status_response(500/400)`
-  на `tracing::debug!` з `&'static str` міткою («status response serialization failed» /
-  «admin log query parse failed»). Приватнісно безпечно (serde/parse, без доменів). Хвилини. (2-C)
+- [x] T-209 — мовчазні `Err(_)` → `tracing::debug!` зі статичною міткою (2-C) —
+  **готово 2026-09-11**. `dispatch::json_response` (`serde_json::to_vec` fail → 500) →
+  «status response serialization failed»; `dispatch::serve_admin_log` (`parse_log_query`
+  fail → 400) → «admin log query parse failed». Обидва як `let…else` (clippy
+  `manual_let_else`/`single_match_else` спрацьовує на блок-тіло `Err` арма). Мітки статичні —
+  `?domain_contains=` підрядок не потрапляє в лог. Гейт: 748 lib + 9 doc + 18 conformance +
+  7 admin_client, clippy/fmt.
 - [ ] T-210 — *(опційно, лише разом із T-204)* Перенести оркестрацію
   `dnsqb-service/src/main.rs` у lib як `pub fn run(...)`; демоутнути внутрішні re-exports
   (`pipeline::handle_query`, `wire::*`, `quorum::*` тощо) у `pub(crate)` — звузити публічну

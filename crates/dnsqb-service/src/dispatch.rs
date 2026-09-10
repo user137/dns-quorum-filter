@@ -1463,14 +1463,19 @@ fn apply_admin_config<C: DohClient + Sync>(
 /// — but `serde_json::to_vec` returns a real `Result`, so this handles it
 /// rather than unwrapping, same discipline as `config::ResolverConfig::save`).
 fn json_response<T: Serialize>(value: &T) -> Response<Full<Bytes>> {
-    match serde_json::to_vec(value) {
-        Ok(bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Full::new(Bytes::from(bytes)))
-            .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR)),
-        Err(_) => status_response(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+    let Ok(bytes) = serde_json::to_vec(value) else {
+        // Not expected for these DTOs, but a silent 500 gives an operator
+        // nothing to act on. The label stays a fixed string — `T: Serialize`
+        // here is this service's own config/status data, not browsing data,
+        // but there is no reason to widen it.
+        tracing::debug!("status response serialization failed");
+        return status_response(StatusCode::INTERNAL_SERVER_ERROR);
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(bytes)))
+        .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
 /// `GET /admin/status` — method allowlisting for this path happens once,
@@ -2964,6 +2969,10 @@ fn serve_admin_log<C: DohClient + Sync>(
     state: &AppState<C>,
 ) -> Response<Full<Bytes>> {
     let Ok(parsed) = parse_log_query(query_string) else {
+        // Coarse, static label — a `?domain_contains=` substring must never
+        // reach a log line (SPEC.md, Наскрізні вимоги). `LogQueryError`'s own
+        // messages are fixed strings, but the label doesn't lean on that.
+        tracing::debug!("admin log query parse failed");
         return status_response(StatusCode::BAD_REQUEST);
     };
     // Validate `?voter=` against the ids a log entry could plausibly carry:
