@@ -156,8 +156,6 @@ async fn main() {
     // `GeoipInit` bundles the startup filter state `AppState::new` splits
     // into its own fields (see that type's doc): T-76 blocked-country list,
     // T-163 database source, T-124 the rating-filter zone from disk.
-    let rating_filter_active =
-        resolver_config.rating_filter.enabled && !resolver_config.rating_filter.lists.is_empty();
     let geoip = build_geoip_init(app_data.as_deref(), geoip_path.as_deref(), &resolver_config);
 
     // T-146: seed the query log from encrypted `query-log.enc` when
@@ -198,7 +196,7 @@ async fn main() {
     state.restore_cache(cache_restore).await;
     spawn_query_log_persister(&state, query_log_flusher);
     spawn_cache_persister(&state, cache_flusher);
-    spawn_public_http_tasks(&state, geoip_path, app_data.clone(), rating_filter_active);
+    spawn_public_http_tasks(&state, geoip_path, app_data.clone());
 
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
@@ -280,9 +278,12 @@ fn spawn_cache_persister(
 ///
 /// - the `GeoIP` database updater (T-75 — `db-ip.com` / `download.maxmind.com`),
 ///   skipped with a warning if no app-data directory resolved `geoip_path`;
-/// - the top-N availability-zone list updater (T-124 —
-///   `raw.githubusercontent.com`), spawned only when `[rating_filter]` is
-///   enabled with a non-empty list set and an app-data directory exists;
+/// - the top-N availability-zone list updater (T-124/T-127 —
+///   `raw.githubusercontent.com`), spawned whenever an app-data directory
+///   exists. It parks idle while `[rating_filter]` is disabled (each cycle
+///   re-reads the config snapshot and no-ops), so `POST /admin/rating-filter`
+///   can turn the bubble on without a service restart — the enable route
+///   wakes it and the first real download follows within seconds;
 /// - the network-reachability prober (T-152 — a few `generate_204`-class
 ///   markers), deliberately **not** wired to `/health` or any watchdog
 ///   channel, so a network outage can never read as a dead service.
@@ -290,7 +291,6 @@ fn spawn_public_http_tasks(
     state: &Arc<AppState<ReqwestDohClient>>,
     geoip_path: Option<PathBuf>,
     app_data: Option<PathBuf>,
-    rating_filter_active: bool,
 ) {
     match (geoip_path, reqwest::Client::builder().build()) {
         (Some(path), Ok(client)) => {
@@ -303,23 +303,18 @@ fn spawn_public_http_tasks(
             tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
         }
     }
-    match (
-        rating_filter_active,
-        app_data,
-        reqwest::Client::builder().build(),
-    ) {
-        (true, Some(dir), Ok(client)) => {
+    match (app_data, reqwest::Client::builder().build()) {
+        (Some(dir), Ok(client)) => {
             tokio::spawn(run_topn_updater(client, dir, Arc::clone(state)));
         }
-        (true, _, Err(err)) => {
+        (Some(_), Err(err)) => {
             tracing::error!("failed to build the top-N list update HTTP client: {err}");
         }
-        (true, None, _) => {
+        (None, _) => {
             tracing::warn!(
                 "no app-data directory available, top-N availability-zone lists cannot refresh"
             );
         }
-        (false, _, _) => {}
     }
     match reqwest::Client::builder().build() {
         Ok(client) => {

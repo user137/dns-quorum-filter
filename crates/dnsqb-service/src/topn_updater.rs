@@ -90,9 +90,12 @@ pub fn load_zone_from_disk(app_data: Option<&Path>, config: &RatingFilterConfig)
     ZoneLists::new(sources)
 }
 
-/// Runs one refresh right away, then every [`TOPN_CHECK_INTERVAL`] (or
-/// sooner if `apply_admin_reset` wakes it). Spawned by `main.rs` only when
-/// `[rating_filter]` is enabled with a non-empty list set.
+/// Runs one refresh right away, then every [`TOPN_CHECK_INTERVAL`] (or sooner
+/// if `apply_admin_reset` / `apply_rating_filter_change` wakes it). Spawned
+/// by `main.rs` whenever an app-data directory exists — [`refresh_all_lists`]
+/// re-reads the config snapshot each cycle and returns immediately while the
+/// filter is disabled, so an always-running idle task is the price of letting
+/// `POST /admin/rating-filter` enable the bubble with no restart.
 pub async fn run_topn_updater(
     client: reqwest::Client,
     app_data: PathBuf,
