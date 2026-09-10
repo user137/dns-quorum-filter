@@ -117,7 +117,7 @@ pub struct UpstreamContext<'a> {
 /// union and the lazy-hygiene removal overlay, taken as **two independent
 /// snapshots** because they have different single writers (the top-N
 /// refresher vs the pipeline). See [`crate::rating_filter`].
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct RatingFilterView<'a> {
     /// The union of every active availability-zone list.
     pub lists: &'a ZoneLists,

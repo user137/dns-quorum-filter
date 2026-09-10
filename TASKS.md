@@ -1551,10 +1551,12 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   транзитивної залежності (перевірено емпірично, що doctest її бачить). **Гейт розширено:
   `cargo test --workspace --doc --locked` тепер частина обов'язкового набору** — `--lib --bins`
   його не запускає. CLAUDE.md Commands оновлено. Гейт: 754 lib + 9 doc + clippy/fmt/rustdoc.
-- [ ] T-208 — `#[derive(Debug)]` на `pipeline::RatingFilterView`; рукописний терсний
-  `impl Debug` на `dispatch::GeoipState` (`maxminddb::Reader` не є `Debug` → «reader:
-  <present/absent>»). `rust.md` §3. (`overrides::InvalidEntry` — уже має рукописний
-  редагувальний `Debug`, не чіпати.) Хвилини. (4-C)
+- [x] T-208 — `Debug` на публічних типах (4-C, `rust.md` §3) — **готово 2026-09-11**.
+  `#[derive(Debug, Clone, Copy)]` на `pipeline::RatingFilterView` (`ZoneLists` вже `Debug`).
+  Рукописний терсний `impl Debug for dispatch::GeoipState` — похідний рекурсив би у
+  `maxminddb::Reader::Debug` (друкує весь mmdb-буфер), тож `reader: "present"/"absent"` +
+  `updated_at`. (`overrides::InvalidEntry` не чіпано — уже має рукописний редагувальний `Debug`.)
+  Гейт: 748 lib + 37 tray + 3 watcher, clippy/fmt.
 - [ ] T-209 — `dispatch.rs:1397/1789`: замінити мовчазний `Err(_) => status_response(500/400)`
   на `tracing::debug!` з `&'static str` міткою («status response serialization failed» /
   «admin log query parse failed»). Приватнісно безпечно (serde/parse, без доменів). Хвилини. (2-C)

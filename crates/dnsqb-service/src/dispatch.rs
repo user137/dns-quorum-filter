@@ -407,6 +407,26 @@ pub struct GeoipState {
     pub updated_at: Option<SystemTime>,
 }
 
+// Hand-written and terse: a derived `Debug` would recurse into
+// `maxminddb::Reader`'s own `Debug`, which prints the whole mmdb byte
+// buffer. Only the presence of a database and its load time are useful
+// here.
+impl std::fmt::Debug for GeoipState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeoipState")
+            .field(
+                "reader",
+                &if self.reader.is_some() {
+                    "present"
+                } else {
+                    "absent"
+                },
+            )
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
 /// `AppState::new`'s `geoip` parameter (T-76) — the initially-loaded
 /// filter-data bundle, so the constructor doesn't grow one parameter per
 /// filter (same `clippy::too_many_arguments` reasoning as
