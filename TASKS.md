@@ -1584,22 +1584,24 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   синхронно поки́дають кеш, щоб hero не лагав. `main.rs`: `spawn_flag_watchers`
   (виокремлено з `main()` разом із `run_pause_watcher` — `too_many_lines`).
 
-### RV.3 — документаційні фікси DOC MAP (окремий docs-only коміт)
+### RV.3 — документаційні фікси DOC MAP (Батч RV, 2026-09-11)
 
-- [ ] T-212 — CLAUDE.md «Known limitations in shipped code» — оновити застарілий bullet про
+- [x] T-212 — CLAUDE.md «Known limitations in shipped code» — оновлено застарілий bullet про
   admin-channel fuzz (T-58): `/dns-query` POST body **уже** фазиться
   (`serve_never_panics_on_arbitrary_input_for_any_documented_route`, кермований `ROUTES`). (1.2-C)
-- [ ] T-213 — `SECURITY.md` таблиця залежностей — додати рядок accepted-risk для
-  `aws-lc-sys` v0.44.0. Перевірено `cargo tree -e no-dev --target x86_64-pc-windows-msvc
-  -i aws-lc-sys`: у ship-графі (← `aws-lc-rs` ← `rcgen`+`rustls`+`rustls-webpki`), лінкується
-  в усі 3 бінарники; `ring` у ship-графі немає. Найбільша `unsafe` C-поверхня в shipped
-  binary; `#![forbid(unsafe_code)]` first-party інтакт; продакшн-альтернативи в `rustls` нема. (2-A)
-- [ ] T-214 — `crates/dnsqb-service/src/admin.rs:1185` — прибрати згадку `dnsqb-ui` / Tauri
-  з doc-коментаря `AdminClient` (канал видалено T-149; споживачі — `dnsqb-tray` + `dnsqb-watcher`). (2-D)
-- [ ] T-215 — `crates/dnsqb-service/src/logging.rs:22–24` — уточнити doc: ротація «once per
-  process start, not continuously» (імʼя `MAX_LOG_BYTES` натякає на постійну межу, якої
-  немає — довготривалий watcher пише необмежений `.log` до рестарту). (3-D)
-- [ ] T-216 — CLAUDE.md «Commands» — нотатка про `cargo test --workspace --lib --bins`
-  пояснює лише *чому обовʼязковий `--bins`*, але не згадує, що `--lib --bins` так само
-  пропускає `tests/` integration-бінарники (третя категорія). Виявлено у T-201: новий
-  `tests/admin_client.rs` не запускався б у CI без окремого рядка. (знахідка T-201)
+  Переписано на фактичну поверхню + два справжні залишкові gap'и (виключені мутуючі cert-роути;
+  шлях декоду upstream-відповіді). Коміт окремо.
+- [x] T-213 — `SECURITY.md` таблиця залежностей — додано рядок accepted-risk для
+  `aws-lc-sys` 0.44.0 після рядка `rustls`. Звірено `cargo tree -e no-dev --target
+  x86_64-pc-windows-msvc -i aws-lc-sys` (← `aws-lc-rs` 1.18.0 ← `rcgen`+`rustls`+`rustls-webpki`,
+  усі 3 бінарники) та `-i ring` → «nothing to print» (немає в ship-графі). Найбільша `unsafe`
+  C-поверхня в shipped binary; `#![forbid(unsafe_code)]` first-party інтакт. (2-A)
+- [x] T-214 — `crates/dnsqb-service/src/admin.rs` — прибрано згадку `dnsqb-ui` / Tauri
+  з doc-коментаря `AdminClient` (канал видалено T-149; споживачі — `dnsqb-tray` + `dnsqb-watcher`).
+  Рядок `reqwest`-versions-tracking лишено (він досі валідний). (2-D)
+- [x] T-215 — `crates/dnsqb-service/src/logging.rs` — уточнено doc (і модульний, і const):
+  `MAX_LOG_BYTES` — поріг, що перевіряється **раз на старті процесу**, не live-cap; довготривалий
+  watcher пише необмежений `<role>.log` до рестарту. (3-D)
+- [x] T-216 — CLAUDE.md «Commands» — додано, що `--lib --bins` так само не запускає `tests/`
+  integration-бінарники (третя категорія); кожен потребує власного `cargo test --test <name>`
+  (`conformance` + `admin_client`). Виявлено у T-201. (знахідка T-201)
