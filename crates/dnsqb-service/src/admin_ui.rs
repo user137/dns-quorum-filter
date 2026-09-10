@@ -579,13 +579,23 @@ mod tests {
         );
     }
 
-    // T-128 — the activity badge div is present in the basic view but nothing
-    // renders into it yet (that is Коміт 5, together with the tray suffix).
+    // T-128 — the always-visible activity indicator: a slot under the hero,
+    // filled by renderRatingFilterBadge from the 2s status poll (via
+    // render()), and gated on status.rating_filter.enabled so it is an empty
+    // div whenever the bubble is off.
     #[test]
-    fn index_html_carries_the_rating_filter_badge_slot() {
+    fn main_js_renders_the_rating_filter_badge_from_the_status_poll() {
         assert!(
             INDEX_HTML.contains("id=\"rating-filter-badge\""),
-            "the always-visible activity indicator needs its slot under the hero"
+            "the badge needs its slot under the hero"
+        );
+        assert!(
+            MAIN_JS.contains("renderRatingFilterBadge(status.rating_filter)"),
+            "the badge must render from the 2s status poll (render()), not go stale"
+        );
+        assert!(
+            MAIN_JS.contains("if (!rf || !rf.enabled)"),
+            "the badge must be gated on rating_filter.enabled - empty div when off"
         );
     }
 }

@@ -17,6 +17,9 @@ const logBody = document.getElementById("log-body");
 const protectionHero = document.getElementById("protection-hero");
 const filterControlsBody = document.getElementById("filter-controls-body");
 const timeoutConfigBody = document.getElementById("timeout-config-body");
+// T-127/T-128: the rating-filter «bubble» card + its always-visible badge.
+const ratingFilterBody = document.getElementById("rating-filter-body");
+const ratingFilterBadge = document.getElementById("rating-filter-badge");
 
 // T-188: the last GET /admin/cert-status result (CertTrustView), or null
 // until the first fetch. Fetched on load and re-fetched after an install
@@ -292,6 +295,10 @@ function renderTimeoutConfig(status) {
 
 function render(status) {
   renderProtectionHero(computeProtectionState(status, true, certTrust));
+  // T-128: the always-visible rating-filter «bubble» badge. On the 2s poll
+  // path (unlike the #rating-filter-body card) so it can't go stale; a
+  // no-op empty div whenever the bubble is off, which is the common case.
+  renderRatingFilterBadge(status.rating_filter);
   renderTimeoutConfig(status);
   syncDohUrl(status);
   // T-96: passive indicator that the query log (i.e. browsing history) is
@@ -2398,7 +2405,8 @@ uninstallBtn.addEventListener("click", async () => {
 // free-text input in progress, same reasoning as #overrides-body /
 // #geoip-body. Built via DOM methods, not innerHTML (the CSP sets no
 // Trusted Types - same house rule as the overrides/geoip editors).
-const ratingFilterBody = document.getElementById("rating-filter-body");
+// (ratingFilterBody / ratingFilterBadge are declared with the other
+// element handles at the top of this file.)
 
 // The curated availability zones ship as bare codes in
 // status.rating_filter.available_lists (the T-105 distribution contract);
@@ -2436,6 +2444,31 @@ function ratingFilterCountByList(loaded) {
     map[entry.list] = entry.domains;
   });
   return map;
+}
+
+// T-128: the always-visible activity indicator (#rating-filter-badge),
+// rendered from status.rating_filter on every 2s poll via render(). Nothing
+// is shown while the bubble is off (an empty div, no layout); "active" vs
+// "enabled, lists loading" (Fork B) are the two visible states, matching the
+// mockup's Артборд E and the tray tooltip suffix.
+function renderRatingFilterBadge(rf) {
+  ratingFilterBadge.textContent = "";
+  if (!rf || !rf.enabled) {
+    return;
+  }
+  const badge = document.createElement("span");
+  badge.className = rf.active ? "rf-badge on" : "rf-badge pending";
+  const dot = document.createElement("span");
+  dot.className = "rf-dot";
+  badge.appendChild(dot);
+  badge.appendChild(
+    document.createTextNode(
+      rf.active
+        ? "Рейтинговий фільтр «бульбашка» активний"
+        : "Рейтинговий фільтр увімкнено — списки завантажуються",
+    ),
+  );
+  ratingFilterBadge.appendChild(badge);
 }
 
 function renderRatingFilter(status) {

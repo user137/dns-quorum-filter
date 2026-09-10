@@ -76,6 +76,14 @@ pub enum TrayStatus {
         /// computed over (T-56, `AdminStats::degraded_window`) — `0` means
         /// no signal yet, not "healthy".
         degraded_window: u64,
+        /// T-128: the rating-filter «bubble» (SPEC.md §5.3) is enabled
+        /// **and** gating queries (`RatingFilterStatusView::active`). Adds a
+        /// tooltip suffix only — never the icon colour (the bubble is a
+        /// deliberate scope choice, not a health signal, same "pass-through
+        /// ≠ failure" reasoning as `NoActiveProvider`). `enabled` but not yet
+        /// `active` (Fork B) shows no suffix — that transient state is the
+        /// web UI's Fork-B notice to explain, not the tray's.
+        rating_filter_active: bool,
     },
 }
 
@@ -103,6 +111,9 @@ impl TrayStatus {
                 total: response.stats.total,
                 degraded_events: response.stats.degraded_events,
                 degraded_window: response.stats.degraded_window,
+                // `active` is already `enabled && zone non-empty` server-side
+                // (the single `rating_filter_is_active` authority).
+                rating_filter_active: response.rating_filter.active,
             }
         }
     }
@@ -136,6 +147,7 @@ impl TrayStatus {
                 total,
                 degraded_events,
                 degraded_window,
+                rating_filter_active,
             } => {
                 let base = format!(
                     "DNS Quorum Filter: захищає \u{2014} {blocked}/{total} заблоковано ({in_flight} запит(ів) зараз)"
@@ -146,13 +158,19 @@ impl TrayStatus {
                 // an always-on warning masking it (T-56, advisor-caught
                 // during planning: a bare threshold-free boolean would go
                 // permanently true under routine fail-open timeouts).
-                if *degraded_events > 0 {
+                let mut text = if *degraded_events > 0 {
                     format!(
                         "{base} \u{2014} деякі перевірки не відповідають ({degraded_events}/{degraded_window} останніх запитів мали тайм-аут)"
                     )
                 } else {
                     base
+                };
+                // T-128: an informational suffix, ranked after the degraded
+                // note (a real problem outranks a scope choice).
+                if *rating_filter_active {
+                    text.push_str(" \u{2014} рейтинг-фільтр «бульбашка» активний");
                 }
+                text
             }
         }
     }
@@ -379,6 +397,7 @@ mod tests {
                 total: 10,
                 degraded_events: 3,
                 degraded_window: 20,
+                rating_filter_active: false,
             }
         );
     }
@@ -449,6 +468,66 @@ mod tests {
         );
     }
 
+    fn quad9_filtering_response(stats: AdminStats) -> AdminStatusResponse {
+        response(
+            vec![ProviderStatusView {
+                id: "quad9".to_string(),
+                display_name: "Quad9 Filtered".to_string(),
+                category: dnsqb_service::Category::Security,
+            }],
+            stats,
+        )
+    }
+
+    #[test]
+    fn tooltip_names_the_rating_filter_bubble_only_when_it_is_actually_gating() {
+        // T-128: `enabled && active` → a suffix; `enabled` but Fork B
+        // (no list loaded) → nothing (the web UI's own notice covers that
+        // transient state); disabled → nothing.
+        let mut resp = quad9_filtering_response(stats(20, 0));
+
+        resp.rating_filter.enabled = true;
+        resp.rating_filter.active = true;
+        assert!(
+            TrayStatus::from_response(&resp)
+                .tooltip()
+                .contains("рейтинг-фільтр «бульбашка» активний"),
+            "an active bubble must add its suffix"
+        );
+
+        resp.rating_filter.active = false;
+        assert!(
+            !TrayStatus::from_response(&resp)
+                .tooltip()
+                .contains("рейтинг-фільтр"),
+            "Fork B (enabled, no list) gets no tray suffix"
+        );
+
+        resp.rating_filter.enabled = false;
+        assert!(
+            !TrayStatus::from_response(&resp)
+                .tooltip()
+                .contains("рейтинг-фільтр"),
+            "a disabled bubble gets no suffix"
+        );
+    }
+
+    #[test]
+    fn an_active_rating_filter_never_changes_the_icon_colour() {
+        // The bubble is a scope choice, not a health signal (same
+        // "pass-through ≠ failure" rule as NoActiveProvider).
+        let active = TrayStatus::Filtering {
+            in_flight: 0,
+            blocked: 1,
+            total: 9,
+            degraded_events: 0,
+            degraded_window: 20,
+            rating_filter_active: true,
+        };
+        assert_eq!(icon_colour(active, true), IconColour::Green);
+        assert_eq!(icon_colour(active, false), IconColour::Red); // cert still wins
+    }
+
     #[test]
     fn paused_tooltip_names_the_state_plainly_and_not_as_a_failure() {
         // T-185: a deliberate pause must not read as "служба недоступна" /
@@ -486,6 +565,7 @@ mod tests {
             total: 9,
             degraded_events,
             degraded_window,
+            rating_filter_active: false,
         }
     }
 
