@@ -252,4 +252,38 @@ mod tests {
         );
         assert_eq!(min_rrset_ttl(&decoded.answers), Some(60));
     }
+
+    #[test]
+    fn decode_wire_message_rejects_truncated_and_garbage_bytes() {
+        // T-198 (1.1-D): the decode-path tests were all positive (a
+        // round-tripped valid message). A body shorter than the 12-byte DNS
+        // header, and a header that promises a question section it doesn't
+        // carry, must both surface as `Err` — never a panic, never a bogus
+        // `Message`.
+        let shorter_than_the_header: &[u8] = &[0xff, 0xff, 0xff];
+        assert!(decode_wire_message(shorter_than_the_header).is_err());
+
+        // id=1, flags=0, QDCOUNT=1, AN/NS/AR=0 — then nothing where the one
+        // promised question should be.
+        let header_promises_a_question_it_lacks: &[u8] = &[
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert!(decode_wire_message(header_promises_a_question_it_lacks).is_err());
+    }
+
+    // T-198 (1.1-D): `decode_wire_message` is the first thing raw, untrusted
+    // wire bytes from a `DoH` POST body reach — its Ok/Err split is covered
+    // above; this property only proves the absence of a panic on any input
+    // shape. Vector capped well under `dispatch::MAX_MESSAGE_SIZE`, 64 cases
+    // (this crate's `proptest` is `default-features = false`, no timeout
+    // tail), same discipline as `dispatch::wire_bytes_from_get_never_panics_*`.
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+        #[test]
+        fn decode_wire_message_never_panics_on_arbitrary_bytes(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096)
+        ) {
+            let _ = decode_wire_message(&bytes);
+        }
+    }
 }

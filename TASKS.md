@@ -1407,11 +1407,14 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   VoterOutcome::Errored(_)))`. Покриті лише `Responded`/`TimedOut`. Чистий тест-add. (1.1-C)
   — **готово 2026-09-10**: `FailingClient` (патерн `quorum::AdGuardErrorsClient`,
   `std::future::ready`), `upstream_error_yields_errored_not_timed_out`; 723 unit passed.
-- [ ] T-198 — `wire.rs`: негативний юніт `decode_wire_message` (обрізані/сміттєві байти →
+- [x] T-198 — `wire.rs`: негативний юніт `decode_wire_message` (обрізані/сміттєві байти →
   `Err`) + `proptest` non-panic на довільному `&[u8]` (патерн `overrides::parse_pattern`
   / `wire_bytes_from_get_never_panics`). **1.1-D(b) знято** — `attach_edns` НЕ мертвий код:
   його викликає `tests/conformance/rfc_6891.rs`, і на його не-використання спирається
   аргумент ECS-non-target у `rfc_7871.rs` (Правило 1 — перевірено перед виконанням). (1.1-D)
+  — **готово 2026-09-10**: `decode_wire_message_rejects_truncated_and_garbage_bytes`
+  (< 12-байт заголовок + QDCOUNT=1 без секції питання) + `..._never_panics_on_arbitrary_bytes`
+  (`proptest`, 64 кейси, `0..4096`); 725 unit passed.
 - [ ] T-199 — `watchdog/transition.rs`: додати `assert_eq!` у
   `verifying_pid_routes_on_the_check_result` для `VerifyingPid + PidCheck::Alive +
   vote==Dead + !any_channel_degraded → ChannelDegraded` (перший операнд `||`, рядок ~55 —
