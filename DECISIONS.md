@@ -1478,3 +1478,51 @@ T-188: свіжа інсталяція не має читатися як «зл�
 - SPEC.md §8/§8.1, UI-SPEC.md §3.1/§4, `diagrams/ui-status-indicator.md` —
   індикатор обчислюється сервером; DTO-таблиці += 3 поля.
 - T-210 (демоут внутрішніх re-exports) лишається опційним хвостом, не зроблено тут.
+
+---
+
+## 2026-09-11 — T-205 (знахідка 3-A): версіонування адмін-DTO — `#[serde(default)]` на additive-полях + `schema_version`
+
+**Контекст:** `AdminStatusResponse` (+ вкладені `*View`) — єдиний крос-процесний
+контракт репо без явного версіонування. Кожен інший (`FRAME_VERSION`,
+`STATE_SCHEMA_VERSION`, `PersistedFileV1`, header-байт `encrypted_file`) має
+версійне поле/байт або `#[serde(default)]`-additive-дисципліну. Новий `dnsqb-tray`
+проти старого `dnsqb-service` → `serde_json` падає «missing field» (напр.
+`rating_filter` з Батч 4.4, `hero_state` з T-204). Вплив низький (MSIX атомарний,
+`pack-msix.ps1` кросс-звіряє версії, path-deps), але це невідповідність власній
+нормі проєкту.
+
+**Рішення:** Варіант 1 знахідки. `pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 1` +
+`AdminStatusResponse.schema_version` (`#[serde(default)]` → відсутнє = `0`).
+`#[serde(default)]` на **additive** полях (усе, додане після Ф1-контракту T-52:
+`serve_baseline_when_filters_unreachable`, `network`, `paused`, `baseline_endpoint`,
+`watchdog`, `encrypted_persistence`, `rating_filter`, `hero_state`) + `Default` /
+`#[default]` на їх типах із чесним нулем (`NetworkStatusView`→`Online` = «вважати
+доступним», як seed `NetworkReachability::default`; `BaselineEndpointView`→`Primary`;
+`HeroStateView`→`Protected` = «без тривоги»; `EncryptedPersistenceView`/
+`RatingFilterStatusView` → все off). **Load-bearing Ф1-поля лишаються строгими**
+(`active_providers`/`timeout_mode`/`timeout_ms`/`port`/`stats`/`persisted`): їх
+відсутність — реальна помилка «це не той DTO», не defaulted-нуль (пом'якшення
+тредофу «`default` маскує missing-field баг», який знахідка називає).
+`ProvidersResponse` — `#[serde(default)]` на T-204-полях (Vec, без derive).
+`AdminClient::{status,apply,reset}` після декоду кличе `warn_on_schema_mismatch` —
+`tracing::warn!` на розбіжність, повертає `Ok` (best-effort).
+
+**Причина:** робить контракт консистентним із рештою репо за ~derive-атрибути;
+new-consumer-old-service graceful; версійне поле дає оператору сигнал перезібрати.
+`hero_state` теж `#[serde(default)]` попри те, що трей його не читає, а `/admin/ui`
+— той самий процес: консистентність дисципліни дешевша за розбір, який саме
+підмножині полів вона потрібна, а `Protected` як `#[default]` — безпечний нуль
+(та сама «unknown ≠ not-yet-known» логіка, що `cert: None` у T-204). `u32` (не
+`u8`) — простір для схем; `= 1` бо це перша версіонована ітерація.
+
+**Наслідки:**
+- `admin.rs`: `+ADMIN_DTO_SCHEMA_VERSION`, `+warn_on_schema_mismatch`, `#[serde(default)]`
+  × 9 полів, `Default` × 5 типів. `admin::dto_versioning_tests` (4). `lib.rs` re-export.
+- `dispatch.rs`: обидва білдери стемплять `schema_version: ADMIN_DTO_SCHEMA_VERSION`;
+  `serve_admin_status_returns_the_default_live_settings` += перевірка стемпа.
+- `dnsqb-tray/status.rs` тест-фікстура += `schema_version`.
+- CLAUDE.md `admin` рядок, UI-SPEC.md §4 — правило «додав поле → бампни const +
+  `#[serde(default)]`».
+- Не робилось: `GET /admin/version` (Варіант 3 — зайве для PET);
+  `deny_unknown_fields` на request-DTO (окремо, якщо колись).

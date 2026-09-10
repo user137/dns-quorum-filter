@@ -341,6 +341,7 @@ mod tests {
         stats: AdminStats,
     ) -> AdminStatusResponse {
         AdminStatusResponse {
+            schema_version: dnsqb_service::ADMIN_DTO_SCHEMA_VERSION,
             // T-204: the tray does not consume `hero_state` (it keeps its own
             // `from_response` ranking — DECISIONS.md 2026-09-07/08); a fixture
             // value is enough.

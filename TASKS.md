@@ -1508,11 +1508,29 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   **Межа влади:** `hero_state` — тільки для hero `/admin/ui`; трей тримає власний ранкінг
   (`status.rs::from_response`, Paused вище watchdog — DECISIONS.md 2026-09-07/08).
   Гейт: 741 lib + 37 tray + 3 watcher + 7 admin_client + 18 conformance, clippy/fmt/doc.
-- [ ] T-205 — Версіонувати адмін-DTO: `#[serde(default)]` на additive-полях
+- [x] T-205 — Версіонувати адмін-DTO: `#[serde(default)]` на additive-полях
   `AdminStatusResponse` + `schema_version: u32`; `AdminClient` логує warning на розбіжність
   версій, не падає. Зараз це єдиний крос-процесний контракт репо без версіонування
   (на відміну від `encrypted_file` VERSION / `PersistedFileV1` / `FRAME_VERSION` /
   `STATE_SCHEMA_VERSION`). Вплив низький (MSIX атомарний), фікс ≈ derive-атрибути. (3-A)
+  — **готово 2026-09-11** (advisor був перевантажений на kickoff — Варіант 1 знахідки
+  прямолінійний; закривний advisor заплановано). `admin.rs`: `pub const
+  ADMIN_DTO_SCHEMA_VERSION: u32 = 1` + doc-коментар «бампати при додаванні поля».
+  `AdminStatusResponse.schema_version` (`#[serde(default)]` → відсутнє = `0`).
+  `#[serde(default)]` на **additive** полях (`serve_baseline_when_filters_unreachable`,
+  `network`, `paused`, `baseline_endpoint`, `watchdog`, `encrypted_persistence`,
+  `rating_filter`, `hero_state`) + `#[derive(Default)]` / `#[default]` на їх типах
+  (`NetworkStatusView`→`Online`, `BaselineEndpointView`→`Primary`, `HeroStateView`→
+  `Protected`, `EncryptedPersistenceView`/`RatingFilterStatusView`). **Load-bearing
+  Ф1-поля лишаються строгими** (`active_providers`/`timeout_mode`/`timeout_ms`/`port`/
+  `stats`/`persisted` — їх відсутність = «це не той DTO»). `ProvidersResponse`:
+  `#[serde(default)]` на T-204-полях (`category_states`/`master_switch_targets`).
+  `AdminClient::{status,apply,reset}` → `warn_on_schema_mismatch(resp.schema_version)`
+  після декоду, повертає `Ok`. Тести: `admin::dto_versioning_tests` (4 — additive
+  absent → Ok із safe-zeros, load-bearing absent → Err, `schema_version` round-trip,
+  `ProvidersResponse` без T-204-полів) + `serve_admin_status_returns_the_default_live_settings`
+  += перевірка стемпа. Гейт: 747 lib + 37 tray + 3 watcher + 7 admin_client + 18 conformance,
+  clippy/fmt/doc.
 - [ ] T-206 — Характеризаційний тест cache-stampede
   (`two_concurrent_misses_for_the_same_key_each_run_quorum`: спільний `AppState`,
   `MockClient` з `AtomicU32`, `tokio::join!`, `assert_eq!(client.calls(), 2 * voters)`) +

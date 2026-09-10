@@ -43,6 +43,32 @@ use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
 
+/// The `/admin/*` JSON DTO contract version (T-205, finding 3-A). Bump this
+/// whenever a field is **added** to [`AdminStatusResponse`] (or a nested
+/// `*View`) or an existing field's meaning changes. The other half of the
+/// discipline: every additive field carries `#[serde(default)]` so a newer
+/// consumer decoding an older service's response falls back to a safe zero
+/// instead of a hard "missing field" error. This is the same versioning norm
+/// every other cross-process contract in the repo already follows
+/// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
+/// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 1;
+
+/// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
+/// schema version this build doesn't recognise (T-205). Never fails — the
+/// body already decoded on a best-effort basis; this is the operator-visible
+/// signal to rebuild the mismatched binary.
+fn warn_on_schema_mismatch(service_schema: u32) {
+    if service_schema != ADMIN_DTO_SCHEMA_VERSION {
+        tracing::warn!(
+            service_schema,
+            client_schema = ADMIN_DTO_SCHEMA_VERSION,
+            "admin DTO schema version differs — response decoded best-effort; rebuild \
+             dnsqb-tray / dnsqb-watcher and dnsqb-service from the same source"
+        );
+    }
+}
+
 /// Live resolver state plus a snapshot of log-derived stats — the body of
 /// `GET /admin/status`, and echoed back by `POST /admin/config` after
 /// applying an update.
@@ -71,6 +97,13 @@ use std::time::SystemTime;
 /// half was already closed structurally, `dispatch::ROUTES`, TASKS-DONE.md).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdminStatusResponse {
+    /// [`ADMIN_DTO_SCHEMA_VERSION`] of the service that produced this response
+    /// (T-205). `#[serde(default)]` so a response from a service built before
+    /// this field existed decodes as `0` — [`warn_on_schema_mismatch`] then
+    /// logs a warning, and the consumer proceeds with whatever fields did
+    /// decode.
+    #[serde(default)]
+    pub schema_version: u32,
     /// The currently **enabled** voters, in configured order (T-72/T-73) — a
     /// projection of the enabled entries of `dispatch::AppState::providers`,
     /// enough for the tray tooltip / status indicator (`empty` =
@@ -88,12 +121,16 @@ pub struct AdminStatusResponse {
     pub timeout_ms: u32,
     /// T-155 — whether an unfiltered baseline answer may be served when every
     /// enabled voter fails. Editable via `POST /admin/config`; mirrored here
-    /// so the `/admin/ui` checkbox reflects the live value.
+    /// so the `/admin/ui` checkbox reflects the live value. `#[serde(default)]`
+    /// (T-205): additive since Ф1, safe zero is `false`.
+    #[serde(default)]
     pub serve_baseline_when_filters_unreachable: bool,
     /// T-152 — the machine's current internet reachability, published by the
     /// reachability prober. `OFFLINE` is the status indicator's condition #3
     /// (DECISIONS.md 2026-09-03: above "0 active providers", below the
-    /// watchdog states).
+    /// watchdog states). `#[serde(default)]` (T-205): safe zero is `ONLINE`
+    /// ("assume reachable" — the prober's own seed).
+    #[serde(default)]
     pub network: NetworkStatusView,
     /// T-193 — whether the user paused filtering from the tray
     /// (`lifecycle::stop.flag`). `dnsqb-service` is up and answering, but
@@ -102,11 +139,14 @@ pub struct AdminStatusResponse {
     /// hero shows a dedicated grey state for this, ranked below `network`
     /// (offline) and above "0 active providers" — the same order as
     /// `pipeline::handle_query`'s fast paths — so a pause never reads as green
-    /// "protected".
+    /// "protected". `#[serde(default)]` (T-205): safe zero is `false`.
+    #[serde(default)]
     pub paused: bool,
     /// T-154 — which entry of the baseline failover chain is currently
     /// active. `PRIMARY` unless the primary baseline has been failed over.
-    /// Diagnostic only — not part of the status indicator.
+    /// Diagnostic only — not part of the status indicator. `#[serde(default)]`
+    /// (T-205): safe zero is `PRIMARY`.
+    #[serde(default)]
     pub baseline_endpoint: BaselineEndpointView,
     /// The local `DoH` listener's port — read-only here (changing it needs a
     /// re-bind, out of scope for a live-apply admin call).
@@ -119,7 +159,10 @@ pub struct AdminStatusResponse {
     /// watcher isn't rewriting it — so "watchdog not running"), or in a state
     /// the UI doesn't surface — never a fabricated healthy reading (Три Б).
     /// A projection, not the raw seven-variant `WatchdogState`: see
-    /// [`WatchdogStatusView`].
+    /// [`WatchdogStatusView`]. `#[serde(default)]` (T-205): safe zero is
+    /// `None` ("watchdog state unknown"), the same value an absent state file
+    /// already produces.
+    #[serde(default)]
     pub watchdog: Option<WatchdogStatusView>,
     /// Whether the values above were also written to `resolver_config.toml`
     /// on this call. Always `true` for a plain `GET /admin/status` (nothing
@@ -135,22 +178,31 @@ pub struct AdminStatusResponse {
     /// browsing-derived data to disk); `/admin/ui` shows a passive warning
     /// line per enabled store. Grouped into their own view so
     /// [`AdminStatusResponse`] stays under `clippy::struct_excessive_bools`
-    /// without an `#[allow]`.
+    /// without an `#[allow]`. `#[serde(default)]` (T-205): safe zero is "both
+    /// stores off".
+    #[serde(default)]
     pub encrypted_persistence: EncryptedPersistenceView,
     /// T-127/T-128 — the rating-filter «bubble» status, always present so the
     /// header badge / tray tooltip can render it without a second fetch.
+    /// `#[serde(default)]` (T-205): safe zero is "bubble off, no lists".
+    #[serde(default)]
     pub rating_filter: RatingFilterStatusView,
     /// T-204 (finding 3-B) — the `/admin/ui` protection-hero state, computed
     /// server-side by [`compute_hero_state`] so its priority ladder is
     /// Rust-tested. `main.js` renders it; it does not re-derive the ordering.
     /// See [`HeroStateView`] for the authority boundary vs. the tray.
+    /// `#[serde(default)]` (T-205): its only consumer is same-process
+    /// `/admin/ui`, so an absent value (a pre-T-204 service) can only be a
+    /// dev/transient-update mismatch — `PROTECTED` (no alarm) is the safe
+    /// fallback and `schema_version` carries the real signal.
+    #[serde(default)]
     pub hero_state: HeroStateView,
 }
 
 /// T-96 / T-97 — the passive "this store is written to disk (encrypted)"
 /// indicators. Each field mirrors a `resolver_config.toml` flag with no admin
 /// route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct EncryptedPersistenceView {
     /// `persist_query_log` — the query log is sealed to `query-log.enc`
     /// (SPEC.md §6).
@@ -168,7 +220,7 @@ pub struct EncryptedPersistenceView {
 /// `RatingFilterView` at all, so the badge can never disagree with the
 /// pipeline. `enabled` without `active` is Fork B (enabled, but no list
 /// downloaded yet — inert).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct RatingFilterStatusView {
     /// `[rating_filter].enabled` — the toggle's live position (T-128).
     pub enabled: bool,
@@ -216,7 +268,7 @@ pub struct ZoneListStatusView {
 /// There is no `SERVICE_UNREACHABLE` variant — the server cannot observe its
 /// own unreachability (if `/admin/status` answered, the fetch worked);
 /// `main.js` synthesises that case client-side when the fetch itself fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HeroStateView {
     /// The watchdog spent its restart budget — the service is stopped,
@@ -237,7 +289,10 @@ pub enum HeroStateView {
     /// Filtering is up, but the cert-trust check could not answer (T-188 —
     /// "unknown ≠ untrusted").
     CertUnknown,
-    /// Filtering is up and nothing above fired.
+    /// Filtering is up and nothing above fired. Also the `#[default]`
+    /// (T-205): an absent `hero_state` from a pre-T-204 service reads as
+    /// "no alarm" rather than a fabricated warning.
+    #[default]
     Protected,
 }
 
@@ -280,10 +335,13 @@ pub(crate) fn compute_hero_state(
 /// T-152 DTO form of [`crate::NetworkReachability`] — a genuine projection
 /// with its own `From`, per this file's DTO-audit discipline, not a reuse of
 /// the internal enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum NetworkStatusView {
-    /// At least one reachability marker answered.
+    /// At least one reachability marker answered. Also the `#[default]`
+    /// (T-205): "assume reachable" — the same seed
+    /// [`crate::NetworkReachability::default`] uses.
+    #[default]
     Online,
     /// Every reachability marker failed — the offline fast path is active.
     Offline,
@@ -301,10 +359,12 @@ impl From<crate::NetworkReachability> for NetworkStatusView {
 /// T-154 DTO form of `baseline_selector`'s active-chain position — a small
 /// closed enum for the `/admin/status` diagnostic view rather than leaking
 /// the raw URL string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BaselineEndpointView {
-    /// `BASELINE_CHAIN[0]` — the primary baseline resolver.
+    /// `BASELINE_CHAIN[0]` — the primary baseline resolver. Also the
+    /// `#[default]` (T-205): a fresh selector is on the primary.
+    #[default]
     Primary,
     /// `BASELINE_CHAIN[1]` — the first alternate.
     Secondary,
@@ -512,13 +572,17 @@ pub struct ProvidersResponse {
     /// T-204 (finding 3-B) — each filtering category's aggregate toggle state
     /// (`Off`/`Partial`/`On`), computed server-side by [`category_filter_views`]
     /// so `main.js`'s basic-view toggles render it rather than re-derive the
-    /// fold. In [`CATEGORY_ORDER`].
+    /// fold. In [`CATEGORY_ORDER`]. `#[serde(default)]` (T-205): additive,
+    /// safe zero is an empty list.
+    #[serde(default)]
     pub category_states: Vec<CategoryFilterView>,
     /// T-204 (finding 3-B) — the categories the basic-view **master switch** is
     /// allowed to flip: those with ≥1 configured voter, enabled or not
     /// ([`master_switch_targets`]). The switch iterates exactly this set, so
     /// turning it on can never opt a user into adult filtering with a preset
-    /// they never chose (T-170 / DECISIONS.md 2026-09-06).
+    /// they never chose (T-170 / DECISIONS.md 2026-09-06). `#[serde(default)]`
+    /// (T-205): additive, safe zero is an empty list.
+    #[serde(default)]
     pub master_switch_targets: Vec<Category>,
     /// Whether the change that produced this response was written to disk —
     /// same convention as [`OverrideListsResponse::persisted`]. Always `true`
@@ -1399,7 +1463,10 @@ impl AdminClient {
             .await
             .and_then(reqwest::Response::error_for_status)
             .map_err(AdminClientError::Request)?;
-        response.json().await.map_err(AdminClientError::Request)
+        let status: AdminStatusResponse =
+            response.json().await.map_err(AdminClientError::Request)?;
+        warn_on_schema_mismatch(status.schema_version);
+        Ok(status)
     }
 
     /// Polls `GET /health` — watchdog channel 3 (SPEC.md §7.1 #10). Uses the
@@ -1441,7 +1508,10 @@ impl AdminClient {
             .await
             .and_then(reqwest::Response::error_for_status)
             .map_err(AdminClientError::Request)?;
-        response.json().await.map_err(AdminClientError::Request)
+        let status: AdminStatusResponse =
+            response.json().await.map_err(AdminClientError::Request)?;
+        warn_on_schema_mismatch(status.schema_version);
+        Ok(status)
     }
 
     /// Soft-resets the live resolver (T-149) — reloads `resolver_config.toml`/
@@ -1462,7 +1532,10 @@ impl AdminClient {
             .await
             .and_then(reqwest::Response::error_for_status)
             .map_err(AdminClientError::Request)?;
-        response.json().await.map_err(AdminClientError::Request)
+        let status: AdminStatusResponse =
+            response.json().await.map_err(AdminClientError::Request)?;
+        warn_on_schema_mismatch(status.schema_version);
+        Ok(status)
     }
 
     /// Requests a graceful shutdown of the whole `dnsqb-service` process
@@ -2567,5 +2640,95 @@ mod hero_and_category_tests {
             master_switch_targets(&entries),
             vec![Category::AdultContent]
         );
+    }
+}
+
+/// T-205 (finding 3-A) — the `/admin/*` DTO contract is now versioned and
+/// forward-compatible: a newer consumer decoding an older service's response
+/// falls back to safe zeros on additive fields instead of a hard decode
+/// error, and `schema_version` carries the signal to rebuild.
+#[cfg(test)]
+mod dto_versioning_tests {
+    use super::{
+        AdminStatusResponse, BaselineEndpointView, EncryptedPersistenceView, HeroStateView,
+        NetworkStatusView, ProvidersResponse, RatingFilterStatusView,
+    };
+
+    /// The fields the contract has carried since Ф1 (T-52) — no `#[serde(default)]`,
+    /// their absence still means "this isn't an [`AdminStatusResponse`]".
+    fn load_bearing_status_json() -> serde_json::Value {
+        serde_json::json!({
+            "active_providers": [],
+            "timeout_mode": "fail_open",
+            "timeout_ms": 2000,
+            "port": 8443,
+            "stats": {
+                "total": 0, "blocked": 0, "degraded_window": 0, "degraded_events": 0,
+                "in_flight": 0, "rejected_connections": 0, "active_connections": 0
+            },
+            "persisted": true
+        })
+    }
+
+    #[test]
+    fn admin_status_response_decodes_with_every_additive_field_absent() {
+        let parsed: AdminStatusResponse = match serde_json::from_value(load_bearing_status_json()) {
+            Ok(parsed) => parsed,
+            Err(err) => panic!("a pre-versioning response must still decode: {err}"),
+        };
+        assert_eq!(parsed.schema_version, 0, "absent ⇒ 0, the rebuild signal");
+        assert_eq!(parsed.hero_state, HeroStateView::Protected);
+        assert_eq!(parsed.network, NetworkStatusView::Online);
+        assert_eq!(parsed.baseline_endpoint, BaselineEndpointView::Primary);
+        assert!(!parsed.paused);
+        assert_eq!(parsed.watchdog, None);
+        assert!(!parsed.serve_baseline_when_filters_unreachable);
+        assert_eq!(
+            parsed.encrypted_persistence,
+            EncryptedPersistenceView::default()
+        );
+        assert_eq!(parsed.rating_filter, RatingFilterStatusView::default());
+    }
+
+    #[test]
+    fn admin_status_response_still_rejects_a_missing_load_bearing_field() {
+        let mut json = load_bearing_status_json();
+        json.as_object_mut()
+            .unwrap_or_else(|| panic!("fixture is an object"))
+            .remove("stats");
+        assert!(
+            serde_json::from_value::<AdminStatusResponse>(json).is_err(),
+            "an absent load-bearing field is a real error, not a defaulted zero"
+        );
+    }
+
+    #[test]
+    fn admin_status_response_round_trips_the_schema_version() {
+        let mut json = load_bearing_status_json();
+        json.as_object_mut()
+            .unwrap_or_else(|| panic!("fixture is an object"))
+            .insert("schema_version".to_string(), serde_json::json!(7));
+        let parsed: AdminStatusResponse = match serde_json::from_value(json) {
+            Ok(parsed) => parsed,
+            Err(err) => panic!("must decode: {err}"),
+        };
+        assert_eq!(parsed.schema_version, 7);
+    }
+
+    #[test]
+    fn providers_response_decodes_without_the_t204_fields() {
+        let json = serde_json::json!({
+            "active": [],
+            "available_presets": [],
+            "third_party_count": 1,
+            "filtering_active": false,
+            "persisted": true
+        });
+        let parsed: ProvidersResponse = match serde_json::from_value(json) {
+            Ok(parsed) => parsed,
+            Err(err) => panic!("a pre-T-204 providers response must still decode: {err}"),
+        };
+        assert!(parsed.category_states.is_empty());
+        assert!(parsed.master_switch_targets.is_empty());
     }
 }

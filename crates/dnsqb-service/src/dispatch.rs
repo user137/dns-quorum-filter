@@ -30,6 +30,7 @@ use crate::admin::{
     MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest, OverrideDomainView,
     OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView, RatingFilterConfigUpdate,
     RatingFilterStatusView, UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
+    ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -1278,6 +1279,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
     let paused = state.filtering_paused_snapshot();
     let watchdog = read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now());
     AdminStatusResponse {
+        schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
             watchdog,
             network,
@@ -1407,6 +1409,7 @@ fn apply_admin_config<C: DohClient + Sync>(
     let network = NetworkStatusView::from(state.reachability_snapshot());
     let paused = state.filtering_paused_snapshot();
     AdminStatusResponse {
+        schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
             watchdog,
             network,
@@ -4250,6 +4253,11 @@ mod tests {
             .map(|p| p.id.as_str())
             .collect();
         assert_eq!(active_ids, vec!["quad9", "cloudflare-malware", "adguard"]);
+        assert_eq!(
+            status.schema_version,
+            crate::admin::ADMIN_DTO_SCHEMA_VERSION,
+            "T-205: the builder stamps the live DTO schema version"
+        );
         assert!(status.persisted);
         assert!(!status.paused, "T-193: a fresh AppState is not paused");
         assert!(

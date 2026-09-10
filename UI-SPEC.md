@@ -268,6 +268,16 @@ persist'нути напівстан). Рядок «N сторін бачать �
 4. `OverrideEntry { domain, is_wildcard, list: ListKind }` — §5.
 5. `TimeoutMode` enum, `ProviderConfig { name, doh_url, category, built_in,
    enabled }` — §3.3, §3.4.
+5a. **Версіонування адмін-DTO (T-205, знахідка 3-A):** `pub const
+   ADMIN_DTO_SCHEMA_VERSION: u32` + `AdminStatusResponse.schema_version`
+   (`#[serde(default)]` → `0` від сервісу до версіонування). **Кожне
+   additive-поле** несе `#[serde(default)]` (`Default`/`#[default]` на його типі —
+   безпечний нуль: `network`→`ONLINE`, `hero_state`→`PROTECTED`, `rating_filter`→
+   off), тож новіший споживач декодує відповідь старішого сервісу з fallback, не
+   помилкою. Load-bearing Ф1-поля (`active_providers`/`timeout_mode`/`timeout_ms`/
+   `port`/`stats`/`persisted`) — строгі. `AdminClient::{status,apply,reset}`
+   `tracing::warn!` на розбіжність версій, не падає. **Правило:** додав поле в
+   `AdminStatusResponse` → бампни const **і** додай `#[serde(default)]`.
 6. `StatusIndicatorState` — не єдиний enum, а сукупність незалежних умов; див.
    `diagrams/ui-status-indicator.md` (включно з ⚠️ GAP про порядок пріоритету
    при одночасному виконанні кількох умов). **T-191:** трей-іконка (`dnsqb-tray`)
