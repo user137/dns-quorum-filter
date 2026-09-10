@@ -365,3 +365,119 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 @media (prefers-reduced-motion: reduce) {
   #advanced-settings > summary .summary-chevron { transition: none; }
 }
+
+/* ===================================================================
+   T-127/T-128/T-111: rating-filter «bubble» (SPEC.md §5.3). Ported from
+   mockups/gui-dashboard.html's Артборд E. The enable control is a framed
+   block with its own confirm step, NOT one more .toggle-row switch. Zone
+   selection is a hand-rolled search combobox (input[role=combobox] +
+   ul[role=listbox] in main.js - the CSP forbids frameworks) plus a
+   removable column list. All colours from the tokens; no data: URIs (the
+   page ships default-src 'self').
+   =================================================================== */
+.rf-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  margin-top: 0.5rem;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.rf-head { display: flex; align-items: center; gap: 0.5rem; }
+.rf-title { flex: 1 1 auto; font-size: 12.5px; font-weight: 700; }
+.rf-desc { font-size: 11.5px; color: var(--text-muted); margin: 0.35rem 0 0; }
+.rf-sub {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted); margin: 0.75rem 0 0.35rem;
+}
+
+/* The enable switch - visually the .switch primitive, but wrapped so it
+   reads as a deliberate control, not a list row. */
+.rating-filter-switch { width: 34px; height: 20px; flex-shrink: 0; }
+
+.rf-combo { position: relative; }
+.rf-combo input {
+  width: 100%; box-sizing: border-box;
+  font-size: 12.8px; padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--paper); color: var(--text);
+}
+.rf-menu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 3px); z-index: 5;
+  list-style: none; margin: 0; padding: 0;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--surface-raised);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+}
+.rf-opt {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem;
+  font-size: 12.5px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+}
+.rf-opt:last-child { border-bottom: none; }
+.rf-opt.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rf-opt .rf-box {
+  width: 13px; height: 13px; border-radius: 3px;
+  border: 1.5px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; color: var(--accent); flex: none;
+}
+.rf-opt.picked .rf-box {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.rf-opt .rf-nm { flex: 1 1 auto; }
+.rf-opt .rf-ct {
+  font-size: 10.5px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rf-picked { list-style: none; margin: 0.45rem 0 0; padding: 0; }
+.rf-picked li {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.rf-picked li:last-child { border-bottom: none; }
+.rf-picked .rf-nm { flex: 1 1 auto; font-weight: 600; }
+.rf-picked .rf-meta {
+  font-size: 10.5px; color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.rf-picked .rf-meta.loading { color: var(--warn); }
+.rf-picked .rf-x {
+  border: none; background: none; cursor: pointer; color: var(--text-muted);
+  font-size: 15px; line-height: 1; padding: 0 0.2rem;
+}
+.rf-picked .rf-x:hover { color: var(--bad); }
+.rf-empty { font-size: 11.5px; color: var(--text-muted); margin: 0.45rem 0 0; }
+
+.rf-save {
+  margin-top: 0.6rem; padding: 0.35rem 0.7rem;
+  border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--accent); color: var(--paper);
+  font-size: 12.3px; cursor: pointer;
+}
+.rf-confirm-row {
+  display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.5rem;
+}
+.rf-confirm-row button {
+  padding: 0.35rem 0.7rem; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface-raised); color: var(--text);
+  font-size: 12.3px; cursor: pointer;
+}
+.rf-confirm-row button.rf-confirm {
+  border-color: var(--accent); background: var(--accent); color: var(--paper);
+}
+
+/* T-128: the always-visible badge under the hero (#rating-filter-badge,
+   renderRatingFilterBadge). Empty div when the filter is off. */
+.rf-badge {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 11px; font-weight: 600; padding: 0.2rem 0.55rem;
+  border-radius: 999px; margin: 0 0 0.55rem;
+}
+.rf-badge.on { background: var(--good-soft); color: var(--good); }
+.rf-badge.pending { background: var(--warn-soft); color: var(--warn); }
+.rf-badge .rf-dot {
+  width: 7px; height: 7px; border-radius: 999px; background: currentColor;
+}

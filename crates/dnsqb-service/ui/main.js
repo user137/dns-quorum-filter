@@ -2388,3 +2388,448 @@ uninstallBtn.addEventListener("click", async () => {
     uninstallBtn.textContent = "Повністю видалити";
   }
 });
+
+// T-127/T-111: the rating-filter «bubble» zone-config card
+// (#rating-filter-body). SPEC.md §5.3. Its data is a field on
+// AdminStatusResponse (status.rating_filter: RatingFilterStatusView), not
+// its own GET route - the card fetches /admin/status once on load and
+// re-renders from the POST /admin/rating-filter response after every
+// action. Deliberately NOT on the 2s poll: the zone combobox is a
+// free-text input in progress, same reasoning as #overrides-body /
+// #geoip-body. Built via DOM methods, not innerHTML (the CSP sets no
+// Trusted Types - same house rule as the overrides/geoip editors).
+const ratingFilterBody = document.getElementById("rating-filter-body");
+
+// The curated availability zones ship as bare codes in
+// status.rating_filter.available_lists (the T-105 distribution contract);
+// the Ukrainian names are a client-side presentation concern - the server
+// has no basis to localise "ua" (i18n is T-151 / Фаза 5). An unknown code
+// (a future dataset the client has no label for) falls back to the code.
+const RATING_FILTER_ZONE_LABELS = {
+  ua: "Україна",
+  us: "США",
+  de: "Німеччина",
+  pl: "Польща",
+  gb: "Велика Британія",
+  global: "Глобальний топ",
+};
+
+function ratingFilterZoneLabel(code) {
+  return RATING_FILTER_ZONE_LABELS[code] || code;
+}
+
+async function setRatingFilter(enabled, lists) {
+  const response = await fetch("/admin/rating-filter", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled, lists }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function ratingFilterCountByList(loaded) {
+  const map = {};
+  (loaded || []).forEach((entry) => {
+    map[entry.list] = entry.domains;
+  });
+  return map;
+}
+
+function renderRatingFilter(status) {
+  const rf = status.rating_filter;
+  ratingFilterBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Рейтинговий фільтр «бульбашка»";
+  ratingFilterBody.appendChild(heading);
+
+  // Same silent-data-loss concern as #overrides-body / #geoip-body (T-47).
+  // No module flag needed here (unlike renderTimeoutConfig's
+  // configPersistFailed): this card isn't re-rendered by the 2s poll, so a
+  // `persisted: false` render stays on screen until the next action.
+  if (status.persisted === false) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    ratingFilterBody.appendChild(notPersisted);
+  }
+
+  const card = document.createElement("div");
+  card.className = "rf-card";
+
+  const head = document.createElement("div");
+  head.className = "rf-head";
+  const title = document.createElement("span");
+  title.className = "rf-title";
+  title.textContent = "Обмежити інтернет обраними зонами";
+  head.appendChild(title);
+
+  const switchLabel = document.createElement("label");
+  switchLabel.className = "switch rating-filter-switch";
+  const switchInput = document.createElement("input");
+  switchInput.type = "checkbox";
+  switchInput.checked = rf.enabled;
+  switchInput.setAttribute("aria-label", "Рейтинговий фільтр «бульбашка»");
+  const track = document.createElement("span");
+  track.className = "track";
+  const thumb = document.createElement("span");
+  thumb.className = "thumb";
+  switchLabel.appendChild(switchInput);
+  switchLabel.appendChild(track);
+  switchLabel.appendChild(thumb);
+  head.appendChild(switchLabel);
+  card.appendChild(head);
+
+  const desc = document.createElement("p");
+  desc.className = "rf-desc";
+  if (rf.active) {
+    desc.textContent =
+      "Активний. Поза обраними зонами → блок, кворум не опитується.";
+  } else if (rf.enabled) {
+    desc.textContent =
+      "Дозволяє резолвити лише сайти з курованих списків популярних доменів. Усе інше → блок.";
+  } else {
+    desc.textContent =
+      "Дозволяє резолвити лише сайти з курованих списків популярних доменів. " +
+      "Усе інше → блок. Опційно, дефолт вимкнено. Оберіть зони заздалегідь — " +
+      "вони застосуються, щойно ввімкнете.";
+  }
+  card.appendChild(desc);
+
+  // Fork B: enabled, but run_topn_updater hasn't landed a list yet - step 5
+  // is inert. A distinct, un-missable warning, not a permanent banner.
+  if (rf.enabled && !rf.active) {
+    const forkB = document.createElement("div");
+    forkB.className = "notice warn";
+    forkB.textContent =
+      "Фільтр увімкнено, але жоден список ще не завантажено — фільтрація поки не діє. " +
+      "Оновиться автоматично за кілька секунд.";
+    card.appendChild(forkB);
+  }
+
+  // OFF→ON arm-confirm block, hidden until the switch is clicked on
+  // (mirrors #geoip-body's add-arming: "an always-on warning is
+  // functionally identical to no warning", SPEC.md §8.1).
+  const confirmNotice = document.createElement("div");
+  confirmNotice.className = "notice warn";
+  confirmNotice.hidden = true;
+  confirmNotice.textContent =
+    "Увімкнення заблокує переважну більшість інтернету — доступними лишаться " +
+    "лише сайти з обраних зон нижче. Дефолт — вимкнено.";
+  card.appendChild(confirmNotice);
+
+  const confirmRow = document.createElement("div");
+  confirmRow.className = "rf-confirm-row";
+  confirmRow.hidden = true;
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Скасувати";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "rf-confirm";
+  confirmBtn.textContent = "Підтвердити ввімкнення";
+  confirmRow.appendChild(cancelBtn);
+  confirmRow.appendChild(confirmBtn);
+  card.appendChild(confirmRow);
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+  card.appendChild(errorLine);
+
+  const sub = document.createElement("div");
+  sub.className = "rf-sub";
+  sub.textContent = "Зони доступності";
+  card.appendChild(sub);
+
+  // Picked codes are re-seeded from the server's normalised echo on every
+  // render (this file's "no local optimistic state" rule). User edits
+  // mutate this render-scoped Set; the "Зберегти зони" button appears when
+  // it diverges from what the server already has.
+  const savedCodes = rf.lists.slice();
+  const picked = new Set(savedCodes);
+  const counts = ratingFilterCountByList(rf.loaded);
+
+  const combo = document.createElement("div");
+  combo.className = "rf-combo";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-expanded", "false");
+  input.setAttribute("aria-controls", "rf-zone-menu");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-label", "Пошук зони");
+  input.placeholder = "Додати зону — країна або «глобальний топ»…";
+  const menu = document.createElement("ul");
+  menu.className = "rf-menu";
+  menu.id = "rf-zone-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+  combo.appendChild(input);
+  combo.appendChild(menu);
+  card.appendChild(combo);
+
+  const pickedList = document.createElement("ul");
+  pickedList.className = "rf-picked";
+  card.appendChild(pickedList);
+
+  const emptyLine = document.createElement("p");
+  emptyLine.className = "rf-empty";
+  emptyLine.textContent = "Ще нічого не обрано.";
+  card.appendChild(emptyLine);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "rf-save";
+  saveBtn.textContent = "Зберегти зони";
+  saveBtn.hidden = true;
+  card.appendChild(saveBtn);
+
+  let activeIndex = -1;
+
+  function pickedMatchesSaved() {
+    if (picked.size !== savedCodes.length) {
+      return false;
+    }
+    return savedCodes.every((code) => picked.has(code));
+  }
+
+  function syncSaveBtn() {
+    saveBtn.hidden = pickedMatchesSaved();
+  }
+
+  function zoneMeta(code) {
+    if (Object.prototype.hasOwnProperty.call(counts, code)) {
+      return { text: `${counts[code]} дом.`, loading: false };
+    }
+    if (rf.enabled) {
+      return { text: "завантажується…", loading: true };
+    }
+    return { text: "—", loading: false };
+  }
+
+  function renderPicked() {
+    pickedList.textContent = "";
+    const codes = rf.available_lists.filter((code) => picked.has(code));
+    emptyLine.hidden = codes.length > 0;
+    codes.forEach((code) => {
+      const li = document.createElement("li");
+      const nm = document.createElement("span");
+      nm.className = "rf-nm";
+      nm.textContent = ratingFilterZoneLabel(code);
+      li.appendChild(nm);
+      const meta = document.createElement("span");
+      const info = zoneMeta(code);
+      meta.className = info.loading ? "rf-meta loading" : "rf-meta";
+      meta.textContent = info.text;
+      li.appendChild(meta);
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "rf-x";
+      removeBtn.textContent = "×";
+      removeBtn.setAttribute(
+        "aria-label",
+        `Прибрати: ${ratingFilterZoneLabel(code)}`,
+      );
+      removeBtn.addEventListener("click", () => {
+        picked.delete(code);
+        renderPicked();
+        renderMenu();
+        syncSaveBtn();
+      });
+      li.appendChild(removeBtn);
+      pickedList.appendChild(li);
+    });
+  }
+
+  function visibleCodes() {
+    const query = input.value.trim().toLowerCase();
+    return rf.available_lists.filter((code) => {
+      if (!query) {
+        return true;
+      }
+      return (
+        code.toLowerCase().includes(query) ||
+        ratingFilterZoneLabel(code).toLowerCase().includes(query)
+      );
+    });
+  }
+
+  function renderMenu() {
+    menu.textContent = "";
+    const codes = visibleCodes();
+    if (activeIndex >= codes.length) {
+      activeIndex = codes.length - 1;
+    }
+    codes.forEach((code, index) => {
+      const li = document.createElement("li");
+      li.className = "rf-opt";
+      li.id = `rf-opt-${code}`;
+      li.setAttribute("role", "option");
+      const isPicked = picked.has(code);
+      li.setAttribute("aria-selected", isPicked ? "true" : "false");
+      if (isPicked) {
+        li.classList.add("picked");
+      }
+      if (index === activeIndex) {
+        li.classList.add("active");
+      }
+      const box = document.createElement("span");
+      box.className = "rf-box";
+      box.textContent = isPicked ? "✓" : "";
+      li.appendChild(box);
+      const nm = document.createElement("span");
+      nm.className = "rf-nm";
+      nm.textContent = ratingFilterZoneLabel(code);
+      li.appendChild(nm);
+      const ct = document.createElement("span");
+      ct.className = "rf-ct";
+      ct.textContent = Object.prototype.hasOwnProperty.call(counts, code)
+        ? String(counts[code])
+        : "—";
+      li.appendChild(ct);
+      // mousedown, not click: it fires before the input's blur handler
+      // closes the menu.
+      li.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        toggleCode(code);
+      });
+      menu.appendChild(li);
+    });
+    if (codes.length > 0 && activeIndex >= 0) {
+      input.setAttribute(
+        "aria-activedescendant",
+        `rf-opt-${codes[activeIndex]}`,
+      );
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function toggleCode(code) {
+    if (picked.has(code)) {
+      picked.delete(code);
+    } else {
+      picked.add(code);
+    }
+    renderPicked();
+    renderMenu();
+    syncSaveBtn();
+  }
+
+  function openMenu() {
+    if (!menu.hidden) {
+      return;
+    }
+    menu.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    activeIndex = -1;
+    renderMenu();
+  }
+
+  function closeMenu() {
+    menu.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    activeIndex = -1;
+    input.removeAttribute("aria-activedescendant");
+  }
+
+  input.addEventListener("focus", openMenu);
+  input.addEventListener("input", () => {
+    openMenu();
+    activeIndex = -1;
+    renderMenu();
+  });
+  input.addEventListener("blur", () => {
+    // Delay so a mousedown on an option runs first.
+    setTimeout(closeMenu, 120);
+  });
+  input.addEventListener("keydown", (event) => {
+    const codes = visibleCodes();
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      openMenu();
+      activeIndex = Math.min(activeIndex + 1, codes.length - 1);
+      renderMenu();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      activeIndex = Math.max(activeIndex - 1, 0);
+      renderMenu();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (!menu.hidden && activeIndex >= 0 && activeIndex < codes.length) {
+        toggleCode(codes[activeIndex]);
+      }
+    } else if (event.key === "Escape") {
+      closeMenu();
+    }
+  });
+
+  function clearArm() {
+    confirmNotice.hidden = true;
+    confirmRow.hidden = true;
+  }
+
+  switchInput.addEventListener("change", async () => {
+    errorLine.textContent = "";
+    if (switchInput.checked) {
+      // OFF→ON: don't POST yet - revert the visual toggle and show the
+      // confirm step. The confirm submits the local picked set, so a user
+      // who queued zones while off gets them applied on enable (the
+      // mockup's own OFF-panel copy: "застосуються, щойно ввімкнете").
+      switchInput.checked = false;
+      confirmNotice.hidden = false;
+      confirmRow.hidden = false;
+    } else {
+      try {
+        renderRatingFilter(await setRatingFilter(false, [...picked]));
+      } catch (err) {
+        switchInput.checked = true;
+        errorLine.textContent = `Не вдалося вимкнути: ${(err && err.message) || String(err)}`;
+      }
+    }
+  });
+  cancelBtn.addEventListener("click", clearArm);
+  confirmBtn.addEventListener("click", async () => {
+    try {
+      renderRatingFilter(await setRatingFilter(true, [...picked]));
+    } catch (err) {
+      errorLine.textContent = `Не вдалося ввімкнути: ${(err && err.message) || String(err)}`;
+    }
+  });
+  saveBtn.addEventListener("click", async () => {
+    try {
+      renderRatingFilter(await setRatingFilter(rf.enabled, [...picked]));
+    } catch (err) {
+      errorLine.textContent = `Не вдалося зберегти зони: ${(err && err.message) || String(err)}`;
+    }
+  });
+
+  renderPicked();
+  syncSaveBtn();
+  ratingFilterBody.appendChild(card);
+}
+
+function renderRatingFilterError(err) {
+  ratingFilterBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Рейтинговий фільтр «бульбашка»";
+  ratingFilterBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  ratingFilterBody.appendChild(panel);
+}
+
+async function refreshRatingFilter() {
+  try {
+    renderRatingFilter(await getStatus());
+  } catch (err) {
+    renderRatingFilterError(err);
+  }
+}
+
+refreshRatingFilter();

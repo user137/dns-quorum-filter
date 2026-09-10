@@ -17,6 +17,13 @@
        render; carries no layout of its own when empty. -->
   <div id="protection-hero"></div>
 
+  <!-- T-128: always-visible rating-filter «bubble» activity indicator. Filled
+       by the 2s status poll (renderRatingFilterBadge, in render()) so it can't
+       go stale; carries no box when the filter is off (the common case), so it
+       adds no layout of its own on a normal render. The zone-config card that
+       turns it on lives in the advanced disclosure (#rating-filter-body). -->
+  <div id="rating-filter-badge"></div>
+
   <!-- T-176: master filter switch + the three category toggles (malware /
        ads / adult). Its own fetch/render cycle off GET /admin/providers (not
        the 2s status poll) so a toggle click never races a poll - same
@@ -173,6 +180,20 @@
            its own independent fetch/render cycle (see main.js). -->
       <div id="geoip-maxmind-body" class="card">
         <h3>Джерело GeoIP: MaxMind GeoLite2</h3>
+        <p>Завантаження…</p>
+      </div>
+
+      <!-- T-127/T-111: rating-filter «bubble» zone-config card (SPEC.md §5.3).
+           A niche opt-in feature, so it sits inside the advanced disclosure.
+           Its own fetch/render cycle off GET /admin/status (once on load) +
+           the POST /admin/rating-filter response - deliberately NOT on the 2s
+           status poll: the zone combobox is a free-text input in progress,
+           same reasoning as #overrides-body / #geoip-body. The enable control
+           is a framed block with a full confirm step on turn-on, not one more
+           mini-row switch (T-127). Kept before #danger-zone-body so the
+           danger zone stays visually last. -->
+      <div id="rating-filter-body" class="card">
+        <h3>Рейтинговий фільтр «бульбашка»</h3>
         <p>Завантаження…</p>
       </div>
 

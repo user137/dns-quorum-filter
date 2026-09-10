@@ -254,6 +254,8 @@ mod tests {
     /// `<details id="advanced-settings">` disclosure.
     const BASIC_SECTION_IDS: &[&str] = &[
         "protection-hero",
+        // T-128 — the always-visible rating-filter «bubble» activity badge.
+        "rating-filter-badge",
         "filter-controls-body",
         "app-body",
         "browser-setup-body",
@@ -267,6 +269,9 @@ mod tests {
         "cache-config-body",
         "geoip-body",
         "geoip-maxmind-body",
+        // T-127/T-111 — the rating-filter «bubble» zone-config card. A niche
+        // opt-in, so it lives with the engineering controls.
+        "rating-filter-body",
         "danger-zone-body",
     ];
 
@@ -535,6 +540,47 @@ mod tests {
         assert!(
             window.contains("finally"),
             "the armed confirm label must reset in a finally, not only on success"
+        );
+    }
+
+    // T-127/T-111 — the rating-filter card must (1) post to the dedicated
+    // write route, (2) gate turn-on behind an explicit confirm step (not a
+    // bare checkbox — SPEC.md §8.1 "an always-on warning is functionally
+    // identical to no warning"), and (3) build the zone picker from the
+    // server's own available_lists, not a hard-coded client list, so a new
+    // dataset is one const edit server-side (the mockup's Артборд E rationale).
+    #[test]
+    fn main_js_rating_filter_card_arms_turn_on_and_drives_the_zone_picker_from_the_server() {
+        assert!(
+            MAIN_JS.contains("/admin/rating-filter"),
+            "the card must post to the dedicated rating-filter route"
+        );
+        assert!(
+            MAIN_JS.contains("Підтвердити ввімкнення"),
+            "turning the bubble on must require an explicit confirm step"
+        );
+        assert!(
+            MAIN_JS.contains("rf.available_lists"),
+            "the zone picker must render from status.rating_filter.available_lists, \
+             not a hard-coded client constant"
+        );
+        assert!(
+            MAIN_JS.contains("aria-activedescendant"),
+            "the hand-rolled combobox must be keyboard-navigable"
+        );
+        assert!(
+            MAIN_JS.contains("setRatingFilter(false,"),
+            "turning the bubble off must be immediate (no confirm), unlike turn-on"
+        );
+    }
+
+    // T-128 — the activity badge div is present in the basic view but nothing
+    // renders into it yet (that is Коміт 5, together with the tray suffix).
+    #[test]
+    fn index_html_carries_the_rating_filter_badge_slot() {
+        assert!(
+            INDEX_HTML.contains("id=\"rating-filter-badge\""),
+            "the always-visible activity indicator needs its slot under the hero"
         );
     }
 }
