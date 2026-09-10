@@ -3,11 +3,18 @@ SOURCES: SPEC.md §5.3 (рейтинговий фільтр — ядро Фаз�
 питання" п.8 (default-OFF — не судження); DECISIONS.md 2026-09-07 (T-179 — §5.1 прибрано),
 2026-09-09 ×2 (T-108 лінива гігієна; T-108/T-124 overlay in-memory / окремий lock / exact-match);
 TASKS.md §"Фаза 4" "План виконання Ф4"; T-104/T-106 (kickoff-гейти); `diagrams/ui-status-indicator.md`
-(індикатор — T-128). **Код (T-124, Батч 4.3 — крок 5 збудовано):** `rating_filter.rs`
+(індикатор — T-128); DECISIONS.md 2026-09-10 (T-127 — `validate_rating_filter_lists` звужено до
+членства в `AVAILABLE_TOPN_LISTS`). **Код (T-124, Батч 4.3 — крок 5 збудовано):** `rating_filter.rs`
 (`ZoneLists::zone_match` — suffix-walk, `rating_filter.rs`), `pipeline.rs::handle_query`
 (`rating_filter_step` після кешу, перед `resolve`; `rating_filter_block_with_meta`;
 `quorum_block_response_with_meta` → `QueryLogMeta::zone_removal`), `dispatch.rs::resolve_doh_request`
 (`record_zone_removal`), `topn_updater.rs` (`run_topn_updater`), `config.rs` (`[rating_filter]`).
+**UI/маршрут (T-111/T-127/T-128, Батч 4.4):** `dispatch.rs` (`POST /admin/rating-filter`,
+`apply_rating_filter_change`, `rating_filter_is_active` — єдиний авторитет для гейта конвеєра
+й бейджа), `admin.rs` (`RatingFilterStatusView`/`ZoneListStatusView`/`RatingFilterConfigUpdate`,
+`AdminClient::set_rating_filter`), `ui/{index.html,main.js,style.css}` (картка `#rating-filter-body`
++ бейдж `#rating-filter-badge`), `dnsqb-tray/status.rs` (`TrayStatus::Filtering.rating_filter_active`
+→ суфікс тултипа), `config.rs` (`+UnknownRatingFilterList`).
 
 # Рейтинговий фільтр «бульбашка» — позиція в конвеєрі + джерела зон
 
@@ -85,13 +92,30 @@ enum, тож 4.2/4.5 адитивні.
   `dispatch::resolve_doh_request` дає `None` замість `RatingFilterView`, лог-warn при старті.
 - **Порядок перевірки джерел зон** — не важливий для результату (∪). `decision_source =
   RATING_FILTER` лише каже «цей крок заблокував»; окремого поля «яке джерело впустило» немає.
-- **Дефолт держ / науково-освітніх «увімкнено»** — ефект лише коли сам фільтр увімкнений; per-source
-  тумблери додає Батч 4.4 (T-111).
+- **Дефолт держ / науково-освітніх «увімкнено»** — ефект лише коли сам фільтр увімкнений; ці
+  `ZoneSource`-типи додає Батч 4.2.
+- **Допустимі коди `lists`** — рівно `AVAILABLE_TOPN_LISTS` (T-127): `validate_rating_filter_lists`
+  робить дві перевірки — форма (`InvalidRatingFilterList`) і членство (`UnknownRatingFilterList`);
+  обидві фатальні. `lists ⊆ available_lists` гарантовано. Прибрати код із константи — ламна зміна
+  конфігу.
+
+## UI — Батч 4.4 (T-111 / T-127 / T-128, збудовано)
+
+- **Маршрут:** `POST /admin/rating-filter`, тіло `RatingFilterConfigUpdate { enabled, lists }`
+  (повна заміна). `apply_rating_filter_change` тримає `persist_lock` через validate→swap→
+  (rebuild кешу, якщо лишається увімкненим)→persist; будить `run_topn_updater`. Відповідь —
+  свіжий `AdminStatusResponse` із полем `rating_filter: RatingFilterStatusView`.
+- **Картка `#rating-filter-body`** у `<details>` «Розширені»: обрамлений enable-блок (OFF→ON —
+  крок підтвердження, ON→OFF миттєве); combobox пошуку зон (`input[role=combobox]` +
+  `ul[role=listbox]`, ↑↓/Enter/Esc, `aria-activedescendant`) з `available_lists` + стовпчик
+  обраних із лічильником доменів (`loaded`, per-list, ніколи сума) і `×`; кнопка «Зберегти зони»
+  (один POST). Fork B і `persisted:false` — notice у картці.
+- **Бейдж `#rating-filter-badge`** під hero (2-с полл) + суфікс у підказці трею (лише коли
+  `active`; колір іконки не чіпає) — див. `diagrams/ui-status-indicator.md`.
 
 ## Крос-посилання на UI
 
 `diagrams/ui-status-indicator.md` — індикатор активності рейтинг-фільтра **обов'язковий, завжди
 видимий** (T-128), не лише в налаштуваннях; окремий візуально виділений enable-тумблер із явним
 попередженням «буде недоступна переважна більшість інтернету» (T-127), НЕ звичайний чекбокс поруч
-з категорійними. Картка конфігурації зон (N, країни, персональний список) — T-111, імовірно в
-`<details>` «Розширені» (T-176 поділ).
+з категорійними.

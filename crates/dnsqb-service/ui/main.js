@@ -2645,11 +2645,12 @@ function renderRatingFilter(status) {
   }
 
   // Codes to display: the server's available set in its canonical order,
-  // plus any already-picked code the client has no catalogue entry for. A
-  // hand-edited resolver_config.toml can carry a well-formed code outside
-  // AVAILABLE_TOPN_LISTS (validate_rating_filter_lists checks shape, not
-  // membership) - it must still show as a removable row, never a silently
-  // hidden zone gating the user's traffic ("never a fake 0/0", Три Б).
+  // plus any already-picked code the client has no catalogue entry for.
+  // Since T-127 validate_rating_filter_lists rejects a code outside
+  // AVAILABLE_TOPN_LISTS, so status.rating_filter.lists is normally a
+  // subset of available_lists - but a resolver_config.toml written before
+  // that check can still carry one, and it must show as a removable row,
+  // never a silently hidden zone ("never a fake 0/0", Три Б).
   function displayCodes() {
     const extra = [...picked].filter(
       (code) => !rf.available_lists.includes(code),

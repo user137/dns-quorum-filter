@@ -574,8 +574,8 @@ mod tests {
         );
         assert!(
             MAIN_JS.contains("!rf.available_lists.includes(code)"),
-            "a picked code outside available_lists (hand-edited config) must still \
-             render as a removable row, not be silently hidden"
+            "a picked code outside available_lists (a config written before T-127) \
+             must still render as a removable row, not be silently hidden"
         );
     }
 

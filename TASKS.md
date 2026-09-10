@@ -969,13 +969,15 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   T-129 (поза-зони BLOCK без звернення до quorum-моків — перевірка виклику), T-130 (в-зоні НЕ
   force-ALLOW), T-131 (user-allowlist перекриває фільтр). Оновити `SERVICES.md` (нові
   zone-файли) + `PERFORMANCE.md` (крок 5 у pipeline-таблиці) + `diagrams/rating-filter.md`.
-- **Батч 4.4 — UI рейтинг-фільтра (T-111, T-127, T-128)**: «backend before UI» — admin-маршрут
-  `POST /admin/rating-filter` (`set_rating_filter` / `RatingFilterConfig`, UI-SPEC) міг зайти
-  ще в 4.3; тут `/admin/ui`-картки та індикатори. T-111 — картка конфігурації зон (N, країни,
-  per-zone enable, глобальне вимкнення) у `<details>` «Розширені» (T-176). T-127 — **окремий
-  візуально виділений** enable-тумблер + явне попередження при увімкненні, НЕ звичайний checkbox.
-  T-128 — обовʼязковий, завжди видимий індикатор активності (header-бейдж + tray-tooltip).
-  `dispatch::ROUTES` + T-59 snapshot. Макет — раунд затвердження з користувачем (прецедент T-176).
+- **Батч 4.4 — UI рейтинг-фільтра (T-111, T-127, T-128) — ЗРОБЛЕНО 2026-09-10.** kickoff
+  plan+advisor+AskUserQuestion + окремий раунд затвердження макета; closing-advisor. `POST
+  /admin/rating-filter` (`RatingFilterConfigUpdate`, повна заміна; `rating_filter_is_active` —
+  єдиний авторитет; `dispatch::ROUTES` + T-59 snapshot) + поле `AdminStatusResponse.rating_filter`
+  (`RatingFilterStatusView`). Картка `#rating-filter-body` (T-127 обрамлений enable-блок із
+  кроком підтвердження; T-111 combobox пошуку зон із `available_lists` + стовпчик обраних).
+  Бейдж `#rating-filter-badge` + суфікс трей-тултипа (T-128). `run_topn_updater` завжди-спавн +
+  clear кешу на увімкненні (закрито дві known-limitation Батча 4.3). `validate_rating_filter_lists`
+  звужено (T-127, DECISIONS.md 2026-09-10). Палітра → Catppuccin. Наратив — TASKS-DONE.md.
 - **Батч 4.2 — курація зон: державні + науково-освітні (T-122, T-123)**: ще два `ZoneSource`
   (4.3 уже приймає N-арний список — адитивно). T-122 — евристичне кандидування за TLD-патерном
   (`*.gov`, `*.gov.ua`, `*.gob.*` …) + **обовʼязкове ручне ревʼю**, дефолт N=10/країну. T-123 —
@@ -1035,8 +1037,11 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `*.gov.ua`, `*.gob.*` тощо), обов'язкове ручне рев'ю перед публікацією, дефолт N=10 на країну (5.3)
 - [ ] T-123 — Курація глобального науково-освітнього/некомерційного списку: ручна, версіонована,
   з процесом рев'ю й changelog (5.3)
-- [ ] T-111 — UI: картка конфігурації параметрів зон — N (розмір топ-списку), список країн,
-  per-zone enable, вимкнути глобально; окремо від T-127 (сам enable-тумблер) (5.3)
+- [x] T-111 — (Батч 4.4) **Зроблено 2026-09-10.** Картка `#rating-filter-body` у `<details>`
+  «Розширені»: hand-rolled combobox пошуку зон (`input[role=combobox]` + `ul[role=listbox]`,
+  ↑↓/Enter/Esc, `aria-activedescendant`) із `available_lists` + стовпчик обраних із лічильником
+  доменів (`RatingFilterStatusView.loaded`, per-list) і `×`; кнопка «Зберегти зони» (один POST).
+  Розмір топ-N у UI немає (фіксує курація, Батч 4.1). Наратив — TASKS-DONE.md.
 - [x] T-124 — (Батч 4.3) **Зроблено 2026-09-09.** Крок 5 конвеєра в `pipeline::handle_query`
   (після Cache, перед Quorum): `rating_filter` модуль (чиста `ZoneLists::zone_match` — suffix-walk,
   без PSL), `topn_download`/`topn_updater` (той самий механізм, що GeoIP), `[rating_filter]`
@@ -1046,9 +1051,18 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   конвеєр без force-ALLOW. Тест `in_zone_domain_continues_through_quorum_and_is_not_force_allowed`.
 - [x] T-126 — (Батч 4.3) **Зроблено 2026-09-09.** `[rating_filter].enabled` дефолт `false`;
   `enabled` без `lists` — інертний, не помилка (Fork B). Round-trip тести в `config.rs`.
-- [ ] T-127 — UI: окремий візуально виділений перемикач з явним попередженням при увімкненні
-  (не звичайний checkbox поруч з іншими), імовірно в `<details>` advanced (T-176) (5.3) — Батч 4.4
-- [ ] T-128 — UI: обов'язковий, завжди видимий індикатор активності рейтингового фільтра (5.3, 8) — Батч 4.4
+- [x] T-127 — (Батч 4.4) **Зроблено 2026-09-10.** `POST /admin/rating-filter`
+  (`RatingFilterConfigUpdate`, повна заміна; `rating_filter_is_active` — єдиний авторитет;
+  `wake` + rebuild кешу при увімкненні) + поле `AdminStatusResponse.rating_filter`
+  (`RatingFilterStatusView`). Картка: обрамлений enable-блок, OFF→ON крок підтвердження
+  «буде недоступна переважна більшість інтернету», ON→OFF миттєве. `run_topn_updater` тепер
+  завжди спавниться (`main.rs`, `173cf56`). **Плюс:** `validate_rating_filter_lists` звужено
+  до членства в `AVAILABLE_TOPN_LISTS` (`+ConfigError::UnknownRatingFilterList`, DECISIONS.md
+  2026-09-10). Наратив — TASKS-DONE.md.
+- [x] T-128 — (Батч 4.4) **Зроблено 2026-09-10.** Бейдж `#rating-filter-badge` під hero
+  (2-с полл, порожній коли вимкнено; `active` / Fork B) + суфікс у підказці трею
+  (`TrayStatus::Filtering.rating_filter_active` → `compose_tooltip`, лише коли `active`,
+  колір іконки не чіпає). Наратив — TASKS-DONE.md.
 - [x] T-129 — (Батч 4.3) **Зроблено 2026-09-09.** `out_of_zone_domain_is_blocked_without_consulting_quorum`
   — `MockClient::all_panic` при виклику; перевірено й «не кешується».
 - [x] T-130 — (Батч 4.3) **Зроблено 2026-09-09.** `in_zone_domain_continues_through_quorum_and_is_not_force_allowed`.

@@ -2,9 +2,12 @@ SOURCES: SPEC.md §5, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4,
 T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
 `serve_baseline_when_filters_unreachable`); T-146/T-97
 (`AdminStatusResponse.encrypted_persistence { query_log, cache }`);
-DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08 (порядок пріоритету індикатора;
-шифрована персистентність; T-179 — `VoterScope` прибрано, §5.1 знято; T-188 — `CertStatusResponse`
-/ `InstallCertResponse` для онбордингу; T-193 — `AdminStatusResponse.paused`). TASKS.md T-188, T-193.
+DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08, 2026-09-10 (порядок пріоритету
+індикатора; шифрована персистентність; T-179 — `VoterScope` прибрано, §5.1 знято; T-188 —
+`CertStatusResponse` / `InstallCertResponse` для онбордингу; T-193 — `AdminStatusResponse.paused`;
+T-127 — `validate_rating_filter_lists` звужено, `lists ⊆ available_lists`). TASKS.md T-188, T-193,
+T-111/T-127/T-128 (`AdminStatusResponse.rating_filter: RatingFilterStatusView`,
+`RatingFilterConfigUpdate` — тіло `POST /admin/rating-filter`).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -163,7 +166,7 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 реалізовано>>
+        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 / T-128 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
@@ -176,6 +179,7 @@ classDiagram
         +WatchdogStatusView? watchdog
         +bool persisted
         +EncryptedPersistenceView encrypted_persistence
+        +RatingFilterStatusView rating_filter
     }
     class EncryptedPersistenceView {
         <<T-146 / T-97, реалізовано — пасивні /admin/ui індикатори>>
@@ -285,6 +289,24 @@ classDiagram
         +bool enabled
         +List~String~ lists
     }
+    class RatingFilterConfigUpdate {
+        <<admin, T-127 — тіло POST /admin/rating-filter, повна заміна>>
+        +bool enabled
+        +List~String~ lists
+    }
+    class RatingFilterStatusView {
+        <<admin, T-128 реалізовано — поле AdminStatusResponse>>
+        +bool enabled
+        +bool active
+        +List~String~ lists
+        +List~String~ available_lists
+        +ZoneListStatusView[] loaded
+    }
+    class ZoneListStatusView {
+        <<admin, T-128 реалізовано>>
+        +String list
+        +usize domains
+    }
 
     LogEntry "1" --> "many" VoterResult : voters
     VoterResult --> VoterStatus
@@ -304,6 +326,8 @@ classDiagram
     ProviderAddRequest --> Category
     AdminStatusResponse --> ProviderStatusView
     AdminStatusResponse --> EncryptedPersistenceView
+    AdminStatusResponse --> RatingFilterStatusView
+    RatingFilterStatusView --> ZoneListStatusView : loaded
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck

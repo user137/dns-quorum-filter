@@ -68,9 +68,27 @@ fresh quorum block of an *exact* in-zone registrable surfaces `QueryLogMeta.zone
 `dispatch` calls `AppState::record_zone_removal` (in-memory overlay, own lock; subdomain block
 records nothing). `AppState` += `rating_filter_config` / `rating_filter_zone` /
 `rating_filter_removed` / `rating_filter_refresh_wake` (the `geoip`/`geoip_countries` split
-pattern). `/admin/reset` reloads the table + wakes the updater. **No admin route** — the UI card
-+ status field are Батч 4.4. Overlay persistence is Батч 4.5. Next: Батч 4.4 (rating-filter UI).
-Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
+pattern). `/admin/reset` reloads the table + wakes the updater. Overlay persistence is Батч 4.5.
+**Батч 4.4 done 2026-09-10** (T-111/T-127/T-128; kickoff plan+advisor+AskUserQuestion +
+separate mockup-approval round, closing-advisor): the rating-filter UI half. `POST
+/admin/rating-filter` (`RatingFilterConfigUpdate { enabled, lists }`, full replace; shares
+`persist_lock`; `rating_filter_is_active(config, zone)` is the single authority both
+`resolve_doh_request` and the status builders call, so badge and pipeline can't disagree);
+`AdminStatusResponse.rating_filter: RatingFilterStatusView { enabled, active, lists,
+available_lists, loaded }`. `/admin/ui`: `#rating-filter-body` card in the advanced `<details>`
+(T-127 framed enable block with an OFF→ON confirm step; T-111 hand-rolled search combobox
+`input[role=combobox]` + `ul[role=listbox]`, ↑↓/Enter/Esc, `aria-activedescendant`, rendered
+from `available_lists`; removable picked-zone list; batched "Зберегти зони"); `#rating-filter-badge`
+under the hero (T-128, on the 2s poll, empty when off). `dnsqb-tray`: `TrayStatus::Filtering` +=
+`rating_filter_active`, `compose_tooltip` appends "— рейтинг-фільтр «бульбашка» активний" (only
+when `active`, never the icon colour). **T-127 also tightened `validate_rating_filter_lists`** —
+shape check + `AVAILABLE_TOPN_LISTS` membership (`+ConfigError::UnknownRatingFilterList`), so
+`lists ⊆ available_lists` is a guaranteed invariant (DECISIONS.md 2026-09-10). Batch 4.3's two
+known limitations closed: `run_topn_updater` now always spawns (no-op while disabled;
+`main.rs`/`spawn_public_http_tasks` dropped the `rating_filter_active` gate — commit `173cf56`),
+and enabling via the route rebuilds the verdict cache. Palette also swapped to Catppuccin
+(Latte/Mocha) across `/admin/ui` + the mockup (`f8f2dce`, superseded Nord). Next: Батч 4.2
+(gov / edu `ZoneSource` kinds). Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
 (macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
 Батч 3.7): `.github/workflows/
@@ -244,9 +262,10 @@ catches, verification notes — goes to `TASKS-DONE.md`, never here. (This file 
 
 `dnsqb-service` — a real `hyper` + `rustls` DoH listener on `127.0.0.1` (T-143), resolving queries
 end to end through the Фаза 1 pipeline (allowlist → blocklist → cache → quorum; T-39) plus live
-GeoIP filtering (SPEC.md §3.5 / §5.3 step 7). The intermediate SPEC.md §5.3 steps — ccTLD block
-(§5.2, Фаза 5), rating filter «bubble» (§5.3, Фаза 4) — are later phases, not built. (There is no
-"voter scope" step any more — §5.1 was removed, T-179.) Since Батч 3.3, `main.rs` also starts
+GeoIP filtering (SPEC.md §3.5 / §5.3 step 7) and the **rating filter «bubble» step 5** (§5.3,
+Batch 4.3 backend + 4.4 UI/route — default OFF; out-of-zone → BLOCK, in-zone → normal pipeline).
+The one intermediate SPEC.md §5.3 step still unbuilt is the ccTLD block (§5.2, Фаза 5). (There is
+no "voter scope" step any more — §5.1 was removed, T-179.) Since Батч 3.3, `main.rs` also starts
 three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe server, `service.hb` touch, the
 in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists, so that
 direction's `GaveUp` is **not durable** — the restart budget resets on every service restart, a
@@ -267,9 +286,9 @@ Modules under `crates/dnsqb-service/src/`:
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (7 producible: +`BaselineFallback` T-155 — the one whose `voters` is **not** empty; +`RatingFilter` T-124), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
 | `rating_filter` | T-124 — pure step-5 core (SPEC.md §5.3). `ZoneSourceKind` (`CountryTopN(cc)`/`Global`, open enum — 4.2/4.5 additive), `ZoneSource { kind, registrables: HashSet }`, `ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — one suffix walk, both the membership test and the exact-match identity for lazy hygiene; a hit on any suffix in the union and not in `removed` = in zone. **No PSL** — the published lists are registrable-only, and `curate_topn` skips bare public suffixes (`overrides::suffix_matches` precedent) |
-| `topn_download` | T-124 pure helpers — `TOPN_RAW_BASE` (`raw.githubusercontent.com/.../data/topn/`, the T-105 stable-URL contract), `list_url`/`sha256_sidecar_url`, `parse_list` (skip `#`/blank, lowercase, dedup), `verify_sha256` (sha256sum-style first token, 64 hex; a malformed sidecar never matches). Mirrors `geoip_download` |
-| `topn_updater` | T-124 — `run_topn_updater` (`loop { refresh_all_lists; park_until_due }`, `TOPN_CHECK_INTERVAL` 24h, `Notify` wake on `/admin/reset`); `refresh_one_list` fetch→verify→`paths::write_atomic(<app-data>/topn/<list>.txt)`→`parse_list`→`ZoneSource`; failed list keeps last-known-good. `load_zone_from_disk` seeds the bubble at startup (empty on fresh install, like `load_geoip_state(None)`). Spawned by `main.rs` only when `[rating_filter]` is enabled + non-empty. **No DNS.** Mirrors `geoip_updater` |
-| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (T-169 — `LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors |
+| `topn_download` | T-124 pure helpers — `TOPN_RAW_BASE` (`raw.githubusercontent.com/.../data/topn/`, the T-105 stable-URL contract), `AVAILABLE_TOPN_LISTS: &[&str]` (`ua`/`us`/`de`/`pl`/`gb`/`global` — the distribution contract; surfaced as `RatingFilterStatusView.available_lists` **and**, since T-127, gates config loading via `validate_rating_filter_lists`, so *removing* a code is a breaking change), `list_url`/`sha256_sidecar_url`, `parse_list` (skip `#`/blank, lowercase, dedup), `verify_sha256` (sha256sum-style first token, 64 hex; a malformed sidecar never matches). Mirrors `geoip_download` |
+| `topn_updater` | T-124 — `run_topn_updater` (`loop { refresh_all_lists; park_until_due }`, `TOPN_CHECK_INTERVAL` 24h, `Notify` wake on `/admin/reset` **and `POST /admin/rating-filter`**); `refresh_one_list` fetch→verify→`paths::write_atomic(<app-data>/topn/<list>.txt)`→`parse_list`→`ZoneSource`; failed list keeps last-known-good. `load_zone_from_disk` seeds the bubble at startup (empty on fresh install, like `load_geoip_state(None)`). **Batch 4.4 (`173cf56`): always spawned by `main.rs` whenever an app-data dir exists** — no longer gated on `[rating_filter]` enabled+non-empty; `refresh_all_lists` re-reads the config snapshot each cycle and returns immediately while disabled (closes the "enable needs a restart" gap). **No DNS.** Mirrors `geoip_updater` |
+| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (T-169 — `LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors. `validate_rating_filter_lists` (T-124, tightened T-127): two ordered checks — shape (`InvalidRatingFilterList`, `"uka"`) then `topn_download::AVAILABLE_TOPN_LISTS` membership (`UnknownRatingFilterList`, `"fr"` — well-formed, no dataset); both fatal at load / `400` on the route, so `lists ⊆ available_lists` always holds (DECISIONS.md 2026-09-10). Removing a code from `AVAILABLE_TOPN_LISTS` is now a breaking config change |
 | `encrypted_file` | T-146 pure AEAD codec: `seal`/`open` over `XChaCha20Poly1305`; 6-byte cleartext header (`DQF1` / `FileKind` / version) is the AAD, validated **before** the AEAD open (`UnsupportedVersion` distinct from `Decrypt`); `EncryptedFileError` payload-free |
 | `persist_dto` | T-146 serde mirrors of `LogEntry` (`SystemTime`↔u64 millis, `RecordType`↔u16, `error_kind` `&'static str` re-interned through a closed set); `PersistedFileV1` wrapper (struct, additive); `to_json`/`from_json` |
 | `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed). `rename_orphan` is `pub(crate)`, reused by `cache_persist` |
@@ -282,8 +301,8 @@ Modules under `crates/dnsqb-service/src/`:
 | `logging` | T-184 (Батч 3.12): `init_logging(role, app_data_dir)` — all 3 binaries call it once → `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`. Dependency-free `tracing_subscriber::fmt().with_writer(Arc<File>)` (no `tracing-appender`), fixed INFO, no `env-filter`; startup rotation to `.log.old` at 5 MiB. Debug build also writes stdout. Exists because T-181 removed the console — the file is the only diagnostic |
 | `lifecycle` | T-185 (Батч 3.12) / **T-193**: `stop.flag` (pause) / `quit.flag` (exit — watcher stops the service + exits). `set_/clear_/…_flag(app_data_dir)`; presence *is* the signal, contents unread. **Separate files, not `watchdog-state.json`** (§7.1 #7 single-writer kept). `dnsqb-watcher::main` clears both on startup → a fresh app launch lifts a pause. **T-193:** `stop.flag` is now read by `dnsqb-service` itself (`pause_watch`, below) — a pause keeps the service **up** serving the unfiltered baseline; the watcher no longer freezes or special-cases it. (DECISIONS.md 2026-09-07 + 2026-09-08) |
 | `pause_watch` | T-193: `run_pause_watcher(app_data, state)` — detached 1 s poll of `lifecycle::stop.flag` → `AppState::filtering_paused` (`RwLock<bool>`, `Copy`, no `Arc` — mirrors `reachability`). `handle_query` snapshots it into `UpstreamContext.filtering_paused` and shares the `!ProviderEntry::any_enabled` branch: paused ⇒ baseline pass-through, never cached, `DecisionSource::Quorum` + empty voters. Providers stay *enabled* (resume = zero config change). Overrides + offline fast path still win above it. Same "detached loop publishes a `Copy` value to `AppState`" shape as `reachability`; loop itself untested by precedent |
-| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog` |
-| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). **T-176:** the page is now basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, danger-zone) — IDs unchanged, `main.js` cycles untouched. Mockup: `mockups/gui-dashboard.html` (user-approved); UI-SPEC.md §2.1 |
+| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog`. **T-127 (Батч 4.4):** `POST /admin/rating-filter` → `serve_admin_rating_filter` → `apply_rating_filter_change` (holds `persist_lock` across validate→swap→cache-rebuild-if-still-on→persist; `wake_rating_filter_refresh`; response built after the guard drops). `rating_filter_is_active(&RatingFilterConfig, &ZoneLists) -> bool` = `enabled && !zone.is_empty()` — the **single** authority, called by both `resolve_doh_request` (pipeline gate) and `rating_filter_status_view` (the 3 `AdminStatusResponse` builders), so the badge and the pipeline can never disagree. **Not** in `FUZZ_EXCLUDED_ROUTES` (handler touches no external resource) |
+| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). **T-176:** the page is now basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, **rating-filter (T-127/T-111, Батч 4.4)**, danger-zone) — IDs unchanged, `main.js` cycles untouched. **Батч 4.4:** `RatingFilterStatusView`/`ZoneListStatusView`/`RatingFilterConfigUpdate` DTOs + `AdminClient::set_rating_filter`; `#rating-filter-body` card (own fetch/render off `GET /admin/status`, not the 2s poll — the zone combobox is a free-text input; `renderRatingFilterBadge` from `render()` *is* on the poll) + `#rating-filter-badge` slot. Palette is now Catppuccin Latte/Mocha (`style.css` + mockup). Mockup: `mockups/gui-dashboard.html` (user-approved, incl. Артборд E); UI-SPEC.md §2.1/§3.6 |
 | `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency; **T-187** added the impure shell `ensure_sibling_running(app_data, role)` = read pid file → `verify_pid_alive` → `plan_launch` → `spawn_sibling`, re-exported from `lib.rs`, called by both `dnsqb-watcher` and the `dnsqb-tray` safety net). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
@@ -301,7 +320,11 @@ edited here, **not** `/admin/config` — which carries `timeout_mode` +
 voter in one `Category` atomically, one `resolver_config.toml` write; turning on an empty
 `ADULT_CONTENT` adds `opendns-familyshield` in the same txn, `EMPTY_ADULT_CATEGORY_DEFAULT_PRESET`,
 DECISIONS.md 2026-09-06),
-`/admin/log[/clear]`; `POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
+`/admin/log[/clear]`; `POST /admin/rating-filter` (T-127 — `RatingFilterConfigUpdate
+{ enabled, lists }`, full replace; shares `persist_lock`; validates `lists` shape +
+`AVAILABLE_TOPN_LISTS` membership → `400`; wakes `run_topn_updater`; rebuilds the verdict
+cache when it leaves the filter on; **not** in `FUZZ_EXCLUDED_ROUTES`);
+`POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
 `resolver_config.toml`);
 `GET /admin/cert-status` (T-188 — `CertStatusResponse { trusted: CertTrustView }`, three-state
 `TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate; `is_trusted` on `<app-data>/cert.pem`,
@@ -378,6 +401,12 @@ amber on `degraded_events == degraded_window` (T-196) — a partial count is a r
 only.** **T-176:** the tooltip *strings*
 were reworded for a lay reader (`DNS Quorum Filter:` prefix, `Filtering` → "захищає — N/M
 заблоковано", no "резолвінг"/"апстрім") — the state set and priority logic are unchanged.
+**T-128 (Батч 4.4):** `TrayStatus::Filtering` gained `rating_filter_active: bool` (from
+`AdminStatusResponse.rating_filter.active`); `compose_tooltip` appends "— рейтинг-фільтр
+«бульбашка» активний" **after** the degraded suffix, **only when `active`** (Fork B —
+`enabled` but no list — gets no tray suffix; the `/admin/ui` card's own notice covers it).
+The icon colour is untouched — the bubble is a scope choice, not a health signal (same
+"pass-through ≠ failure" rule as `NoActiveProvider`).
 
 `dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main` since Батч 3.3.
 `#[tokio::main(flavor = "current_thread")]` (§7.1 #9 — flavor, not features, keeps it
@@ -472,16 +501,14 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
-- **Rating filter (T-124)** — (a) enabling it from a disabled state by hand-editing
-  `resolver_config.toml` + `POST /admin/reset` reloads the table but does **not** start
-  `run_topn_updater` (it's spawned once at startup, gated on `[rating_filter]` being enabled +
-  non-empty) — needs a service restart, like `[limits]`. (b) Enabling leaves **already-cached**
-  domains reachable until their `block_verdict_ttl` / positive TTL expires (cache is step 4, above
-  the filter — SPEC §5.3 "кеш … завжди переважають цей фільтр"); a cache clear on the enable route
-  is where 4.4 would add one. (c) The lazy-hygiene removal overlay is **in-memory only** —
+- **Rating filter (T-124)** — ~~(a) enable-needs-restart~~ / ~~(b) already-cached domains outlive
+  a new bubble~~ **both closed in Батч 4.4** (T-127: `run_topn_updater` always spawns; the enable
+  route rebuilds the verdict cache). (c) The lazy-hygiene removal overlay is **in-memory only** —
   rebuilt lazily after a restart (each removed domain re-blocked by quorum on first re-query);
-  durable storage is Батч 4.5. (d) No `rating_filter` field on `AdminStatusResponse` yet
-  (Батч 4.4) — an `enabled`-but-inert filter is only visible as a startup `tracing::warn`.
+  durable storage is Батч 4.5. (d) The `#rating-filter-body` card's zone-count line reads
+  `RatingFilterStatusView.loaded` (per-list, never a cross-source sum — a domain in both a country
+  list and `global` would double-count); a card shows "—" for a picked code with no loaded list
+  yet. Not a bug — a stated choice, same "never a fake 0/0" discipline as T-66.
 - **Encrypted query-log persistence (T-146)** — best-effort scrub only (no defence vs VSS shadow
   copies / SSD wear-levelling, same honesty as `key_store::overwrite_with_zeros`); a hard crash
   loses ≤60s of the log tail (periodic full-snapshot rewrite, not append-only — deliberate); an

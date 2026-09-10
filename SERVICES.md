@@ -71,12 +71,16 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    + gzip CRC32/структурна валідація перед атомарною заміною файлу. Відсутність бази при першому
    запуску — не помилка, `GeoIP`-фільтр (T-76, ще не підключений у конвеєр) просто без ефекту, доки
    перший апдейт не завершиться успішно.
-5a. **Якщо `[rating_filter].enabled = true` з непорожнім `lists`** — завантажує наявні
-   `<app-data>/topn/<list>.txt` (порожньо на свіжій інсталяції, як `geoip.mmdb`) і запускає
-   **фоновий top-N-апдейтер** (T-124, `run_topn_updater`): один HTTPS GET на обраний список раз
-   на 24 год (спочатку одразу) із `raw.githubusercontent.com`, звірка `.txt.sha256`-сайдкара,
-   атомарна заміна файлу, публікація зібраної зони на `AppState`. Провал одного списку — лог
-   warn, лишається last-known-good файл. `POST /admin/reset` будить таск. **Без DNS.**
+5a. Завантажує наявні `<app-data>/topn/<list>.txt` (порожньо на свіжій інсталяції, як
+   `geoip.mmdb`) і **завжди** запускає **фоновий top-N-апдейтер** (T-124, `run_topn_updater`) —
+   доки є тека app-data, незалежно від `[rating_filter].enabled` (Батч 4.4: раніше гейтився на
+   `enabled && !lists.is_empty()`, що вимагало рестарту після увімкнення). Поки фільтр вимкнено,
+   таск no-op-ить щоцикл (читає свіжий знімок конфігу, паркується). Коли активний: один HTTPS GET
+   на обраний список раз на 24 год (спочатку одразу) із `raw.githubusercontent.com`, звірка
+   `.txt.sha256`-сайдкара, атомарна заміна файлу, публікація зібраної зони на `AppState`. Провал
+   одного списку — лог warn, лишається last-known-good файл. `POST /admin/reset` **і**
+   `POST /admin/rating-filter` будять таск (останній — щоб увімкнення дало перше завантаження за
+   секунди). **Без DNS.**
 6. Запускає **фоновий reachability-проб-таск** (T-152, Батч 3.4) — раз на ~30 s (частіше поки
    офлайн) б'є `HEAD` по кількох незалежних `generate_204`-класу маркерах (Google / Cloudflare /
    Apple); «сирий» вердикт `OFFLINE` — лише коли **всі** впали, а публікується `OFFLINE` тільки
@@ -131,6 +135,14 @@ cache-config/apply`, нічого не перебудовує й не інвал
 `geoip_countries`, читається зі `state.geoip`, окремого `RwLock` від того, що зберігає список
 країн) і `database_built_at_ms: Option<u64>` (дата **збірки** бази видавцем, `GeoipReader::
 build_time`, не час останнього опитування `geoip_updater`).
+`POST /admin/rating-filter` (T-127, Батч 4.4) — керує таблицею `[rating_filter]` з `/admin/ui`;
+тіло `RatingFilterConfigUpdate { enabled, lists }` (повна заміна). Той самий `persist_lock`
+(четвертий писар одного файлу); валідує списки (`validate_rating_filter_lists` — форма +
+членство в `AVAILABLE_TOPN_LISTS`, невалідне → `400`), оновлює живий `RatingFilterConfig`, будить
+`run_topn_updater`, і — коли лишає фільтр увімкненим — перебудовує кеш вердиктів (`Arc`-своп, як
+`apply_admin_reset`), щоб уже-кешовані ALLOW не пережили нову «бульбашку». Відповідь несе нове
+поле `rating_filter: RatingFilterStatusView { enabled, active, lists, available_lists, loaded }`
+(також у кожній відповіді `GET /admin/status`).
 `GET /admin/log` (T-54) — читання query-логу з
 трьома незалежними query-фасетами (`domain_contains`/`decision`/`voter`) плюс `limit` (дефолт 200,
 хардкап 1000 — сам розмір ring buffer'а); відповідь завжди обмежена, з полем `truncated`, коли
@@ -406,6 +418,12 @@ watchdog-стани й admin-канал: під час навмисної пау
 «апстрім», без застарілого «обидва провайдери»; префікс `dns-quorum-filter:` → `DNS Quorum
 Filter:`, а `Filtering` тепер читається як «захищає — N/M заблоковано». Набір станів і сама
 логіка розрізнення без змін.
+**T-128 (Батч 4.4):** `Filtering` дістав поле `rating_filter_active: bool` (з
+`AdminStatusResponse.rating_filter.active`). `compose_tooltip` дописує суфікс `— рейтинг-фільтр
+«бульбашка» активний` **після** degraded-суфікса (реальна проблема перед вибором обсягу).
+Спрацьовує лише коли `active` (не на самому `enabled`): у треї Fork B — «увімкнено, списки
+завантажуються» — суфікса не дає, це пояснює notice у картці `/admin/ui`. **Колір іконки не
+чіпає** — та сама логіка «pass-through ≠ failure», що `NoActiveProvider`.
 
 ### Іконка (T-191, Батч 3.14)
 

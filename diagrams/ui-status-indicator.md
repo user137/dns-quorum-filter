@@ -1,6 +1,6 @@
 SOURCES: SPEC.md §8, §8.1, §3.3, §3.7, §5.3, §7; "Відкриті питання" №10; CLAUDE.md
-(dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-128, T-152,
-T-176, T-188, T-191, T-193, T-196; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
+(dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-111, T-127,
+T-128, T-152, T-176, T-188, T-191, T-193, T-196; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
 "Меню"; UI-SPEC.md §2.1, §3.1; `diagrams/onboarding.md`, `diagrams/process-lifecycle.md`;
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08 (T-191 — колір іконки; T-188 — онбординг +
 hero cert-гілка; T-193 — пауза = нефільтрований baseline + `AdminStatusResponse.paused`).
@@ -58,8 +58,15 @@ flowchart TD
 Не частина основного індикатора вище. §5.3 і T-128 вимагають **окремий,
 завжди видимий** індикатор активності рейтингового фільтра — це друге, не
 альтернативне, UI-повідомлення: показується одночасно з будь-яким станом
-основного індикатора, коли `RatingFilterConfig.enabled = true` (Ф4 — конвеєр
-збудовано T-124, Батч 4.3; сам бейдж + status-поле — T-128, Батч 4.4).
+основного індикатора, коли `AdminStatusResponse.rating_filter.enabled = true`.
+**Збудовано Батч 4.4 (T-128):** конвеєр — T-124/Батч 4.3; поле статусу
+(`RatingFilterStatusView { enabled, active, lists, available_lists, loaded }`),
+`<div id="rating-filter-badge">` під hero (2-с полл, `renderRatingFilterBadge`
+у `render()` — не застаріває; порожній `<div>`, коли вимкнено) з двома станами
+(`active` → «активний»; `enabled && !active` Fork B → «увімкнено — списки
+завантажуються») **плюс** суфікс у підказці трею `— рейтинг-фільтр «бульбашка»
+активний` (`compose_tooltip`, **лише коли `active`**, після degraded-суфікса,
+**колір іконки не чіпає** — вибір обсягу ≠ сигнал здоровʼя).
 
 ## Стан реалізації
 

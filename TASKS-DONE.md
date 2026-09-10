@@ -4744,3 +4744,107 @@ pipeline + updater + lazy hygiene) · `b4d2ca5` (docs) · `<pending>` (closing-a
 **Примітка про CI:** `docs`-джоб CI упав на `4132bad` — `rating_filter.rs` мав intra-doc-лінки
 на `topn_updater`/`topn_download`, яких у тому коміті ще не було; `b17a95b` додав обидва модулі
 → резолвиться. `main` зелений після `b17a95b`.
+
+### Батч 4.4 — UI рейтинг-фільтра «бульбашка»: маршрут + картка + індикатор (T-111, T-127, T-128; зроблено 2026-09-10, kickoff plan+advisor+AskUserQuestion + окремий раунд затвердження макета; closing-advisor; 7 комітів)
+
+UI-половина рейтинг-фільтра. Батч 4.3 збудував крок 5 конвеєра без жодної UI-поверхні; цей батч
+додає admin-маршрут, картку `/admin/ui`, завжди-видимий індикатор, і закриває дві known-limitation
+Батча 4.3.
+
+**Kickoff-рішення (plan-mode + advisor + AskUserQuestion 2026-09-10):**
+- **Форма — `{ enabled, lists }`, БЕЗ `n`.** Рядок «Зони — N (розмір топ-N)» в UI-SPEC §3.6 /
+  `ui-navigation.md` — застаріла чернетка (Батч 4.1 зафіксував розмір при курації); прибрано
+  правкою-нотаткою.
+- **Один `rating_filter_is_active(&RatingFilterConfig, &ZoneLists) -> bool`** (= `enabled &&
+  !zone.is_empty()`) — єдина точка обчислення, викликається і з `resolve_doh_request` (гейт
+  конвеєра), і з трьох білдерів `AdminStatusResponse`. Інакше drift: бейдж каже «активний», а
+  конвеєр отримує `None`.
+- **`RatingFilterStatusView.loaded: Vec<ZoneListStatusView>`** — per-list лічильники, **не**
+  сумарний `zone_domain_count` (домен у country- і в global-списку рахувався б двічі — та сама
+  «ніколи фейкова 0/0», що T-66).
+- **`available_lists` з `AVAILABLE_TOPN_LISTS`** — сервер віддає перелік, UI рендерить чекбокси з
+  нього; новий датасет = одна правка const, нуль змін у клієнті. Прибрало JS-константу.
+- **Окремий раунд затвердження макета** (рішення користувача): додати картку в
+  `mockups/gui-dashboard.html`, надіслати, дочекатися «ок» перед справжнім UI (прецедент T-176).
+- **`run_topn_updater` — завжди спавн.** Прибрано гейт `rating_filter_active` зі
+  `spawn_public_http_tasks` (`main.rs`): updater уже no-op-ить при `disabled` (читає свіжий
+  знімок конфігу щоцикл), тож завжди-спавн (за наявності app-data dir) закриває known-limitation
+  (a) — `wake_rating_filter_refresh()` з маршруту тригерить перше завантаження за секунди.
+- **Clear кешу на увімкненні.** `apply_rating_filter_change` перебудовує `state.cache` (`Arc`-своп,
+  як `apply_admin_reset`) коли `new_config.enabled` і змінилося `enabled`/`lists` — одне правило,
+  без асиметрії. Закриває known-limitation (b): вже-кешовані ALLOW інакше пережили б нову
+  «бульбашку» до спливу TTL. No-op POST / вимкнення — кеш не чіпає.
+
+**Реалізація:**
+- **`POST /admin/rating-filter`** (`serve_admin_rating_filter` → `apply_rating_filter_change`):
+  CSRF-гейт → `Limited` → `serde_json` → `validate_rating_filter_lists` → build `new_config` →
+  `persist_lock` через validate-swap-(rebuild кешу)-persist → відповідь будується після дропу
+  guard. `RatingFilterConfigUpdate { enabled, lists }` — повна заміна. Нормалізований `lists` в
+  ехо-відповіді, не сире тіло. **НЕ** в `FUZZ_EXCLUDED_ROUTES` (обробник не чіпає зовнішніх
+  ресурсів). `ROUTES` + `EXPECTED_ADMIN_ROUTES` (T-59 snapshot) оновлено.
+- **`AdminStatusResponse.rating_filter: RatingFilterStatusView { enabled, active, lists,
+  available_lists, loaded }`** — будується в усіх трьох білдерах (`admin_status`,
+  `apply_admin_config`, `apply_rating_filter_change`). `AdminClient::set_rating_filter`.
+- **T-127 картка `#rating-filter-body`** у `<details>` «Розширені», перед `#danger-zone-body`.
+  Власний fetch/render цикл (з `GET /admin/status` раз + відповіді POST) — **не** на 2-с поллі
+  (combobox — free-text). DOM-методи, не innerHTML. Обрамлений enable-блок: OFF→ON — крок
+  підтвердження («Підтвердити ввімкнення» / «Скасувати»), ON→OFF миттєве; підтвердження шле
+  локально обраний набір зон (макет: «застосуються, щойно ввімкнете»). Fork B / `persisted:false`
+  — окремі notice.
+- **T-111 вибір зон** — hand-rolled combobox (`input[role=combobox]` + `ul[role=listbox]`,
+  ↑↓/Enter/Esc, `aria-activedescendant`, клік/`mousedown`) із `available_lists`; мітки країн —
+  клієнтська мапа в `main.js` (i18n сервера тут немає — Ф5/T-151); стовпчик обраних (`.rf-picked`)
+  із лічильником доменів або «завантажується…» і `×`; батчева кнопка «Зберегти зони» (один POST →
+  одна перебудова кешу). `pickedCodes` ре-сідиться з ехо-відповіді сервера щорендер («no local
+  optimistic state»).
+- **T-128 бейдж `#rating-filter-badge`** під hero, `renderRatingFilterBadge(status.rating_filter)`
+  з `render()` (2-с полл → не застаріває); порожній `<div>` коли вимкнено; `active` → «активний»
+  (ok), Fork B → «увімкнено — списки завантажуються» (warn).
+- **T-128 трей** — `TrayStatus::Filtering` += `rating_filter_active: bool` (з
+  `response.rating_filter.active`); `compose_tooltip` дописує «— рейтинг-фільтр «бульбашка»
+  активний» **після** degraded-суфікса, **лише коли `active`** (Fork B у треї суфікса не дає).
+  `icon_colour` не чіпає (вибір обсягу ≠ сигнал здоровʼя — та сама логіка, що `NoActiveProvider`;
+  `match` без wildcard, `..` уже покривав нове поле).
+- **Палітра → Catppuccin (Latte/Mocha)** через `/admin/ui` `style.css` + макет (`f8f2dce`,
+  замінив Nord `75b31de`). Скарга користувача: у Nord темний текст замитий (`#9aa4b6` ≈ 5:1).
+  Catppuccin — спроєктована світло/темна пара, WCAG AAA для тексту на базі; темний `--text
+  #cdd6f4` ≈ 13:1, `--text-muted #a6adc8` ≈ 8:1. Акцент — Catppuccin Mauve в обох темах.
+  Світлі `--good`/`--warn` затемнені на крок для AA на пастельних `--*-soft`. Advisor залучено
+  (вибір Catppuccin > Dracula: «не перевантажувати психіку» — Dracula «high-energy»).
+
+**Closing-advisor (Коміт 4) впіймав реальний дефект:** `renderPicked`/`visibleCodes` перебирали
+лише `available_lists`, тож обраний код поза ним (ручний правл конфігу) зникав з картки —
+невидимий і без `×`. Фікс: `displayCodes()` малює обʼєднання; окремий коміт `6289903`.
+ArrowUp тепер теж відкриває меню (як ArrowDown).
+
+**T-127 — `validate_rating_filter_lists` звужено** (варіант B, обраний користувачем після
+пояснення; DECISIONS.md 2026-09-10, власний advisor-гейт): дві впорядковані перевірки — форма
+(`InvalidRatingFilterList`, `"uka"`) + членство в `AVAILABLE_TOPN_LISTS` (**новий**
+`UnknownRatingFilterList`, `"fr"` — форма правильна, датасету нема). Обидві → `400` на маршруті /
+гучна помилка старту. `lists ⊆ available_lists` — гарантований інваріант. Причина: URL
+завантаження фіксований, код поза переліком не запрацює ніколи — гучна помилка строго краща за
+тихе не-фільтрування. `main.js` обʼєднання лишається як оборона для конфіга, збереженого до
+T-127. Прибрати код із `AVAILABLE_TOPN_LISTS` — відтепер ламна зміна конфігу (зафіксовано в
+doc-коментарі const). `ResolverConfig::save` пише `lists` без ревалідації — простежено, безпечно
+(жоден шлях не сіє `.lists` повз валідатор).
+
+**Гейти:** `fmt` / `clippy --workspace --all-targets -D warnings` / `cargo test --workspace --lib
+--bins` (722 + 32) / `--doc` / rustdoc `-D warnings` / conformance / `node --check main.js` — усе
+зелено на кожному коміті. Живий димний тест: `/admin/ui` картка показує вимкнений перемикач і
+відсутній бейдж; клік «Увімкнути» → arm-попередження → «Підтвердити» → `POST /admin/rating-filter`,
+`<app-data>/topn/ua.txt` зʼявляється за секунди (updater був заздалегідь спавнений), бейдж
+«активний» зʼявляється, трей-тултип дістає суфікс; combobox пропонує рівно 6 зон; спроба зберегти
+код поза переліком → `400`; вимкнення → бейдж зникає.
+
+**Звірка діаграм:** `ui-dto-model.md` (+`AdminStatusResponse.rating_filter`, +`RatingFilterStatusView`
+/`ZoneListStatusView`/`RatingFilterConfigUpdate` класи + звʼязки), `ui-navigation.md` (Header-нода:
+бейдж збудовано + 2 стани + трей-суфікс; Advanced-нода: combobox замість «зони — N», T-127/T-128
+збудовано), `ui-status-indicator.md` (§бейдж — збудовано Батч 4.4, поле статусу + трей-суфікс лише
+коли `active`), `rating-filter.md` (SOURCES += admin.rs/admin_ui/dispatch/tray + DECISIONS
+2026-09-10; нова секція «UI — Батч 4.4»; «розмір топ-N у UI немає»; допустимі коди = перелік).
+Зачеплено 4, оновлено 4, GAP 0.
+
+**Коміти:** `f8f2dce` (палітра Catppuccin) · `cdb923c` (T-127+T-111 картка) · `6289903`
+(closing-advisor фікс: union зон + ArrowUp) · `fe026ea` (T-128 бейдж + трей) · `2941879` (T-127
+валідатор звужено + DECISIONS) · `<docs>` (цей запис + синхронізація доків/діаграм). Плюс
+`c64e1db`/`173cf56` (Коміт 1–2 backend, зроблені перед палітрою).
