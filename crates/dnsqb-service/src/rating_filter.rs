@@ -185,8 +185,8 @@ impl ZoneLists {
     /// contributed only by a [`ZoneSourceKind::GovernmentTopN`] /
     /// [`ZoneSourceKind::SciEdu`] blanket-suffix entry is never eligible,
     /// even on an exact match — see the module doc and
-    /// [`crate::pipeline::rating_filter_step`], the sole caller (guards
-    /// `exact` at the point it's computed, not where it's later consumed).
+    /// `pipeline::rating_filter_step`, the sole caller (guards `exact` at
+    /// the point it's computed, not where it's later consumed).
     #[must_use]
     pub fn is_hygiene_eligible(&self, registrable: &str) -> bool {
         self.0
