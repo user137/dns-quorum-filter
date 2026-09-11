@@ -45,6 +45,23 @@
 //! eligible](ZoneSourceKind::hygiene_eligible) — a false-positive quorum
 //! block of the bare suffix itself must not evict the whole namespace it
 //! covers. See that method's doc for the mechanism.
+//!
+//! **Personal learned zone (T-138, Батч 4.5).** [`ZoneSourceKind::Personal`]
+//! is the fourth source — individually-named hostnames the user themselves
+//! visited often/regularly, derived locally by [`crate::personal_zone_stats`]
+//! from already-ALLOW-and-Quorum-passed traffic, never curated or
+//! downloaded. It is **not** folded into this crate's [`ZoneLists`] the way
+//! the other three kinds are: the downloaded lists and the personal zone
+//! have different single writers on different cadences (`topn_updater`'s
+//! 24h full-replace vs. a daily rollover), so `crate::dispatch::AppState`
+//! holds them as two independent `Arc<ZoneLists>` values, each with its own
+//! writer — the same reasoning that already keeps the T-108 `removed`
+//! overlay out of this type. `pipeline::rating_filter_step` calls
+//! [`Self::zone_match`] against both and takes whichever matches first; no
+//! change to this method's signature was needed. A [`ZoneSourceKind::Personal`]
+//! entry is a queried *hostname*, not a registrable (this crate has no PSL
+//! to reduce one to the other) — narrower and safe, but it means `www.`/
+//! `api.`/`cdn.` of the same site count as separate learned entries.
 
 use std::collections::HashSet;
 
@@ -74,6 +91,13 @@ pub enum ZoneSourceKind {
     /// canonical research infrastructure (the SPEC.md §5.3 examples —
     /// `PubMed`, NASA — plus similarly neutral, globally-recognized bodies).
     SciEdu,
+    /// T-138 (Батч 4.5) — a hostname the user's own traffic earned its way
+    /// into: [`crate::personal_zone_stats`] derives this set locally from
+    /// already-ALLOW-and-Quorum-passed queries (frequency top-N ∪ regularity
+    /// X-of-Y days), never downloaded or curated. See the module doc for why
+    /// this kind lives in its own `ZoneLists`, not folded into the one
+    /// holding the other three.
+    Personal,
 }
 
 impl ZoneSourceKind {
@@ -89,6 +113,7 @@ impl ZoneSourceKind {
             Self::Global => "global".to_string(),
             Self::GovernmentTopN(cc) => format!("gov-{cc}"),
             Self::SciEdu => "edu".to_string(),
+            Self::Personal => "personal".to_string(),
         }
     }
 
@@ -106,9 +131,15 @@ impl ZoneSourceKind {
     /// subdomain under it, not one site; T-108's cost/benefit does not
     /// apply. [`ZoneLists::is_hygiene_eligible`] is the caller-facing check
     /// built on this.
+    ///
+    /// `true` for [`Self::Personal`] too (T-138, Батч 4.5) — a personal
+    /// entry is one specific hostname the user visited, not a blanket
+    /// suffix; a fresh quorum block of it (the site turned malicious, or was
+    /// learned before the bubble caught up) should evict it exactly like a
+    /// `CountryTopN`/`Global` hit.
     #[must_use]
     pub fn hygiene_eligible(&self) -> bool {
-        matches!(self, Self::CountryTopN(_) | Self::Global)
+        matches!(self, Self::CountryTopN(_) | Self::Global | Self::Personal)
     }
 }
 
@@ -395,12 +426,14 @@ mod tests {
             "gov-ua"
         );
         assert_eq!(ZoneSourceKind::SciEdu.list_code(), "edu");
+        assert_eq!(ZoneSourceKind::Personal.list_code(), "personal");
     }
 
     #[test]
-    fn only_the_crux_derived_kinds_are_hygiene_eligible() {
+    fn hygiene_eligibility_excludes_only_the_blanket_suffix_kinds() {
         assert!(ZoneSourceKind::CountryTopN("ua".to_string()).hygiene_eligible());
         assert!(ZoneSourceKind::Global.hygiene_eligible());
+        assert!(ZoneSourceKind::Personal.hygiene_eligible());
         assert!(!ZoneSourceKind::GovernmentTopN("ua".to_string()).hygiene_eligible());
         assert!(!ZoneSourceKind::SciEdu.hygiene_eligible());
     }
