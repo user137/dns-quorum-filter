@@ -1160,17 +1160,15 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   надають як готові бандли, на відміну від live-сервісної моделі AdGuard Home/Pi-hole; джерела —
   статичні публічні репозиторії (`raw.githubusercontent.com`, уже в мережевому allowlist), не
   живий third-party сервіс. Мета користувача — знизити залежність від DNS-кворуму.
-  **Кандидатні джерела** (аналіз користувача, дослідження зі стороннього чату, не перевірено цим
-  проєктом): Ads & Trackers — HaGeZi Multi PRO (~222k, `github.com/hagezi/dns-blocklists`), OISD
-  (~247k, oisd.nl), AdGuard DNS filter (~177k, `github.com/AdguardTeam/AdguardSDNSFilter`), Steven
-  Black hosts (~80k), 1Hosts Lite (~102k, `github.com/badmojr/1Hosts`). Безпека/загрози (аналог
-  NextDNS Security-tab) — HaGeZi TIF/NRD/DGA/DynDNS/Badware-Hoster/Most-Abused-TLDs,
-  CoinBlockerLists (`Zerodot1/CoinBlockerLists`); відкриті альтернативи Google Safe Browsing (що
-  потребує API-ключа) — OpenPhish Community Feed, URLhaus (abuse.ch). Явно виключено з розгляду:
-  AI-Driven Threat Detection / IDN Homographs / Typosquatting (це алгоритми на кшталт `dnstwist`,
-  не набори даних — портування, не сорсинг списку) / Tunneling Endpoints / Data Drop Services /
-  Residential Hosting / Decentralized Web Gateways (усе — власні NextDNS EARLY ACCESS дані) /
-  CSAM-Project Arachnid (доступ лише для акредитованих партнерів).
+  **Кандидатні джерела:** повний аналіз (Ads & Trackers, розбір 17 NextDNS Security-фіч на
+  публічно-доступні/потребують-ключа/без-аналога категорії, результуючий список 7 джерел) —
+  `data/blocklists/CANDIDATES.md` (файл користувача, 2026-09-11, дослідження зі стороннього чату,
+  **жодне поле не перевірено цим проєктом** — та сама планка, що будь-яке зовнішнє джерело перед
+  T-105-класу перевіркою). Стисло: HaGeZi Multi PRO/TIF/NRD-DGA/DynDNS/Badware-Hoster/Most-Abused-
+  TLDs + CoinBlockerLists — 7-пунктний "результуючий набір"; OpenPhish/URLhaus як ключ-вільні
+  альтернативи Google Safe Browsing; AI-Detection/IDN-гомографи/typosquatting/Tunneling/Data-Drop/
+  Residential-Hosting/Decentralized-Gateways/CSAM явно поза межами (алгоритм-не-список або
+  пропрієтарні/партнерські дані без відкритого аналога).
   **Три питання, що фактично визначать дизайн (advisor-рев'ю), жодне не відповідь-очевидне з
   дослідження користувача:**
   1. **Ліцензія й право на редистрибуцію — окремо для кожного списку.** Той самий шлюз, що вже
