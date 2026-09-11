@@ -568,25 +568,34 @@ pub(crate) fn validate_country_code(raw: &str) -> Result<String, ConfigError> {
 }
 
 /// Validates the `[rating_filter] lists` entries (T-124/T-126, tightened by
-/// T-127): the result is lowercased and deduplicated with first-seen order
-/// preserved. Two ordered checks, each with its own error so a hand-edited
-/// file names the actual mistake:
-/// 1. shape — a lowercase two-letter code or `"global"`, else
-///    [`ConfigError::InvalidRatingFilterList`] (a `"uka"` typo);
+/// T-127, extended by T-122/T-123 Батч 4.2): the result is lowercased and
+/// deduplicated with first-seen order preserved. Two ordered checks, each
+/// with its own error so a hand-edited file names the actual mistake:
+/// 1. shape — a lowercase two-letter code, `"global"`, `"edu"`, or
+///    `"gov-"` + a lowercase two-letter code, else
+///    [`ConfigError::InvalidRatingFilterList`] (a `"uka"` typo, a bare
+///    `"gov"` with no country suffix);
 /// 2. membership in [`AVAILABLE_TOPN_LISTS`], else
 ///    [`ConfigError::UnknownRatingFilterList`] (well-formed, but no such
 ///    dataset — `topn_updater`'s download URL is fixed, so it could only
-///    ever be inert; DECISIONS.md 2026-09-10).
+///    ever be inert; DECISIONS.md 2026-09-10 — `"gov-de"` is exactly this
+///    case, Батч 4.2's stated gap).
 ///
 /// After this, `lists ⊆ available_lists` is a guaranteed invariant for every
 /// consumer. Unlike the `[geoip]` codes these stay lowercase: the published
 /// list files are `data/topn/<lc>.txt`.
 pub(crate) fn validate_rating_filter_lists(raw: &[String]) -> Result<Vec<String>, ConfigError> {
+    fn is_country_code(s: &str) -> bool {
+        s.len() == 2 && s.bytes().all(|byte| byte.is_ascii_lowercase())
+    }
+
     let mut out: Vec<String> = Vec::with_capacity(raw.len());
     for entry in raw {
         let lc = entry.to_ascii_lowercase();
-        let well_formed =
-            lc == "global" || (lc.len() == 2 && lc.bytes().all(|byte| byte.is_ascii_lowercase()));
+        let well_formed = lc == "global"
+            || lc == "edu"
+            || is_country_code(&lc)
+            || lc.strip_prefix("gov-").is_some_and(is_country_code);
         if !well_formed {
             return Err(ConfigError::InvalidRatingFilterList(entry.clone()));
         }
@@ -1361,6 +1370,73 @@ mod tests {
         assert!(matches!(
             ResolverConfig::load(&path),
             Err(ConfigError::UnknownRatingFilterList(entry)) if entry == "fr"
+        ));
+    }
+
+    // ---- T-122/T-123 (Батч 4.2): `gov-<cc>` / `edu` code shapes ----
+
+    #[test]
+    fn load_accepts_the_new_gov_and_edu_codes() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[rating_filter]\nenabled = true\nlists = [\"GOV-UA\", \"edu\"]\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("gov-ua/edu are published datasets, must load: {err}"),
+        };
+        assert_eq!(
+            config.rating_filter.lists,
+            vec!["gov-ua".to_string(), "edu".to_string()],
+            "gov-* lowercases the same way a country code does"
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_malformed_gov_code() {
+        let (_dir, path) = temp_config_path();
+        // Well-formed shape check must fire before the dataset-membership
+        // check — `gov-` with no 2-letter country is a shape error, not a
+        // "no such dataset" one.
+        if let Err(err) = fs::write(&path, "[rating_filter]\nlists = [\"gov-\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidRatingFilterList(entry)) if entry == "gov-"
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_gov_code_with_no_published_dataset() {
+        let (_dir, path) = temp_config_path();
+        // Well-formed (`gov-` + 2 letters), but Батч 4.2 shipped no
+        // `gov-de.txt` (SPEC.md §5.3 stated gap) — must fail the same way
+        // an unpublished country code already does (`"fr"` above).
+        if let Err(err) = fs::write(&path, "[rating_filter]\nlists = [\"gov-de\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::UnknownRatingFilterList(entry)) if entry == "gov-de"
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_bare_gov_code_with_no_country_suffix() {
+        let (_dir, path) = temp_config_path();
+        // A bare "gov" (no "-<cc>") must never be treated as a valid code —
+        // the validator requires the "gov-" prefix precisely so this can't
+        // collide with a future two-letter country code.
+        if let Err(err) = fs::write(&path, "[rating_filter]\nlists = [\"gov\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidRatingFilterList(entry)) if entry == "gov"
         ));
     }
 

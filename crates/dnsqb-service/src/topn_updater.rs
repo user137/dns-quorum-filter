@@ -191,6 +191,10 @@ async fn refresh_one_list(
 fn zone_source_kind(list: &str) -> ZoneSourceKind {
     if list == "global" {
         ZoneSourceKind::Global
+    } else if list == "edu" {
+        ZoneSourceKind::SciEdu
+    } else if let Some(cc) = list.strip_prefix("gov-") {
+        ZoneSourceKind::GovernmentTopN(cc.to_string())
     } else {
         ZoneSourceKind::CountryTopN(list.to_string())
     }
@@ -260,6 +264,41 @@ mod tests {
         assert_eq!(
             zone_source_kind("ua"),
             ZoneSourceKind::CountryTopN("ua".to_string())
+        );
+    }
+
+    // T-122/T-123 (Батч 4.2)
+    #[test]
+    fn zone_source_kind_routes_gov_and_edu_lists() {
+        assert_eq!(
+            zone_source_kind("gov-ua"),
+            ZoneSourceKind::GovernmentTopN("ua".to_string())
+        );
+        assert_eq!(zone_source_kind("edu"), ZoneSourceKind::SciEdu);
+    }
+
+    #[test]
+    fn load_zone_from_disk_reads_a_gov_list() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let topn = dir.path().join("topn");
+        if let Err(err) = std::fs::create_dir_all(&topn) {
+            panic!("mkdir: {err}");
+        }
+        if let Err(err) = std::fs::write(topn.join("gov-ua.txt"), "# header\ngov.ua\n") {
+            panic!("write: {err}");
+        }
+        let config = RatingFilterConfig {
+            enabled: true,
+            lists: vec!["gov-ua".to_string()],
+        };
+        let zone = load_zone_from_disk(Some(dir.path()), &config);
+        let no_removals = HashSet::new();
+        assert_eq!(
+            zone.zone_match("diia.gov.ua", &no_removals),
+            Some("gov.ua"),
+            "the blanket suffix entry loads and covers a subdomain nobody listed"
         );
     }
 

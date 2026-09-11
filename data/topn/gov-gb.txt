@@ -1,0 +1,12 @@
+# dns-quorum-filter — curated availability zone
+# list: gov-gb (T-122, Батч 4.2)
+# source: hand-curated, NOT CrUX-derived
+# criterion: registrar-restricted government domain — the gov.uk second-level
+#   is a controlled namespace restricted to UK public-sector bodies. One
+#   blanket entry covers every present/future subdomain (zone_match is a
+#   pure suffix walk, no PSL) — no per-department enumeration, no editorial
+#   judgment about which specific site is "really" official.
+# verified: 2026-09-11, see data/topn/ZONES-CHANGELOG.md
+#
+# One entry per line. Lines starting with '#' and blank lines are ignored.
+gov.uk

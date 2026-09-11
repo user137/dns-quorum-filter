@@ -36,7 +36,14 @@ pub(crate) const TOPN_RAW_BASE: &str =
 /// backward-compatible, but **removing** one is a breaking change — a
 /// `resolver_config.toml` that still selects the retired code will fail to
 /// load until the operator edits it.
-pub(crate) const AVAILABLE_TOPN_LISTS: &[&str] = &["ua", "us", "de", "pl", "gb", "global"];
+///
+/// `gov-<cc>` / `edu` (T-122/T-123, Батч 4.2) are hand-curated, not
+/// CrUX-derived — see `data/topn/README.md`. `gov-de` is deliberately
+/// absent: no single registrar-restricted government suffix exists for
+/// Germany (a stated gap, SPEC.md §5.3).
+pub(crate) const AVAILABLE_TOPN_LISTS: &[&str] = &[
+    "ua", "us", "de", "pl", "gb", "global", "gov-ua", "gov-us", "gov-pl", "gov-gb", "edu",
+];
 
 /// Upper bound on one list download. A published list is ~1000 rows of
 /// ~40 bytes plus a short `#` header — well under 64 KiB; this is generous

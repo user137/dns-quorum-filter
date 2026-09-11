@@ -332,7 +332,9 @@ enum RatingFilterStep {
     Off,
     /// The domain is inside a zone; `exact` is `true` when quorum blocking
     /// it should also evict it via lazy hygiene (T-108) — i.e. `log_domain`
-    /// itself is the matched registrable, not a subdomain of it.
+    /// itself is the matched registrable (not a subdomain of it) **and**
+    /// that registrable comes from a hygiene-eligible source (Батч 4.2 —
+    /// never true for a `GovernmentTopN`/`SciEdu` blanket-suffix entry).
     InZone { exact: bool },
     /// The domain is outside every zone — `handle_query` returns a BLOCK and
     /// never consults quorum.
@@ -348,7 +350,14 @@ fn rating_filter_step(view: Option<RatingFilterView<'_>>, log_domain: &str) -> R
     match rf.lists.zone_match(log_domain, rf.removed) {
         None => RatingFilterStep::OutOfZone,
         Some(registrable) => RatingFilterStep::InZone {
-            exact: registrable == log_domain,
+            // T-122/T-123 (Батч 4.2): `exact` must also gate on hygiene
+            // eligibility, not just string equality — a `GovernmentTopN`/
+            // `SciEdu` blanket-suffix entry (e.g. `gov.ua`) must never be
+            // reported as evictable, or a false-positive quorum block of
+            // the bare suffix itself would (via T-108 lazy hygiene) drop
+            // the whole namespace it covers. Guarded here, at the point
+            // `exact` is computed — not downstream where it's consumed.
+            exact: registrable == log_domain && rf.lists.is_hygiene_eligible(registrable),
         },
     }
 }
@@ -4365,6 +4374,36 @@ mod tests {
             sub_meta.and_then(|m| m.zone_removal),
             None,
             "a subdomain block leaves the registrable in the bubble"
+        );
+    }
+
+    // T-122/T-123 (Батч 4.2) — the blanket-suffix eviction guard. A quorum
+    // block of the *exact* bare suffix a `GovernmentTopN` source holds must
+    // never surface `zone_removal`, or T-108 lazy hygiene would (on the next
+    // lookup) evict the whole namespace it covers, not one site.
+    #[tokio::test]
+    async fn a_blocked_blanket_suffix_never_surfaces_zone_removal() {
+        let zone = ZoneLists::new(vec![ZoneSource::new(
+            ZoneSourceKind::GovernmentTopN("ua".to_string()),
+            ["gov.ua".to_string()],
+        )]);
+        let removed = HashSet::new();
+
+        let (_, meta) = run_with_rating_filter(
+            &query_for("gov.ua.", RecordType::A),
+            &blocking_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &zone,
+            &removed,
+            true,
+        )
+        .await;
+        assert_eq!(
+            meta.and_then(|m| m.zone_removal),
+            None,
+            "a false-positive block of the blanket suffix itself must not \
+             be recorded for eviction — it would evict every subdomain"
         );
     }
 

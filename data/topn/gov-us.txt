@@ -1,0 +1,13 @@
+# dns-quorum-filter — curated availability zone
+# list: gov-us (T-122, Батч 4.2)
+# source: hand-curated, NOT CrUX-derived
+# criterion: registrar-restricted government TLD — .gov registration is
+#   restricted by the DotGov Act (2021) to US federal/state/local/tribal
+#   government entities, managed by CISA. One blanket entry covers every
+#   present/future subdomain (zone_match is a pure suffix walk, no PSL) — no
+#   per-agency enumeration, no editorial judgment about which specific site
+#   is "really" official.
+# verified: 2026-09-11, see data/topn/ZONES-CHANGELOG.md
+#
+# One entry per line. Lines starting with '#' and blank lines are ignored.
+gov

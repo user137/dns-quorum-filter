@@ -1,0 +1,14 @@
+# dns-quorum-filter — curated availability zone
+# list: gov-pl (T-122, Батч 4.2)
+# source: hand-curated, NOT CrUX-derived
+# criterion: registrar-restricted government domain — registration under
+#   gov.pl is limited by policy to entitled Polish government entities,
+#   registered directly by NASK (the national research institute that
+#   operates Poland's registry). One blanket entry covers every
+#   present/future subdomain (zone_match is a pure suffix walk, no PSL) — no
+#   per-ministry enumeration, no editorial judgment about which specific site
+#   is "really" official.
+# verified: 2026-09-11, see data/topn/ZONES-CHANGELOG.md
+#
+# One entry per line. Lines starting with '#' and blank lines are ignored.
+gov.pl
