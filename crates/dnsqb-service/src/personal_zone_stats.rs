@@ -444,6 +444,48 @@ mod tests {
         assert!(qualifying.contains("grown.example"));
     }
 
+    // Closing-advisor (Батч 4.5): `from_persisted` calls `resize_counts`
+    // *then* `rotate_day` - each individually tested above/elsewhere, but
+    // their composition (a restart after a long downtime *and* a shrunk
+    // window in the same edit) is where a pad-front/drop-front ordering bug
+    // would actually live. A day gap smaller than the new window: the visit
+    // must still land at the correct offset from `current_today`, not be
+    // lost or misplaced by the resize.
+    #[test]
+    fn a_restart_after_a_shrunk_window_and_a_partial_gap_keeps_the_right_offset() {
+        let mut stats = PersonalZoneStats::new(30, day(0));
+        for d in 0..30 {
+            stats.record_visit("everyday.example", day(d));
+        }
+        let persisted = stats.to_persisted();
+        // Restart 5 days later, window shrunk 30 -> 7 in the same edit.
+        let restored = PersonalZoneStats::from_persisted(persisted, day(34), 7);
+        // Visits ran through day 29; day 34 is now "today", so the last
+        // real visit (day 29) is 5 days back - inside a 7-day window.
+        let qualifying = restored.derive_qualifying_domains(&cfg(7, 1, 7, 1));
+        assert!(
+            qualifying.contains("everyday.example"),
+            "a visit still inside the shrunk window must survive the restart"
+        );
+    }
+
+    // Same composition, but the gap now exceeds the shrunk window entirely -
+    // every count must land outside the window and the domain must not
+    // qualify (nor panic/underflow while getting there).
+    #[test]
+    fn a_restart_after_a_shrunk_window_and_a_gap_longer_than_it_drops_stale_data() {
+        let mut stats = PersonalZoneStats::new(30, day(0));
+        stats.record_visit("stale.example", day(0));
+        let persisted = stats.to_persisted();
+        // Restart 40 days later, window shrunk 30 -> 7.
+        let restored = PersonalZoneStats::from_persisted(persisted, day(40), 7);
+        let qualifying = restored.derive_qualifying_domains(&cfg(7, 1, 7, 1));
+        assert!(
+            !qualifying.contains("stale.example"),
+            "a visit older than the shrunk window must not survive the restart"
+        );
+    }
+
     // ---- Error path ----
 
     #[test]

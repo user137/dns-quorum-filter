@@ -3574,7 +3574,7 @@ mod tests {
         WatchdogStatusView, ZoneListStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
-    use crate::config::{LimitsConfig, RatingFilterConfig, ResolverConfig};
+    use crate::config::{LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig};
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
@@ -5135,6 +5135,70 @@ mod tests {
                 assert!(
                     loaded.persist_cache,
                     "an unrelated config write must not blank persist_cache"
+                );
+            }
+            Err(err) => panic!("the saved file must load back: {err}"),
+        }
+    }
+
+    // T-138 (Батч 4.5) cross-field read, closing-advisor-requested: unlike
+    // `rating_filter` (a `PersistTarget` snapshot, T-217's known staleness
+    // gap), `personal_zone` was deliberately *not* added to `PersistTarget` -
+    // every write site reads `state.personal_zone_config_snapshot()` live
+    // instead. This test is the empirical proof that design choice actually
+    // works, not just "read the code and all 5 sites use the live snapshot"
+    // (the T-57/T-139/T-149/T-47/T-77/T-217 class this project keeps
+    // re-hitting): hand-edit `[personal_zone]` to a non-default value via
+    // `update_personal_zone_config` (the same path `apply_admin_reset` uses),
+    // then call a *completely unrelated* write route
+    // (`/admin/cache-config/apply`) and confirm the table survives on disk.
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_preserves_a_hand_edited_personal_zone() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        state.update_personal_zone_config(PersonalZoneConfig {
+            enabled: true,
+            frequency_window_days: 21,
+            frequency_top_n: 77,
+            regularity_window_days: 9,
+            regularity_min_days: 3,
+        });
+
+        let cache_update = non_default_cache_config_update();
+        match serve(admin_cache_config_apply_request(cache_update), state).await {
+            Ok(response) => assert_eq!(response.status(), StatusCode::OK),
+            Err(err) => match err {},
+        }
+
+        match ResolverConfig::load(&path) {
+            Ok(loaded) => {
+                assert_eq!(
+                    loaded.personal_zone,
+                    PersonalZoneConfig {
+                        enabled: true,
+                        frequency_window_days: 21,
+                        frequency_top_n: 77,
+                        regularity_window_days: 9,
+                        regularity_min_days: 3,
+                    },
+                    "an unrelated cache-config write must not blank or reset \
+                     a hand-edited [personal_zone] table"
                 );
             }
             Err(err) => panic!("the saved file must load back: {err}"),
