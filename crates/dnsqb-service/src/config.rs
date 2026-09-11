@@ -184,6 +184,28 @@ pub enum ConfigError {
     /// filters. Safe to echo.
     #[error("[rating_filter] list {0:?} is not a distributed zone list")]
     UnknownRatingFilterList(String),
+    /// A `[personal_zone]` `*_window_days` field was `0` or exceeded
+    /// [`MAX_PERSONAL_ZONE_WINDOW_DAYS`] (T-138, Батч 4.5) — `0` would make
+    /// every inclusion check vacuously empty, and an unbounded value would
+    /// make `personal_zone_stats::PersonalZoneStats`'s per-domain ring grow
+    /// without the provable bound its own module doc asks for.
+    #[error("[personal_zone] {field} must be between 1 and {MAX_PERSONAL_ZONE_WINDOW_DAYS} days")]
+    PersonalZoneWindowOutOfRange {
+        /// Which field failed — `"frequency_window_days"` or
+        /// `"regularity_window_days"`, never a domain name.
+        field: &'static str,
+    },
+    /// `[personal_zone] frequency_top_n` was `0` (T-138) — the frequency
+    /// criterion would never include anything, silently disabling half of
+    /// SPEC.md §5.1.1's union.
+    #[error("[personal_zone] frequency_top_n must not be 0")]
+    ZeroPersonalZoneFrequencyTopN,
+    /// `[personal_zone] regularity_min_days` was `0` or exceeded
+    /// `regularity_window_days` (T-138) — `0` would count every domain as
+    /// "regular", and a `min_days` above the window it's measured over could
+    /// never be satisfied by construction.
+    #[error("[personal_zone] regularity_min_days must be between 1 and regularity_window_days")]
+    PersonalZoneRegularityMinOutOfRange,
 }
 
 /// Upper bound on `resolver_config.toml`'s on-disk size, checked in
@@ -293,6 +315,86 @@ pub struct RatingFilterConfig {
     pub lists: Vec<String>,
 }
 
+/// Upper bound on `[personal_zone] frequency_window_days` /
+/// `regularity_window_days` (T-138, Батч 4.5) — the provable cap on
+/// `personal_zone_stats::PersonalZoneStats`'s per-domain ring length (see
+/// that module's own `MAX_TRACKED_DOMAINS` doc for the sibling bound on
+/// domain *count*; this is the bound on how far back one domain's history
+/// reaches).
+pub(crate) const MAX_PERSONAL_ZONE_WINDOW_DAYS: u32 = 90;
+
+/// The `[personal_zone]` table (T-138, Батч 4.5, SPEC.md §5.1.1) — the
+/// fourth, personal-learned availability-zone source. `Copy`, like
+/// [`LimitsConfig`] — every field is a plain number/bool.
+///
+/// **Default is off, mandatory, same as [`RatingFilterConfig`]** (SPEC.md
+/// §5.3 п.8): enabling personal learning is a separate, higher-privacy-tier
+/// opt-in from the rating filter itself, never implied by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersonalZoneConfig {
+    /// Whether already-ALLOW-and-Quorum-passed traffic is aggregated into
+    /// the personal zone (SPEC.md §5.1.1). Default `false`.
+    pub enabled: bool,
+    /// The rolling window (days) the frequency criterion ranks over.
+    pub frequency_window_days: u32,
+    /// How many top-ranked-by-frequency domains qualify.
+    pub frequency_top_n: u32,
+    /// The rolling window (days) the regularity criterion counts distinct
+    /// visited days over.
+    pub regularity_window_days: u32,
+    /// Minimum distinct visited days (out of `regularity_window_days`) for
+    /// the regularity criterion to qualify a domain.
+    pub regularity_min_days: u32,
+}
+
+impl Default for PersonalZoneConfig {
+    /// SPEC.md §5.1.1 names the two criteria but not their exact
+    /// thresholds — these are a reasonable starting point (a month of
+    /// frequency ranking, two weeks of regularity, visiting on a third of
+    /// those days), not a value pinned by the spec text itself.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frequency_window_days: 30,
+            frequency_top_n: 200,
+            regularity_window_days: 14,
+            regularity_min_days: 5,
+        }
+    }
+}
+
+/// Validates a `[personal_zone]` table's numeric fields (T-138) — `enabled`
+/// needs no validation. Mirrors [`validate_rating_filter_lists`]'s "loud
+/// error on a hand-edited mistake, not a silent no-op" discipline.
+fn validate_personal_zone(
+    file: &PersonalZoneConfigFile,
+) -> Result<PersonalZoneConfig, ConfigError> {
+    let window_ok = |days: u32| (1..=MAX_PERSONAL_ZONE_WINDOW_DAYS).contains(&days);
+    if !window_ok(file.frequency_window_days) {
+        return Err(ConfigError::PersonalZoneWindowOutOfRange {
+            field: "frequency_window_days",
+        });
+    }
+    if !window_ok(file.regularity_window_days) {
+        return Err(ConfigError::PersonalZoneWindowOutOfRange {
+            field: "regularity_window_days",
+        });
+    }
+    if file.frequency_top_n == 0 {
+        return Err(ConfigError::ZeroPersonalZoneFrequencyTopN);
+    }
+    if file.regularity_min_days == 0 || file.regularity_min_days > file.regularity_window_days {
+        return Err(ConfigError::PersonalZoneRegularityMinOutOfRange);
+    }
+    Ok(PersonalZoneConfig {
+        enabled: file.enabled,
+        frequency_window_days: file.frequency_window_days,
+        frequency_top_n: file.frequency_top_n,
+        regularity_window_days: file.regularity_window_days,
+        regularity_min_days: file.regularity_min_days,
+    })
+}
+
 /// Resolver config, loaded once at startup (T-144). No longer `Copy` as of
 /// T-76 — `geoip.blocked_countries` is a `Vec<String>`, so this type is
 /// `Clone` only now (every other field stays individually `Copy`, so a
@@ -364,6 +466,12 @@ pub struct ResolverConfig {
     /// (SPEC.md §5.3). Default off. No admin route yet (Батч 4.4); carried
     /// through every config rewrite the same way `limits` is.
     pub rating_filter: RatingFilterConfig,
+    /// T-138 (Батч 4.5) — the `[personal_zone]` personal learned zone
+    /// (SPEC.md §5.1.1). Default off, no admin route (hand-edit only, the
+    /// same "browsing-derived data, opt-in disclosure only" treatment as
+    /// `persist_query_log`/`persist_cache`); carried through every config
+    /// rewrite via [`crate::dispatch::PersistTarget`].
+    pub personal_zone: PersonalZoneConfig,
 }
 
 impl Default for ResolverConfig {
@@ -381,6 +489,7 @@ impl Default for ResolverConfig {
             persist_query_log: false,
             persist_cache: false,
             rating_filter: RatingFilterConfig::default(),
+            personal_zone: PersonalZoneConfig::default(),
         }
     }
 }
@@ -476,6 +585,7 @@ impl ResolverConfig {
             blocked_countries.push(validate_country_code(raw)?);
         }
         let rating_filter_lists = validate_rating_filter_lists(&file.rating_filter.lists)?;
+        let personal_zone = validate_personal_zone(&file.personal_zone)?;
 
         Ok(Self {
             port: file.port,
@@ -498,6 +608,7 @@ impl ResolverConfig {
                 enabled: file.rating_filter.enabled,
                 lists: rating_filter_lists,
             },
+            personal_zone,
         })
     }
 
@@ -542,6 +653,13 @@ impl ResolverConfig {
             rating_filter: RatingFilterConfigFile {
                 enabled: self.rating_filter.enabled,
                 lists: self.rating_filter.lists.clone(),
+            },
+            personal_zone: PersonalZoneConfigFile {
+                enabled: self.personal_zone.enabled,
+                frequency_window_days: self.personal_zone.frequency_window_days,
+                frequency_top_n: self.personal_zone.frequency_top_n,
+                regularity_window_days: self.personal_zone.regularity_window_days,
+                regularity_min_days: self.personal_zone.regularity_min_days,
             },
             limits: LimitsConfigFile {
                 max_concurrent_connections: self.limits.max_concurrent_connections,
@@ -688,6 +806,8 @@ struct ResolverConfigFile {
     geoip: GeoipConfigFile,
     /// T-124/T-126 — see [`ResolverConfig::rating_filter`].
     rating_filter: RatingFilterConfigFile,
+    /// T-138 (Батч 4.5) — see [`ResolverConfig::personal_zone`].
+    personal_zone: PersonalZoneConfigFile,
     /// T-169 — see [`ResolverConfig::limits`].
     limits: LimitsConfigFile,
 }
@@ -773,6 +893,13 @@ impl Default for ResolverConfigFile {
                 enabled: defaults.rating_filter.enabled,
                 lists: defaults.rating_filter.lists,
             },
+            personal_zone: PersonalZoneConfigFile {
+                enabled: defaults.personal_zone.enabled,
+                frequency_window_days: defaults.personal_zone.frequency_window_days,
+                frequency_top_n: defaults.personal_zone.frequency_top_n,
+                regularity_window_days: defaults.personal_zone.regularity_window_days,
+                regularity_min_days: defaults.personal_zone.regularity_min_days,
+            },
             limits: LimitsConfigFile::default(),
         }
     }
@@ -830,6 +957,33 @@ struct RatingFilterConfigFile {
     lists: Vec<String>,
 }
 
+/// TOML-facing shape for [`PersonalZoneConfig`] (T-138, Батч 4.5) — a plain,
+/// hand-editable `[personal_zone]` table, same "graceful partial, loud typo"
+/// split every other nested table here uses. Range validation happens in
+/// [`ResolverConfig::load`] via [`validate_personal_zone`], not here.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct PersonalZoneConfigFile {
+    enabled: bool,
+    frequency_window_days: u32,
+    frequency_top_n: u32,
+    regularity_window_days: u32,
+    regularity_min_days: u32,
+}
+
+impl Default for PersonalZoneConfigFile {
+    fn default() -> Self {
+        let defaults = PersonalZoneConfig::default();
+        Self {
+            enabled: defaults.enabled,
+            frequency_window_days: defaults.frequency_window_days,
+            frequency_top_n: defaults.frequency_top_n,
+            regularity_window_days: defaults.regularity_window_days,
+            regularity_min_days: defaults.regularity_min_days,
+        }
+    }
+}
+
 /// TOML-facing shape for `cache::CacheConfig` (T-153) — seconds as `u64`,
 /// mirroring how `ResolverConfigFile.timeout_ms` is a plain integer while the
 /// live `TimeoutConfig` holds a real `Duration`. `CacheConfig` itself stays
@@ -861,7 +1015,8 @@ impl Default for CacheConfigFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheConfig, ConfigError, GeoipConfig, LimitsConfig, RatingFilterConfig, ResolverConfig,
+        CacheConfig, ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig,
+        RatingFilterConfig, ResolverConfig,
     };
     use crate::timeout::TimeoutMode;
     use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
@@ -924,6 +1079,7 @@ mod tests {
                 persist_query_log: false,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
+                personal_zone: PersonalZoneConfig::default(),
             }
         );
     }
@@ -1178,6 +1334,7 @@ mod tests {
                 enabled: true,
                 lists: vec!["ua".to_string(), "global".to_string()],
             },
+            personal_zone: PersonalZoneConfig::default(),
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -1444,6 +1601,123 @@ mod tests {
     fn load_rejects_a_misspelled_rating_filter_key() {
         let (_dir, path) = temp_config_path();
         if let Err(err) = fs::write(&path, "[rating_filter]\nenbaled = true\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    // ---- T-138 (Батч 4.5): [personal_zone] validation ----
+
+    #[test]
+    fn load_of_a_missing_personal_zone_table_defaults_to_disabled() {
+        let (_dir, path) = temp_config_path();
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("an absent table must default, not error: {err}"),
+        };
+        assert_eq!(config.personal_zone, PersonalZoneConfig::default());
+    }
+
+    #[test]
+    fn load_accepts_a_fully_specified_personal_zone_table() {
+        let (_dir, path) = temp_config_path();
+        let toml = "[personal_zone]\nenabled = true\nfrequency_window_days = 21\n\
+                     frequency_top_n = 50\nregularity_window_days = 10\nregularity_min_days = 3\n";
+        if let Err(err) = fs::write(&path, toml) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a well-formed table must load: {err}"),
+        };
+        assert_eq!(
+            config.personal_zone,
+            PersonalZoneConfig {
+                enabled: true,
+                frequency_window_days: 21,
+                frequency_top_n: 50,
+                regularity_window_days: 10,
+                regularity_min_days: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_zero_frequency_window() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[personal_zone]\nfrequency_window_days = 0\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::PersonalZoneWindowOutOfRange {
+                field: "frequency_window_days"
+            })
+        ));
+    }
+
+    // Security/boundary: a window above the provable cap is rejected, not
+    // silently accepted as an ever-growing per-domain ring.
+    #[test]
+    fn load_rejects_a_regularity_window_above_the_cap() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[personal_zone]\nregularity_window_days = 91\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::PersonalZoneWindowOutOfRange {
+                field: "regularity_window_days"
+            })
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_zero_frequency_top_n() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[personal_zone]\nfrequency_top_n = 0\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::ZeroPersonalZoneFrequencyTopN)
+        ));
+    }
+
+    // Misuse/fool: a `regularity_min_days` above its own window can never be
+    // satisfied by construction — rejected rather than silently inert.
+    #[test]
+    fn load_rejects_a_regularity_min_days_exceeding_its_window() {
+        let (_dir, path) = temp_config_path();
+        let toml = "[personal_zone]\nregularity_window_days = 5\nregularity_min_days = 6\n";
+        if let Err(err) = fs::write(&path, toml) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::PersonalZoneRegularityMinOutOfRange)
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_zero_regularity_min_days() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[personal_zone]\nregularity_min_days = 0\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::PersonalZoneRegularityMinOutOfRange)
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_personal_zone_key() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[personal_zone]\nenbaled = true\n") {
             panic!("must be able to write the fixture file: {err}");
         }
         assert!(matches!(
