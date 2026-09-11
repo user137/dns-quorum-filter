@@ -4848,3 +4848,79 @@ doc-коментарі const). `ResolverConfig::save` пише `lists` без р
 (closing-advisor фікс: union зон + ArrowUp) · `fe026ea` (T-128 бейдж + трей) · `2941879` (T-127
 валідатор звужено + DECISIONS) · `<docs>` (цей запис + синхронізація доків/діаграм). Плюс
 `c64e1db`/`173cf56` (Коміт 1–2 backend, зроблені перед палітрою).
+
+### Батч 4.2 — курація зон: державні + науково-освітні (T-122, T-123; зроблено 2026-09-11,
+kickoff plan+advisor, closing-advisor; 2 коміти)
+
+`ZoneLists` уже приймала N-арний `Vec<ZoneSource>` саме заради цього батчу — новий
+`ZoneSourceKind` не чіпає pipeline/UI/DTO-поверхню.
+
+**Спрощення обсягу (рішення користувача на kickoff-плані).** Оригінальний план TASKS.md —
+евристичне TLD-кандидування + обов'язковий формальний PR-шаблон/CODEOWNERS процес — користувач
+відхилив як зайву складність для одноосібного репозиторію: «просто витягати топ відповідних
+доменів спираючись на старі або відомі домени які використовують науковці інженери держ
+службовці». Реалізація: без окремого інструмента курації, короткий вручну зібраний список.
+Прозорість (SPEC.md вимагає «версійований список») — легкий `data/topn/ZONES-CHANGELOG.md`, без
+GitHub-механізмів.
+
+**Ключовий трюк — blanket-suffix записи.** `ZoneLists::zone_match` — чистий walk по суфіксах без
+PSL. Замість переліку конкретних міністерств/установ, кожен держ.-список тримає **один запис** —
+сам домен/суфікс, реєстрація в якому обмежена реєстратором лише легітимним держ. органам
+(`gov.ua`, `gov.pl`, `gov.uk`, голий `gov` для США — DotGov Act 2021, CISA). Один такий запис
+автоматично покриває всі теперішні й майбутні піддомени; легітимність гарантує сама політика
+реєстратора, не суб'єктивне судження про «хто справжній уряд». Перевірено пошуком цього сеансу
+(не з пам'яті): `gov.ua` (101domain, NIC.UA), `gov.pl` (101domain, NASK), `edu.ua` (NIC.UA),
+`ac.uk` (Jisc) — усі підтверджено як обмежені. **Німеччина (`gov-de`) — свідома прогалина**:
+немає єдиної конвенції (SPEC.md сам це називає).
+
+`edu.txt` (T-123, глобальний, не per-country, 13 записів) — той самий трюк для `edu`/`ac.uk`/
+`edu.ua`/`int`, плюс жменька індивідуально названих globally-визнаних тіл: SPEC.md §5.3's власні
+приклади (PubMed/NIH, NASA) + arXiv, DOI, ORCID, IETF, W3C, IEEE, ООН. Свідомо вузько — не спроба
+рангувати «хто вартий довіри» у світі (SPEC.md сам називає цей ризик).
+
+`gov-<cc>`/`edu` приєднались до code-простору `[rating_filter] lists` (`AVAILABLE_TOPN_LISTS`,
+`validate_rating_filter_lists`, `topn_updater::zone_source_kind`) — адитивно для більшості
+викликів (`list_code()` — усе, що їм треба).
+
+**Структурний guard, знайдений advisor-ревʼю kickoff-плану (без нього — блокер).** Blanket-запис —
+це один рядок, що покриває цілий простір. Ризик: хибно-позитивний quorum-блок голого суфікса
+(`gov.ua` буквально) міг стати `exact = true` → T-108 лінива гігієна → `record_zone_removal` →
+**евіктиться ЦІЛА державна зона**, мовчки, до рестарту. Емпірична перевірка (Google DoH JSON,
+WebFetch) показала, що `gov.ua` сьогодні резолвиться в реальну IP (не NXDOMAIN), тож сьогоднішня
+`evaluate()`-логіка (`NullIp`/`NxdomainVsBaseline`/`NullIpOrNxdomain`) цей шлях не запускає — але
+advisor наполіг на структурному гарді замість покладання на цей трейс (той самий клас, що
+CLAUDE.md вже фіксує для bounds-safety: інваріант, доведений в іншому модулі, — реальний ризик для
+наступного читача). Фікс — на **двох** рівнях, обидва в точці, де факт **обчислюється**, не де він
+**споживається**:
+- `ZoneSourceKind::hygiene_eligible()` — `true` лише для `CountryTopN`/`Global` (шумні CrUX-списки,
+  ~20% junk за T-104 — для них T-108 і існує); `false` для `GovernmentTopN`/`SciEdu`.
+- `ZoneLists::zone_match` сам тепер ігнорує `removed` для non-eligible джерела — структурна
+  гарантія (навіть якби `removed` якимось іншим шляхом колись отримав суфіксний запис, blanket-
+  зона все одно не зникне), не лише дисципліна виклику.
+- `pipeline::rating_filter_step`'s `exact` додатково вимагає `is_hygiene_eligible` — тож
+  `record_zone_removal` для blanket-запису взагалі ніколи не викликається.
+
+Це означає: нові `ZoneSourceKind`-варіанти адитивні для pipeline/UI/DTO, але **не** для T-108
+лінивої гігієни — зафіксовано в doc-коментарі, не мовчки.
+
+**UI-полірування (advisor знахідка №2).** `#rating-filter-body`'s `zoneMeta` рендерила
+`${counts[code]} дом.` — для `gov-ua` буквально «1 дом.», хоча запис покриває весь `gov.ua`. Той
+самий "never a fake count" клас, що T-66 (CLAUDE.md). Фікс: `zoneMeta` — гілка на префікс
+`"gov-"` → «весь простір» замість лічильника; `edu` не чіпали (реальний список, лічильник чесний).
+`RATING_FILTER_ZONE_LABELS` += українські підписи для нових кодів.
+
+**Тести (4 категорії де застосовно):** `rating_filter.rs` (`list_code`, `hygiene_eligible`,
+blanket-suffix покриває піддомен і сам себе, `is_hygiene_eligible` false для blanket / true для
+CrUX-джерела); `config.rs` (Happy: `gov-ua`/`edu` приймаються; Security-Boundary: `gov-` без
+2-літерного коду; Misuse-Fool: `gov-de` — форма ок, датасету нема; Error: голий `"gov"` без
+дефіса); `topn_updater.rs` (routing + `load_zone_from_disk` fixture); `pipeline.rs` (властивісний
+тест — quorum-блок точно `gov.ua` → `zone_removal = None`); `admin_ui.rs` (`zoneMeta` має гілку на
+`gov-`-префікс, не лишена без тесту).
+
+**Гейти:** `fmt` / `clippy --workspace --all-targets -D warnings` / `cargo test --workspace --lib
+--bins --locked` (761 + 40) / `--doc --locked` (9, `ZoneLists::zone_match` доктест незмінний) /
+`node --check main.js` — усе зелено на кожному коміті.
+
+**Коміти:** `a9108e6` (T-122 — механізм + guard + `gov-{ua,us,pl,gb}.txt`) · `<цей коміт>` (T-123 —
+`edu.txt` + UI-полірування + документація: `data/topn/{README.md,ZONES-CHANGELOG.md}`,
+`diagrams/rating-filter.md`, `TASKS.md`, `CLAUDE.md`, цей запис).

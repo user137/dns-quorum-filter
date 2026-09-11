@@ -586,6 +586,23 @@ mod tests {
         );
     }
 
+    // T-122 (Батч 4.2) — a gov-* zone is one blanket suffix, not a
+    // popularity count; showing "1 дом." next to it would read as broken
+    // (the T-66 "never a fake count" discipline). The picked-zone row must
+    // render a coverage label instead of the raw domain count for those.
+    #[test]
+    fn main_js_shows_coverage_not_a_domain_count_for_a_gov_zone() {
+        assert!(
+            MAIN_JS.contains(r#"code.startsWith("gov-")"#),
+            "zoneMeta must special-case the gov-* blanket-suffix codes"
+        );
+        assert!(
+            MAIN_JS.contains("весь простір"),
+            "a gov-* zone's row must say it covers a whole domain space, \
+             not a misleading single-digit count"
+        );
+    }
+
     // T-128 — the always-visible activity indicator: a slot under the hero,
     // filled by renderRatingFilterBadge from the 2s status poll (via
     // render()), and gated on status.rating_filter.enabled so it is an empty

@@ -12,13 +12,60 @@ countries, `global`) — the zone is the union of those.
 |---|---|
 | `<cc>.txt` | Top-traffic registrable domains of country `<cc>` (ISO 3166-1 alpha-2). |
 | `global.txt` | Worldwide top-traffic registrable domains. |
+| `gov-<cc>.txt` | Government domain/suffix for country `<cc>` (Батч 4.2 — see below). |
+| `edu.txt` | Global science/education/non-profit zone (Батч 4.2 — see below). |
 | `<name>.txt.sha256` | `sha256sum`-format checksum sidecar for `<name>.txt`. |
 
-Format: **one registrable domain per line, sorted, lowercase**. Lines
-starting with `#` (a provenance header) and blank lines are ignored by the
-client. URLs are stable — content changes, paths don't; the client fetches
-`<name>.txt` + `<name>.txt.sha256` and atomic-swaps on a checksum change
-(the same mechanism as the GeoIP database).
+Format: **one entry per line, sorted, lowercase**. Lines starting with `#`
+(a provenance header) and blank lines are ignored by the client. URLs are
+stable — content changes, paths don't; the client fetches `<name>.txt` +
+`<name>.txt.sha256` and atomic-swaps on a checksum change (the same
+mechanism as the GeoIP database).
+
+An entry is not always a single site — see "Government & science/education
+zones" below for the blanket-suffix case, where one entry covers an entire
+domain space.
+
+## Government & science/education zones (`gov-<cc>.txt`, `edu.txt` — Батч 4.2)
+
+**These files are hand-curated, not CrUX-derived** — the "Data source and
+attribution" section below (CrUX, CC BY 4.0, the PSL) does not apply to
+them; they carry their own `source:`/`criterion:` header instead. No
+automated candidate-scanning tool exists for these — the lists are short
+enough that a maintainer curates them directly (see
+`ZONES-CHANGELOG.md` for the audit trail of what was added, why, and against
+what source it was verified).
+
+**Government (`gov-<cc>.txt`, T-122).** Each file holds one *domain/suffix*
+whose registration a registrar restricts by policy to legitimate government
+bodies of that country (`gov.ua`, `gov.pl`, `gov.uk`, bare `gov` for the
+US). Because [`ZoneLists::zone_match`](../../crates/dnsqb-service/src/rating_filter.rs)
+is a pure suffix walk with no PSL, that single entry automatically covers
+every present and future subdomain — no per-ministry enumeration, and no
+editorial judgment about which specific site is "really" official (the
+registrar's own restricted-registration policy is the inclusion criterion,
+not this project's opinion). **`de` is a stated gap**: Germany has no single
+unified government-domain convention (agencies use a mix of `bund.de` and
+independent domains) — SPEC.md §5.3 names this variance explicitly, and this
+batch did not attempt to guess a substitute.
+
+Because a `gov-<cc>` entry is a whole namespace behind one line, it is
+**not** subject to T-108 lazy hygiene (`ZoneSourceKind::hygiene_eligible`) —
+a false-positive quorum block of the bare suffix itself must never evict the
+entire zone it covers. The `/admin/ui` zone card shows "весь простір"
+instead of a domain count for these — a "1" would read as broken.
+
+**Science/education (`edu.txt`, T-123).** One global (not per-country) list
+mixing (a) registrar-restricted academic/international TLDs and SLDs (`edu`,
+`ac.uk`, `edu.ua`, `int` — same blanket-suffix reasoning as above) and (b) a
+short list of individually-named, globally-recognized research/standards
+bodies — the SPEC.md §5.3 examples (PubMed/NIH, NASA) plus similarly neutral
+peers (arXiv, DOI, ORCID, IETF, W3C, IEEE, the UN). Deliberately narrow: this
+is not an attempt to rank or enumerate every legitimate institution
+worldwide (SPEC.md names that exact risk — "чому є NASA, а нема аналогічної
+установи іншої країни"), only entries with an objective inclusion criterion.
+No restricted academic SLD is included for `de`/`pl` — not verified with
+confidence this batch, a stated gap alongside the `gov-de` one.
 
 ## Data source and attribution
 

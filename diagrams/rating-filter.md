@@ -14,7 +14,12 @@ TASKS.md §"Фаза 4" "План виконання Ф4"; T-104/T-106 (kickoff-
 й бейджа), `admin.rs` (`RatingFilterStatusView`/`ZoneListStatusView`/`RatingFilterConfigUpdate`,
 `AdminClient::set_rating_filter`), `ui/{index.html,main.js,style.css}` (картка `#rating-filter-body`
 + бейдж `#rating-filter-badge`), `dnsqb-tray/status.rs` (`TrayStatus::Filtering.rating_filter_active`
-→ суфікс тултипа), `config.rs` (`+UnknownRatingFilterList`).
+→ суфікс тултипа), `config.rs` (`+UnknownRatingFilterList`). **T-122/T-123 (Батч 4.2, зроблено):**
+`rating_filter.rs` (`ZoneSourceKind::GovernmentTopN`/`SciEdu`, `hygiene_eligible`,
+`ZoneLists::is_hygiene_eligible`), `pipeline.rs::rating_filter_step` (`exact` += eligibility-гейт),
+`topn_download.rs` (`AVAILABLE_TOPN_LISTS` += `gov-*`/`edu`), `topn_updater.rs`
+(`zone_source_kind` routing), `config.rs` (`validate_rating_filter_lists` розширено),
+`data/topn/{README.md,ZONES-CHANGELOG.md,gov-*.txt,edu.txt}`.
 
 # Рейтинговий фільтр «бульбашка» — позиція в конвеєрі + джерела зон
 
@@ -63,7 +68,7 @@ flowchart TD
     EN -- "ні (дефолт / lists порожній — Fork B)" --> PASS["далі конвеєром:<br/>Quorum → GeoIP"]
     EN -- "так" --> ZONE{"zone_match(log_domain):<br/>якийсь суфікс домену в ∪ зон<br/>І не в removed-overlay?"}
 
-    ZONE -- "Some(registrable)<br/>(вкл. субдомен in-zone registrable)" --> INZ["у зоні<br/>exact = (log_domain == registrable)"]
+    ZONE -- "Some(registrable)<br/>(вкл. субдомен in-zone registrable)" --> INZ["у зоні<br/>exact = (log_domain == registrable)<br/>І is_hygiene_eligible(registrable) — Батч 4.2"]
     ZONE -- "None (поза кожною зоною<br/>АБО в removed-overlay)" --> OUT["BLOCK (0.0.0.0/::)<br/>decision_source = RATING_FILTER<br/>кворум НЕ опитується · НЕ кешується"]
 
     INZ --> PASS
@@ -72,9 +77,10 @@ flowchart TD
     QUORUM -- "quorum Block І субдомен" --> NOOP["нічого не прибирати<br/>(кворум ре-блокує щоразу за нуль ціни)"]
 ```
 
-Джерела зони — `∪`: курований топ-N країни + `global` ∪ [держ / науково-освітні — Батч 4.2] ∪
-[персональний §5.1.1 — Батч 4.5] ∪ ручний allowlist (крок 1, вище). `ZoneSourceKind` — відкритий
-enum, тож 4.2/4.5 адитивні.
+Джерела зони — `∪`: курований топ-N країни + `global` ∪ держ (`GovernmentTopN`) / науково-освітні
+(`SciEdu`) — **Батч 4.2, зроблено** ∪ [персональний §5.1.1 — Батч 4.5] ∪ ручний allowlist (крок 1,
+вище). `ZoneSourceKind` — відкритий enum, тож нові варіанти адитивні для pipeline/UI/DTO — **але
+НЕ для T-108 лінивої гігієни** (`ZoneSourceKind::hygiene_eligible`, нижче).
 
 ## Рішення, яких SPEC §5.3 прямо не називає (розвʼязано при T-124)
 
@@ -92,8 +98,17 @@ enum, тож 4.2/4.5 адитивні.
   `dispatch::resolve_doh_request` дає `None` замість `RatingFilterView`, лог-warn при старті.
 - **Порядок перевірки джерел зон** — не важливий для результату (∪). `decision_source =
   RATING_FILTER` лише каже «цей крок заблокував»; окремого поля «яке джерело впустило» немає.
-- **Дефолт держ / науково-освітніх «увімкнено»** — ефект лише коли сам фільтр увімкнений; ці
-  `ZoneSource`-типи додає Батч 4.2.
+- **Держ / науково-освітні зони (T-122/T-123, Батч 4.2, зроблено)** — `GovernmentTopN(cc)` /
+  `SciEdu`, code-простір `gov-<cc>`/`edu`, не CrUX-похідні (`data/topn/README.md`). Здебільшого
+  «blanket-suffix» записи (`gov.ua`, `gov`, `edu`, `int`, …) — один запис у наборі покриває весь
+  простір піддоменів через той самий PSL-вільний `zone_match`, без окремого механізму.
+- **`hygiene_eligible` — новий виняток із «адитивності»** (`ZoneSourceKind::hygiene_eligible`,
+  `ZoneLists::is_hygiene_eligible`). `CountryTopN`/`Global` — eligible (для них T-108 і існує,
+  ~20% junk у сирому топ-N за T-104); `GovernmentTopN`/`SciEdu` — **не** eligible: blanket-запис
+  покриває цілий простір, тож хибний quorum-блок самого запису не має евіктити все під ним.
+  Guard — у двох шарах: `zone_match` сам ігнорує `removed` для non-eligible джерела (структурна
+  гарантія, не лише дисципліна виклику), і `pipeline::rating_filter_step`'s `exact` додатково
+  вимагає eligibility, тож `record_zone_removal` для blanket-запису взагалі ніколи не викликається.
 - **Допустимі коди `lists`** — рівно `AVAILABLE_TOPN_LISTS` (T-127): `validate_rating_filter_lists`
   робить дві перевірки — форма (`InvalidRatingFilterList`) і членство (`UnknownRatingFilterList`);
   обидві фатальні. `lists ⊆ available_lists` гарантовано. Прибрати код із константи — ламна зміна

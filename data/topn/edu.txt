@@ -1,0 +1,41 @@
+# dns-quorum-filter — curated availability zone
+# list: edu (T-123, Батч 4.2)
+# source: hand-curated, NOT CrUX-derived. Global — not per-country.
+# criterion: each entry is either (a) a registrar-restricted academic/
+#   international TLD or SLD — no editorial judgment about which specific
+#   institution is "really" legitimate, the registrar's own policy is the
+#   gate — or (b) an individually-named, globally-recognized research/
+#   standards body (the SPEC.md §5.3 examples, PubMed/NASA, plus similarly
+#   neutral peers). Deliberately narrow: not a per-country popularity list,
+#   and not an attempt to enumerate every legitimate institution worldwide.
+# (a) restricted TLD/SLD:
+#   edu      — US, accredited postsecondary institutions only (Educause)
+#   ac.uk    — UK academic/research institutions only (Jisc)
+#   edu.ua   — Ukrainian higher-education institutions only (level III+)
+#   int      — organizations founded by an international treaty (IANA)
+# (b) individually-named, verified 2026-09-11:
+#   nasa.gov, nih.gov         — SPEC.md §5.3's own examples
+#   arxiv.org                 — open-access research preprint repository
+#   doi.org                   — persistent identifier resolver for published research
+#   orcid.org                 — researcher identifier registry
+#   ietf.org, w3.org          — Internet/Web standards bodies
+#   ieee.org                  — engineering professional/standards body
+#   un.org                    — United Nations
+# Known gap: no equivalent restricted academic SLD included for de/pl (not
+# verified with confidence this session) — see data/topn/ZONES-CHANGELOG.md.
+# verified: 2026-09-11, see data/topn/ZONES-CHANGELOG.md
+#
+# One entry per line. Lines starting with '#' and blank lines are ignored.
+edu
+ac.uk
+edu.ua
+int
+nasa.gov
+nih.gov
+arxiv.org
+doi.org
+orcid.org
+ietf.org
+w3.org
+ieee.org
+un.org

@@ -2377,6 +2377,12 @@ const RATING_FILTER_ZONE_LABELS = {
   pl: "Польща",
   gb: "Велика Британія",
   global: "Глобальний топ",
+  // T-122/T-123 (Батч 4.2) — hand-curated, not CrUX popularity lists.
+  "gov-ua": "Україна (державні)",
+  "gov-us": "США (державні)",
+  "gov-pl": "Польща (державні)",
+  "gov-gb": "Велика Британія (державні)",
+  edu: "Наука/освіта",
 };
 
 function ratingFilterZoneLabel(code) {
@@ -2592,8 +2598,15 @@ function renderRatingFilter(status) {
   }
 
   function zoneMeta(code) {
+    // T-122 (Батч 4.2): a gov-* list is one blanket suffix covering an
+    // entire domain space, not a popularity count - showing "1 дом." would
+    // read as broken (T-66 "never a fake count" discipline). `edu` keeps
+    // the real count: it's a genuine curated list, not a single suffix.
+    const isBlanketGovZone = code.startsWith("gov-");
     if (Object.prototype.hasOwnProperty.call(counts, code)) {
-      return { text: `${counts[code]} дом.`, loading: false };
+      return isBlanketGovZone
+        ? { text: "весь простір", loading: false }
+        : { text: `${counts[code]} дом.`, loading: false };
     }
     if (rf.enabled) {
       return { text: "завантажується…", loading: true };

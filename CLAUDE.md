@@ -87,8 +87,28 @@ shape check + `AVAILABLE_TOPN_LISTS` membership (`+ConfigError::UnknownRatingFil
 known limitations closed: `run_topn_updater` now always spawns (no-op while disabled;
 `main.rs`/`spawn_public_http_tasks` dropped the `rating_filter_active` gate — commit `173cf56`),
 and enabling via the route rebuilds the verdict cache. Palette also swapped to Catppuccin
-(Latte/Mocha) across `/admin/ui` + the mockup (`f8f2dce`, superseded Nord). Next: Батч 4.2
-(gov / edu `ZoneSource` kinds). Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
+(Latte/Mocha) across `/admin/ui` + the mockup (`f8f2dce`, superseded Nord). **Батч 4.2 (T-122,
+T-123) done 2026-09-11** (kickoff plan+advisor, closing-advisor): two more `ZoneSourceKind`
+variants, `GovernmentTopN(cc)` / `SciEdu` — user-simplified scope at kickoff (no TLD-heuristic
+scan tool, no PR-template/CODEOWNERS; a short hand-curated list instead). Each government list is
+a single registrar-restricted **blanket-suffix** entry (`gov.ua`/`gov`/`gov.pl`/`gov.uk`) that
+`zone_match`'s PSL-free suffix walk turns into automatic coverage of every subdomain — legitimacy
+comes from the registrar's own restricted-registration policy, not editorial judgment; `de` is a
+stated gap (no unified convention). `edu.txt` (T-123, global, 13 entries) mixes restricted
+academic/international TLDs (`edu`/`ac.uk`/`edu.ua`/`int`) with a short list of individually-named
+canonical bodies (the SPEC.md-named PubMed/NASA examples + arXiv/DOI/ORCID/IETF/W3C/IEEE/UN).
+**Advisor caught a real structural risk on the kickoff plan:** a blanket entry is a whole
+namespace behind one line, so a false-positive quorum block of the bare suffix itself could (via
+T-108 lazy hygiene) silently evict the entire zone it covers — fixed with
+`ZoneSourceKind::hygiene_eligible` (`false` for the two new variants) enforced at two layers
+(`ZoneLists::zone_match` itself only lets `removed` suppress a hygiene-eligible source, and
+`pipeline::rating_filter_step`'s `exact` flag additionally requires eligibility before a removal
+is ever recorded) — the new variants are additive for pipeline/UI/DTO but **not** for T-108.
+Also fixed: the `/admin/ui` zone card would have shown a misleading "1 дом." next to a blanket
+government zone (T-66 "never a fake count" class) — `zoneMeta` now renders "весь простір" for
+`gov-*` codes. `data/topn/ZONES-CHANGELOG.md` (new) is the lightweight curation audit trail
+SPEC.md §5.3 calls for, no formal GitHub process. Next: Батч 4.5 (personal learned zone source).
+Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
 (macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
 Батч 3.7): `.github/workflows/
@@ -304,7 +324,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (7 producible: +`BaselineFallback` T-155 — the one whose `voters` is **not** empty; +`RatingFilter` T-124), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
-| `rating_filter` | T-124 — pure step-5 core (SPEC.md §5.3). `ZoneSourceKind` (`CountryTopN(cc)`/`Global`, open enum — 4.2/4.5 additive), `ZoneSource { kind, registrables: HashSet }`, `ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — one suffix walk, both the membership test and the exact-match identity for lazy hygiene; a hit on any suffix in the union and not in `removed` = in zone. **No PSL** — the published lists are registrable-only, and `curate_topn` skips bare public suffixes (`overrides::suffix_matches` precedent) |
+| `rating_filter` | T-124 — pure step-5 core (SPEC.md §5.3). `ZoneSourceKind` (`CountryTopN(cc)`/`Global`/`GovernmentTopN(cc)`/`SciEdu` — T-122/T-123, Батч 4.2; open enum, 4.5 still additive), `ZoneSource { kind, registrables: HashSet }`, `ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — one suffix walk, both the membership test and the exact-match identity for lazy hygiene; a hit on any suffix in the union = in zone. **No PSL** — the published lists are registrable-only, and `curate_topn` skips bare public suffixes (`overrides::suffix_matches` precedent). **Blanket-suffix entries (Батч 4.2):** a `GovernmentTopN`/`SciEdu` source can hold a whole registrar-restricted domain space (`gov.ua`, `gov`, `edu`, `int`) as one entry — the same PSL-free suffix walk then covers every subdomain automatically. `ZoneSourceKind::hygiene_eligible()` (`false` for these two, `true` for the CrUX-derived kinds) + `ZoneLists::is_hygiene_eligible()` gate T-108 lazy hygiene at **two** layers — `zone_match` itself only lets `removed` suppress a hygiene-eligible source's match (structural, not just caller discipline), and `pipeline::rating_filter_step`'s `exact` additionally requires eligibility — so a false-positive quorum block of the bare suffix itself can never evict the whole namespace it covers |
 | `topn_download` | T-124 pure helpers — `TOPN_RAW_BASE` (`raw.githubusercontent.com/.../data/topn/`, the T-105 stable-URL contract), `AVAILABLE_TOPN_LISTS: &[&str]` (`ua`/`us`/`de`/`pl`/`gb`/`global` — the distribution contract; surfaced as `RatingFilterStatusView.available_lists` **and**, since T-127, gates config loading via `validate_rating_filter_lists`, so *removing* a code is a breaking change), `list_url`/`sha256_sidecar_url`, `parse_list` (skip `#`/blank, lowercase, dedup), `verify_sha256` (sha256sum-style first token, 64 hex; a malformed sidecar never matches). Mirrors `geoip_download` |
 | `topn_updater` | T-124 — `run_topn_updater` (`loop { refresh_all_lists; park_until_due }`, `TOPN_CHECK_INTERVAL` 24h, `Notify` wake on `/admin/reset` **and `POST /admin/rating-filter`**); `refresh_one_list` fetch→verify→`paths::write_atomic(<app-data>/topn/<list>.txt)`→`parse_list`→`ZoneSource`; failed list keeps last-known-good. `load_zone_from_disk` seeds the bubble at startup (empty on fresh install, like `load_geoip_state(None)`). **Batch 4.4 (`173cf56`): always spawned by `main.rs` whenever an app-data dir exists** — no longer gated on `[rating_filter]` enabled+non-empty; `refresh_all_lists` re-reads the config snapshot each cycle and returns immediately while disabled (closes the "enable needs a restart" gap). **No DNS.** Mirrors `geoip_updater` |
 | `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (T-169 — `LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors. `validate_rating_filter_lists` (T-124, tightened T-127): two ordered checks — shape (`InvalidRatingFilterList`, `"uka"`) then `topn_download::AVAILABLE_TOPN_LISTS` membership (`UnknownRatingFilterList`, `"fr"` — well-formed, no dataset); both fatal at load / `400` on the route, so `lists ⊆ available_lists` always holds (DECISIONS.md 2026-09-10). Removing a code from `AVAILABLE_TOPN_LISTS` is now a breaking config change |
