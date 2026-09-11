@@ -4924,3 +4924,109 @@ CrUX-джерела); `config.rs` (Happy: `gov-ua`/`edu` приймаються;
 **Коміти:** `a9108e6` (T-122 — механізм + guard + `gov-{ua,us,pl,gb}.txt`) · `<цей коміт>` (T-123 —
 `edu.txt` + UI-полірування + документація: `data/topn/{README.md,ZONES-CHANGELOG.md}`,
 `diagrams/rating-filter.md`, `TASKS.md`, `CLAUDE.md`, цей запис).
+
+### Батч 4.5 — персональне навчене джерело зон + персистенція T-108-overlay (T-138; зроблено
+2026-09-11, kickoff plan+advisor, два раунди advisor-рев'ю, closing-advisor; 7 комітів)
+
+Останнє, четверте джерело зон «бульбашки» (SPEC.md §5.1.1) — локально навчене з уже-ALLOW-і-вже-
+пройшов-Quorum трафіку самого користувача, без завантаження/курації.
+
+**Прийняте на kickoff'і рішення користувача:** навігація-vs-subresource (SPEC.md вимагає рахувати
+лише «користувач-ініційовані навігації») прийнято як чесну структурну прогалину DNS-шару — DNS-
+резолвер не бачить різниці між кліком і підвантаженим subresource-доменом, немає браузерного
+сигналу на цьому рівні. Рахується кожен уже-ALLOW-і-вже-пройшов-Quorum A/AAAA-запит; домени на
+кшталт аналітичних/рекламних доменів природно потрапляють у список як «часто дозволені» — точне
+відображення того, що резолвер справді бачить, не помилка навчання.
+
+**Архітектура: окремий `Arc<ZoneLists>`, не третій елемент `Vec<ZoneSource>`.** `rating_filter.rs`'s
+module doc (Батч 4.3) заздалегідь готував N-арність саме для цього батчу, але буквальне додавання
+персональної зони в той самий `Vec<ZoneSource>` зламало б інваріант одного писача:
+`topn_updater::refresh_all_lists` (24-годинний цикл, повна заміна) і персональний щоденний rollover
+— два незалежні писачі до одного `Arc`. **Рішення:** `AppState.rating_filter_personal_zone:
+RwLock<Arc<ZoneLists>>` — повністю незалежний від `rating_filter_zone`, власний писач
+(`personal_zone_persist::run_personal_zone_task`). `pipeline::rating_filter_step` викликає
+`ZoneLists::zone_match` **двічі** (спершу завантажений список, тоді персональний) — жодних змін
+сигнатури вже протестованого `zone_match`. `removed`-overlay (T-108) застосовується до обох
+викликів однаково.
+
+**Advisor другого раунду рев'ю (mid-implementation) впіймав реальну небезпеку активації.** Перша
+версія плану розширювала `rating_filter_is_active` до `enabled && !(zone.is_empty() &&
+personal.is_empty())` — це відкривало рівно ту несподіванку, яку SPEC.md §5.3 п.8 забороняє явно:
+`enabled=true`, `lists=[]`, персональна зона навчила N хостів → бульбашка стає *активною* й блокує
+весь інтернет поза тими N, без жодного обраного списку. Виправлено **до** злиття:
+`rating_filter_is_active` лишається дволичильниковою (0 змінених serve-side викликів), тест
+`a_personal_zone_alone_never_activates_the_bubble` фіксує властивість явно.
+
+**T-108's обіцянка також закрита цим батчем** (TASKS.md's рядок 4.5 цього не називав — пропуск у
+першому чернетковому проході плану, спіймано advisor-рев'ю): `AppState.rating_filter_removed`
+(лінива гігієна) тепер переживає рестарт через новий, малий `zone_removal_persist.rs`. Гейт —
+`[rating_filter].enabled` (не `[personal_zone].enabled`), переюзано наявний `persistence-key`
+(T-96/97) — overlay є операційним станом уже-опт-ін фічі, той самий приватнісний рівень, що
+`cache.enc`, не нове розкриття персональної історії.
+
+**Знайдено, не виправлено: `PersistTarget.rating_filter` — застарілий знімок** (T-217, backlog).
+`dispatch.rs`'s чотири не-`/admin/rating-filter` config-маршрути читають статичний
+`state.persist.rating_filter.clone()`, взятий один раз при старті, — латентний T-57-класу баг від
+T-127 (Батч 4.4), коли той маршрут отримав живий RwLock, а решта чотирьох — ні. Не виправлено тут
+(поза межами батчу); для нового `[personal_zone]` цей клас багу свідомо не відтворено — усі 5 місць
+побудови `ResolverConfig` читають живий `state.personal_zone_config_snapshot()`, `[personal_zone]`
+взагалі не додано до `PersistTarget`.
+
+**Ядро (`personal_zone_stats.rs`, чисте):** `DayIndex` (дні від epoch, насичується в обидва боки —
+ніколи не панікує на стрибку годинника чи застарілому знімку); `PersonalZoneStats` — фіксованої
+довжини щоденне кільце лічильників на домен (`window_len_from_config` =
+`max(frequency_window_days, regularity_window_days)`); `MAX_TRACKED_DOMAINS = 2000`, провний bound,
+LRU-подібне витіснення за `last_visited`. `record_visit` — гарячошляхова точка входу (`rotate_day`
+спершу, `saturating_add`, без алокації на вже-відстеженому хості). `derive_qualifying_domains` —
+два критерії SPEC.md §5.1.1 як **об'єднання** (частотний топ-N над одним вікном АБО регулярність
+X-із-Y над іншим), доведено властивісним тестом в обидва боки. Записи — заqueryовані *hostname*, не
+registrable (клієнт свідомо не має PSL) — `www.`/`api.`/`cdn.` одного сайту рахуються окремо.
+
+**Персистенція (`personal_zone_persist.rs`, дзеркало `log_persist`/`cache_persist`):** сіллю з
+**окремим** 4-м секретом `key_store::personal_zone_key_entry`/`load_or_create_personal_zone_key`
+(не спільний `persistence-key` — вища приватнісна планка; спільна mint-or-read логіка винесена в
+приватний `load_or_create_symmetric_key`, щоб уникнути дублювання безпеко-критичного коду). Один
+таск робить обидві роботи щоцикл (60с або будильник від `/admin/reset`): прокручує статистику
+вперед до «сьогодні», перераховує кваліфіковану множину з поточного конфігу, публікує похідну зону,
+тоді персистить знімок — без окремого «чи день дійсно змінився» розгалуження (дешево на масштабі
+`MAX_TRACKED_DOMAINS`, простіше не помилитись).
+
+**Конфіг:** нова `[personal_zone]` таблиця (`enabled`, `frequency_window_days`, `frequency_top_n`,
+`regularity_window_days`, `regularity_min_days`) — дефолт вимкнено, hand-edit-only (той самий
+трактування, що `persist_query_log`/`persist_cache`), валідація вікон `1..=90`
+(`MAX_PERSONAL_ZONE_WINDOW_DAYS`, провний cap), `frequency_top_n != 0`, `1 <=
+regularity_min_days <= regularity_window_days`.
+
+**DTO/UI:** `RatingFilterStatusView.loaded` тепер включає персональне джерело (той самий масив, що
+й завантажені — `list == "personal"`); новий `personal_zone_enabled` (`#[serde(default)]`,
+`ADMIN_DTO_SCHEMA_VERSION` 1→2). Пасивний рядок-попередження в `/admin/ui` (той самий стиль, що
+T-96/T-97), гейтований на прапорець. `local_state::remove_all` → 5 артефактів (новий
+`personal_zone_key`), `dnsqb-tray`'s звіт деінсталяції оновлено.
+
+**Тести (4 категорії де застосовно):** `personal_zone_stats.rs` (Happy: qualif. by regularity/
+frequency; Security-Boundary: `MAX_TRACKED_DOMAINS` bound, `u16`-лічильник насичується без паніки;
+Misuse-Fool: rotate через багато пропущених днів чистить усе, зворотний стрибок годинника — no-op;
+Error: порожній store → порожній derive; властивість об'єднання явно в обидва боки);
+`personal_zone_persist.rs` (round-trip, скасування диска при вимкненому прапорці, рестарт через
+межу дня зберігає навчений домен — під `STORE_TEST_GUARD`, реальний Credential Manager);
+`config.rs` (Happy/Security-Boundary/Misuse-Fool/Error на всі чотири валідації); `key_store.rs`
+(round-trip нового секрету, незалежність від `persistence-key`); `pipeline.rs`
+(`personal_zone_domain_is_reached_when_topn_zone_misses`,
+`lazy_hygiene_evicts_a_personal_zone_domain_on_a_fresh_quorum_block`); `dispatch.rs`
+(`rating_filter_status_view_includes_the_personal_zone_source_and_flag`,
+`a_personal_zone_alone_never_activates_the_bubble` — advisor-знахідка, властивісний тест);
+`admin_ui.rs` (передня-кінцева асерція на попередження); `local_state.rs`/`zone_removal_persist.rs`
+(round-trip, скасування на диску при вимкненому прапорці).
+
+**Гейти:** `fmt` / `clippy --workspace --all-targets -D warnings` / `cargo test --workspace --lib
+--bins --locked` / `--doc --locked` / `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
+--document-private-items --locked` (обидва прогнано окремо, урок Батчу 4.2) — усе зелено на
+кожному коміті; знайдено й одразу виправлено одне зламане intra-doc посилання
+(`[Self::zone_match]` у `//!`-документі модуля, де `Self` не резолвиться).
+
+**Коміти:** `a7d9159` (`ZoneSourceKind::Personal`) · `afb7ca3` (4-й `key_store`-секрет +
+`FileKind`) · `091835d` (T-108 `zone_removal_persist.rs` + rustdoc-фікс) · `9513da4`
+(`personal_zone_stats.rs`) · `37da6a5` (`personal_zone_persist.rs` + `[personal_zone]` конфіг) ·
+`041a33c` (проводка pipeline/dispatch/orchestrate/DTO) · `f30b202` (5-й артефакт деінсталяції) ·
+`<цей коміт>` (документація: SPEC.md/DECISIONS.md/CONFIGURATION.md/SECURITY.md/SERVICES.md/
+CLAUDE.md/TASKS.md/diagrams).

@@ -1658,3 +1658,94 @@ hygiene_eligible` (`false` для `GovernmentTopN`/`SciEdu`) на двох рі�
 lists` — нові коди + приклади помилок), `data/topn/README.md` (новий розділ), новий
 `data/topn/ZONES-CHANGELOG.md`, `TASKS.md`/`TASKS-DONE.md`/`CLAUDE.md`, `diagrams/rating-filter.md`
 (ground-truth ritual).
+
+---
+
+## 2026-09-11 — Батч 4.5 (T-138): персональне навчене джерело зон + персистенція
+T-108-overlay
+
+**Контекст:** останнє, четверте джерело зон «бульбашки» (SPEC.md §5.1.1) — локально навчений
+список часто/регулярно відвідуваних доменів самого користувача, похідний виключно з уже-ALLOW-і-
+вже-пройшов-Quorum трафіку. Kickoff plan+advisor (два раунди рев'ю).
+
+**(а) Навігація vs subresource — прийнято як чесну структурну прогалину DNS-шару.** SPEC.md §5.1.1
+вимагає рахувати лише «користувач-ініційовані навігації», не кожен subresource-домен (реклама/
+аналітика/CDN), що тягнеться з кожним відвіданим сайтом — інакше частотний критерій штучно роздує
+такі домени. DNS-резолвер технічно не бачить різниці: кожен A/AAAA-запит виглядає однаково, немає
+браузерного сигналу (Sec-Fetch-Dest тощо) на цьому шарі. **Рішення користувача цього kickoff'у:**
+прийняти як прогалину, той самий клас чесності, що вже є в проєкті (ccTLD-евристика §5.2, GeoIP
+anycast §3.5) — не намагатись імітувати точність, якої шар не має. Наслідок: домени на кшталт
+`google-analytics.com` природно потраплять у персональний список як «часто дозволені» — це не
+помилка навчання, а точне відображення того, що резолвер справді бачить.
+
+**(б) Архітектура: окремий `Arc<ZoneLists>`, не третій елемент існуючого `Vec<ZoneSource>`.**
+`rating_filter.rs`'s module doc (Батч 4.3) заздалегідь формулював N-арність саме заради цього
+батчу — «Батч 4.5 adds the personal learned list» — але буквальне додавання персональної зони в
+той самий `Vec<ZoneSource>`, який публікує `AppState.rating_filter_zone`, зламало б інваріант
+одного писача: `topn_updater::refresh_all_lists` (24-годинний цикл, повна заміна) і персональний
+щоденний rollover — два незалежні писачі до одного `Arc`, неминучий втрачений запис (той самий
+клас проблеми, задля якої T-108's `removed`-множина вже винесена в окремий lock). **Рішення:**
+`AppState.rating_filter_personal_zone: RwLock<Arc<ZoneLists>>` — повністю незалежний від
+`rating_filter_zone`, власний писач (`personal_zone_persist::run_personal_zone_task`).
+`pipeline::rating_filter_step` викликає `ZoneLists::zone_match` **двічі** (спершу завантажений
+список, тоді персональний) — жодних змін сигнатури вже протестованого `zone_match`. `removed`-
+overlay (T-108) застосовується до обох викликів однаково — `record_zone_removal` вже
+індиферентний до джерела.
+
+**(в) `rating_filter_is_active` НЕ змінюється — advisor-знахідка другого раунду рев'ю.** Перша
+версія kickoff-плану розширювала предикат до `enabled && !(zone.is_empty() && personal.is_empty())`
+— це відкривало рівно ту несподіванку, яку SPEC.md §5.3 п.8 забороняє явно: `enabled=true`,
+`lists=[]`, персональна зона навчила N хостів → бульбашка стає *активною* і блокує весь інтернет
+поза тими N, без жодного обраного списку користувачем. SPEC.md §5.1.1 сам каже, що персональне
+джерело «має сенс лише коли рейтинг-фільтр §5.3 увімкнений» — **додає** до вже змістовної
+бульбашки, ніколи не активує її самотужки. Виправлено до злиття: `rating_filter_is_active`
+лишається дволичильниковою (0 змінених serve-side викликів), тест
+`a_personal_zone_alone_never_activates_the_bubble` фіксує властивість явно.
+
+**(г) Записи — hostname, не registrable.** Клієнт свідомо не має PSL (T-105) — навчена множина
+покриває hostname і його піддомени через той самий suffix-walk, що й завантажені списки (вужчий,
+безпечний випадок), але `www.`/`api.`/`cdn.` того самого сайту рахуються як окремі записи, ділять
+частотний сигнал і швидше вичерпують `MAX_TRACKED_DOMAINS` (2000, провний bound).
+
+**(д) Персональний список за конструкцією навчається лише на вже-в-зоні доменах, поки бульбашка
+активна.** Домен поза зоною блокується на кроці 5 й ніколи не доходить до quorum — тобто сигнал
+навчання не додає нового покриття «наживо». Цінність — утримувати вже дозволені домени проти
+майбутнього дрейфу публічних списків (SPEC.md's власне формулювання) плюс покриття для періодів,
+коли бульбашка була вимкнена/порожня. Не баг; підтверджує вибір гейтити навчання на
+`personal_zone.enabled`, не на `rating_filter.enabled`.
+
+**(е) T-108's обіцянка також закрита цим батчем** (TASKS.md's рядок 4.5 цього не називав — пропуск
+у першому чернетковому проході плану, спіймано advisor-рев'ю): `AppState.rating_filter_removed`
+(лінива гігієна) тепер переживає рестарт через `zone_removal_persist.rs`, окремий, малий модуль.
+Гейт — `[rating_filter].enabled`, не `[personal_zone].enabled` (overlay важливий, доки увімкнений
+сам рейтинг-фільтр). Переюзано наявний `persistence-key` (T-96/97) — overlay є операційним станом
+уже-опт-ін фічі (множина вже заблокованих quorum'ом registrable, той самий приватнісний рівень, що
+`cache.enc`), не новою розкриттям персональної історії, тому не потребує окремого секрету.
+
+**(є) Знайдено, не виправлено в цьому батчі: `PersistTarget.rating_filter` — застарілий знімок.**
+`dispatch.rs`'s `apply_admin_config`/`apply_cache_config`/`apply_geoip_change`/
+`apply_provider_change` читають `state.persist.rating_filter.clone()` — статичний знімок, взятий
+рівно один раз при старті `AppState::new` і ніколи не оновлюваний після. Якщо користувач змінює
+`[rating_filter]` через власний `POST /admin/rating-filter` (T-127), а тоді викликає будь-який
+**інший** із цих чотирьох маршрутів, той маршрут перезаписує `resolver_config.toml` застарілим
+значенням `rating_filter`, мовчки скасовуючи зміну на диску (не в пам'яті — `state.
+rating_filter_config` лишається коректним до наступного рестарту). Той самий клас багу, що T-57/
+T-139/T-149/T-47/T-77. Не виправлено тут — поза межами цього батчу, і `[rating_filter]` вже мав
+власний робочий шлях до дня, коли він набув живого RwLock (T-127, той самий Батч 4.4, де
+з'явився `POST /admin/rating-filter`). **Для нового поля `[personal_zone]` цей самий клас багу
+свідомо не відтворено:** усі 5 місць побудови `ResolverConfig` у цьому батчі читають живий
+`state.personal_zone_config_snapshot()`, а не статичний `PersistTarget`-знімок — `[personal_zone]`
+взагалі не додано до `PersistTarget`. TASKS.md backlog отримує окремий пункт на виправлення
+`rating_filter`-версії того самого класу бага.
+
+**Наслідки в коді:** `rating_filter.rs` (`ZoneSourceKind::Personal`, `hygiene_eligible() == true`),
+`key_store.rs` (4-й секрет `personal-zone-key`, рефакторинг спільного mint-хелпера),
+`encrypted_file.rs` (`FileKind::PersonalZone`/`ZoneRemovals`), нові `personal_zone_stats.rs`
+(чисте ядро) / `personal_zone_persist.rs` / `zone_removal_persist.rs`, `config.rs` (`[personal_zone]`
+таблиця + `validate_personal_zone`), `dispatch.rs`/`pipeline.rs`/`orchestrate.rs` (проводка),
+`admin.rs` (`RatingFilterStatusView.personal_zone_enabled` + `loaded` розширено; `ADMIN_DTO_
+SCHEMA_VERSION` 1→2), `local_state.rs` (5-й артефакт видалення).
+**Наслідки в доках:** `CONFIGURATION.md` (`[personal_zone]` таблиця + 3-тє шифроване сховище),
+`SECURITY.md` (4-й секрет + новий рядок загроз), `SERVICES.md` (`personal-zone.enc` у переліку),
+`CLAUDE.md` (Батч 4.5 project-state абзац + таблиця модулів + known-limitations), `TASKS.md`/
+`TASKS-DONE.md`, `diagrams/rating-filter.md` (ground-truth ritual).

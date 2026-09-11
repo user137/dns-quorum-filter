@@ -19,7 +19,17 @@ TASKS.md §"Фаза 4" "План виконання Ф4"; T-104/T-106 (kickoff-
 `ZoneLists::is_hygiene_eligible`), `pipeline.rs::rating_filter_step` (`exact` += eligibility-гейт),
 `topn_download.rs` (`AVAILABLE_TOPN_LISTS` += `gov-*`/`edu`), `topn_updater.rs`
 (`zone_source_kind` routing), `config.rs` (`validate_rating_filter_lists` розширено),
-`data/topn/{README.md,ZONES-CHANGELOG.md,gov-*.txt,edu.txt}`.
+`data/topn/{README.md,ZONES-CHANGELOG.md,gov-*.txt,edu.txt}`. **T-138 (Батч 4.5, зроблено):**
+DECISIONS.md 2026-09-11 (навігація-vs-subresource прийнято як прогалину; архітектура окремого
+`Arc<ZoneLists>`; advisor-знахідка активації; T-217 знайдений-не-виправлений staleness-баг).
+`rating_filter.rs` (`ZoneSourceKind::Personal`), нові `personal_zone_stats.rs`/
+`personal_zone_persist.rs`/`zone_removal_persist.rs`, `pipeline.rs::rating_filter_step`
+(другий незалежний `zone_match`-виклик на `personal`), `dispatch.rs` (`AppState.
+rating_filter_personal_zone`, `record_personal_visit`, `rotate_and_republish_personal_zone`,
+`restore_rating_filter_removed`), `config.rs` (`[personal_zone]` + `validate_personal_zone`),
+`key_store.rs` (4-й секрет `personal-zone-key`), `admin.rs`
+(`RatingFilterStatusView.personal_zone_enabled`, `loaded` включає `"personal"`), `local_state.rs`
+(5-й артефакт).
 
 # Рейтинговий фільтр «бульбашка» — позиція в конвеєрі + джерела зон
 
@@ -53,9 +63,9 @@ TASKS.md §"Фаза 4" "План виконання Ф4"; T-104/T-106 (kickoff-
 | Джерело | Курація | Дефолт | Задача |
 |---------|---------|--------|--------|
 | Курований топ-N по країні + `global` | Проєктний інструмент `curate_topn` (**без DNS**): fetch CrUX (CC BY 4.0; **не** Cloudflare Radar — CC BY-NC, T-106) → origin→registrable (пінований PSL) → `data/topn/<list>.txt` + `.sha256`, стабільний URL. Клієнт (`topn_updater`) завантажує тим самим механізмом, що GeoIP. **Гігієна (T-108) — лінива рантайм, не при курації:** опублікований список сирий; клієнт прибирає домен, коли кворум блокує **сам registrable**, з in-memory overlay (DECISIONS.md 2026-09-09) | активний для обраних `lists` | T-107, T-108, T-124 |
-| Державні домени (`*.gov`, `*.gov.ua`, `*.gob.*` …) | Евристичне кандидування + **обов'язкове ручне рев'ю**. Дефолт N=10/країну | увімкнено | T-122 |
-| Науково-освітні / некомерційні (PubMed, NASA …) | **Ручна**, версіонована, з changelog. Не per-country, не алгоритмічна. Редакційне судження — тримати публічним і простежуваним | увімкнено | T-123 |
-| Персональний локально навчений список (§5.1.1) | Локальне навчання: частота ∩ регулярність відвідувань; джерело сигналу — **лише вже-`ALLOW`-вердикти кворуму**. Окреме шифроване локальне сховище. Тільки **додає** домени | **ВИМКНЕНО** (окремий opt-in, вища приватнісна планка) | T-138 |
+| Державні домени (blanket-suffix: `gov.ua`, `gov`, `gov.pl`, `gov.uk`) | Вручну зібраний, критерій — обмежена реєстратором політика реєстрації (не евристичне кандидування — спрощено на kickoff'і, DECISIONS.md 2026-09-11 у Батчі 4.2) | активний, якщо обрано | T-122 |
+| Науково-освітні / некомерційні (PubMed, NASA …) | **Ручна**, версіонована, з changelog. Не per-country, не алгоритмічна. Редакційне судження — тримати публічним і простежуваним | активний, якщо обрано | T-123 |
+| Персональний локально навчений список (§5.1.1) | Локальне навчання: частота ∪ регулярність відвідувань (об'єднання, не перетин); джерело сигналу — **лише вже-ALLOW-і-вже-пройшов-Quorum трафік**. Окреме, 4-те шифроване сховище (свій ключ). Тільки **додає** домени; ніколи сам не активує бульбашку (лише розширює вже активну) | **ВИМКНЕНО** (окремий opt-in, вища приватнісна планка) — T-138, зроблено 2026-09-11 | T-138 |
 
 **Ручний allowlist користувача (крок 1)** — запобіжник поверх усього: навіть з увімкненим
 фільтром користувач може вручну відкрити конкретний домен поза зонами.
@@ -64,23 +74,35 @@ TASKS.md §"Фаза 4" "План виконання Ф4"; T-104/T-106 (kickoff-
 
 ```mermaid
 flowchart TD
-    Q["запит на домен<br/>(після Allowlist / Blocklist / ccTLD / Cache)"] --> EN{"рейтинг-фільтр<br/>увімкнений<br/>І зона непорожня?"}
-    EN -- "ні (дефолт / lists порожній — Fork B)" --> PASS["далі конвеєром:<br/>Quorum → GeoIP"]
-    EN -- "так" --> ZONE{"zone_match(log_domain):<br/>якийсь суфікс домену в ∪ зон<br/>І не в removed-overlay?"}
+    Q["запит на домен<br/>(після Allowlist / Blocklist / ccTLD / Cache)"] --> EN{"рейтинг-фільтр<br/>увімкнений<br/>І завантажена зона<br/>(lists) непорожня?"}
+    EN -- "ні (дефолт / lists порожній — Fork B)<br/>персональна зона сама НІКОЛИ не активує" --> PASS["далі конвеєром:<br/>Quorum → GeoIP"]
+    EN -- "так" --> ZONE{"lists.zone_match(log_domain, removed):<br/>суфікс у завантаженій зоні<br/>І не в removed-overlay?"}
 
-    ZONE -- "Some(registrable)<br/>(вкл. субдомен in-zone registrable)" --> INZ["у зоні<br/>exact = (log_domain == registrable)<br/>І is_hygiene_eligible(registrable) — Батч 4.2"]
-    ZONE -- "None (поза кожною зоною<br/>АБО в removed-overlay)" --> OUT["BLOCK (0.0.0.0/::)<br/>decision_source = RATING_FILTER<br/>кворум НЕ опитується · НЕ кешується"]
+    ZONE -- "Some(registrable)" --> INZ1["у зоні (lists)<br/>exact = (log_domain == registrable)<br/>І lists.is_hygiene_eligible(registrable) — Батч 4.2"]
+    ZONE -- "None" --> PZONE{"personal.zone_match(log_domain, removed):<br/>суфікс у персональній зоні<br/>(Батч 4.5, ОКРЕМИЙ Arc)<br/>І не в removed-overlay?"}
 
-    INZ --> PASS
+    PZONE -- "Some(registrable)" --> INZ2["у зоні (personal)<br/>exact = (log_domain == registrable)<br/>І personal.is_hygiene_eligible(registrable)<br/>— завжди true, Батч 4.5"]
+    PZONE -- "None (поза обома зонами<br/>АБО в removed-overlay)" --> OUT["BLOCK (0.0.0.0/::)<br/>decision_source = RATING_FILTER<br/>кворум НЕ опитується · НЕ кешується"]
+
+    INZ1 --> PASS
+    INZ2 --> PASS
     PASS --> QUORUM["Quorum (повний увімкнений voter-набір) → GeoIP"]
-    QUORUM -- "quorum Block І exact" --> RM["record_zone_removal(registrable)<br/>(in-memory overlay, окремий lock)<br/>→ наступний lookup: ZONE = None"]
+    QUORUM -- "quorum Block І exact" --> RM["record_zone_removal(registrable)<br/>(overlay, окремий lock —<br/>персистується з Батчу 4.5)<br/>→ наступний lookup: обидва zone_match = None"]
     QUORUM -- "quorum Block І субдомен" --> NOOP["нічого не прибирати<br/>(кворум ре-блокує щоразу за нуль ціни)"]
 ```
 
-Джерела зони — `∪`: курований топ-N країни + `global` ∪ держ (`GovernmentTopN`) / науково-освітні
-(`SciEdu`) — **Батч 4.2, зроблено** ∪ [персональний §5.1.1 — Батч 4.5] ∪ ручний allowlist (крок 1,
-вище). `ZoneSourceKind` — відкритий enum, тож нові варіанти адитивні для pipeline/UI/DTO — **але
-НЕ для T-108 лінивої гігієни** (`ZoneSourceKind::hygiene_eligible`, нижче).
+**Два незалежні `zone_match`-виклики, не один `∪`-набір** (Батч 4.5): курований топ-N + `global` ∪
+держ (`GovernmentTopN`) / науково-освітні (`SciEdu`) живуть в одному `AppState.rating_filter_zone:
+Arc<ZoneLists>` (писач — `topn_updater`, 24-годинний цикл, повна заміна); персональний список
+(§5.1.1) живе в **окремому** `AppState.rating_filter_personal_zone: Arc<ZoneLists>` (писач —
+`personal_zone_persist`, щоденний rollover) — два незалежні писачі до одного `Arc` конфліктували б,
+тож `pipeline::rating_filter_step` перевіряє їх послідовно, кожен своїм `zone_match`-викликом, а не
+зливає в один набір. Ручний allowlist (крок 1, вище) лишається окремим запобіжником поза цим
+кроком. `ZoneSourceKind` — закритий enum (усі 4 варіанти вже реалізовано), нові варіанти в
+принципі адитивні для pipeline/UI/DTO — **але не для T-108 лінивої гігієни**
+(`ZoneSourceKind::hygiene_eligible`, нижче) і **не для активації бульбашки**
+(`rating_filter_is_active` бере до уваги лише завантажену `lists`-зону, ніколи персональну —
+advisor-знахідка Батчу 4.5, DECISIONS.md 2026-09-11).
 
 ## Рішення, яких SPEC §5.3 прямо не називає (розвʼязано при T-124)
 
@@ -91,13 +113,20 @@ flowchart TD
 - **Лінива гігієна прибирає лише точний registrable** (`log_domain == matched_registrable`).
   Блок субдомену (`sub.example.co.uk`) → нічого не прибирати: кворум і так блокує його щоразу, а
   виселення `example.co.uk` — хибне over-blocking (DECISIONS.md 2026-09-09).
-- **Overlay прибраного — in-memory, окремий lock** від зони (`AppState.rating_filter_removed` vs
-  `rating_filter_zone`, взірець `geoip`/`geoip_countries`). Не персистується цей батч — переживає
-  тумблер, відновлюється ліниво після рестарту; персистенція — Батч 4.5.
+- **Overlay прибраного — окремий lock** від зони (`AppState.rating_filter_removed` vs
+  `rating_filter_zone`, взірець `geoip`/`geoip_countries`). **Персистується з Батчу 4.5**
+  (`zone_removal_persist.rs`, `zone-removals.enc`, спільний `persistence-key` T-96/97, гейт —
+  `[rating_filter].enabled`) — переживає й тумблер, і рестарт процесу.
 - **`enabled` без завантажених списків → фільтр інертний** (Fork B), не block-everything —
   `dispatch::resolve_doh_request` дає `None` замість `RatingFilterView`, лог-warn при старті.
-- **Порядок перевірки джерел зон** — не важливий для результату (∪). `decision_source =
-  RATING_FILTER` лише каже «цей крок заблокував»; окремого поля «яке джерело впустило» немає.
+- **Порядок перевірки джерел зон** — не впливає на **членство** (все ще ефективно `∪` для «в
+  зоні чи ні»), `decision_source = RATING_FILTER` лише каже «цей крок заблокував», окремого поля
+  «яке джерело впустило» немає. **Але з Батчу 4.5 впливає на `hygiene_eligible`,** коли той самий
+  домен присутній і в `lists`, і в персональній зоні: `lists.zone_match` перевіряється першим,
+  тож eligibility визначає джерело з `lists` (могло б бути non-eligible blanket-suffix), навіть
+  якщо персональна зона (завжди eligible) теж мала б цей домен. Рідкісний перетин, не помилка —
+  `lists`-джерело вже кураторське/довірене, а `record_zone_removal` для нього просто не
+  спрацював би, як і до появи персональної зони.
 - **Держ / науково-освітні зони (T-122/T-123, Батч 4.2, зроблено)** — `GovernmentTopN(cc)` /
   `SciEdu`, code-простір `gov-<cc>`/`edu`, не CrUX-похідні (`data/topn/README.md`). Здебільшого
   «blanket-suffix» записи (`gov.ua`, `gov`, `edu`, `int`, …) — один запис у наборі покриває весь
@@ -109,6 +138,13 @@ flowchart TD
   Guard — у двох шарах: `zone_match` сам ігнорує `removed` для non-eligible джерела (структурна
   гарантія, не лише дисципліна виклику), і `pipeline::rating_filter_step`'s `exact` додатково
   вимагає eligibility, тож `record_zone_removal` для blanket-запису взагалі ніколи не викликається.
+  **`Personal` (Батч 4.5) — завжди eligible** (`true`): це окремі навчені сайти, не blanket-запис —
+  хибний блок конкретного навченого домену має його евіктити так само, як `CountryTopN`/`Global`.
+- **Персональна зона ніколи сама не активує бульбашку** — `rating_filter_is_active` перевіряє
+  лише `lists`-зону, персональна свідомо не бере участі (advisor-знахідка другого раунду рев'ю
+  Батчу 4.5, DECISIONS.md 2026-09-11): якби перевірялась, `enabled=true` + порожній `lists` +
+  навчена персональна зона мовчки блокувала б майже весь інтернет без жодного обраного списку
+  (SPEC.md §5.3 п.8 забороняє явно). Персональна зона лише *розширює* вже активну бульбашку.
 - **Допустимі коди `lists`** — рівно `AVAILABLE_TOPN_LISTS` (T-127): `validate_rating_filter_lists`
   робить дві перевірки — форма (`InvalidRatingFilterList`) і членство (`UnknownRatingFilterList`);
   обидві фатальні. `lists ⊆ available_lists` гарантовано. Прибрати код із константи — ламна зміна

@@ -60,6 +60,17 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    відновлюються лише `Allow`-вердикти; запис, чий абсолютний (настінний) дедлайн сплив за час
    простою, відкидається. Зниклий ключ + наявний файл / пошкоджений файл → `cache.enc.orphaned-<unix_ts>`,
    новий ключ, кеш порожній.
+2c. **Якщо `[rating_filter].enabled = true`** (T-108, Батч 4.5) — той самий `persistence-key`,
+   розшифровує `%LOCALAPPDATA%\dns-quorum-filter\zone-removals.enc` (T-108's лінива гігієна —
+   множина registrable, які кворум уже заблокував) і засіває нею `AppState.rating_filter_removed`
+   **до** прийому трафіку. Той самий orphan-rename шлях, що вище, у разі відсутнього ключа чи
+   пошкодженого файлу.
+2d. **Якщо `[personal_zone].enabled = true`** (T-138, Батч 4.5) — бере/мінтить **окремий**
+   32-байтний ключ `personal-zone-key:<hash теки>` (не той самий `persistence-key`, що вище —
+   вища приватнісна планка), розшифровує `%LOCALAPPDATA%\dns-quorum-filter\personal-zone.enc`
+   (агреговані щоденні лічильники відвідувань на хост) і будує з них і живу статистику, і
+   похідну «персональну зону» — доступну бульбашці одразу, ще до першого циклу фонової задачі.
+   Той самий orphan-rename шлях при відсутньому ключі/пошкодженому файлі.
 3. Біндить TCP-слухач на вказаному порту — зайнятий порт це явна фатальна помилка, не тихий
    fallback на інший порт (SPEC.md §1).
 4. Приймає з'єднання, термінує TLS (`rustls`), і на кожен DoH GET/POST-запит прогонює конвеєр
@@ -98,8 +109,19 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    перезапис `cache.enc` кожні 60 s + фінальний флаш на shutdown. Config-зміна кешу через
    `/admin/cache-config/apply` будує новий порожній `Cache` (T-153) — наступний флаш перезапише
    `cache.enc` майже-порожнім.
+7b. **Якщо `[rating_filter].enabled = true`** (T-108, Батч 4.5) — фоновий zone-removal-персистер:
+   повний перезапис `zone-removals.enc` кожні 60 s + фінальний флаш на shutdown. Перечитує
+   прапорець щоцикл (не лише при старті) — вимкнення `[rating_filter]` зупиняє нові флаші без
+   рестарту.
+7c. **Якщо `[personal_zone].enabled = true`** (T-138, Батч 4.5) — фоновий personal-zone-таск:
+   щоцикл (60 s, або на будильник від `POST /admin/reset`) прокручує статистику вперед до
+   «сьогодні», перераховує кваліфіковану множину з поточних порогів, публікує похідну зону, тоді
+   персистить знімок статистики — усе в одному циклі, не двох окремих.
 8. `GET /admin/status.encrypted_persistence` = `{ query_log, cache }` (стан обох прапорців);
-   `/admin/ui` показує окремий пасивний рядок-попередження на кожен активний.
+   `/admin/ui` показує окремий пасивний рядок-попередження на кожен активний. Персональна зона —
+   окремий прапорець, `GET /admin/status.rating_filter.personal_zone_enabled`, той самий стиль
+   пасивного рядка. Overlay (`zone-removals.enc`) — суто внутрішній механізм, без окремого
+   DTO-поля (стан видно опосередковано через `[rating_filter]`).
 9. Запускає **фоновий pause-watcher** (T-193, `pause_watch::run_pause_watcher`) — раз на секунду
    `stat` файла `stop.flag` у теці app-data, публікує наявність у `AppState.filtering_paused`.
    Поки увімкнено, `handle_query` віддає кожен A/AAAA-запит через нефільтрований baseline (без
@@ -329,13 +351,15 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   confirm-діалогом, що називає це наперед.
 - **Повністю видалити** (T-70, Батч 3.8; розширено T-195, Батч 3.14) —
   `dnsqb_service::remove_all_local_state` (`trust_store::uninstall()` + `key_store::delete_secret`
-  для всіх трьох ключів: TLS T-67, persistence T-146, MaxMind T-163; кожен артефакт звітується
+  для всіх чотирьох ключів: TLS T-67, persistence T-146 (спільний і для `query-log.enc`/
+  `cache.enc`, і для `zone-removals.enc`), MaxMind T-163, personal-zone T-138 (Батч 4.5); кожен
+  артефакт звітується
   незалежно `Removed`/`NotPresent`/`Failed`), тоді **зупиняє весь застосунок і стирає всю теку
   app-data**: показує звіт → пише `stop.flag` + `quit.flag` (watcher зупиняє `dnsqb-service` і
   виходить) → спавнить від'єднаний прихований `powershell.exe` (`self_uninstall.rs`), що чекає на
   вихід `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray`, потім у retry-циклі видаляє всю
-  `%LOCALAPPDATA%\dns-quorum-filter` (`cert.pem`, `query-log.enc`/`cache.enc`,
-  `resolver_config.toml`/`overrides.toml`, `logs\`, pid/lock) → відкриває
+  `%LOCALAPPDATA%\dns-quorum-filter` (`cert.pem`, `query-log.enc`/`cache.enc`/`zone-removals.enc`/
+  `personal-zone.enc`, `resolver_config.toml`/`overrides.toml`, `logs\`, pid/lock) → відкриває
   `ms-settings:appsfeatures` через `explorer.exe` → трей виходить (`QUIT_REQUESTED`). Причина
   detached-прибиральника: трей/watcher/служба тримають свої `*.lock` відкритими, а `tao`
   `event_loop.run` не повертається — жоден процес не може `remove_dir_all` власну теку. MSIX

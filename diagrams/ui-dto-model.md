@@ -5,9 +5,10 @@ T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_en
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08, 2026-09-10 (порядок пріоритету
 індикатора; шифрована персистентність; T-179 — `VoterScope` прибрано, §5.1 знято; T-188 —
 `CertStatusResponse` / `InstallCertResponse` для онбордингу; T-193 — `AdminStatusResponse.paused`;
-T-127 — `validate_rating_filter_lists` звужено, `lists ⊆ available_lists`). TASKS.md T-188, T-193,
-T-111/T-127/T-128 (`AdminStatusResponse.rating_filter: RatingFilterStatusView`,
-`RatingFilterConfigUpdate` — тіло `POST /admin/rating-filter`).
+T-127 — `validate_rating_filter_lists` звужено, `lists ⊆ available_lists`; 2026-09-11 — T-138,
+Батч 4.5, `RatingFilterStatusView.personal_zone_enabled`, `ADMIN_DTO_SCHEMA_VERSION` 1→2).
+TASKS.md T-188, T-193, T-111/T-127/T-128 (`AdminStatusResponse.rating_filter:
+RatingFilterStatusView`, `RatingFilterConfigUpdate` — тіло `POST /admin/rating-filter`), T-138.
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -301,6 +302,7 @@ classDiagram
         +List~String~ lists
         +List~String~ available_lists
         +ZoneListStatusView[] loaded
+        +bool personal_zone_enabled
     }
     class ZoneListStatusView {
         <<admin, T-128 реалізовано>>
