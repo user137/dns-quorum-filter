@@ -1069,6 +1069,20 @@ reasoning (search by section number rather than re-deriving a decision from scra
   sister project **pakko** (`C:\Users\Pa\Projects\windows-archiver-wrapper`,
   `github.com/pakkoapp-oss/pakko` — its `scripts/Setup-DevCert.ps1`, `docs/DECISIONS.md`), which
   hit the same wall first.
+- **MSIX per-package `%LOCALAPPDATA%` file virtualization does not extend to a spawned
+  unpackaged child process** — `certutil.exe` handed the packaged app's own logical `cert_path`
+  sees it as missing (`ERROR_FILE_NOT_FOUND`), even though the packaged process's own `std::fs`
+  reads/writes that same path fine; confirmed release-blocking on a live v0.4.0 MSIX
+  2026-09-12, fixed (pure-Rust SHA-1 thumbprint for reads, a `%SystemRoot%\Temp` staged copy for
+  the one `-addstore` write) — full root-cause chain and fix verification in `TASKS-DONE.md`'s
+  T-219 entry, don't re-derive it. `certutil -store`/`-delstore` (no file-path arg — `uninstall`'s
+  code path) were **not** affected.
+- **The `windows` MCP server's `ui_click` (UIA element-name-based) can report success while a
+  native Win32 dialog (an `rfd` message box, a CryptUI confirmation) never receives the click** —
+  observed twice 2026-09-12, dialog stayed open after a "successful" click. `autoit`'s
+  `controlClick` (Windows-message-based, straight into the button's control handle, no screen
+  coordinates/UIA) worked every time on the same dialogs — prefer it for native Win32 dialogs
+  (message boxes, CryptUI, TaskDialogs); reserve `windows`'s UIA tools for actual UIA-aware app UI.
 - **A `gh` call inside a job that checks out multiple copies via `path: build-a`/`build-b`**
   (`release.yml`'s repro-then-release job) **needs `--repo $env:GITHUB_REPOSITORY` explicitly** —
   the job's own working directory has no `.git`, so `gh release create` fails "not a git
