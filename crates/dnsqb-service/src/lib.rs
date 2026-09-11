@@ -147,6 +147,8 @@ mod overrides;
 mod paths;
 mod pause_watch;
 mod persist_dto;
+mod personal_zone_persist;
+mod personal_zone_stats;
 mod pipeline;
 mod query_log;
 mod quorum;
@@ -160,6 +162,7 @@ mod trust_store;
 mod upstream;
 mod watchdog;
 mod wire;
+mod zone_removal_persist;
 
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,

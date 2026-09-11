@@ -57,8 +57,8 @@
 //! holds them as two independent `Arc<ZoneLists>` values, each with its own
 //! writer — the same reasoning that already keeps the T-108 `removed`
 //! overlay out of this type. `pipeline::rating_filter_step` calls
-//! [`Self::zone_match`] against both and takes whichever matches first; no
-//! change to this method's signature was needed. A [`ZoneSourceKind::Personal`]
+//! [`ZoneLists::zone_match`] against both and takes whichever matches first;
+//! no change to this method's signature was needed. A [`ZoneSourceKind::Personal`]
 //! entry is a queried *hostname*, not a registrable (this crate has no PSL
 //! to reduce one to the other) — narrower and safe, but it means `www.`/
 //! `api.`/`cdn.` of the same site count as separate learned entries.
