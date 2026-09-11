@@ -110,3 +110,12 @@ cargo run --release --example curate_topn -- lists=ua,global n=1000
 ```
 
 Fast — one HTTP GET per list, no DNS. See the tool's module doc.
+
+**`gov-<cc>.txt`/`edu.txt` have no tool** — edit the `.txt` by hand, add a row to
+`ZONES-CHANGELOG.md`, then recompute the sidecar (the client's `verify_sha256`
+silently keeps the last-known-good file and logs a warn on any mismatch — a
+forgotten sidecar update means the new content never actually ships):
+
+```
+sha256sum data/topn/gov-ua.txt | awk '{print $1"  gov-ua.txt"}' > data/topn/gov-ua.txt.sha256
+```
