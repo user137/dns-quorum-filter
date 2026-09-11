@@ -4926,7 +4926,8 @@ CrUX-джерела); `config.rs` (Happy: `gov-ua`/`edu` приймаються;
 `diagrams/rating-filter.md`, `TASKS.md`, `CLAUDE.md`, цей запис).
 
 ### Батч 4.5 — персональне навчене джерело зон + персистенція T-108-overlay (T-138; зроблено
-2026-09-11, kickoff plan+advisor, два раунди advisor-рев'ю, closing-advisor; 7 комітів)
+2026-09-11, kickoff plan+advisor, два раунди advisor-рев'ю, closing-advisor; 8 комітів + 1
+closing-review коміт)
 
 Останнє, четверте джерело зон «бульбашки» (SPEC.md §5.1.1) — локально навчене з уже-ALLOW-і-вже-
 пройшов-Quorum трафіку самого користувача, без завантаження/курації.
@@ -5028,5 +5029,28 @@ Error: порожній store → порожній derive; властивіст�
 `FileKind`) · `091835d` (T-108 `zone_removal_persist.rs` + rustdoc-фікс) · `9513da4`
 (`personal_zone_stats.rs`) · `37da6a5` (`personal_zone_persist.rs` + `[personal_zone]` конфіг) ·
 `041a33c` (проводка pipeline/dispatch/orchestrate/DTO) · `f30b202` (5-й артефакт деінсталяції) ·
-`<цей коміт>` (документація: SPEC.md/DECISIONS.md/CONFIGURATION.md/SECURITY.md/SERVICES.md/
-CLAUDE.md/TASKS.md/diagrams).
+`e1feaa7` (документація: SPEC.md/DECISIONS.md/CONFIGURATION.md/SECURITY.md/SERVICES.md/
+CLAUDE.md/TASKS.md/diagrams). CI (`34610268093`) 7/7 зелено.
+
+**Closing-advisor (після push, на вже-durable результат) знайшов три властивості, які гейти
+довели опосередковано, не напряму** — виправлено окремим комітом `3afd4ae`:
+(1) `[personal_zone]` свідомо не додано до `PersistTarget` (архітектурне відхилення від плану,
+див. вище) — верифікаційний крок плану ("hand-edit таблицю, виклич незв'язаний write-маршрут,
+підтверди виживання") ніколи не був переформульований під нову форму; додано
+`serve_admin_cache_config_apply_preserves_a_hand_edited_personal_zone` — емпіричний доказ, не
+лише "прочитав код, усі 5 місць використовують живий знімок" (той самий клас, що
+T-57/T-139/T-149/T-47/T-77/T-217). (2) `from_persisted` компонує `resize_counts` (нова довжина
+вікна) → `rotate_day` (пропущені дні) — кожен окремо протестований, але не їхня композиція
+(рестарт після довгого простою **і** зменшеного вікна в тій самій правці); додано два тести —
+розрив менший за нове вікно зберігає правильний зсув, розрив більший за нього повністю обнуляє
+(без паніки/underflow в обох напрямах). Дві інші closing-advisor-знахідки підтверджені коректними
+інспекцією коду, без змін: `ADMIN_DTO_SCHEMA_VERSION` 1→2 не може перетворити `warn` старого трея
+на відмову декодування (жоден DTO в `admin.rs` не використовує `deny_unknown_fields`); поведінка
+`zone_removal_persist`'s гейта на рантайм-вимкнення/увімкнення `[rating_filter]` вже відповідає
+власне задокументованому контракту (`CLAUDE.md`'s рядок модуля). CI (`34612769694`) 7/7 зелено.
+
+**CodeQL (обидва пуші):** 8 нових алертів `rust/hard-coded-cryptographic-value` (critical) на
+фіксованих тестових ключах у `personal_zone_persist.rs`/`zone_removal_persist.rs` — той самий
+клас, що T-146's шість дисмісів. Усі 8 — усередині `#[cfg(test)]`, підтверджено по кожному рядку
+перед дисмісом (не масово). Відхилено через `gh api` як `used in tests`. **0 відкритих алертів
+на кінець батчу.**
