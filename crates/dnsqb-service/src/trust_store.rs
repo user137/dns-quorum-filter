@@ -3,7 +3,11 @@
 //! `certutil.exe` (`%SystemRoot%\System32\certutil.exe`, absolute path, never
 //! a bare `PATH` lookup, same convention as `cert.rs`'s `icacls.exe` calls) —
 //! not the Windows `CryptoAPI` directly, which is `unsafe` FFI and this crate
-//! is `#![forbid(unsafe_code)]`.
+//! is `#![forbid(unsafe_code)]`. **Exception: [`local_cert_thumbprint`]
+//! (2026-09-12) computes the local certificate's own SHA-1 thumbprint in
+//! pure Rust instead of shelling out — see its doc comment for why a
+//! packaged (MSIX) build's `certutil.exe` child can't be handed this file's
+//! path at all.**
 //!
 //! **Target store is `CurrentUser\Root`, decided by a live probe this
 //! session, not `TrustedPeople` (failed on a real Chrome test) or
@@ -60,18 +64,23 @@
 //! matching the existing "Зупинити фільтрацію" pattern.
 //!
 //! [`is_trusted`] (T-191) is the read-only public counterpart: it only
-//! *reads* trust state — the same `certutil -dump` / `-store` calls the
-//! install path already makes to decide whether it has work to do — never
-//! mutates, and so is safe to call unattended, including from a background
-//! poll. The `dnsqb-tray` status icon uses it to turn red when the
-//! certificate the `DoH` listener serves isn't trusted (the browser's own
-//! `DoH` connection would then fail silently). No HTTP route wraps it; the
-//! tray calls it directly, exactly as it already does for [`ensure_installed`].
+//! *reads* trust state — [`local_cert_thumbprint`]'s pure-Rust hash plus the
+//! same `certutil -store` call the install path already makes to decide
+//! whether it has work to do — never mutates, and so is safe to call
+//! unattended, including from a background poll. The `dnsqb-tray` status
+//! icon uses it to turn red when the certificate the `DoH` listener serves
+//! isn't trusted (the browser's own `DoH` connection would then fail
+//! silently). No HTTP route wraps it; the tray calls it directly, exactly as
+//! it already does for [`ensure_installed`].
 
 use std::env;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::CertificateDer;
+use sha1::{Digest, Sha1};
 
 use crate::cert::CERT_COMMON_NAME;
 
@@ -104,10 +113,10 @@ pub enum TrustStoreError {
     /// Failed to spawn `certutil.exe`.
     #[error("failed to spawn certutil: {0}")]
     Spawn(#[source] std::io::Error),
-    /// `certutil -dump` on the local `cert.pem` didn't succeed, or its
-    /// output didn't contain a `Cert Hash(sha1):` line in the expected
-    /// format — including the common first-run case where `cert.pem`
-    /// doesn't exist yet because `dnsqb-service` has never been started.
+    /// The local `cert.pem` couldn't be read or parsed as a certificate
+    /// (see [`local_cert_thumbprint`]) — including the common first-run
+    /// case where it doesn't exist yet because `dnsqb-service` has never
+    /// been started.
     #[error(
         "could not read the local certificate's thumbprint from {path:?} — \
          if dnsqb-service has never been run, start it once first so \
@@ -120,6 +129,12 @@ pub enum TrustStoreError {
     /// `certutil -addstore` ran but reported failure.
     #[error("certutil failed to install the certificate (exit code {0:?})")]
     InstallFailed(Option<i32>),
+    /// [`ensure_installed`] couldn't stage the temporary `%SystemRoot%\Temp`
+    /// copy `-addstore` needs (see [`addstore_temp_path`]'s doc comment) —
+    /// distinct from [`TrustStoreError::Spawn`], which is specifically about
+    /// `certutil.exe` itself failing to start.
+    #[error("could not write a temporary certificate copy for certutil to install: {0}")]
+    TempCopy(#[source] std::io::Error),
     /// `certutil -delstore` ran but reported failure for a reason other than
     /// "not found" (a genuine "not found" is not an error — see
     /// [`uninstall`]).
@@ -153,12 +168,16 @@ pub enum TrustStoreOutcome {
     Installed,
 }
 
-/// Absolute path to `certutil.exe`.
-fn certutil_path() -> Result<std::path::PathBuf, TrustStoreError> {
+/// `%SystemRoot%` itself (e.g. `C:\Windows`) — shared by [`certutil_path`]
+/// and [`addstore_temp_path`].
+fn system_root_dir() -> Result<PathBuf, TrustStoreError> {
     let system_root = env::var_os("SystemRoot").ok_or(TrustStoreError::MissingSystemRoot)?;
-    Ok(Path::new(&system_root)
-        .join("System32")
-        .join("certutil.exe"))
+    Ok(PathBuf::from(system_root))
+}
+
+/// Absolute path to `certutil.exe`.
+fn certutil_path() -> Result<PathBuf, TrustStoreError> {
+    Ok(system_root_dir()?.join("System32").join("certutil.exe"))
 }
 
 /// A `Command` for `certutil.exe` that never flashes a console window.
@@ -184,49 +203,57 @@ fn certutil_command(certutil: &Path) -> Command {
     command
 }
 
-/// The SHA-1 thumbprint (`certutil`'s own "Cert Hash(sha1)" field) of the
-/// certificate currently at `cert_path`, read via `certutil -dump` — a
-/// read-only operation, safe to call freely (including from tests). Never
-/// caches a previously computed value; always reflects whatever is on disk
-/// right now, since that's the whole point of not keying identity on a
-/// fixed name (see this module's doc comment).
+/// The SHA-1 thumbprint (`certutil`'s own "Cert Hash(sha1)" field — verified
+/// empirically 2026-09-12 to be exactly SHA-1 over the certificate's DER
+/// encoding, not its PEM text or file bytes: `.NET`'s
+/// `X509Certificate2.Thumbprint` on a real generated `cert.pem` matched this
+/// function's output exactly) of the certificate currently at `cert_path`.
+///
+/// **Deliberately computed in Rust, not via `certutil -dump <cert_path>`.**
+/// A packaged (MSIX) build's own file I/O sees `cert_path` (built from the
+/// logical `%LOCALAPPDATA%\dns-quorum-filter` path,
+/// [`crate::paths::app_data_dir`]) transparently redirected by Windows to
+/// its real on-disk location — but a spawned `certutil.exe` **child**
+/// process does not get that redirection and reports the path as missing
+/// (`ERROR_FILE_NOT_FOUND`), confirmed empirically against a live packaged
+/// `dnsqb-service` (2026-09-12: `/admin/cert-status` stuck at `UNKNOWN` for
+/// 20+ minutes / ~20 poll cycles — not a startup race — while an external
+/// `certutil -dump` on the identical logical path reproduced the same
+/// error, and the same file's real physical path dumped successfully).
+/// Reusing [`CertificateDer::from_pem_slice`] (the same PEM→DER primitive
+/// `tls.rs`/`cert.rs` already use for this exact file) instead of a
+/// hand-rolled parser sidesteps the whole class of problem, at the cost of
+/// no longer round-tripping through `certutil` for this one read — the
+/// mutating calls elsewhere in this module (`-store`/`-addstore`/
+/// `-delstore`, none of which take this file's path as an argument) are
+/// unaffected and still shell out.
+///
+/// Read-only, safe to call freely (including from tests). Never caches a
+/// previously computed value; always reflects whatever is on disk right
+/// now, since that's the whole point of not keying identity on a fixed name
+/// (see this module's doc comment).
 ///
 /// # Errors
 ///
 /// Returns [`TrustStoreError::LocalThumbprint`] if `cert_path` doesn't exist
-/// or isn't a certificate `certutil -dump` can parse, and
-/// [`TrustStoreError::Spawn`]/[`TrustStoreError::MissingSystemRoot`] for the
-/// usual process-spawning failure modes.
+/// or isn't a certificate this can parse.
 pub(crate) fn local_cert_thumbprint(cert_path: &Path) -> Result<String, TrustStoreError> {
-    let certutil = certutil_path()?;
-    let output = certutil_command(&certutil)
-        .arg("-dump")
-        .arg(cert_path)
-        .output()
-        .map_err(TrustStoreError::Spawn)?;
-    if !output.status.success() {
-        return Err(TrustStoreError::LocalThumbprint {
-            path: cert_path.to_path_buf(),
-        });
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_cert_hash_sha1(&stdout).ok_or_else(|| TrustStoreError::LocalThumbprint {
-        path: cert_path.to_path_buf(),
-    })
-}
+    use std::fmt::Write;
 
-/// Extracts the value of the first `Cert Hash(sha1): <hex>` line from
-/// `certutil -dump`'s stdout — pure, so it's testable against a fabricated
-/// string without spawning a process. Confirmed empirically (not assumed
-/// from docs) against a real `certutil -dump` run over a throwaway,
-/// never-installed local file: the line has no separators in the hex value
-/// and is prefixed with exactly `"Cert Hash(sha1): "`.
-fn parse_cert_hash_sha1(stdout: &str) -> Option<String> {
-    stdout.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("Cert Hash(sha1): ")
-            .map(str::to_string)
-    })
+    let make_err = || TrustStoreError::LocalThumbprint {
+        path: cert_path.to_path_buf(),
+    };
+    let pem = std::fs::read(cert_path).map_err(|_| make_err())?;
+    let der = CertificateDer::from_pem_slice(&pem).map_err(|_| make_err())?;
+
+    Ok(Sha1::digest(der.as_ref())
+        .iter()
+        .fold(String::with_capacity(40), |mut acc, byte| {
+            // Writing a byte to a `String` via `write!` is infallible; the
+            // `fmt::Error` branch is unreachable for this sink.
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        }))
 }
 
 /// Runs `certutil -store -user Root <common_name>` and hands back the raw
@@ -338,6 +365,29 @@ pub fn is_trusted(cert_path: &Path) -> Result<bool, TrustStoreError> {
     Ok(trusted_state(cert_path)?.0)
 }
 
+/// Where [`ensure_installed`] stages a temporary copy of `cert.pem`'s bytes
+/// so `certutil -addstore` — which must open the file itself, unlike
+/// [`local_cert_thumbprint`]'s pure-Rust read — can actually see it. Pure:
+/// no I/O, just path construction, so it's unit-testable without touching
+/// disk (the write/spawn/cleanup around it is the untested impure shell,
+/// same split as [`local_cert_thumbprint`] vs. its caller).
+///
+/// `%SystemRoot%\Temp`, deliberately not `std::env::temp_dir()` — the latter
+/// resolves under `%LOCALAPPDATA%\Temp`, the same virtualized prefix
+/// [`local_cert_thumbprint`]'s doc comment describes the bug living in;
+/// `%SystemRoot%\Temp` is a shared, per-machine folder no per-package
+/// redirection touches, confirmed empirically 2026-09-12 (`certutil -dump` a
+/// copy placed there succeeded). Named by `thumbprint` — content-addressed,
+/// so it's unique per real certificate and not guessable ahead of computing
+/// it; the file holds a public certificate (no private key material, that
+/// stays in `key_store`), so the property this heads off is a stale/
+/// substituted file, not disclosure.
+fn addstore_temp_path(system_root: &Path, thumbprint: &str) -> PathBuf {
+    system_root
+        .join("Temp")
+        .join(format!("dnsqb-cert-{thumbprint}.pem"))
+}
+
 /// Ensures the certificate currently at `cert_path` is trusted in
 /// `CurrentUser\Root`, installing it (`certutil -addstore`) only if it isn't
 /// already — see this module's doc comment for why identity here is the
@@ -346,6 +396,11 @@ pub fn is_trusted(cert_path: &Path) -> Result<bool, TrustStoreError> {
 /// certificate regeneration) is logged via `tracing::warn!`, not silently
 /// ignored — removing it is [`uninstall`]'s job, not this function's.
 ///
+/// **`-addstore` runs against a temporary copy of `cert.pem`
+/// ([`addstore_temp_path`]), not `cert_path` itself** — same reason as
+/// [`local_cert_thumbprint`]: a packaged (MSIX) build's `certutil.exe` child
+/// can't resolve `cert_path`'s virtualized location at all.
+///
 /// **Mutates the real trust store — never call this from an automated
 /// test.**
 ///
@@ -353,7 +408,8 @@ pub fn is_trusted(cert_path: &Path) -> Result<bool, TrustStoreError> {
 ///
 /// Returns [`TrustStoreError`] if the local certificate's thumbprint can't
 /// be read (including the common first-run case where `cert.pem` doesn't
-/// exist yet) or if `certutil -addstore` itself fails.
+/// exist yet), if the temporary copy can't be written
+/// ([`TrustStoreError::TempCopy`]), or if `certutil -addstore` itself fails.
 pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStoreError> {
     let (already_trusted, installed) = trusted_state(cert_path)?;
 
@@ -369,6 +425,13 @@ pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStor
         );
     }
 
+    let thumbprint = local_cert_thumbprint(cert_path)?;
+    let pem = std::fs::read(cert_path).map_err(|_| TrustStoreError::LocalThumbprint {
+        path: cert_path.to_path_buf(),
+    })?;
+    let temp_path = addstore_temp_path(&system_root_dir()?, &thumbprint);
+    std::fs::write(&temp_path, &pem).map_err(TrustStoreError::TempCopy)?;
+
     let certutil = certutil_path()?;
     let output = certutil_command(&certutil)
         .args([
@@ -376,9 +439,18 @@ pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStor
             OsStr::new("-user"),
             OsStr::new("Root"),
         ])
-        .arg(cert_path)
+        .arg(&temp_path)
         .output()
         .map_err(TrustStoreError::Spawn)?;
+
+    // Best-effort cleanup: the install attempt above already happened by
+    // this point (succeeded or failed), and this is a public certificate
+    // (see `addstore_temp_path`'s doc comment) — a leftover copy is not a
+    // secrecy risk, only ever observed to transiently fail on a real-time
+    // scanner briefly locking a new file under `%SystemRoot%\Temp`, not an
+    // ACL/permission problem worth surfacing to the caller.
+    let _ = std::fs::remove_file(&temp_path);
+
     if output.status.success() {
         Ok(TrustStoreOutcome::Installed)
     } else {
@@ -458,10 +530,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        certutil_command, is_trusted, local_cert_thumbprint, parse_cert_hash_sha1, uninstall_loop,
-        MAX_MATCHING_ENTRIES,
+        addstore_temp_path, certutil_command, certutil_path, is_trusted, local_cert_thumbprint,
+        uninstall_loop, MAX_MATCHING_ENTRIES,
     };
     use std::path::Path;
+
+    #[test]
+    fn addstore_temp_path_is_content_addressed_under_system_root_temp() {
+        let path = addstore_temp_path(Path::new(r"C:\Windows"), "abc123");
+        assert_eq!(path, Path::new(r"C:\Windows\Temp\dnsqb-cert-abc123.pem"));
+        // Two different certificates (different thumbprints) must never
+        // collide on the same temp path — the whole point of naming by
+        // content, not a fixed name.
+        let other = addstore_temp_path(Path::new(r"C:\Windows"), "def456");
+        assert_ne!(path, other);
+    }
 
     #[test]
     fn certutil_command_targets_the_given_path() {
@@ -523,31 +606,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_cert_hash_sha1_extracts_the_value_from_a_realistic_dump_fixture() {
-        // Fixture shape confirmed empirically against a real `certutil
-        // -dump` run over a throwaway, never-installed local certificate
-        // file this session — see this module's doc comment.
-        let fixture = "X509 Certificate:\r\nVersion: 3\r\n\
-             Serial Number: 317931e2427087d4c5f5c01c38680610e9f604d3\r\n\
-             ...\r\nCert Hash(sha1): 7c8d919d62f7d064fc515a9a6073d9406f974f27\r\n\
-             Signature Hash: 850fe0af...\r\n";
-        assert_eq!(
-            parse_cert_hash_sha1(fixture).as_deref(),
-            Some("7c8d919d62f7d064fc515a9a6073d9406f974f27")
-        );
-    }
-
-    #[test]
-    fn parse_cert_hash_sha1_returns_none_when_the_line_is_absent() {
-        assert_eq!(parse_cert_hash_sha1("no such line here\r\n"), None);
-    }
-
-    #[test]
-    fn local_cert_thumbprint_of_a_freshly_generated_cert_matches_the_dump_format() {
-        // Real `certutil -dump` call against a real cert.pem this project
-        // actually generates (not the openssl fixture used while designing
-        // the parser above) — read-only, no store mutation, safe to run
-        // from an automated test unlike `ensure_installed`/`uninstall`.
+    fn local_cert_thumbprint_matches_a_real_certutil_dump_of_the_same_file() {
+        // Cross-validates the pure-Rust SHA-1-over-DER computation against
+        // certutil's own ground truth for the same file — this is the whole
+        // reason this function is trusted to have replaced `certutil -dump
+        // <cert_path>` (2026-09-12, see this function's doc comment) without
+        // silently drifting from what `Cert Hash(sha1)` actually means.
+        // Spawning certutil here is safe (read-only, no store mutation) and,
+        // unlike the function under test, is exactly what it's checking
+        // against — not a redundant self-comparison.
         let dir = match tempfile::tempdir() {
             Ok(dir) => dir,
             Err(err) => panic!("must be able to create a temp dir: {err}"),
@@ -573,6 +640,34 @@ mod tests {
         assert!(
             thumbprint.chars().all(|c| c.is_ascii_hexdigit()),
             "thumbprint must be pure hex, got {thumbprint:?}"
+        );
+
+        let Ok(certutil) = certutil_path() else {
+            panic!("%SystemRoot% must be set on any Windows test runner");
+        };
+        let output = match certutil_command(&certutil)
+            .arg("-dump")
+            .arg(&cert_path)
+            .output()
+        {
+            Ok(output) => output,
+            Err(err) => panic!("certutil must spawn on this Windows test runner: {err}"),
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let Some(certutil_hash) = stdout
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("Cert Hash(sha1): "))
+        else {
+            panic!("certutil -dump output had no Cert Hash(sha1) line:\n{stdout}");
+        };
+        // Case-insensitive: this function emits lowercase hex (matching the
+        // rest of the crate's hex output, e.g. `paths::app_data_dir_hash`),
+        // certutil prints uppercase — `trusted_state`'s real comparison is
+        // already `eq_ignore_ascii_case` for the same reason.
+        assert!(
+            thumbprint.eq_ignore_ascii_case(certutil_hash),
+            "Rust SHA-1(DER) {thumbprint:?} must match certutil's own \
+             Cert Hash(sha1) {certutil_hash:?}"
         );
     }
 
