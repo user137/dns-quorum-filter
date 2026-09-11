@@ -119,9 +119,18 @@ pub struct UpstreamContext<'a> {
 /// refresher vs the pipeline). See [`crate::rating_filter`].
 #[derive(Debug, Clone, Copy)]
 pub struct RatingFilterView<'a> {
-    /// The union of every active availability-zone list.
+    /// The union of every active downloaded/curated availability-zone list
+    /// (T-124/T-122/T-123 — country top-N, `global`, government, sci/edu).
     pub lists: &'a ZoneLists,
+    /// T-138 (Батч 4.5) — the personal learned zone, a fully independent
+    /// `ZoneLists` (its own writer/cadence — see `rating_filter`'s module
+    /// doc). `rating_filter_step` checks it as a *second*, separate
+    /// `zone_match` call, never merged into `lists` itself.
+    pub personal: &'a ZoneLists,
     /// Registrable domains dropped from the bubble by lazy hygiene (T-108).
+    /// The same overlay applies to both `lists` and `personal` — a fresh
+    /// quorum block of an exact hygiene-eligible registrable evicts it
+    /// regardless of which `ZoneLists` contributed it.
     pub removed: &'a std::collections::HashSet<String>,
 }
 
@@ -343,23 +352,35 @@ enum RatingFilterStep {
 
 /// Resolves step 5 against the bubble. Matches `log_domain` (trimmed,
 /// lowercased), never `domain` (which still has a trailing dot).
+///
+/// Checks the downloaded/curated `lists` first, then — only on a miss — the
+/// T-138 personal zone (Батч 4.5), as two independent `zone_match` calls
+/// rather than one merged lookup (see `RatingFilterView`'s own doc for why
+/// they stay separate `ZoneLists` values). `exact`'s hygiene-eligibility
+/// check is against whichever `ZoneLists` actually produced the match, so a
+/// personal-zone hit is correctly evictable even though a `lists` hit from
+/// a blanket-suffix source (Батч 4.2) would not be.
 fn rating_filter_step(view: Option<RatingFilterView<'_>>, log_domain: &str) -> RatingFilterStep {
     let Some(rf) = view else {
         return RatingFilterStep::Off;
     };
-    match rf.lists.zone_match(log_domain, rf.removed) {
-        None => RatingFilterStep::OutOfZone,
-        Some(registrable) => RatingFilterStep::InZone {
-            // T-122/T-123 (Батч 4.2): `exact` must also gate on hygiene
-            // eligibility, not just string equality — a `GovernmentTopN`/
-            // `SciEdu` blanket-suffix entry (e.g. `gov.ua`) must never be
-            // reported as evictable, or a false-positive quorum block of
-            // the bare suffix itself would (via T-108 lazy hygiene) drop
-            // the whole namespace it covers. Guarded here, at the point
-            // `exact` is computed — not downstream where it's consumed.
+    // T-122/T-123 (Батч 4.2): `exact` must also gate on hygiene eligibility,
+    // not just string equality — a `GovernmentTopN`/`SciEdu` blanket-suffix
+    // entry (e.g. `gov.ua`) must never be reported as evictable, or a
+    // false-positive quorum block of the bare suffix itself would (via
+    // T-108 lazy hygiene) drop the whole namespace it covers. Guarded here,
+    // at the point `exact` is computed — not downstream where it's consumed.
+    if let Some(registrable) = rf.lists.zone_match(log_domain, rf.removed) {
+        return RatingFilterStep::InZone {
             exact: registrable == log_domain && rf.lists.is_hygiene_eligible(registrable),
-        },
+        };
     }
+    if let Some(registrable) = rf.personal.zone_match(log_domain, rf.removed) {
+        return RatingFilterStep::InZone {
+            exact: registrable == log_domain && rf.personal.is_hygiene_eligible(registrable),
+        };
+    }
+    RatingFilterStep::OutOfZone
 }
 
 /// The rating filter «bubble»'s BLOCK (T-124, SPEC.md §5.3 step 5): the
@@ -4135,6 +4156,13 @@ mod tests {
         )])
     }
 
+    fn personal_zone_of(domains: &[&str]) -> ZoneLists {
+        ZoneLists::new(vec![ZoneSource::new(
+            ZoneSourceKind::Personal,
+            domains.iter().map(|d| (*d).to_string()),
+        )])
+    }
+
     fn allowing_client() -> MockClient {
         let ip = Ipv4Addr::new(1, 1, 1, 1);
         MockClient {
@@ -4166,8 +4194,58 @@ mod tests {
         removed: &HashSet<String>,
         enabled: bool,
     ) -> (PipelineOutcome, Option<QueryLogMeta>) {
+        // T-138: every existing caller of this helper predates the personal
+        // zone and only exercises `lists` — a fixed empty one keeps them all
+        // unchanged. `run_with_personal_zone` below is the dedicated helper
+        // for tests that need a non-empty one.
+        let empty_personal = ZoneLists::default();
         let view = (enabled && !zone.is_empty()).then_some(RatingFilterView {
             lists: zone,
+            personal: &empty_personal,
+            removed,
+        });
+        handle_query(
+            query,
+            client,
+            overrides,
+            &default_voters(),
+            &CacheContext {
+                cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
+                rating_filter: view,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await
+    }
+
+    /// T-138 (Батч 4.5) — same shape as [`run_with_rating_filter`], but with
+    /// the *downloaded* `lists` fixed empty and a caller-supplied personal
+    /// zone instead, so a test can prove the personal zone is reached and
+    /// treated the same way on its own, not just as a side effect of the
+    /// downloaded-lists path.
+    async fn run_with_personal_zone<C: DohClient + Sync>(
+        query: &Message,
+        client: &C,
+        overrides: &OverrideLists,
+        cache: &Cache,
+        personal: &ZoneLists,
+        removed: &HashSet<String>,
+    ) -> (PipelineOutcome, Option<QueryLogMeta>) {
+        let empty_lists = ZoneLists::default();
+        let view = Some(RatingFilterView {
+            lists: &empty_lists,
+            personal,
             removed,
         });
         handle_query(
@@ -4431,6 +4509,57 @@ mod tests {
             meta.map(|m| m.decision_source),
             Some(DecisionSource::RatingFilter),
             "a removed registrable is now out-of-zone"
+        );
+    }
+
+    // T-138 (Батч 4.5) — the personal zone is a second, independent
+    // `zone_match` check: a domain that misses the downloaded `lists`
+    // entirely is still in-zone when the personal zone holds it.
+    #[tokio::test]
+    async fn personal_zone_domain_is_reached_when_topn_zone_misses() {
+        let personal = personal_zone_of(&["my-favorite-site.example"]);
+        let removed = HashSet::new();
+
+        let (outcome, meta) = run_with_personal_zone(
+            &query_for("my-favorite-site.example.", RecordType::A),
+            &allowing_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &personal,
+            &removed,
+        )
+        .await;
+        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        assert_ne!(
+            meta.map(|m| m.decision_source),
+            Some(DecisionSource::RatingFilter),
+            "a personal-zone hit must proceed through quorum, not be \
+             blocked as out-of-zone"
+        );
+    }
+
+    // T-138 — a personal-zone entry is one specific learned hostname, not a
+    // blanket suffix (`ZoneSourceKind::Personal::hygiene_eligible() ==
+    // true`), so a fresh quorum block of it *does* surface `zone_removal` —
+    // the opposite of the Батч 4.2 blanket-suffix guard above.
+    #[tokio::test]
+    async fn lazy_hygiene_evicts_a_personal_zone_domain_on_a_fresh_quorum_block() {
+        let personal = personal_zone_of(&["turned-malicious.example"]);
+        let removed = HashSet::new();
+
+        let (_, meta) = run_with_personal_zone(
+            &query_for("turned-malicious.example.", RecordType::A),
+            &blocking_client(),
+            &overrides_with(vec![]),
+            &Cache::new(&cache_config()),
+            &personal,
+            &removed,
+        )
+        .await;
+        assert_eq!(
+            meta.and_then(|m| m.zone_removal),
+            Some("turned-malicious.example".to_string()),
+            "an exact block of a personal-zone entry must be evictable"
         );
     }
 

@@ -53,7 +53,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 1;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 2;
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the
@@ -236,11 +236,23 @@ pub struct RatingFilterStatusView {
     /// renders its checkboxes from this, so a new dataset is one server-side
     /// const edit, not a client change.
     pub available_lists: Vec<String>,
-    /// Per-source domain counts for the lists actually loaded from disk — an
-    /// exact count each, never a cross-source sum (a domain in both a country
-    /// list and `global` would be double-counted). Empty until
-    /// `run_topn_updater`'s first successful download.
+    /// Per-source domain counts for every currently-loaded zone source —
+    /// downloaded/curated (T-124/T-122/T-123) **and**, since T-138 (Батч
+    /// 4.5), the personal learned zone (`list == "personal"`) — an exact
+    /// count each, never a cross-source sum (a domain in both a country
+    /// list and `global` would be double-counted). Empty until each
+    /// source's own background task first publishes something.
     pub loaded: Vec<ZoneListStatusView>,
+    /// T-138 (Батч 4.5) — `[personal_zone].enabled`'s live position. A
+    /// separate flag from `enabled`/`active` above: the personal zone never
+    /// activates the bubble on its own (see
+    /// [`crate::dispatch::rating_filter_is_active`]'s own doc for why), so
+    /// its own Fork-B-style "on but not yet contributing" state is this flag
+    /// being `true` with no `"personal"` entry in `loaded` yet.
+    /// `#[serde(default)]` (T-205 schema-versioning discipline) so an older
+    /// service's response falls back to `false`.
+    #[serde(default)]
+    pub personal_zone_enabled: bool,
 }
 
 /// One loaded availability-zone list in [`RatingFilterStatusView::loaded`].
@@ -1812,6 +1824,8 @@ pub struct UninstallLocalStateResponse {
     pub persistence_key: ArtifactOutcomeView,
     /// The optional `MaxMind` `GeoLite2` account credentials (T-163).
     pub maxmind_creds: ArtifactOutcomeView,
+    /// The personal learned rating-filter zone's own key (T-138, Батч 4.5).
+    pub personal_zone_key: ArtifactOutcomeView,
 }
 
 impl From<crate::local_state::UninstallReport> for UninstallLocalStateResponse {
@@ -1821,6 +1835,7 @@ impl From<crate::local_state::UninstallReport> for UninstallLocalStateResponse {
             tls_key: report.tls_key.into(),
             persistence_key: report.persistence_key.into(),
             maxmind_creds: report.maxmind_creds.into(),
+            personal_zone_key: report.personal_zone_key.into(),
         }
     }
 }

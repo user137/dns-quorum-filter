@@ -150,6 +150,22 @@ mod tests {
         );
     }
 
+    // T-138 (Батч 4.5): the personal-zone warning is the same shape - gated
+    // on `rating_filter.personal_zone_enabled`, names `personal-zone.enc`,
+    // and tells the operator the config-file edit that turns it off.
+    #[test]
+    fn main_js_shows_the_personal_zone_warning_gated_on_the_status_flag() {
+        assert!(
+            MAIN_JS.contains("status.rating_filter.personal_zone_enabled"),
+            "the warning must be gated on the status flag, not always shown"
+        );
+        assert!(MAIN_JS.contains("personal-zone.enc"));
+        assert!(
+            MAIN_JS.contains("[personal_zone] enabled = false"),
+            "the warning must tell the operator how to disable it"
+        );
+    }
+
     // T-81: DB-IP Lite's CC BY 4.0 licence requires the "IP Geolocation by
     // DB-IP" anchor text AND a link back to db-ip.com in the *same* element,
     // on any page displaying data derived from the database - and this page

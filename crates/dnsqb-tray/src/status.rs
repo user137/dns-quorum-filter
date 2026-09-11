@@ -367,6 +367,7 @@ mod tests {
                 lists: Vec::new(),
                 available_lists: Vec::new(),
                 loaded: Vec::new(),
+                personal_zone_enabled: false,
             },
         }
     }

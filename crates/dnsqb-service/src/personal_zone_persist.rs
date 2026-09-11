@@ -304,8 +304,15 @@ mod tests {
         assert_eq!(restored.tracked_domain_count(), 1);
     }
 
+    // This is the one test here that goes through `load_or_create_personal_zone_key`
+    // with a real app-data dir - i.e. the real OS credential store, which
+    // races under concurrent access from this process even across distinct
+    // entries (see key_store's own STORE_TEST_GUARD doc). Every other test
+    // in this module either passes `enabled: false` / `app_data: None`
+    // (never reaches the store) or supplies its own raw key directly.
     #[test]
     fn a_restart_preserves_a_learned_domain_across_the_day_boundary() {
+        let _guard = crate::key_store::STORE_TEST_GUARD.lock();
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
@@ -330,6 +337,11 @@ mod tests {
             Some("restart-me.example"),
             "a domain visited before a restart must still qualify after it"
         );
+
+        // Best-effort cleanup - a leaked test entry is harmless (unique per
+        // temp-dir path hash), but tidy up when we can.
+        let _ =
+            crate::key_store::delete_secret(&crate::key_store::personal_zone_key_entry(dir.path()));
     }
 
     // ---- Misuse / fool ----

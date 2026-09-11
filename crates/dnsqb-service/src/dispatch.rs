@@ -37,8 +37,8 @@ use crate::admission::ConnectionGate;
 use crate::baseline_selector::BaselineSelector;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
-    validate_country_code, ConfigError, GeoipConfig, LimitsConfig, RatingFilterConfig,
-    ResolverConfig,
+    validate_country_code, ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig,
+    RatingFilterConfig, ResolverConfig,
 };
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
@@ -46,12 +46,15 @@ use crate::geoip_updater::{
     check_maxmind_credentials, GeoipSource, GeoipUpdateError, MaxmindHealth,
 };
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
+use crate::personal_zone_stats::{DayIndex, PersonalZoneStats};
 use crate::pipeline::{
     handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
     PipelineOutcome, RatingFilterView, UpstreamContext,
 };
-use crate::query_log::{Decision, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
-use crate::rating_filter::ZoneLists;
+use crate::query_log::{
+    Decision, DecisionSource, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES,
+};
+use crate::rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
 use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutConfig;
 use crate::topn_download::AVAILABLE_TOPN_LISTS;
@@ -564,6 +567,14 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     let rating_filter_config = state.rating_filter_config_snapshot();
     let rating_filter_zone = state.rating_filter_zone_snapshot();
     let rating_filter_removed = state.rating_filter_removed_snapshot();
+    // T-138: the personal zone is a fully independent `Arc<ZoneLists>` (own
+    // writer, own cadence — see `rating_filter`'s module doc) and
+    // deliberately does NOT participate in `rating_filter_is_active` — an
+    // `enabled` rating filter with an empty downloaded `lists` but a
+    // non-empty personal zone must stay inert, not silently start blocking
+    // almost the whole internet from personal-zone entries alone (SPEC.md
+    // §5.3 п.8). It only ever *widens* an already-active bubble.
+    let rating_filter_personal_zone = state.rating_filter_personal_zone_snapshot();
     let cache_context = CacheContext {
         cache: &cache_state.cache,
         config: &cache_state.config,
@@ -581,6 +592,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     let rating_filter_view = rating_filter_is_active(&rating_filter_config, &rating_filter_zone)
         .then_some(RatingFilterView {
             lists: &rating_filter_zone,
+            personal: &rating_filter_personal_zone,
             removed: &rating_filter_removed,
         });
     let upstream_context = UpstreamContext {
@@ -614,6 +626,24 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
                 // field (see `pipeline::QueryLogMeta::zone_removal`).
                 if let Some(registrable) = meta.zone_removal {
                     state.record_zone_removal(registrable);
+                }
+                // T-138 (Батч 4.5, SPEC.md §5.1.1): the personal-zone
+                // learning signal is exactly "already-ALLOW-and-Quorum-
+                // passed" — `Quorum` (a fresh resolution) and `Cache` (a
+                // cache hit of an earlier quorum verdict) are the only two
+                // `DecisionSource`s that mean that; every other source
+                // (`Allowlist` bypassed quorum, `Blocklist`/`RatingFilter`/
+                // `Geoip`/`BaselineFallback` are not a clean quorum ALLOW)
+                // must never feed the learner. By reference, before
+                // `meta.domain` moves into `LogEntry` below — no extra
+                // allocation on an already-tracked domain.
+                if matches!(meta.decision, Decision::Allowed)
+                    && matches!(
+                        meta.decision_source,
+                        DecisionSource::Quorum | DecisionSource::Cache
+                    )
+                {
+                    state.record_personal_visit(&meta.domain);
                 }
                 let latency_ms = started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
                 state.query_log.push(LogEntry {
@@ -754,6 +784,30 @@ pub struct AppState<C: DohClient + Sync> {
     /// `TOPN_CHECK_INTERVAL` later. Same one-permit `Notify` semantics as
     /// `geoip_refresh_wake`.
     rating_filter_refresh_wake: Arc<Notify>,
+    /// T-138 (Батч 4.5) — live `[personal_zone]` config snapshot, mirrors
+    /// `rating_filter_config`. Sole writer: `update_personal_zone_config`
+    /// (from `apply_admin_reset`, a hand-edited reload — no dedicated admin
+    /// route this batch, same as `rating_filter` before T-127).
+    personal_zone_config: RwLock<Arc<PersonalZoneConfig>>,
+    /// T-138 — the raw per-domain daily-count aggregate: the hot path writes
+    /// to it on every already-ALLOW-and-Quorum-passed query
+    /// (`record_personal_visit`), and the personal-zone task reads/rotates
+    /// it once a cycle. A `parking_lot::RwLock` around the struct itself
+    /// (not `Arc`-swapped) — many small in-place mutations, the shape
+    /// `query_log`'s own ring buffer already uses, not the "whole-value
+    /// swap" shape `rating_filter_zone` uses.
+    personal_zone_stats: RwLock<PersonalZoneStats>,
+    /// T-138 — the *derived* personal zone (one `ZoneSourceKind::Personal`
+    /// source), republished by the personal-zone task from
+    /// `personal_zone_stats`. An independent `Arc<ZoneLists>` from
+    /// `rating_filter_zone` — different writers on different cadences (see
+    /// `rating_filter`'s own module doc) — matched by
+    /// `pipeline::rating_filter_step` as a second, separate `zone_match` call.
+    rating_filter_personal_zone: RwLock<Arc<ZoneLists>>,
+    /// T-138 — wakes the personal-zone task out of its inter-cycle sleep
+    /// when `apply_admin_reset` reloads a hand-edited `[personal_zone]`
+    /// table. Same one-permit `Notify` semantics as `rating_filter_refresh_wake`.
+    personal_zone_refresh_wake: Arc<Notify>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -902,6 +956,18 @@ impl<C: DohClient + Sync> AppState<C> {
             rating_filter_zone: RwLock::new(Arc::new(geoip.rating_filter_zone)),
             rating_filter_removed: RwLock::new(Arc::new(HashSet::new())),
             rating_filter_refresh_wake: Arc::new(Notify::new()),
+            // T-138: real values come in via `restore_personal_zone`, called
+            // once at startup before the listener accepts traffic (the same
+            // "construct empty, restore separately" shape `restore_cache`
+            // already uses) — a fresh, empty store is a safe placeholder in
+            // the meantime.
+            personal_zone_config: RwLock::new(Arc::new(PersonalZoneConfig::default())),
+            personal_zone_stats: RwLock::new(PersonalZoneStats::new(
+                1,
+                DayIndex::from_system_time(SystemTime::now()),
+            )),
+            rating_filter_personal_zone: RwLock::new(Arc::new(ZoneLists::default())),
+            personal_zone_refresh_wake: Arc::new(Notify::new()),
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             reachability: RwLock::new(NetworkReachability::default()),
@@ -1072,6 +1138,14 @@ impl<C: DohClient + Sync> AppState<C> {
         Arc::make_mut(&mut guard).insert(registrable);
     }
 
+    /// Re-seeds the T-108 removal overlay from a persisted `zone-removals.enc`
+    /// snapshot (Батч 4.5), once at startup before the listener accepts
+    /// traffic. Not a "sole writer" method like [`Self::record_zone_removal`]
+    /// — called exactly once, before any query can reach the hot path.
+    pub(crate) fn restore_rating_filter_removed(&self, removed: HashSet<String>) {
+        *self.rating_filter_removed.write() = Arc::new(removed);
+    }
+
     /// Wakes `run_topn_updater` out of its inter-cycle sleep (T-124/T-127) —
     /// fired by `apply_admin_reset` after a config reload and by
     /// `apply_rating_filter_change` after a `POST /admin/rating-filter`, so a
@@ -1085,6 +1159,87 @@ impl<C: DohClient + Sync> AppState<C> {
     /// (T-124), paired with [`Self::wake_rating_filter_refresh`].
     pub(crate) fn rating_filter_refresh_wake_handle(&self) -> Arc<Notify> {
         Arc::clone(&self.rating_filter_refresh_wake)
+    }
+
+    /// One `Arc::clone` snapshot of the live `[personal_zone]` config
+    /// (T-138) — read once per query alongside the other rating-filter
+    /// snapshots, and by `personal_zone_persist`'s task each cycle.
+    pub(crate) fn personal_zone_config_snapshot(&self) -> Arc<PersonalZoneConfig> {
+        Arc::clone(&self.personal_zone_config.read())
+    }
+
+    /// Swaps in a freshly-reloaded `[personal_zone]` config (T-138) — sole
+    /// writer is `apply_admin_reset`. Never touches `personal_zone_stats`/
+    /// `rating_filter_personal_zone` directly; the personal-zone task picks
+    /// up the new thresholds on its own next cycle after being woken.
+    pub(crate) fn update_personal_zone_config(&self, config: PersonalZoneConfig) {
+        *self.personal_zone_config.write() = Arc::new(config);
+    }
+
+    /// Wakes the personal-zone task out of its inter-cycle sleep (T-138),
+    /// mirrors [`Self::wake_rating_filter_refresh`].
+    pub(crate) fn wake_personal_zone_refresh(&self) {
+        self.personal_zone_refresh_wake.notify_one();
+    }
+
+    /// The `Notify` handle the personal-zone task parks on (T-138), paired
+    /// with [`Self::wake_personal_zone_refresh`].
+    pub(crate) fn personal_zone_refresh_wake_handle(&self) -> Arc<Notify> {
+        Arc::clone(&self.personal_zone_refresh_wake)
+    }
+
+    /// One `Arc::clone` snapshot of the derived personal zone (T-138) —
+    /// read once per query by `resolve_doh_request`, alongside
+    /// `rating_filter_zone`.
+    pub(crate) fn rating_filter_personal_zone_snapshot(&self) -> Arc<ZoneLists> {
+        Arc::clone(&self.rating_filter_personal_zone.read())
+    }
+
+    /// The hot-path entry point (T-138, SPEC.md §5.1.1): records one
+    /// already-ALLOW-and-Quorum-passed resolution of `host`. A no-op while
+    /// `[personal_zone].enabled` is `false` — checked here, not left to
+    /// every caller, so there is exactly one place this gate can be
+    /// forgotten. Cheap either way (`parking_lot::RwLock`, no clone unless
+    /// `host` is genuinely new — see [`PersonalZoneStats::record_visit`]'s
+    /// own doc).
+    pub(crate) fn record_personal_visit(&self, host: &str) {
+        if !self.personal_zone_config.read().enabled {
+            return;
+        }
+        let today = DayIndex::from_system_time(SystemTime::now());
+        self.personal_zone_stats.write().record_visit(host, today);
+    }
+
+    /// Re-seeds the personal-zone stats/derived-zone pair at startup (Батч
+    /// 4.5), once before the listener accepts traffic — the same
+    /// "construct empty in `new`, restore separately" shape
+    /// [`Self::restore_cache`]/[`Self::restore_rating_filter_removed`] use.
+    pub(crate) fn restore_personal_zone(&self, stats: PersonalZoneStats, zone: ZoneLists) {
+        *self.personal_zone_stats.write() = stats;
+        *self.rating_filter_personal_zone.write() = Arc::new(zone);
+    }
+
+    /// Rolls the personal-zone stats forward to `today`, re-derives the
+    /// qualifying set from the *current* `[personal_zone]` config, and
+    /// republishes it — the personal-zone task's one per-cycle unit of
+    /// work, called unconditionally every cycle (cheap even as a no-op: a
+    /// `rotate_day` that finds nothing to shift, then a re-sort over at
+    /// most `personal_zone_stats::MAX_TRACKED_DOMAINS` entries). Returns a
+    /// clone of the rotated stats for the caller to persist — taken from
+    /// the same locked section that just rotated it, so the persisted
+    /// snapshot and the republished zone can never disagree about which
+    /// rotation they reflect.
+    pub(crate) fn rotate_and_republish_personal_zone(&self, today: DayIndex) -> PersonalZoneStats {
+        let cfg = self.personal_zone_config_snapshot();
+        let mut guard = self.personal_zone_stats.write();
+        guard.rotate_day(today);
+        let qualifying = guard.derive_qualifying_domains(&cfg);
+        *self.rating_filter_personal_zone.write() =
+            Arc::new(ZoneLists::new(vec![ZoneSource::new(
+                ZoneSourceKind::Personal,
+                qualifying,
+            )]));
+        guard.clone()
     }
 
     /// One `Arc::clone` snapshot of the baseline selector (T-154) — the hot
@@ -1270,9 +1425,16 @@ pub(crate) fn rating_filter_is_active(config: &RatingFilterConfig, zone: &ZoneLi
 fn rating_filter_status_view<C: DohClient + Sync>(state: &AppState<C>) -> RatingFilterStatusView {
     let config = state.rating_filter_config_snapshot();
     let zone = state.rating_filter_zone_snapshot();
+    // T-138 (Батч 4.5): the personal zone is a fully independent `ZoneLists`
+    // (its own writer/cadence), so it never counts toward `active` — see
+    // `rating_filter_is_active`'s own doc for why — but its one source
+    // still belongs in `loaded`, the same "what's actually contributing"
+    // disclosure every other source gets.
+    let personal_zone = state.rating_filter_personal_zone_snapshot();
     let loaded = zone
         .sources()
         .iter()
+        .chain(personal_zone.sources())
         .map(|source| ZoneListStatusView {
             list: source.kind().list_code(),
             domains: source.len(),
@@ -1287,6 +1449,7 @@ fn rating_filter_status_view<C: DohClient + Sync>(state: &AppState<C>) -> Rating
             .map(|s| (*s).to_string())
             .collect(),
         loaded,
+        personal_zone_enabled: state.personal_zone_config_snapshot().enabled,
     }
 }
 
@@ -1416,6 +1579,12 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // T-124/T-126 cross-field read: not admin-mutable, carried
                 // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
                 rating_filter: state.persist.rating_filter.clone(),
+                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
+                // construction-time snapshot in `PersistTarget`), this reads
+                // the *live* config directly — no dedicated admin route
+                // exists to have gone stale against, so there was no reason
+                // to introduce the same staleness gap for a new field.
+                personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
             };
             match config.save(&paths.config) {
@@ -1711,6 +1880,13 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // rebuilds the zone; a removal must survive a reload).
     state.update_rating_filter_config(config.rating_filter);
     state.wake_rating_filter_refresh();
+    // T-138: reload the `[personal_zone]` table too and wake the personal-
+    // zone task, the same completeness gap the reloads above close. The
+    // stats/derived zone are left untouched here (the task rebuilds them
+    // from the new thresholds on its own next cycle) — same split as
+    // `rating_filter_zone` above.
+    state.update_personal_zone_config(config.personal_zone);
+    state.wake_personal_zone_refresh();
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -1964,6 +2140,12 @@ fn apply_cache_config<C: DohClient + Sync>(
                 // T-124/T-126 cross-field read: not admin-mutable, carried
                 // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
                 rating_filter: state.persist.rating_filter.clone(),
+                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
+                // construction-time snapshot in `PersistTarget`), this reads
+                // the *live* config directly — no dedicated admin route
+                // exists to have gone stale against, so there was no reason
+                // to introduce the same staleness gap for a new field.
+                personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
                 providers,
                 cache: new_config,
@@ -2114,6 +2296,12 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 // T-124/T-126 cross-field read: not admin-mutable, carried
                 // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
                 rating_filter: state.persist.rating_filter.clone(),
+                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
+                // construction-time snapshot in `PersistTarget`), this reads
+                // the *live* config directly — no dedicated admin route
+                // exists to have gone stale against, so there was no reason
+                // to introduce the same staleness gap for a new field.
+                personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
                 providers,
                 cache: cache_config,
@@ -2279,6 +2467,9 @@ fn apply_rating_filter_change<C: DohClient + Sync>(
                     persist_query_log: state.persist.persist_query_log,
                     persist_cache: state.persist.persist_cache,
                     rating_filter: new_config,
+                    // T-138: live snapshot, same reasoning as the other
+                    // ResolverConfig-literal sites in this file.
+                    personal_zone: *state.personal_zone_config_snapshot(),
                     limits: state.persist.limits,
                     providers,
                     cache: cache_config,
@@ -2614,6 +2805,12 @@ where
                 // T-124/T-126 cross-field read: not admin-mutable, carried
                 // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
                 rating_filter: state.persist.rating_filter.clone(),
+                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
+                // construction-time snapshot in `PersistTarget`), this reads
+                // the *live* config directly — no dedicated admin route
+                // exists to have gone stale against, so there was no reason
+                // to introduce the same staleness gap for a new field.
+                personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
                 providers: after.clone(),
                 cache: cache_config,
@@ -6890,6 +7087,77 @@ mod tests {
                 list: "ua".to_string(),
                 domains: 1,
             }]
+        );
+    }
+
+    // T-138 (Батч 4.5): the personal zone's one source shows up in `loaded`
+    // alongside the downloaded ones, and `personal_zone_enabled` reflects
+    // the config flag independently of `active` (which stays governed by
+    // the downloaded lists alone, per `rating_filter_is_active`'s own doc).
+    #[test]
+    fn rating_filter_status_view_includes_the_personal_zone_source_and_flag() {
+        let state = state_with(no_op_client());
+        seed_ua_zone(&state);
+        let mut config = (*state.rating_filter_config_snapshot()).clone();
+        config.enabled = true;
+        config.lists = vec!["ua".to_string()];
+        state.update_rating_filter_config(config);
+        state.restore_personal_zone(
+            crate::personal_zone_stats::PersonalZoneStats::new(
+                7,
+                crate::personal_zone_stats::DayIndex::from_system_time(SystemTime::now()),
+            ),
+            ZoneLists::new(vec![crate::rating_filter::ZoneSource::new(
+                crate::rating_filter::ZoneSourceKind::Personal,
+                ["learned.example".to_string()],
+            )]),
+        );
+        state.update_personal_zone_config(crate::config::PersonalZoneConfig {
+            enabled: true,
+            ..crate::config::PersonalZoneConfig::default()
+        });
+        let status = admin_status(&state, true);
+        assert!(status.rating_filter.personal_zone_enabled);
+        assert!(
+            status.rating_filter.loaded.contains(&ZoneListStatusView {
+                list: "personal".to_string(),
+                domains: 1,
+            }),
+            "the personal source must appear in loaded alongside downloaded ones"
+        );
+        assert!(
+            status.rating_filter.active,
+            "the seeded downloaded `ua` list alone must still gate active"
+        );
+    }
+
+    // T-138 (Батч 4.5, advisor-caught): a non-empty personal zone must never
+    // make the bubble `active` on its own — SPEC.md §5.3 п.8's "never an
+    // unwelcome surprise" guarantee, reached here via an *empty* downloaded
+    // `lists` with a *non-empty* personal zone.
+    #[test]
+    fn a_personal_zone_alone_never_activates_the_bubble() {
+        let state = state_with(no_op_client());
+        // `rating_filter.enabled = true` but the downloaded zone stays
+        // whatever AppState::new default-constructed it as (empty).
+        let mut config = (*state.rating_filter_config_snapshot()).clone();
+        config.enabled = true;
+        state.update_rating_filter_config(config);
+        state.restore_personal_zone(
+            crate::personal_zone_stats::PersonalZoneStats::new(
+                7,
+                crate::personal_zone_stats::DayIndex::from_system_time(SystemTime::now()),
+            ),
+            ZoneLists::new(vec![crate::rating_filter::ZoneSource::new(
+                crate::rating_filter::ZoneSourceKind::Personal,
+                ["learned.example".to_string()],
+            )]),
+        );
+        let status = admin_status(&state, true);
+        assert!(
+            !status.rating_filter.active,
+            "an empty downloaded `lists` must stay inert even with a \
+             non-empty personal zone - it only ever widens an already-active bubble"
         );
     }
 

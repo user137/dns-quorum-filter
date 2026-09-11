@@ -281,9 +281,18 @@ function render(status) {
   const cachePersistWarning = status.encrypted_persistence.cache
     ? `<div class="notice warn">Кеш вердиктів зберігається на диск у зашифрованому файлі (cache.enc) — між перезапусками зберігається, які домени резолвилися. Вимкнути: <code>persist_cache = false</code> у resolver_config.toml.</div>`
     : "";
+  // T-138 (Батч 4.5): same passive, hand-edit-only indicator for the
+  // personal learned rating-filter zone — a higher privacy tier than
+  // either of the two above (it learns which sites *you specifically*
+  // visit often/regularly), so it gets the same always-visible treatment,
+  // not buried inside the collapsed #rating-filter-body card.
+  const personalZoneWarning = status.rating_filter.personal_zone_enabled
+    ? `<div class="notice warn">Особиста навчена зона рейтинг-фільтра зберігається на диск у зашифрованому файлі (personal-zone.enc) — це запам'ятовує, які сайти ви часто/регулярно відвідуєте. Вимкнути: <code>[personal_zone] enabled = false</code> у resolver_config.toml.</div>`
+    : "";
   appBody.innerHTML = `
     ${persistWarning}
     ${cachePersistWarning}
+    ${personalZoneWarning}
     <div class="card">
       <h3>Статистика (у поточному вікні логу)</h3>
       <div class="stat-row">
@@ -2307,6 +2316,7 @@ function renderUninstallResult(result) {
     ["TLS-ключ", result.tls_key],
     ["Ключ шифрування", result.persistence_key],
     ["Креденшели MaxMind", result.maxmind_creds],
+    ["Ключ особистої зони", result.personal_zone_key],
   ];
   const anyFailed = rows.some(([, outcome]) => outcome === "FAILED");
   const panel = document.createElement("p");

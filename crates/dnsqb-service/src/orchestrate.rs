@@ -54,6 +54,11 @@ use crate::logging::init as init_logging;
 use crate::overrides::{InvalidEntry, OverrideLists};
 use crate::paths::app_data_dir;
 use crate::pause_watch::run_pause_watcher;
+use crate::personal_zone_persist::{
+    load_persisted_personal_zone, run_personal_zone_task, PersonalZoneInit,
+};
+use crate::personal_zone_stats::PersonalZoneStats;
+use crate::rating_filter::ZoneLists;
 use crate::reachability::run_reachability_prober;
 use crate::timeout::TimeoutConfig;
 use crate::tls::load_or_generate_server_config;
@@ -63,10 +68,14 @@ use crate::watchdog::instance::{
     acquire as acquire_instance_guard, write_pid_file, GuardError, InstanceGuard,
     Role as InstanceRole,
 };
+use crate::zone_removal_persist::{
+    load_persisted_zone_removals, run_zone_removal_persister, ZoneRemovalsInit,
+};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto;
 use hyper_util::server::graceful::GracefulShutdown;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -169,24 +178,9 @@ pub async fn run() {
             .serve_baseline_when_filters_unreachable,
     };
     // T-52/T-149: the admin channel persists a config change back to
-    // whichever path it was loaded from, and /admin/reset (T-149) reloads
-    // from the same two paths - `None` (no app-data dir) means a live
-    // change still applies in-memory, it just can't survive a restart (and
-    // /admin/reset has nothing to reload from, 500), same tolerance
-    // `load_resolver_config`/`load_overrides` already apply to a missing
-    // app-data directory. Both paths are always resolved together from the
-    // same `app_data_dir()` call - never independently `Some`/`None`.
-    let persist = PersistTarget {
-        port: resolver_config.port,
-        persist_query_log: resolver_config.persist_query_log,
-        persist_cache: resolver_config.persist_cache,
-        limits: resolver_config.limits,
-        rating_filter: resolver_config.rating_filter.clone(),
-        paths: app_data.as_deref().map(|dir| PersistPaths {
-            config: dir.join("resolver_config.toml"),
-            overrides: dir.join("overrides.toml"),
-        }),
-    };
+    // whichever path it was loaded from - see `build_persist_target`'s own
+    // doc for the `None`-app-data-dir tolerance and the `paths` invariant.
+    let persist = build_persist_target(&resolver_config, app_data.as_deref());
 
     // T-75: a database a previous run already downloaded is loaded
     // synchronously here so a restart doesn't lose GeoIP filtering until the
@@ -215,6 +209,15 @@ pub async fn run() {
         flusher: cache_flusher,
     } = load_persisted_cache(app_data.as_deref(), resolver_config.persist_cache);
 
+    // T-108/T-138: `zone-removals.enc` / `personal-zone.enc`, see below.
+    let RatingFilterPersistenceInit {
+        zone_removals: zone_removals_restore,
+        zone_removals_flusher,
+        personal_stats: personal_zone_stats_restore,
+        personal_zone: personal_zone_restore,
+        personal_zone_flusher,
+    } = load_rating_filter_persistence(app_data.as_deref(), &resolver_config);
+
     // Cache config is live-editable (T-153); built from the `[cache]` table.
     let state = Arc::new(AppState::new(
         client,
@@ -235,8 +238,13 @@ pub async fn run() {
     // T-97: seed the cache from `cache.enc` before the listener accepts
     // traffic, then start its persister (no-op when `persist_cache` is off).
     state.restore_cache(cache_restore).await;
+    // T-108/T-138: seed the overlay/personal zone too, same as the cache above.
+    state.restore_rating_filter_removed(zone_removals_restore);
+    state.restore_personal_zone(personal_zone_stats_restore, personal_zone_restore);
     spawn_query_log_persister(&state, query_log_flusher);
     spawn_cache_persister(&state, cache_flusher);
+    spawn_zone_removal_persister(&state, zone_removals_flusher);
+    spawn_personal_zone_task(&state, personal_zone_flusher);
     spawn_public_http_tasks(&state, geoip_path, app_data.clone());
 
     let port = resolver_config.port;
@@ -304,6 +312,70 @@ fn watchdog_now_millis() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+/// Builds the admin channel's cross-field-read snapshot (T-52/T-149) —
+/// pulled out of [`run`] purely to keep that function under
+/// `clippy::too_many_lines`. `/admin/reset` reloads from the same two
+/// `paths`, `None` (no app-data dir) means a live change still applies
+/// in-memory but can't survive a restart (and reset has nothing to reload
+/// from, 500) — the same tolerance `load_resolver_config`/`load_overrides`
+/// already apply. Both paths are always resolved together from the same
+/// `app_data_dir()` call — never independently `Some`/`None`.
+fn build_persist_target(
+    resolver_config: &ResolverConfig,
+    app_data: Option<&Path>,
+) -> PersistTarget {
+    PersistTarget {
+        port: resolver_config.port,
+        persist_query_log: resolver_config.persist_query_log,
+        persist_cache: resolver_config.persist_cache,
+        limits: resolver_config.limits,
+        rating_filter: resolver_config.rating_filter.clone(),
+        paths: app_data.map(|dir| PersistPaths {
+            config: dir.join("resolver_config.toml"),
+            overrides: dir.join("overrides.toml"),
+        }),
+    }
+}
+
+/// Bundles the two Батч 4.5 startup persistence loads (T-108's removal
+/// overlay, T-138's personal zone) — pulled out of [`run`] purely to keep
+/// that function under `clippy::too_many_lines`, not because the two loads
+/// have anything else in common (they use different keys, different
+/// on-disk files, different enable flags).
+struct RatingFilterPersistenceInit {
+    zone_removals: HashSet<String>,
+    zone_removals_flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
+    personal_stats: PersonalZoneStats,
+    personal_zone: ZoneLists,
+    personal_zone_flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
+}
+
+fn load_rating_filter_persistence(
+    app_data: Option<&Path>,
+    resolver_config: &ResolverConfig,
+) -> RatingFilterPersistenceInit {
+    let ZoneRemovalsInit {
+        removed: zone_removals,
+        flusher: zone_removals_flusher,
+    } = load_persisted_zone_removals(app_data, resolver_config.rating_filter.enabled);
+    let PersonalZoneInit {
+        stats: personal_stats,
+        zone: personal_zone,
+        flusher: personal_zone_flusher,
+    } = load_persisted_personal_zone(
+        app_data,
+        resolver_config.personal_zone,
+        std::time::SystemTime::now(),
+    );
+    RatingFilterPersistenceInit {
+        zone_removals,
+        zone_removals_flusher,
+        personal_stats,
+        personal_zone,
+        personal_zone_flusher,
+    }
+}
+
 /// T-146: spawns the encrypted query-log persister (a 60 s flush loop plus a
 /// final flush on shutdown) when [`load_persisted_query_log`] resolved a
 /// key — a no-op otherwise.
@@ -325,6 +397,30 @@ fn spawn_cache_persister(
 ) {
     if let Some((path, key)) = flusher {
         tokio::spawn(run_cache_persister(Arc::clone(state), path, key));
+    }
+}
+
+/// T-108 (Батч 4.5): spawns the encrypted zone-removal-overlay persister
+/// (a 60 s flush loop plus a final flush on shutdown) when
+/// [`load_persisted_zone_removals`] resolved a key — a no-op otherwise.
+fn spawn_zone_removal_persister(
+    state: &Arc<AppState<ReqwestDohClient>>,
+    flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
+) {
+    if let Some((path, key)) = flusher {
+        tokio::spawn(run_zone_removal_persister(Arc::clone(state), path, key));
+    }
+}
+
+/// T-138 (Батч 4.5): spawns the personal-zone task (rotate/republish/persist
+/// every 60 s or on a config-reload wake, plus a final flush on shutdown)
+/// when [`load_persisted_personal_zone`] resolved a key — a no-op otherwise.
+fn spawn_personal_zone_task(
+    state: &Arc<AppState<ReqwestDohClient>>,
+    flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
+) {
+    if let Some((path, key)) = flusher {
+        tokio::spawn(run_personal_zone_task(Arc::clone(state), path, key));
     }
 }
 
