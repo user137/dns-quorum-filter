@@ -59,7 +59,10 @@ use crate::upstream::{
     all_builtin_presets, builtin_preset, BlockSignature, DohClient, ProviderEntry, ProviderSpec,
     EMPTY_ADULT_CATEGORY_DEFAULT_PRESET,
 };
-use crate::watchdog::state::{WatchdogState, WATCHDOG_STATE_STALE_AFTER};
+use crate::watchdog::heartbeat_file::is_stale;
+use crate::watchdog::state::{
+    read as read_watchdog_state, WatchdogState, STATE_FILE_NAME, WATCHDOG_STATE_STALE_AFTER,
+};
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -1231,13 +1234,13 @@ fn timeout_ms(duration: Duration) -> u32 {
 /// own (T-160 filing pattern — a small measured cost, recorded not optimised).
 fn read_watchdog_view(paths: Option<&PersistPaths>, now: SystemTime) -> Option<WatchdogStatusView> {
     let dir = paths?.app_data_dir();
-    let mtime = std::fs::metadata(dir.join(crate::STATE_FILE_NAME))
+    let mtime = std::fs::metadata(dir.join(STATE_FILE_NAME))
         .and_then(|meta| meta.modified())
         .ok()?;
-    if crate::is_stale(now, mtime, WATCHDOG_STATE_STALE_AFTER) {
+    if is_stale(now, mtime, WATCHDOG_STATE_STALE_AFTER) {
         return None;
     }
-    match crate::read_watchdog_state(&dir).ok()?.state {
+    match read_watchdog_state(&dir).ok()?.state {
         WatchdogState::Restarting | WatchdogState::BackoffWait => {
             Some(WatchdogStatusView::Restarting)
         }

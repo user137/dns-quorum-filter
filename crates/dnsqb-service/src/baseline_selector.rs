@@ -110,12 +110,6 @@ impl BaselineSelector {
         self.active_index > 0 && self.retry_primary_after.is_some_and(|at| now >= at)
     }
 
-    /// Whether the primary is the active endpoint (nothing failed over).
-    #[must_use]
-    pub fn on_primary(&self) -> bool {
-        self.active_index == 0
-    }
-
     /// Active position in [`BASELINE_CHAIN`] (`0` = primary). For the
     /// `/admin/status` diagnostic view (T-152 indicator commit).
     #[must_use]
@@ -201,7 +195,7 @@ mod tests {
     fn fresh_selector_is_on_the_primary() {
         let s = BaselineSelector::new();
         assert_eq!(s.current(), BASELINE_CHAIN[0]);
-        assert!(s.on_primary());
+        assert_eq!(s.active_index(), 0);
         assert!(!s.should_retry_primary(t0()));
     }
 
@@ -223,7 +217,7 @@ mod tests {
                 s.record(t0(), BASELINE_CHAIN[0], BaselineHealth::Failed),
                 None
             );
-            assert!(s.on_primary(), "must not switch before the threshold");
+            assert_eq!(s.active_index(), 0, "must not switch before the threshold");
         }
         let ev = s.record(t0(), BASELINE_CHAIN[0], BaselineHealth::Failed);
         assert_eq!(ev, Some(BaselineEvent::SwitchedTo { index: 1 }));
@@ -247,7 +241,7 @@ mod tests {
             s.record(t0(), BASELINE_CHAIN[0], BaselineHealth::Failed),
             None
         );
-        assert!(s.on_primary());
+        assert_eq!(s.active_index(), 0);
     }
 
     #[test]
@@ -262,7 +256,7 @@ mod tests {
         let ev = s.record(now, BASELINE_CHAIN[0], BaselineHealth::Responded);
         assert_eq!(ev, Some(BaselineEvent::RecoveredToPrimary));
         assert_eq!(s.current(), BASELINE_CHAIN[0]);
-        assert!(s.on_primary());
+        assert_eq!(s.active_index(), 0);
     }
 
     #[test]

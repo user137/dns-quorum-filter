@@ -265,15 +265,34 @@ end to end through the Фаза 1 pipeline (allowlist → blocklist → cache �
 GeoIP filtering (SPEC.md §3.5 / §5.3 step 7) and the **rating filter «bubble» step 5** (§5.3,
 Batch 4.3 backend + 4.4 UI/route — default OFF; out-of-zone → BLOCK, in-zone → normal pipeline).
 The one intermediate SPEC.md §5.3 step still unbuilt is the ccTLD block (§5.2, Фаза 5). (There is
-no "voter scope" step any more — §5.1 was removed, T-179.) Since Батч 3.3, `main.rs` also starts
+no "voter scope" step any more — §5.1 was removed, T-179.) Since Батч 3.3, startup also spawns
 three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe server, `service.hb` touch, the
 in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists, so that
 direction's `GaveUp` is **not durable** — the restart budget resets on every service restart, a
 symmetric un-fixable-without-§7.1-#7-violation counterpart to the watcher→service `restored` path).
+**T-210 (Батч RV):** this whole startup/serve-until-shutdown sequence lives in `orchestrate::run`
+(a lib module, `pub async fn run()`), not `main.rs` — `main.rs` is now a 3-line shim
+(`dnsqb_service::run().await`). `main.rs` is a separate crate that links this lib externally, so
+keeping the ~800-line body there forced ~20 internal helpers to stay `pub` at the crate root for
+no reason but that one file; moving it in let `lib.rs`'s `pub use` surface narrow from 49 to 32
+top-level re-export lines (compiler-verified: delete a re-export group, rebuild, the resulting
+`E0432` names the exact external consumer that still needs it — `dnsqb-tray`/`dnsqb-watcher`/
+`tests/{admin_client,conformance}`/`examples/*.rs`/`lib.rs`'s own doctests, never `pub(crate) use`,
+which would've been `unused_imports` noise since no in-crate module re-imports its own crate-root
+re-export). `examples/*.rs` (compiled by CI) turned out to pin most of `upstream`/parts of
+`quorum`/`wire` regardless, so the real narrowing is concentrated in what was genuinely
+orchestration-only: `cache_persist`, `log_persist`, `encrypted_file`, `tls`, `listener`,
+`key_store`, `reachability`, `pause_watch`, `cert_watch`, `pipeline::*`, and slices of
+`topn_updater`/`geoip_updater`/`geoip_credentials`/`cert`/`cert_rotation`. **`orchestrate::run` is
+called only from `dnsqb-service`'s own `main.rs`** — `dnsqb-watcher` links the same lib but must
+never call `run()` or its private `run_service_to_watcher_watchdog` (§7.1 #7's single-writer
+invariant depends on that boundary now being enforced by "who actually calls this," not by two
+physically separate `main.rs` files the way it was before this task).
 Modules under `crates/dnsqb-service/src/`:
 
 | Module | Responsibility |
 |---|---|
+| `orchestrate` | T-210 (Батч RV) — `pub async fn run()`, `dnsqb-service`'s whole startup + accept-loop-until-`/admin/shutdown` sequence (moved here verbatim from `main.rs`). Owns `serve_until_shutdown` (T-169 connection-gate + handshake/idle timeouts), the config/overrides/cert/cache/query-log/GeoIP startup loads, and `spawn_watchdog_tasks`/`spawn_flag_watchers`/`spawn_public_http_tasks`. `main.rs` is now a 3-line shim calling `run()`. Called **only** from `dnsqb-service`'s own `main.rs` — see this section's own T-210 paragraph for the §7.1 #7 boundary this implies for `dnsqb-watcher` |
 | `admission` | T-169 — `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()` (cumulative), `active()` (max − available, live). Lives on `AppState` (`connection_gate()`); `main.rs`'s accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling; `live_stats` reads both counters into `AdminStats` |
 | `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability, filtering_paused, rating_filter }` bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read. `outcome.filters_unreachable` (T-155) → `DecisionSource::BaselineFallback`, never cached. **Step 5 rating filter (T-124):** `rating_filter_step` after the cache read, before `resolve` — `RatingFilterView { lists, removed }` snapshots; out-of-zone → `rating_filter_block_with_meta` (`DecisionSource::RatingFilter`, **not cached**); in-zone exact + quorum `Block` → `QueryLogMeta.zone_removal` (lazy-hygiene action signal, not a log field) |
 | `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature, &Message, &[SinkholeNet])` (3 heuristics `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`, **+ T-175 sinkhole-prefix branch**: an A/AAAA answer inside a preset's `upstream::sinkhole_nets_for(id)` prefix (v4 or v6; IPv4-mapped AAAA unwrapped) → `Signal::NeedsBaseline`, composes with the signature); `is_blocked` / `known_signal` also carry the `&[SinkholeNet]` param; early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |

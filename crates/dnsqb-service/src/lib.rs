@@ -163,112 +163,58 @@ mod wire;
 
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    BaselineEndpointView, CategoryFilterView, CategoryToggleState, DatabaseSource,
-    EncryptedPersistenceView, HealthGeoip, HealthResponse, HeroStateView, MaxmindCredentialCheck,
-    MaxmindCredentialsRequest, MaxmindCredentialsView, MaxmindRefreshHealth, NetworkStatusView,
-    ProviderAddRequest, ProviderRemoveRequest, ProviderSetEnabledRequest, ProviderStatusView,
-    ProviderView, ProvidersResponse, RatingFilterConfigUpdate, RatingFilterStatusView,
-    WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    BaselineEndpointView, EncryptedPersistenceView, HeroStateView, NetworkStatusView,
+    ProviderStatusView, RatingFilterStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 pub use admission::ConnectionGate;
-pub use baseline_selector::{
-    BaselineEvent, BaselineHealth, BaselineSelector, BASELINE_CHAIN, RETRY_PRIMARY_AFTER,
-    SWITCH_THRESHOLD,
-};
-pub use cache::{
-    chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheConfigError,
-    CacheConfigSecs, CacheEntry, CacheKey, Verdict,
-};
-pub use cache_persist::{load_persisted_cache, run_cache_persister, CacheInit};
-pub use cert::{generate_self_signed_cert, write_cert_and_key_to_app_data, CertError, CertFiles};
-pub use cert_rotation::{rotate_certificate, RotationError, RotationReport};
-pub use cert_watch::{run_cert_trust_watch, CERT_TRUST_POLL_INTERVAL};
-pub use config::{ConfigError, GeoipConfig, LimitsConfig, RatingFilterConfig, ResolverConfig};
+pub use baseline_selector::BASELINE_CHAIN;
+pub use cache::{Cache, CacheConfig};
+pub use cert::generate_self_signed_cert;
+pub use cert_rotation::rotate_certificate;
+pub use config::{LimitsConfig, RatingFilterConfig, ResolverConfig};
 pub use dispatch::{
-    serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
-    PersistTarget, RuntimeInit, RuntimeSettings,
+    serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistTarget, RuntimeInit,
 };
-pub use encrypted_file::{
-    open as open_encrypted, seal as seal_encrypted, EncryptedFileError, FileKind,
-};
-pub use geoip::{GeoipError, GeoipReader};
-pub use geoip_credentials::{
-    load as load_maxmind_credentials, migrate_legacy_credentials_file, CredentialsError,
-    LicenseKey, MaxmindCredentials,
-};
-pub use geoip_updater::{
-    run_geoip_updater, GeoipSource, GeoipUpdateError, MaxmindHealth, GEOIP_CHECK_INTERVAL,
-};
-pub use key_store::{load_or_create_persistence_key, KeyStoreError, PersistenceKey};
+pub use geoip_updater::GeoipSource;
 pub use lifecycle::{
     clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_stop_flag,
     stop_flag_is_set,
 };
-pub use listener::{bind_listener, BindError};
 pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
-pub use log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
 pub use logging::init as init_logging;
 pub use orchestrate::run;
-pub use overrides::{
-    InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
-};
-pub use paths::{app_data_dir, PathsError};
-pub use pause_watch::{run_pause_watcher, PAUSE_POLL_INTERVAL};
-pub use pipeline::{
-    handle_query, invalidate_changed, proxy_to_single_upstream, CacheContext, GeoipFilter,
-    PipelineOutcome, QueryLogMeta, RatingFilterView,
-};
-pub use query_log::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog};
-pub use quorum::{
-    is_blocked, requires_quorum, resolve, QuorumOutcome, QuorumVerdict, VoterRecord, VoterVerdict,
-};
+pub use overrides::OverrideLists;
+pub use paths::app_data_dir;
+pub use query_log::QueryLog;
+pub use quorum::{is_blocked, requires_quorum};
 pub use rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
-pub use reachability::{
-    next_probe_delay, run_reachability_prober, verdict_from_probe_results, NetworkReachability,
-    MARKERS, OFFLINE_CONFIRM_CYCLES,
-};
-pub use timeout::{query_with_timeout, TimeoutConfig, TimeoutMode, VoterOutcome};
-pub use tls::{load_or_generate_server_config, TlsError};
-pub use topn_updater::{load_zone_from_disk, run_topn_updater, TOPN_CHECK_INTERVAL};
-pub use trust_store::{
-    ensure_installed, is_trusted, uninstall, TrustStoreError, TrustStoreOutcome,
-};
+pub use timeout::TimeoutMode;
+pub use trust_store::{ensure_installed, is_trusted, uninstall, TrustStoreError};
 pub use upstream::{
-    all_builtin_presets, builtin_preset, doh_get_url, is_valid_provider_id, sinkhole_nets_for,
-    validate_provider_url, BlockSignature, Category, DohClient, ProviderEntry, ProviderSpec,
-    ProviderUrlError, ReqwestDohClient, SinkholeNet, UpstreamError, BASELINE_DOH_URL,
-    DEFAULT_PROVIDER_IDS, EMPTY_ADULT_CATEGORY_DEFAULT_PRESET,
+    all_builtin_presets, doh_get_url, sinkhole_nets_for, BlockSignature, Category, DohClient,
+    ProviderSpec, ReqwestDohClient, SinkholeNet, UpstreamError, BASELINE_DOH_URL,
 };
-pub use watchdog::backoff::{next_backoff, BACKOFF_CAP, BACKOFF_STEPS};
-pub use watchdog::budget::{BudgetVerdict, RestartBudget, MAX_RESTARTS_PER_WINDOW, RESTART_WINDOW};
+pub use watchdog::backoff::{next_backoff, BACKOFF_CAP};
 pub use watchdog::channel::{channel_status, ChannelStatus, MISS_THRESHOLD};
-pub use watchdog::frame::{
-    encode as encode_heartbeat_frame, parse as parse_heartbeat_frame, Frame, FrameError, FrameKind,
-    FRAME_LEN,
-};
 pub use watchdog::heartbeat_file::{
     is_stale, read as read_heartbeat_file, touch as touch_heartbeat_file, HeartbeatFile,
 };
 pub use watchdog::instance::{
     acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
-    PidFile, Role as InstanceRole,
+    Role as InstanceRole,
 };
-pub use watchdog::launcher::{ensure_sibling_running, plan_launch, LaunchAction};
-pub use watchdog::loop_driver::{ChannelObs, Direction, Effect, LoopDriver, TickOutcome};
+pub use watchdog::launcher::ensure_sibling_running;
+pub use watchdog::loop_driver::{ChannelObs, Direction, Effect, LoopDriver};
 pub use watchdog::pid_check::{verify_pid_alive, PidCheck};
 #[cfg(windows)]
-pub use watchdog::pipe::{HeartbeatPipeClient, HeartbeatPipeServer};
-pub use watchdog::spawn::{resolve_sibling_path, spawn_sibling, SpawnError};
+pub use watchdog::pipe::HeartbeatPipeClient;
+pub use watchdog::spawn::spawn_sibling;
 pub use watchdog::state::{
-    read as read_watchdog_state, write as write_watchdog_state, WatchdogErrorLabel, WatchdogState,
-    WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
-    WATCHDOG_STATE_STALE_AFTER,
+    read as read_watchdog_state, write as write_watchdog_state, WatchdogState, WatchdogStateFile,
+    WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION, WATCHDOG_STATE_STALE_AFTER,
 };
-pub use watchdog::transition::{transition, TransitionInput};
-pub use watchdog::vote::{vote_service_checks_watcher, vote_watcher_checks_service, Liveness};
 pub use wire::{
-    attach_edns, build_block_response, decode_wire_message, encode_wire_message, forward_response,
-    EDNS_UDP_PAYLOAD_SIZE,
+    attach_edns, decode_wire_message, encode_wire_message, forward_response, EDNS_UDP_PAYLOAD_SIZE,
 };
 
 use hickory_proto::rr::rdata::SOA;

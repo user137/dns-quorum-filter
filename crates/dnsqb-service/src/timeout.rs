@@ -1,6 +1,6 @@
 //! Upstream timeout modes and the per-voter timeout wrapper (SPEC.md §3.3,
-//! T-27). Combining [`VoterOutcome`]s into a [`crate::QuorumVerdict`] is
-//! `quorum::combine` — this module only produces the per-voter outcome, it
+//! T-27). Combining [`VoterOutcome`]s into a [`crate::quorum::QuorumVerdict`]
+//! is `quorum::combine` — this module only produces the per-voter outcome, it
 //! doesn't interpret one.
 
 use crate::upstream::{DohClient, UpstreamError};

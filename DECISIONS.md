@@ -1526,3 +1526,70 @@ new-consumer-old-service graceful; версійне поле дає операт
   `#[serde(default)]`».
 - Не робилось: `GET /admin/version` (Варіант 3 — зайве для PET);
   `deny_unknown_fields` на request-DTO (окремо, якщо колись).
+
+## 2026-09-11 — T-210 (знахідка 4-B): оркестрація `main.rs` → lib `orchestrate::run`, звуження публічної поверхні
+
+**Контекст:** `lib.rs` реекспортував ~50 `pub use`-рядків (майже всю внутрішню
+машинерію), бо `dnsqb-service/src/main.rs` — окремий крейт ([[bin]]-таргет лінкує
+lib як зовнішню залежність), тож усе, що потрібно самому оркестраційному коду
+(`handle_query`, `wire::*`, десяток `run_*`/`load_*` персистенс/апдейтер-хелперів),
+мусило бути `pub`, не `pub(crate)`.
+
+**Рішення:** Варіант 1 ревʼю (єдиний серйозно розглянутий — варіант 2, окремий
+`dnsqb-core` крейт, дорожчий і ревʼю сам не рекомендує). Перенести тіло `main.rs`
+дослівно в новий lib-модуль `orchestrate.rs` (`pub async fn run()`); `main.rs` →
+3-рядковий шим (`dnsqb_service::run().await`). Звуження — **компілятор-кероване, не
+ручний grep і не `pub(crate) use`**: видалити реекспортну групу цілком → зібрати →
+`E0432` називає точний символ і зовнішнього споживача, який його ще тримає → повернути
+лише той символ. `pub(crate) use` була б неправильним проміжним станом — жоден
+внутрішній модуль не імпортує сам себе через `lib.rs`'s реекспортний шлях, тож
+`pub(crate) use` без жодного внутрішнього вжитку = гарантований `unused_imports`
+під `-D warnings`.
+
+**Скоригована оцінка обсягу (advisor-catch до реалізації):** перший чорновик плану
+оцінював «~60 груп → ~25», порахувавши лише 4 класи зовнішніх споживачів
+(`dnsqb-tray`, `dnsqb-watcher`, `tests/{admin_client,conformance}`, `lib.rs`'s
+doctests). `examples/*.rs` — пʼятий клас, який CI реально компілює й запускає
+(`cargo test --workspace --examples`), пропущений спочатку — виявилось, що він
+тягне майже весь `upstream` і частину `quorum`/`wire` незалежно від T-210. Чесний
+результат: **49 → 32 `pub use`-рядки** (виміряно, не оцінка) — реальне звуження, але
+скромніше, і зосереджене на тому, що було виключно оркестраційним: `cache_persist`,
+`log_persist`, `encrypted_file`, `tls`, `listener`, `key_store`, `reachability`,
+`pause_watch`, `cert_watch`, `pipeline::*`, `quorum::resolve`, і частини
+`topn_updater`/`geoip_updater`/`geoip_credentials`/`cert`/`cert_rotation`.
+
+**Побічний ефект — звуження оголило 2 pre-existing gap'и**, раніше замасковані
+широкою поверхнею (публічний елемент не варнить dead_code, навіть без реального
+викликача): `BaselineSelector::on_primary()` (нуль production-викликів, лише
+тести) — видалено, тести переписані на `active_index() == 0`;
+`watchdog::transition::transition`'s `&TransitionInput`-параметр — clippy
+`trivially_copy_pass_by_ref` раніше мовчав, бо функція вважалась «частиною
+публічного API» (`effective_visibilities::is_exported`); тепер internal-only →
+лінт більше не пригнічений → змінено на by-value (`TransitionInput` вже `Copy`).
+
+**§7.1 #7 межа названа явно, не залишена неявною.** `run_service_to_watcher_watchdog`
+тепер живе в lib-коді, який лінкує і `dnsqb-watcher`, а не в окремому `main.rs`, як
+раніше — фізична межа зникла. Doc-коментар `orchestrate::run` називає інваріант
+прямо: `dnsqb-watcher` не повинен викликати `run()` чи цю функцію напряму.
+
+**Верифіковано:** повна тест-матриця без регресій (748+6 lib / 37 tray / 3 watcher /
+8 examples / 9 doctests — точне число до і після, advisor-catch: `--doc` не бере
+`--document-private-items`, тож демоутнутий doctest-символ мовчки губить свій тест
+/ 18+2 conformance / 7 admin_client), `clippy --all-targets -D warnings`, `fmt`,
+`rustdoc -D warnings`. Ручний smoke: реальний `dnsqb-service.exe` на скретч
+app-data — `/health` 200, `/admin/ui` 200, реальний `GET /dns-query` для
+`example.com` A → 200 `application/dns-message`.
+
+**Наслідки:**
+- Новий `crates/dnsqb-service/src/orchestrate.rs`; `main.rs` — 3 рядки.
+- `lib.rs`: 49 → 32 `pub use`-рядки.
+- `admin.rs`/`dispatch.rs`: 2 внутрішні місця, що самі йшли через `crate::`-реекспорт
+  замість модульного шляху, переведено на прямі шляхи (`crate::reachability::
+  NetworkReachability` тощо) — виявлено тим самим компілятор-керованим проходом.
+- `baseline_selector.rs`: видалено `on_primary()`.
+- `watchdog/transition.rs`, `watchdog/loop_driver.rs`: `transition` бере
+  `TransitionInput` за значенням.
+- CLAUDE.md `dnsqb-service`-параграф + новий рядок `orchestrate` у таблиці модулів.
+- Два окремі коміти (механічний рух, потім звуження) — прецедент T-211/T-204, той
+  самий advisor-catch: перший коміт самодостатньо тестовний і доводить «нуль змін
+  видимості» власним дифом.

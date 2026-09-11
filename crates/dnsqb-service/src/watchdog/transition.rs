@@ -35,7 +35,7 @@ pub struct TransitionInput {
 /// every `(state, input)` returns a state, never panics. Each arm traces to an
 /// edge of `diagrams/watchdog-state.md`.
 #[must_use]
-pub fn transition(current: WatchdogState, input: &TransitionInput) -> WatchdogState {
+pub fn transition(current: WatchdogState, input: TransitionInput) -> WatchdogState {
     use WatchdogState as S;
     match current {
         // Healthy / ChannelDegraded: the vote decides. Dead → suspect; else a
@@ -109,11 +109,11 @@ mod tests {
     // Healthy / ChannelDegraded out-edges: the vote decides.
     #[test]
     fn healthy_and_degraded_follow_the_vote() {
-        assert_eq!(transition(S::Healthy, &input()), S::Healthy);
+        assert_eq!(transition(S::Healthy, input()), S::Healthy);
         assert_eq!(
             transition(
                 S::Healthy,
-                &TransitionInput {
+                TransitionInput {
                     any_channel_degraded: true,
                     ..input()
                 }
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::Healthy,
-                &TransitionInput {
+                TransitionInput {
                     vote: Liveness::Dead,
                     ..input()
                 }
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::ChannelDegraded,
-                &TransitionInput {
+                TransitionInput {
                     any_channel_degraded: false,
                     ..input()
                 }
@@ -155,7 +155,7 @@ mod tests {
             ..input()
         };
         for from in [S::Healthy, S::ChannelDegraded] {
-            let next = transition(from, &observed);
+            let next = transition(from, observed);
             assert_eq!(next, S::ChannelDegraded);
             assert!(!matches!(
                 next,
@@ -172,18 +172,18 @@ mod tests {
             vote: Liveness::Dead,
             ..input()
         };
-        assert_eq!(transition(S::Healthy, &dead), S::SuspectDead);
-        assert_eq!(transition(S::ChannelDegraded, &dead), S::SuspectDead);
+        assert_eq!(transition(S::Healthy, dead), S::SuspectDead);
+        assert_eq!(transition(S::ChannelDegraded, dead), S::SuspectDead);
     }
 
     // SuspectDead always goes to VerifyingPid, whatever else is observed.
     #[test]
     fn suspect_dead_always_verifies_pid() {
-        assert_eq!(transition(S::SuspectDead, &input()), S::VerifyingPid);
+        assert_eq!(transition(S::SuspectDead, input()), S::VerifyingPid);
         assert_eq!(
             transition(
                 S::SuspectDead,
-                &TransitionInput {
+                TransitionInput {
                     vote: Liveness::Dead,
                     pid: Some(PidCheck::Gone),
                     ..input()
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::VerifyingPid,
-                &TransitionInput {
+                TransitionInput {
                     pid: Some(PidCheck::Alive),
                     ..input()
                 }
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::VerifyingPid,
-                &TransitionInput {
+                TransitionInput {
                     pid: Some(PidCheck::Alive),
                     any_channel_degraded: true,
                     ..input()
@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::VerifyingPid,
-                &TransitionInput {
+                TransitionInput {
                     pid: Some(PidCheck::Alive),
                     vote: Liveness::Dead,
                     ..input()
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::VerifyingPid,
-                &TransitionInput {
+                TransitionInput {
                     pid: Some(PidCheck::Gone),
                     ..input()
                 }
@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::VerifyingPid,
-                &TransitionInput {
+                TransitionInput {
                     pid: Some(PidCheck::IdentityMismatch),
                     ..input()
                 }
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::VerifyingPid,
-                &TransitionInput {
+                TransitionInput {
                     pid: None,
                     ..input()
                 }
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::Restarting,
-                &TransitionInput {
+                TransitionInput {
                     budget: Some(BudgetVerdict::Allowed),
                     ..input()
                 }
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::Restarting,
-                &TransitionInput {
+                TransitionInput {
                     budget: Some(BudgetVerdict::GaveUp),
                     ..input()
                 }
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::Restarting,
-                &TransitionInput {
+                TransitionInput {
                     budget: None,
                     ..input()
                 }
@@ -306,11 +306,11 @@ mod tests {
     // elapsed → re-verify; otherwise keep waiting.
     #[test]
     fn backoff_wait_out_edges() {
-        assert_eq!(transition(S::BackoffWait, &input()), S::Healthy);
+        assert_eq!(transition(S::BackoffWait, input()), S::Healthy);
         assert_eq!(
             transition(
                 S::BackoffWait,
-                &TransitionInput {
+                TransitionInput {
                     vote: Liveness::Dead,
                     budget: Some(BudgetVerdict::GaveUp),
                     ..input()
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::BackoffWait,
-                &TransitionInput {
+                TransitionInput {
                     vote: Liveness::Dead,
                     backoff_elapsed: true,
                     ..input()
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(
             transition(
                 S::BackoffWait,
-                &TransitionInput {
+                TransitionInput {
                     vote: Liveness::Dead,
                     ..input()
                 }
@@ -354,7 +354,7 @@ mod tests {
                 any_channel_degraded: false,
             },
         ] {
-            assert_eq!(transition(S::GaveUp, &observed), S::GaveUp);
+            assert_eq!(transition(S::GaveUp, observed), S::GaveUp);
         }
     }
 }

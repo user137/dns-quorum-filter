@@ -1564,10 +1564,36 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   `manual_let_else`/`single_match_else` спрацьовує на блок-тіло `Err` арма). Мітки статичні —
   `?domain_contains=` підрядок не потрапляє в лог. Гейт: 748 lib + 9 doc + 18 conformance +
   7 admin_client, clippy/fmt.
-- [ ] T-210 — *(опційно, лише разом із T-204)* Перенести оркестрацію
-  `dnsqb-service/src/main.rs` у lib як `pub fn run(...)`; демоутнути внутрішні re-exports
-  (`pipeline::handle_query`, `wire::*`, `quorum::*` тощо) у `pub(crate)` — звузити публічну
-  поверхню (~60 груп `pub use`, наслідок lib+bin в одному пакеті). (4-B)
+- [x] T-210 — *(опційно, лише разом із T-204)* Перенести оркестрацію
+  `dnsqb-service/src/main.rs` у lib як `pub fn run(...)`; звузити публічну поверхню. (4-B)
+  — **готово 2026-09-11** (Батч RV, plan+advisor kickoff, 2 коміти): (1) механічний рух —
+  новий модуль `orchestrate.rs` (`pub async fn run()` + всі приватні хелпери main.rs
+  дослівно), `main.rs` → 3-рядковий шим; нуль змін видимості (диф `lib.rs` — 2 додаткові
+  рядки). (2) звуження — компілятор-кероване видалення+відновлення (видалити реекспортну
+  групу цілком → зібрати → `E0432` називає точний символ і зовнішнього споживача →
+  повернути лише його), **не** `pub(crate) use` (unused_imports-шум, advisor-catch).
+  **Скоригована оцінка (advisor-catch):** `examples/*.rs` — пʼятий клас зовнішніх
+  споживачів (CI їх компілює й запускає), не врахований у першому чорновику — вони
+  тягнуть майже весь `upstream`/частину `quorum`/`wire`, тож реальне звуження менше за
+  первинну оцінку «~60→~25»: **49 → 32 `pub use`-рядки** (не «груп» — орієнтир, не точна
+  метрика review). Звужено те, що було виключно оркестраційним: `cache_persist`,
+  `log_persist`, `encrypted_file`, `tls`, `listener`, `key_store`, `reachability`,
+  `pause_watch`, `cert_watch`, частини `topn_updater`/`geoip_updater`/
+  `geoip_credentials`/`cert`/`cert_rotation`, `pipeline::*`, `quorum::resolve` та інше.
+  Звуження оголило 2 pre-existing gap'и: `BaselineSelector::on_primary()` (нуль
+  production-викликів, лише тести — видалено, тести → `active_index() == 0`) і
+  `watchdog::transition::transition`'s `&TransitionInput` параметр (тепер internal-only →
+  clippy `trivially_copy_pass_by_ref` вже не пригнічений публічним API-статусом → змінено
+  на by-value, `TransitionInput` вже `Copy`). Кілька внутрішніх модулів (`admin.rs`,
+  `dispatch.rs`) виявилися самі йшли через `crate::`-реекспорт замість модульного шляху —
+  переведено на прямі шляхи (`crate::reachability::NetworkReachability` тощо).
+  Doctest-гейт (advisor-catch): точно 9 до і після (демоутнутий символ з `# Examples`
+  мовчки губить свій doctest — `--doc` не бере `--document-private-items`). Ручний smoke:
+  реальний `dnsqb-service.exe` на скретч app-data — `/health` 200, `/admin/ui` 200
+  (13288 байт), реальний `GET /dns-query?dns=...` для `example.com` A → 200
+  `application/dns-message`, 61 байт (справжня квота-резолюція, не лише health-шлях).
+  §7.1 #7 межа названа явно в doc-коментарі `orchestrate::run`: `dnsqb-watcher` лінкує
+  той самий lib, але не повинен викликати `run()`/`run_service_to_watcher_watchdog`.
 - [x] T-211 — Кешувати `trust_store::is_trusted` у `AppState` на N с (патерн
   `status::spawn_trust_watch`), щоб `GET /admin/cert-status` не спавнив 2 `certutil` на
   кожен виклик. Добре пом'якшено вже (`127.0.0.1`, ConnectionGate, `CREATE_NO_WINDOW`) —

@@ -35,6 +35,7 @@ use crate::cache::{CacheConfig, CacheConfigError};
 use crate::overrides::ListKind;
 use crate::query_log::{Decision, DecisionSource, LogEntry};
 use crate::quorum::{VoterRecord, VoterVerdict};
+use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutMode;
 use crate::upstream::{Category, ProviderEntry};
 use hickory_proto::rr::RecordType;
@@ -332,7 +333,7 @@ pub(crate) fn compute_hero_state(
     }
 }
 
-/// T-152 DTO form of [`crate::NetworkReachability`] — a genuine projection
+/// T-152 DTO form of [`NetworkReachability`] — a genuine projection
 /// with its own `From`, per this file's DTO-audit discipline, not a reuse of
 /// the internal enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -340,18 +341,18 @@ pub(crate) fn compute_hero_state(
 pub enum NetworkStatusView {
     /// At least one reachability marker answered. Also the `#[default]`
     /// (T-205): "assume reachable" — the same seed
-    /// [`crate::NetworkReachability::default`] uses.
+    /// [`NetworkReachability::default`] uses.
     #[default]
     Online,
     /// Every reachability marker failed — the offline fast path is active.
     Offline,
 }
 
-impl From<crate::NetworkReachability> for NetworkStatusView {
-    fn from(reachability: crate::NetworkReachability) -> Self {
+impl From<NetworkReachability> for NetworkStatusView {
+    fn from(reachability: NetworkReachability) -> Self {
         match reachability {
-            crate::NetworkReachability::Online => Self::Online,
-            crate::NetworkReachability::Offline => Self::Offline,
+            NetworkReachability::Online => Self::Online,
+            NetworkReachability::Offline => Self::Offline,
         }
     }
 }
@@ -2136,12 +2137,14 @@ mod tests {
     #[test]
     fn network_status_view_wire_strings_and_conversion() {
         assert_eq!(
-            json_of(&NetworkStatusView::from(crate::NetworkReachability::Online)),
+            json_of(&NetworkStatusView::from(
+                crate::reachability::NetworkReachability::Online
+            )),
             "\"ONLINE\""
         );
         assert_eq!(
             json_of(&NetworkStatusView::from(
-                crate::NetworkReachability::Offline
+                crate::reachability::NetworkReachability::Offline
             )),
             "\"OFFLINE\""
         );

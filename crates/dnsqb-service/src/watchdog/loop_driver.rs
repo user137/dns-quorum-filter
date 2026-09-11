@@ -212,7 +212,7 @@ impl LoopDriver {
             budget,
             backoff_elapsed,
         };
-        let next = transition(self.state, &input);
+        let next = transition(self.state, input);
 
         let mut effects = Vec::new();
 

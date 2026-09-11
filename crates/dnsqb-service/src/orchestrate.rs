@@ -37,16 +37,31 @@
 //! be discovered by whoever next reads this file from `dnsqb-watcher`'s
 //! side.
 
-use crate::{
-    acquire_instance_guard, app_data_dir, bind_listener, init_logging, load_maxmind_credentials,
-    load_or_generate_server_config, load_persisted_cache, load_persisted_query_log,
-    load_zone_from_disk, migrate_legacy_credentials_file, run_cache_persister,
-    run_cert_trust_watch, run_geoip_updater, run_pause_watcher, run_query_log_persister,
-    run_reachability_prober, run_topn_updater, serve, write_pid_file, AppState, BindError, Cache,
-    CacheInit, CacheState, GeoipInit, GeoipReader, GeoipSource, GeoipState, GuardError,
-    InstanceGuard, InstanceRole, InvalidEntry, LimitsConfig, OverrideLists, OverridesState,
-    PersistPaths, PersistTarget, QueryLogInit, ReqwestDohClient, ResolverConfig, RuntimeInit,
-    TimeoutConfig,
+use crate::cache::Cache;
+use crate::cache_persist::{load_persisted_cache, run_cache_persister, CacheInit};
+use crate::cert_watch::run_cert_trust_watch;
+use crate::config::{LimitsConfig, ResolverConfig};
+use crate::dispatch::{
+    serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
+    PersistTarget, RuntimeInit,
+};
+use crate::geoip::GeoipReader;
+use crate::geoip_credentials::{load as load_maxmind_credentials, migrate_legacy_credentials_file};
+use crate::geoip_updater::{run_geoip_updater, GeoipSource};
+use crate::listener::{bind_listener, BindError};
+use crate::log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
+use crate::logging::init as init_logging;
+use crate::overrides::{InvalidEntry, OverrideLists};
+use crate::paths::app_data_dir;
+use crate::pause_watch::run_pause_watcher;
+use crate::reachability::run_reachability_prober;
+use crate::timeout::TimeoutConfig;
+use crate::tls::load_or_generate_server_config;
+use crate::topn_updater::{load_zone_from_disk, run_topn_updater};
+use crate::upstream::ReqwestDohClient;
+use crate::watchdog::instance::{
+    acquire as acquire_instance_guard, write_pid_file, GuardError, InstanceGuard,
+    Role as InstanceRole,
 };
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
@@ -62,11 +77,21 @@ use zeroize::Zeroizing;
 // `#[cfg(windows)]` seam `watchdog::pipe` already sits behind; the Фаза 6 port
 // lifts both together.
 #[cfg(windows)]
-use crate::{
-    is_stale, read_heartbeat_file, read_pid_file, spawn_sibling, touch_heartbeat_file,
-    verify_pid_alive, ChannelObs, Direction, Effect, HeartbeatPipeServer, LoopDriver,
-    WatchdogState,
+use crate::watchdog::heartbeat_file::{
+    is_stale, read as read_heartbeat_file, touch as touch_heartbeat_file,
 };
+#[cfg(windows)]
+use crate::watchdog::instance::read_pid_file;
+#[cfg(windows)]
+use crate::watchdog::loop_driver::{ChannelObs, Direction, Effect, LoopDriver};
+#[cfg(windows)]
+use crate::watchdog::pid_check::verify_pid_alive;
+#[cfg(windows)]
+use crate::watchdog::pipe::HeartbeatPipeServer;
+#[cfg(windows)]
+use crate::watchdog::spawn::spawn_sibling;
+#[cfg(windows)]
+use crate::watchdog::state::WatchdogState;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(windows)]
