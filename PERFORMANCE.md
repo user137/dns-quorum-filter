@@ -44,30 +44,34 @@ in latency at a representative large size.
 
 ## Connection-level complexity — the part that isn't in the table above
 
-The per-query costs above are all bounded by existing constants. What is **not** bounded today
-is the number of concurrent connections and, downstream of quorum fan-out, the number of
-concurrent outbound sockets:
+The per-query costs above are all bounded by existing constants. **The number of concurrent
+connections itself is now bounded (T-169, SPEC.md §1.1)** — see "Budget check" below for the
+sizing analysis behind that cap. Two things downstream of it are still not bounded:
 
-- **Accept loop**: `main.rs`'s `serve_until_shutdown` (`main.rs:551-579`) calls `tokio::spawn`
-  once per accepted TCP connection, unconditionally. No cap exists on how many connections (and
-  therefore tasks) can be in flight at once.
-- **Per-connection stream limit — verified, not assumed**: no code in `main.rs`/`dispatch.rs`
-  calls `.http2().max_concurrent_streams(...)` on the `hyper_util::server::conn::auto::Builder`
-  used to serve each connection. Reading `hyper` 1.11.0's own source
+- **Accept loop**: `orchestrate::serve_until_shutdown` (T-210 — moved out of `main.rs`, which is
+  now a 3-line shim) calls `tokio::spawn` once per accepted TCP connection that clears
+  `state.connection_gate().try_admit()` — a connection past the ceiling is closed at the TCP
+  layer, before TLS, never spawned.
+- **Per-connection stream limit — verified, not assumed**: no code in `orchestrate.rs`/
+  `dispatch.rs` calls `.http2().max_concurrent_streams(...)` on the `hyper_util::server::conn::
+  auto::Builder` used to serve each connection. Reading `hyper` 1.11.0's own source
   (`hyper-1.11.0/src/proto/h2/server.rs:69`) shows its h2 server config defaults to
   `max_concurrent_streams: Some(200)` — this is **hyper's** default, not h2's (h2's own
   `Builder`, used standalone, defaults to `None`, meaning no limit). So: **one connection is
-  capped at 200 concurrent HTTP/2 streams; the number of connections is not capped at all.**
+  capped at 200 concurrent HTTP/2 streams — the connection cap (T-169) bounds how many
+  connections exist, not streams per connection.**
 - **Outbound fan-out amplification**: `quorum::resolve` (`quorum.rs:624`) opens one outbound
   `reqwest` connection per enabled provider per query (`FuturesUnordered`, ≤10 providers,
   SPEC.md §3.4). Concurrent in-flight queries multiply this directly — see "Fan-out ceiling
-  (computed)" below.
+  (computed)" below. **Still unbounded today** — T-169's cap is on inbound connections, not on
+  concurrent quorum resolutions (see "Fan-out ceiling" and CLAUDE.md's T-169 known-limitations
+  entry).
 
 **Memory is largely already bounded** (`MAX_MESSAGE_SIZE` = 65 535 bytes per DoH message,
 `MAX_ADMIN_BODY_SIZE` for admin routes, `moka`'s `max_capacity` = 10 000 cache entries,
-`query_log`'s 1000-entries/24h ring buffer). **What is not bounded is task count, connection
-count, and outbound socket count** — that is the actual resource-exhaustion risk this file is
-about, not per-query memory.
+`query_log`'s 1000-entries/24h ring buffer, and now connection count itself via T-169). **What is
+still not bounded is per-connection HTTP/2 stream count and outbound socket count from quorum
+fan-out** — see the two bullets above.
 
 ### Memory per connection (cost model — first-order, for sizing the cap)
 
