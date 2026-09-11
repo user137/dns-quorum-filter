@@ -39,7 +39,9 @@ a human clicks Publish, same as `v0.3.0`). The first-run onboarding wizard (Ба
 `onboarding.rs` + `/admin/ui` hero cert-branch, `4cb9ed9`) + **T-189** (per-browser setup card,
 `98ac6c8` + `a5489ef`) + **T-193** (pause serves the unfiltered baseline instead of killing DNS —
 `pause_watch` module, tray drops `/admin/shutdown`, watcher drops the freeze; DECISIONS.md
-2026-09-08 revises T-185) done; **T-190** (bump + closing-advisor + MSIX + tag `v0.3.2`) pending. **Фаза 4 (rating filter «bubble» + per-country top-N list
+2026-09-08 revises T-185) done; **T-190 (`v0.3.2`) deliberately never tagged on its own** — user
+decision 2026-09-11 folded it into Батч 4.6's `v0.4.0` instead (this line's own onboarding-wizard
+work still shipped in that tag). **Фаза 4 (rating filter «bubble» + per-country top-N list
 infra + personal learned zone source) — kickoff done 2026-09-07 (Батч 4.0, T-179): §5.1
 (top-sites excluded from Ads/Adult voters) removed and merged into the rating filter §5.3 — one
 opt-in bubble (out-of-zone → BLOCK, in-zone → normal pipeline), which moved here from Фаза 5.
@@ -137,8 +139,15 @@ stale `PersistTarget.rating_filter` snapshot taken once at startup rather than t
 `rating_filter_config` — a pre-existing T-57-class staleness gap from when T-127 (Батч 4.4) added
 `rating_filter`'s own admin route without updating the other four write sites; not reproduced for
 `[personal_zone]` (every site reads a live snapshot instead, no `PersistTarget` field for it at
-all) — filed as a TASKS.md backlog item, not fixed here. Next: Батч 4.6 (phase closure — version
-bump, tag `v0.4.0`).
+all) — filed as a TASKS.md backlog item, not fixed here (T-217, backlog). **Батч 4.6 — phase
+closure, done 2026-09-11** (short kickoff + closing-advisor before the tag push): version bump
+`0.3.1` → `0.4.0` (T-190/`v0.3.2`, Батч 3.13's onboarding wizard, deliberately never tagged on
+its own and folded into this release instead — user decision 2026-09-11); T-175's mandatory
+pre-release `sinkhole_probe` re-ran clean (every sinkhole prefix still matches live behavior);
+`curate_topn` re-run for all 6 lists (same CrUX month `202608`, byte-identical output, zero diff
+committed). Tag `v0.4.0` → `release.yml` draft (build-sign + msix + cross-path repro), publish
+left to a human. **Фаза 4 fully closed** — all six batches (4.0–4.5) done; T-217/T-218 stay open
+backlog, not blocking.
 Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
 (macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
 (3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
