@@ -822,6 +822,7 @@ fn format_uninstall_report(report: &UninstallReport) -> String {
         line("TLS-ключ", report.tls_key),
         line("Ключ шифрування", report.persistence_key),
         line("Креденшели MaxMind", report.maxmind_creds),
+        line("Ключ особистої зони", report.personal_zone_key),
     ]
     .join("\n")
 }
@@ -920,18 +921,20 @@ mod tests {
             tls_key: outcome,
             persistence_key: outcome,
             maxmind_creds: outcome,
+            personal_zone_key: outcome,
         }
     }
 
     #[test]
     fn uninstall_report_has_one_labelled_line_per_artifact() {
         let text = format_uninstall_report(&report_of(ArtifactOutcome::Removed));
-        assert_eq!(text.lines().count(), 4);
+        assert_eq!(text.lines().count(), 5);
         for label in [
             "Сертифікат",
             "TLS-ключ",
             "Ключ шифрування",
             "Креденшели MaxMind",
+            "Ключ особистої зони",
         ] {
             assert!(text.contains(label), "missing label {label}");
         }
@@ -963,6 +966,7 @@ mod tests {
             tls_key: ArtifactOutcome::NotPresent,
             persistence_key: ArtifactOutcome::Failed("secret store error"),
             maxmind_creds: ArtifactOutcome::Removed,
+            personal_zone_key: ArtifactOutcome::NotPresent,
         });
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
@@ -972,6 +976,7 @@ mod tests {
                 "TLS-ключ: не було встановлено",
                 "Ключ шифрування: НЕ ВДАЛОСЯ видалити",
                 "Креденшели MaxMind: видалено",
+                "Ключ особистої зони: не було встановлено",
             ]
         );
     }

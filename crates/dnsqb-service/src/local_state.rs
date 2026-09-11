@@ -4,14 +4,15 @@
 //!
 //! MSIX (T-156) has no uninstall-time code hook: the OS deletes the package's
 //! files and nothing runs afterward. The trusted certificate in
-//! `CurrentUser\Root` (T-49) and the three Credential Manager secrets (TLS
-//! key T-67, persistence key T-146, `MaxMind` creds T-163) all live *outside*
-//! the package, so OS removal alone would leave them behind — the same class
-//! of bug SECURITY.md already names for a left-behind trusted cert. This
-//! module is the explicit, user-triggered action (tray menu + `/admin/ui`)
-//! that clears them before the user removes the app from Windows Settings.
+//! `CurrentUser\Root` (T-49) and the four Credential Manager secrets (TLS
+//! key T-67, persistence key T-146, `MaxMind` creds T-163, personal-zone key
+//! T-138) all live *outside* the package, so OS removal alone would leave
+//! them behind — the same class of bug SECURITY.md already names for a
+//! left-behind trusted cert. This module is the explicit, user-triggered
+//! action (tray menu + `/admin/ui`) that clears them before the user removes
+//! the app from Windows Settings.
 //!
-//! Each of the four artifacts is reported independently, never collapsed
+//! Each of the five artifacts is reported independently, never collapsed
 //! into one bool — a partial failure (e.g. the cert cleared but a Credential
 //! Manager write is locked) must stay visible, the same discipline as this
 //! project's recurring `persisted: false` pattern.
@@ -26,7 +27,8 @@
 use std::path::Path;
 
 use crate::key_store::{
-    delete_secret, load_secret, maxmind_credentials_entry, persistence_key_entry, tls_key_entry,
+    delete_secret, load_secret, maxmind_credentials_entry, persistence_key_entry,
+    personal_zone_key_entry, tls_key_entry,
 };
 use crate::trust_store;
 
@@ -60,16 +62,20 @@ pub struct UninstallReport {
     pub persistence_key: ArtifactOutcome,
     /// The optional `MaxMind` `GeoLite2` account credentials (T-163).
     pub maxmind_creds: ArtifactOutcome,
+    /// The personal learned rating-filter zone's own key (T-138, Батч 4.5) —
+    /// deliberately separate from `persistence_key`, see that field's own
+    /// module (`key_store`) for why.
+    pub personal_zone_key: ArtifactOutcome,
 }
 
 /// Clear every local trust/secret artifact for the install rooted at
-/// `app_data_dir`. Best-effort across all four — a failure on one artifact
+/// `app_data_dir`. Best-effort across all five — a failure on one artifact
 /// does not stop the others from being attempted, so the caller always gets
 /// the fullest possible report rather than an early abort.
 ///
 /// `app_data_dir: None` is the rare degenerate startup case where the OS
 /// app-data directory itself couldn't be resolved (`AppState.persist.paths`
-/// is `Option` for the same reason) — the three Credential Manager entries
+/// is `Option` for the same reason) — the four Credential Manager entries
 /// can't be named without it, so they're reported `Failed`, but the
 /// certificate (keyed by a fixed `CommonName`, not the app-data path) is
 /// still attempted.
@@ -93,6 +99,7 @@ pub fn remove_all(app_data_dir: Option<&Path>) -> UninstallReport {
             tls_key: NO_DIR,
             persistence_key: NO_DIR,
             maxmind_creds: NO_DIR,
+            personal_zone_key: NO_DIR,
         };
     };
     UninstallReport {
@@ -100,6 +107,7 @@ pub fn remove_all(app_data_dir: Option<&Path>) -> UninstallReport {
         tls_key: remove_secret(&tls_key_entry(dir)),
         persistence_key: remove_secret(&persistence_key_entry(dir)),
         maxmind_creds: remove_secret(&maxmind_credentials_entry(dir)),
+        personal_zone_key: remove_secret(&personal_zone_key_entry(dir)),
     }
 }
 
@@ -131,7 +139,9 @@ fn remove_secret(entry: &str) -> ArtifactOutcome {
 #[cfg(test)]
 mod tests {
     use super::{remove_secret, ArtifactOutcome};
-    use crate::key_store::{delete_secret, store_secret, tls_key_entry, STORE_TEST_GUARD};
+    use crate::key_store::{
+        delete_secret, personal_zone_key_entry, store_secret, tls_key_entry, STORE_TEST_GUARD,
+    };
     use std::path::Path;
 
     // `remove_all`'s cert branch (and therefore `remove_all` itself) is
@@ -139,7 +149,7 @@ mod tests {
     // cover `remove_secret`, the actual Removed/NotPresent/Failed decision,
     // directly and independently of any per-artifact bundling `remove_all`
     // does; `UninstallReport`'s "each artifact is independent" property
-    // follows from `remove_all` being a plain struct literal of four
+    // follows from `remove_all` being a plain struct literal of five
     // independent calls, not from anything that itself needs a real-store
     // integration test.
 
@@ -178,5 +188,21 @@ mod tests {
 
         assert_eq!(remove_secret(&entry), ArtifactOutcome::Removed);
         assert_eq!(remove_secret(&entry), ArtifactOutcome::NotPresent);
+    }
+
+    // T-138 (Батч 4.5) — the same removal mechanism generalizes to the 5th
+    // artifact `remove_all` now reports: the personal-zone key.
+    #[test]
+    fn present_personal_zone_key_reports_removed() {
+        let _guard = STORE_TEST_GUARD.lock();
+        let dir = Path::new(r"C:\scratch\dns-quorum-filter-local-state-test-d");
+        let entry = personal_zone_key_entry(dir);
+        let Ok(()) = store_secret(&entry, b"placeholder") else {
+            panic!("store_secret should succeed");
+        };
+
+        assert_eq!(remove_secret(&entry), ArtifactOutcome::Removed);
+
+        let _ = delete_secret(&entry); // idempotent cleanup
     }
 }
