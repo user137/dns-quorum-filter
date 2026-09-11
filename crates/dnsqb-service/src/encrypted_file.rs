@@ -15,10 +15,11 @@
 //! "loud hard cutover" discipline as T-144 / T-145 / T-148):
 //!
 //! ```text
-//! offset 0   magic    b"DQF1"                       4 bytes
-//! offset 4   kind     0x01 query-log / 0x02 cache   1 byte
-//! offset 5   version  0x01                          1 byte
-//! offset 6   nonce    XChaCha20Poly1305             24 bytes
+//! offset 0   magic    b"DQF1"                                4 bytes
+//! offset 4   kind     0x01 query-log / 0x02 cache /           1 byte
+//!                     0x03 personal-zone / 0x04 zone-removals
+//! offset 5   version  0x01                                   1 byte
+//! offset 6   nonce    XChaCha20Poly1305                       24 bytes
 //! offset 30  ct       seal(key, nonce, plaintext, aad = header[0..6])
 //! ```
 //!
@@ -55,6 +56,18 @@ pub enum FileKind {
     QueryLog,
     /// `cache.enc` (SPEC.md §4, T-97).
     Cache,
+    /// `personal-zone.enc` (SPEC.md §5.1.1, T-138, Батч 4.5) — the locally
+    /// learned rating-filter zone's aggregated per-domain daily counters.
+    /// Sealed with its own key ([`crate::key_store::load_or_create_personal_zone_key`]),
+    /// distinct from `QueryLog`/`Cache`'s shared `persistence-key` — a higher
+    /// privacy tier than the other two stores.
+    PersonalZone,
+    /// `zone-removals.enc` (T-108, Батч 4.5) — the rating-filter lazy-hygiene
+    /// removal overlay (`AppState.rating_filter_removed`). Sealed with the
+    /// same shared `persistence-key` as `QueryLog`/`Cache` — this is
+    /// operational state of an already-opted-in feature, the same privacy
+    /// tier as the verdict cache, not personal browsing history.
+    ZoneRemovals,
 }
 
 impl FileKind {
@@ -63,6 +76,8 @@ impl FileKind {
         match self {
             FileKind::QueryLog => 0x01,
             FileKind::Cache => 0x02,
+            FileKind::PersonalZone => 0x03,
+            FileKind::ZoneRemovals => 0x04,
         }
     }
 }

@@ -2,12 +2,18 @@
 //! plaintext files on disk (SPEC.md §2: "Приватний ключ — у платформному secure
 //! storage … **ніколи не plaintext-файлом поруч із конфігом**"; the ACL-locked
 //! plaintext files were the explicitly-tracked MVP fallback, "технічний борг …
-//! а не дефолт назавжди"). Three secrets go through here: the local `DoH`
+//! а не дефолт назавжди"). Four secrets go through here: the local `DoH`
 //! listener's TLS private key (T-67, [`tls_key_entry`]), the optional
 //! `MaxMind GeoLite2` download credentials (T-163, [`maxmind_credentials_entry`]),
-//! and the symmetric key for the opt-in encrypted on-disk persistence
+//! the symmetric key for the opt-in encrypted on-disk persistence
 //! (T-146, [`persistence_key_entry`] / [`load_or_create_persistence_key`] —
-//! the query log, and the verdict cache at T-97).
+//! the query log, the verdict cache at T-97, and the T-108 zone-removal
+//! overlay at Батч 4.5), and the *separate* symmetric key for the personal
+//! learned rating-filter zone (T-138, Батч 4.5,
+//! [`personal_zone_key_entry`] / [`load_or_create_personal_zone_key`]) — a
+//! deliberately distinct key from the persistence one, because that store's
+//! privacy tier is higher (it encodes which sites this specific user visits
+//! often, not just an already-opted-in feature's operational state).
 //!
 //! **The persistence key is created exactly once.** [`load_or_create_persistence_key`]
 //! mints it on first run and reads it back on every run after; nothing
@@ -114,6 +120,14 @@ pub(crate) fn persistence_key_entry(app_data_dir: &Path) -> String {
     entry_name("persistence-key", app_data_dir)
 }
 
+/// Credential-store entry holding the 32-byte symmetric key for the personal
+/// learned rating-filter zone (T-138, Батч 4.5) for the install rooted at
+/// `app_data_dir`. Deliberately a separate entry from
+/// [`persistence_key_entry`] — see the module docs.
+pub(crate) fn personal_zone_key_entry(app_data_dir: &Path) -> String {
+    entry_name("personal-zone-key", app_data_dir)
+}
+
 /// The persistence key plus a one-shot signal for a key/ciphertext mismatch.
 pub struct PersistenceKey {
     /// The 32-byte `XChaCha20Poly1305` key, wiped on drop.
@@ -168,8 +182,33 @@ pub fn load_or_create_persistence_key(
     app_data_dir: &Path,
     ciphertext_present: bool,
 ) -> Result<PersistenceKey, KeyStoreError> {
-    let entry = persistence_key_entry(app_data_dir);
-    if let Some(existing) = load_secret(&entry)? {
+    load_or_create_symmetric_key(&persistence_key_entry(app_data_dir), ciphertext_present)
+}
+
+/// Returns the install's personal-zone key (T-138, Батч 4.5), minting and
+/// storing one on first run — same idempotent "exactly once" invariant and
+/// error/orphan semantics as [`load_or_create_persistence_key`], just a
+/// separate entry (see the module docs for why).
+///
+/// # Errors
+///
+/// Same as [`load_or_create_persistence_key`].
+pub fn load_or_create_personal_zone_key(
+    app_data_dir: &Path,
+    ciphertext_present: bool,
+) -> Result<PersistenceKey, KeyStoreError> {
+    load_or_create_symmetric_key(&personal_zone_key_entry(app_data_dir), ciphertext_present)
+}
+
+/// Shared mint-or-read core for both symmetric-key entries above — kept as
+/// one function rather than duplicated per entry, since this is exactly the
+/// place where a copy-paste divergence (RNG failure handling, key-length
+/// validation) would be a real security bug, not a stylistic nit.
+fn load_or_create_symmetric_key(
+    entry: &str,
+    ciphertext_present: bool,
+) -> Result<PersistenceKey, KeyStoreError> {
+    if let Some(existing) = load_secret(entry)? {
         return Ok(PersistenceKey {
             key: key_from_secret(&existing)?,
             orphaned_ciphertext: false,
@@ -178,7 +217,7 @@ pub fn load_or_create_persistence_key(
     let mut key = Zeroizing::new([0u8; 32]);
     // A failing OS RNG aborts key creation - never a zero or fixed key.
     getrandom::fill(key.as_mut_slice()).map_err(|_| KeyStoreError::Rng)?;
-    store_secret(&entry, key.as_slice())?;
+    store_secret(entry, key.as_slice())?;
     Ok(PersistenceKey {
         key,
         orphaned_ciphertext: ciphertext_present,
@@ -273,8 +312,9 @@ pub(crate) fn erase_and_remove(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        delete_secret, erase_and_remove, load_or_create_persistence_key, load_secret,
-        maxmind_credentials_entry, overwrite_with_zeros, persistence_key_entry, store_secret,
+        delete_secret, erase_and_remove, load_or_create_persistence_key,
+        load_or_create_personal_zone_key, load_secret, maxmind_credentials_entry,
+        overwrite_with_zeros, persistence_key_entry, personal_zone_key_entry, store_secret,
         tls_key_entry, KeyStoreError,
     };
     use std::path::{Path, PathBuf};
@@ -474,20 +514,62 @@ mod tests {
         fn drop(&mut self) {
             // Best-effort - a leaked test entry is harmless.
             let _ = delete_secret(&persistence_key_entry(&self.dir));
+            let _ = delete_secret(&personal_zone_key_entry(&self.dir));
         }
     }
 
     #[test]
-    fn persistence_key_entry_differs_from_the_other_two_and_shares_the_dir_hash() {
+    fn persistence_key_entry_differs_from_the_other_three_and_shares_the_dir_hash() {
         let dir = Path::new(r"C:\Users\x\AppData\Local\dns-quorum-filter");
         let persist = persistence_key_entry(dir);
+        let personal = personal_zone_key_entry(dir);
         assert!(persist.starts_with("persistence-key:"));
+        assert!(personal.starts_with("personal-zone-key:"));
         assert_ne!(persist, tls_key_entry(dir));
         assert_ne!(persist, maxmind_credentials_entry(dir));
+        assert_ne!(persist, personal);
         assert_eq!(
             persist.rsplit(':').next(),
             tls_key_entry(dir).rsplit(':').next(),
-            "all three entries derive from the same normalized path hash"
+            "all four entries derive from the same normalized path hash"
+        );
+        assert_eq!(persist.rsplit(':').next(), personal.rsplit(':').next());
+    }
+
+    #[test]
+    fn personal_zone_key_first_run_generates_and_persists_a_key() {
+        let scratch = ScratchPersistDir::new("personal-zone-first-run");
+        let pk = match load_or_create_personal_zone_key(&scratch.dir, false) {
+            Ok(pk) => pk,
+            Err(err) => panic!("first run must mint a key: {err}"),
+        };
+        assert!(!pk.orphaned_ciphertext, "no ciphertext file was present");
+        assert!(
+            !pk.key.iter().all(|&b| b == 0),
+            "a freshly generated key must not be all zeros"
+        );
+        match load_secret(&personal_zone_key_entry(&scratch.dir)) {
+            Ok(Some(stored)) => assert_eq!(stored.len(), 32),
+            Ok(None) => panic!("the minted key must be persisted"),
+            Err(err) => panic!("reading the minted key back failed: {err}"),
+        }
+    }
+
+    #[test]
+    fn personal_zone_key_and_persistence_key_are_independent_secrets() {
+        let scratch = ScratchPersistDir::new("personal-zone-independent");
+        let persistence = match load_or_create_persistence_key(&scratch.dir, false) {
+            Ok(pk) => pk,
+            Err(err) => panic!("persistence key: {err}"),
+        };
+        let personal = match load_or_create_personal_zone_key(&scratch.dir, false) {
+            Ok(pk) => pk,
+            Err(err) => panic!("personal-zone key: {err}"),
+        };
+        assert_ne!(
+            persistence.key.as_slice(),
+            personal.key.as_slice(),
+            "the two secrets must not collide on the same bytes"
         );
     }
 
