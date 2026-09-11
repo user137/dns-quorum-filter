@@ -220,7 +220,7 @@ fn certutil_command(certutil: &Path) -> Command {
 /// 20+ minutes / ~20 poll cycles — not a startup race — while an external
 /// `certutil -dump` on the identical logical path reproduced the same
 /// error, and the same file's real physical path dumped successfully).
-/// Reusing [`CertificateDer::from_pem_slice`] (the same PEM→DER primitive
+/// Reusing `CertificateDer::from_pem_slice` (the same PEM→DER primitive
 /// `tls.rs`/`cert.rs` already use for this exact file) instead of a
 /// hand-rolled parser sidesteps the whole class of problem, at the cost of
 /// no longer round-tripping through `certutil` for this one read — the
