@@ -1,0 +1,42 @@
+name: CLAUDE.md size gate
+
+on:
+  push:
+    paths: ['CLAUDE.md']
+  pull_request:
+    paths: ['CLAUDE.md']
+
+# Deliberately the inverse of ci.yml's paths-ignore: this is the one workflow that
+# MUST fire on a CLAUDE.md-only change, because that is exactly the shape of push
+# that caused the 2026-08-30 -> 2026-09-11 regrowth (198k -> 62k -> 174k) with zero
+# CI feedback the whole way, since ci.yml/codeql.yml both ignore **/*.md.
+concurrency:
+  group: claude-md-size-${{ github.ref }}
+  cancel-in-progress: true
+
+# Threshold set from the actual size right after the 2026-09-11 declutter pass
+# (134,615 chars) plus a few percent headroom — deliberately tight, not the usual
+# generous margin: a loose limit just lets the next batch of narrative regrow
+# quietly until someone hits the wall and "fixes" it by bumping this number, which
+# is how the previous text-only "don't re-grow it" rule died. If this fails, the
+# fix is moving the new prose to its owner file (see CLAUDE.md's own "Maintaining
+# this section" note and "Documentation map"), not raising CLAUDE_MD_MAX_CHARS.
+env:
+  CLAUDE_MD_MAX_CHARS: 140000
+
+jobs:
+  check-size:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check CLAUDE.md size
+        shell: pwsh
+        run: |
+          $bytes = (Get-Item CLAUDE.md).Length
+          $limit = [int]$env:CLAUDE_MD_MAX_CHARS
+          Write-Host "CLAUDE.md is $bytes bytes (limit $limit)."
+          if ($bytes -gt $limit) {
+            Write-Host "::error::CLAUDE.md is $bytes bytes, limit $limit. Narrative belongs in TASKS-DONE.md (completed-task history) or DECISIONS.md (reversed/corrected decisions), never appended to CLAUDE.md itself -- see CLAUDE.md's own 'Maintaining this section' note and 'Documentation map'. Move the new prose to its owner file and re-push; do not raise CLAUDE_MD_MAX_CHARS in this workflow as the fix."
+            exit 1
+          }

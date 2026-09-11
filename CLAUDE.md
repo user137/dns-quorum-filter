@@ -4,357 +4,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Phase:** Фаза 3 (production hardening — `dnsqb-watcher`, MSIX packaging) **closed in full
-2026-09-06** with the `v0.3.0` release tag (Батч 3.11 / T-173); all carried Ф1 gates closed by
-honest verification (T-170/T-174/T-175/T-172). Фаза 2 (cert automation, Windows) formally closed
-2026-08-31; Фаза 1 (PoC) 2026-08-29. **Post-Ф3 hotfix — Батч 3.12 (T-181–T-185, T-187), 2026-09-07,
-plan+advisor kickoff+closing:** live `v0.3.0` MSIX run found the Start-menu tile opened a console
-window the service was bound to (no `windows_subsystem` on service/watcher — T-181), a stale
-teal-square tray icon (T-183), no detached children (T-182), and no way to stop or pause the app
-from the tray (T-185: `stop.flag`/`quit.flag`, menu rebuild). T-187: watcher stays the MSIX root
-(T-156 unchanged) but spawns the tray first and a re-clicked tile shows the icon; `ensure_sibling_running`
-moved to `watchdog::launcher`. New `logging` (file logs, T-184) + `lifecycle` modules, new
-`diagrams/process-lifecycle.md`. Version bump `0.3.0` → `0.3.1` (`0e9b944`). **Post-Ф3 hotfix —
-Батч 3.14 (T-191–T-192), 2026-09-08, plan+advisor kickoff+closing:** user asked for Google-Drive-style
-coloured tray icons (T-191) — `status::icon_colour(TrayStatus, cert_trusted)` picks one of four
-`gen-icon.py` blobs (green/amber/grey/red); read-only `trust_store::is_trusted` pulled forward
-(shared `trusted_state` core, no HTTP route), polled by a dedicated `status::spawn_trust_watch`
-thread; cert-not-trusted → red flips `Filtering` only (SPEC §3/§8.1 + T-185 paused-tooltip test),
-the cert issue reaches other states as a `compose_tooltip` suffix. **T-194/T-195 (2026-09-08, hotfix
-from a live `0.3.1` MSIX run, plan+advisor):** T-194 — every `certutil` spawn goes through
-`trust_store::certutil_command` with `CREATE_NO_WINDOW` (T-191's background trust-watch, 2 spawns
-per poll, flashed a console window every few seconds on a fresh install); T-195 — "Повністю
-видалити" now stops the whole app (`stop.flag`+`quit.flag`) and a detached hidden `powershell`
-helper (`dnsqb-tray/src/self_uninstall.rs`) waits for every process to exit then wipes all of
-`%LOCALAPPDATA%\dns-quorum-filter`, then opens `ms-settings:appsfeatures` via `explorer.exe`
-(revises T-70; DECISIONS.md 2026-09-08). **T-196** — the tray icon only goes amber for `Filtering`
-when *every* recent quorum query degraded (`degraded_events == degraded_window`), not on any
-`> 0` — a recovered upstream blip was pinning the taskbar icon amber for ~20 queries (revises
-T-191). Commits `58c269d` + `45aa0d6` (+ `a65143f` closing-advisor) + T-196, in `v0.3.1` before the tag.
-T-192: patch release **`v0.3.1`**
-covers Батч 3.12 **+ 3.14** and closes T-186 — bump commit `0e9b944`, tag `v0.3.1` pushed after a
-manual clean-reinstall MSIX check (MSIX rebuilt with T-194/T-195) → `release.yml` draft (unpublished,
-a human clicks Publish, same as `v0.3.0`). The first-run onboarding wizard (Батч 3.13) becomes `v0.3.2` (needs its own `0.3.1`→`0.3.2` bump):
-**T-188** (`GET /admin/cert-status` three-state + `POST /admin/install-cert` + `rfd` tray wizard +
-`onboarding.rs` + `/admin/ui` hero cert-branch, `4cb9ed9`) + **T-189** (per-browser setup card,
-`98ac6c8` + `a5489ef`) + **T-193** (pause serves the unfiltered baseline instead of killing DNS —
-`pause_watch` module, tray drops `/admin/shutdown`, watcher drops the freeze; DECISIONS.md
-2026-09-08 revises T-185) done; **T-190 (`v0.3.2`) deliberately never tagged on its own** — user
-decision 2026-09-11 folded it into Батч 4.6's `v0.4.0` instead (this line's own onboarding-wizard
-work still shipped in that tag). **Фаза 4 (rating filter «bubble» + per-country top-N list
-infra + personal learned zone source) — kickoff done 2026-09-07 (Батч 4.0, T-179): §5.1
-(top-sites excluded from Ads/Adult voters) removed and merged into the rating filter §5.3 — one
-opt-in bubble (out-of-zone → BLOCK, in-zone → normal pipeline), which moved here from Фаза 5.
-Reasons: T-106 (Cloudflare Radar is CC BY-NC — no cleanly-licensed ordinal per-country source;
-CrUX CC BY 4.0 is the candidate), T-104 (Ads FP ≈ 0 for the default, Adult "FP" mostly correct
-blocks + a blanket top-N exemption would un-block genuinely-adult popular sites), and a user
-design clarification. `VoterScopeView` / `LogEntry.voter_scope` removed (dead — nothing narrows
-the voter set). See DECISIONS.md 2026-09-07.** **Батч 4.1 done 2026-09-09** (T-107/T-108/T-180,
-gate T-120; kickoff plan+advisor+AskUserQuestion, closing-advisor): `examples/curate_topn.rs` (no
-DNS — fetch CrUX top bucket + origin→registrable via a bundled pinned PSL, hand-rolled matcher, no
-crate) + `.github/workflows/topn-curate.yml` + first datasets `data/topn/{ua,us,de,pl,gb,global}.txt`
-+ `.sha256` (raw popular set, no content filtering). `ci.yml` += `cargo test --workspace --examples`.
-**T-108 re-scoped to Батч 4.3** (DECISIONS.md 2026-09-09): hygiene is lazy client-side — an in-zone
-domain quorum blocks is removed from the local zone set, not a curation-time bulk scan (1000 DoH
-queries/resolver/regen risks the address being rate-limited; quorum runs anyway). T-180: CrUX
-CC BY 4.0 + PSL MPL-2.0 in the `/admin/ui` `#credits` footer + `data/topn/README.md`.
-**Батч 4.3 done 2026-09-09** (T-124/T-125/T-126 + T-129/T-130/T-131; T-108 folded in; kickoff
-plan+advisor, closing-advisor): the client rating filter is live. `[rating_filter]` config table
-(default OFF); `rating_filter` module (pure `ZoneLists::zone_match` — suffix-walk over the zone
-union, **no runtime PSL**: the published lists are already registrable-only); `topn_download` +
-`topn_updater` (`run_topn_updater` — one HTTPS GET per selected list per 24h from
-`raw.githubusercontent.com`, sha256-sidecar verify, atomic-swap, mirrors `geoip_*`); pipeline
-**step 5** in `handle_query` (below cache, above quorum) — out-of-zone → NULL BLOCK
-`DecisionSource::RatingFilter` (not cached), in-zone → unchanged. **Lazy hygiene (T-108):** a
-fresh quorum block of an *exact* in-zone registrable surfaces `QueryLogMeta.zone_removal` →
-`dispatch` calls `AppState::record_zone_removal` (in-memory overlay, own lock; subdomain block
-records nothing). `AppState` += `rating_filter_config` / `rating_filter_zone` /
-`rating_filter_removed` / `rating_filter_refresh_wake` (the `geoip`/`geoip_countries` split
-pattern). `/admin/reset` reloads the table + wakes the updater. Overlay persistence is Батч 4.5.
-**Батч 4.4 done 2026-09-10** (T-111/T-127/T-128; kickoff plan+advisor+AskUserQuestion +
-separate mockup-approval round, closing-advisor): the rating-filter UI half. `POST
-/admin/rating-filter` (`RatingFilterConfigUpdate { enabled, lists }`, full replace; shares
-`persist_lock`; `rating_filter_is_active(config, zone)` is the single authority both
-`resolve_doh_request` and the status builders call, so badge and pipeline can't disagree);
-`AdminStatusResponse.rating_filter: RatingFilterStatusView { enabled, active, lists,
-available_lists, loaded }`. `/admin/ui`: `#rating-filter-body` card in the advanced `<details>`
-(T-127 framed enable block with an OFF→ON confirm step; T-111 hand-rolled search combobox
-`input[role=combobox]` + `ul[role=listbox]`, ↑↓/Enter/Esc, `aria-activedescendant`, rendered
-from `available_lists`; removable picked-zone list; batched "Зберегти зони"); `#rating-filter-badge`
-under the hero (T-128, on the 2s poll, empty when off). `dnsqb-tray`: `TrayStatus::Filtering` +=
-`rating_filter_active`, `compose_tooltip` appends "— рейтинг-фільтр «бульбашка» активний" (only
-when `active`, never the icon colour). **T-127 also tightened `validate_rating_filter_lists`** —
-shape check + `AVAILABLE_TOPN_LISTS` membership (`+ConfigError::UnknownRatingFilterList`), so
-`lists ⊆ available_lists` is a guaranteed invariant (DECISIONS.md 2026-09-10). Batch 4.3's two
-known limitations closed: `run_topn_updater` now always spawns (no-op while disabled;
-`main.rs`/`spawn_public_http_tasks` dropped the `rating_filter_active` gate — commit `173cf56`),
-and enabling via the route rebuilds the verdict cache. Palette also swapped to Catppuccin
-(Latte/Mocha) across `/admin/ui` + the mockup (`f8f2dce`, superseded Nord). **Батч 4.2 (T-122,
-T-123) done 2026-09-11** (kickoff plan+advisor, closing-advisor): two more `ZoneSourceKind`
-variants, `GovernmentTopN(cc)` / `SciEdu` — user-simplified scope at kickoff (no TLD-heuristic
-scan tool, no PR-template/CODEOWNERS; a short hand-curated list instead). Each government list is
-a single registrar-restricted **blanket-suffix** entry (`gov.ua`/`gov`/`gov.pl`/`gov.uk`) that
-`zone_match`'s PSL-free suffix walk turns into automatic coverage of every subdomain — legitimacy
-comes from the registrar's own restricted-registration policy, not editorial judgment; `de` is a
-stated gap (no unified convention). `edu.txt` (T-123, global, 13 entries) mixes restricted
-academic/international TLDs (`edu`/`ac.uk`/`edu.ua`/`int`) with a short list of individually-named
-canonical bodies (the SPEC.md-named PubMed/NASA examples + arXiv/DOI/ORCID/IETF/W3C/IEEE/UN).
-**Advisor caught a real structural risk on the kickoff plan:** a blanket entry is a whole
-namespace behind one line, so a false-positive quorum block of the bare suffix itself could (via
-T-108 lazy hygiene) silently evict the entire zone it covers — fixed with
-`ZoneSourceKind::hygiene_eligible` (`false` for the two new variants) enforced at two layers
-(`ZoneLists::zone_match` itself only lets `removed` suppress a hygiene-eligible source, and
-`pipeline::rating_filter_step`'s `exact` flag additionally requires eligibility before a removal
-is ever recorded) — the new variants are additive for pipeline/UI/DTO but **not** for T-108.
-Also fixed: the `/admin/ui` zone card would have shown a misleading "1 дом." next to a blanket
-government zone (T-66 "never a fake count" class) — `zoneMeta` now renders "весь простір" for
-`gov-*` codes. `data/topn/ZONES-CHANGELOG.md` (new) is the lightweight curation audit trail
-SPEC.md §5.3 calls for, no formal GitHub process. **Батч 4.5 (T-138) done 2026-09-11** (kickoff
-plan+advisor, two review rounds): the fourth and final zone source — personally learned, locally
-derived from already-ALLOW-and-Quorum-passed traffic, no downloading/curation. `ZoneSourceKind::
-Personal` (`hygiene_eligible() == true` — a real quorum block of a learned hostname evicts it,
-unlike a Батч 4.2 blanket suffix). **Architecture:** the personal zone lives in its own
-independent `AppState.rating_filter_personal_zone: RwLock<Arc<ZoneLists>>`, not folded into
-`rating_filter_zone`'s `Vec<ZoneSource>` — two writers on different cadences (`topn_updater`'s
-24h full-replace vs. a daily personal rollover) would race on one `Arc`; `pipeline::
-rating_filter_step` calls `zone_match` twice, no signature change to that already-tested method.
-New `personal_zone_stats.rs` (pure: per-domain daily-count ring, `MAX_TRACKED_DOMAINS = 2000`
-provable cap, the two SPEC.md §5.1.1 criteria — frequency top-N, regularity X-of-Y-days — as a
-**union**) + `personal_zone_persist.rs` (impure shell, own `personal-zone.enc`, own 4th
-`key_store` secret `personal-zone-key` — deliberately separate from the shared `persistence-key`,
-a higher privacy tier). New `[personal_zone]` config table (default off, hand-edit-only, no
-admin route — same treatment as `persist_query_log`/`persist_cache`). **Also closes a T-108
-promise this batch's own kickoff plan almost missed** (caught by advisor mid-implementation):
-the lazy-hygiene removal overlay now survives a restart too, via a new `zone_removal_persist.rs`
-— gated on `[rating_filter].enabled`, reusing the *shared* `persistence-key` (operational state
-of an already-opted-in feature, not new personal disclosure). **Advisor's second review round
-caught a real activation hazard**, not present in the first draft's approved shape but introduced
-while implementing it: making `rating_filter_is_active` also check the personal zone's emptiness
-would let an `enabled=true`, empty-`lists` config get silently activated by personal-zone entries
-alone, blocking almost the whole internet with zero list ever chosen by the user (exactly SPEC.md
-§5.3 п.8's forbidden surprise) — fixed by leaving `rating_filter_is_active`'s signature and every
-call site untouched; the personal zone only ever *widens* an already-active bubble. **Also
-discovered, not fixed:** `dispatch.rs`'s non-`/admin/rating-filter` config-writing routes read a
-stale `PersistTarget.rating_filter` snapshot taken once at startup rather than the live
-`rating_filter_config` — a pre-existing T-57-class staleness gap from when T-127 (Батч 4.4) added
-`rating_filter`'s own admin route without updating the other four write sites; not reproduced for
-`[personal_zone]` (every site reads a live snapshot instead, no `PersistTarget` field for it at
-all) — filed as a TASKS.md backlog item, not fixed here (T-217, backlog). **Батч 4.6 — phase
-closure, done 2026-09-11** (short kickoff + closing-advisor before the tag push): version bump
-`0.3.1` → `0.4.0` (T-190/`v0.3.2`, Батч 3.13's onboarding wizard, deliberately never tagged on
-its own and folded into this release instead — user decision 2026-09-11); T-175's mandatory
-pre-release `sinkhole_probe` re-ran clean (every sinkhole prefix still matches live behavior);
-`curate_topn` re-run for all 6 lists (same CrUX month `202608`, byte-identical output, zero diff
-committed). Tag `v0.4.0` → `release.yml` draft (build-sign + msix + cross-path repro), publish
-left to a human. **Фаза 4 fully closed** — all six batches (4.0–4.5) done; T-217/T-218 stay open
-backlog, not blocking.
-Фаза 5 (ccTLD block §5.2 + i18n T-151) and Фаза 6
-(macOS/Linux) are the remaining planned work — not started. Batch execution history for Ф3
-(3.0–3.11) is in TASKS.md §"Фаза 3". **T-101 done 2026-09-01** (pulled forward from
-Батч 3.7): `.github/workflows/
-codeql.yml` — CodeQL SAST, `rust` / `build-mode: none` / `windows-latest`, on every push/PR;
-alerts in the Security tab, triaged like clippy/audit findings (see the Commands section for the
-`gh` read command).
-**Батчі 3.0–3.3 done 2026-09-02 — watchdog complete, demonstrated end-to-end.** 3.0: SPEC.md §7.1
-(9 реалізаційні рішення) + `diagrams/watchdog-{state,channels}.md`. 3.1: liveness primitives
-(`instance` guard/pid, `frame`/`channel`, `pipe`, `heartbeat_file`, `GET /health`). 3.2: pure
-decision core (`vote`, `backoff`, `budget`, `pid_check`, `spawn`, `state`, `transition`). 3.3:
-assembly — `watchdog::loop_driver` (pure per-direction tick automaton, loop-level T-93/T-94),
-`watchdog::launcher` (T-150 `plan_launch`), the three `dnsqb-service` heartbeat tasks +
-`service→watcher` loop, `dnsqb-watcher`'s real `main` (idempotent launcher + `watcher→service`
-loop, sole writer of `watchdog-state.json`), and T-95 (`/admin/status.watchdog` + tray).
-**Батч 3.4 done 2026-09-03** (T-154/T-155/T-152, 8 commits, plan+advisor): T-154(a)
-`connect_timeout` on `ReqwestDohClient` (probe-proven: `reqwest` 0.13 skips a blackholed first
-resolved address without it) + T-154(b) `baseline_selector` (sticky Cloudflare→Quad9→Google
-failover with auto-return, driven by the reachability prober's per-cycle `DoH` health check);
-T-155 `DecisionSource::BaselineFallback` + `serve_baseline_when_filters_unreachable` toggle
-(default OFF — DECISIONS.md 2026-09-03: OFF = today's behaviour, better-labelled, zero regress);
-T-152 `reachability` module (3 independent `generate_204` markers, Offline only if all fail) +
-offline fast path in `handle_query` (instant SERVFAIL, no fan-out/cache) + status-indicator
-condition #3. Per-batch narrative → TASKS-DONE.md.
-**Батч 3.5 — T-146 + T-96 done 2026-09-03** (7 code + 1 docs commit, plan+advisor): opt-in
-encrypted persistence of the query log. `encrypted_file` (`XChaCha20Poly1305`, RustCrypto —
-user decision, DECISIONS.md 2026-09-03), 32-byte key in the OS secret store (`key_store`, the
-T-67 mechanism), `query-log.enc` format, `persist_query_log` config flag (**no admin toggle** —
-hand-edit only), passive `/admin/ui` indicator.
-**T-97 done 2026-09-03** (5 code + 1 docs commit, plan+advisor kickoff+closing): opt-in
-encrypted persistence of the verdict cache. Same `encrypted_file` / `FileKind::Cache` / single
-`persistence-key` as the log; `cache_persist_dto` stores an **absolute wall-clock deadline** (the
-live `expires_at` is a monotonic `Instant` that resets on reboot) and drops an entry whose TTL
-elapsed during downtime; **only `Verdict::Allow` is persisted** — `Block` is filtered at snapshot
-(user decision: a `fail_closed` timeout-`Block` must not survive a restart / the watchdog's
-auto-restart). `persist_cache` config flag (no admin route), `AdminStatusResponse.encrypted_persistence
-{ query_log, cache }` (replaced the bare `query_log_persisted` bool — kept `AdminStatusResponse`
-under `clippy::struct_excessive_bools`), passive `/admin/ui` line.
-**Батч 3.6 (T-98 + T-99) done 2026-09-04, docs-only.** T-98 (research): Chrome DoH
-enterprise-policy mechanism verified against the Chromium `policy_definitions` YAML —
-`DnsOverHttpsMode` enum `off/automatic/secure` (Chrome 78+, `secure` = no silent native-resolver
-fallback, `dynamic_refresh:true`), `DnsOverHttpsTemplates` (Chrome 80+, mandatory-non-empty under
-`secure`, `{?dns}`⇒GET, a malformed template is silently ignored), registry
-`HKLM\SOFTWARE\Policies\Google\Chrome` `REG_SZ`. Tiered write-up in SPEC.md §"Відкриті питання"
-п.3. Gotcha: `chromeenterprise.google/policies/*` is a JS SPA (WebFetch sees only the shell) —
-fetch the raw `chromium.googlesource.com/.../policy_definitions/*.yaml` instead. **T-99 closed
-with no code** (kickoff AskUserQuestion, T-164 format): `secure` makes all Chrome resolution
-hard-fail when `dnsqb-service` is down (Три Б user-safety), `HKLM\...\Policies` needs admin +
-is machine-global (conflicts with "no persistent elevated privileges"), Chrome-only — same
-conclusion T-134 reached for Firefox. Mechanism documented for a possible future phase, not
-built. **Батч 3.7 (T-100/T-102/T-103) done 2026-09-04, CI-only** (plan+advisor). T-100:
-`--locked` on every CI `cargo`; `.cargo/config.toml` `/Brepro` (MSVC triple only) +
-`[profile.release] codegen-units = 1` (default 16 built `dnsqb-service` non-deterministically);
-blocking `repro` job = two clean `--release` builds in **different absolute paths**, SHA-256
-compared. T-102: `.github/workflows/release.yml` builds + signs the 3 binaries — **ephemeral
-self-signed `test-signed`** by default (real cert optional via `CODESIGN_PFX` secret; production
-trust = Microsoft Store re-signing the MSIX at publication, Батч 3.8); artifact name carries the
-mode. T-103: `v*` tag → re-proves cross-path reproducibility → **draft** GitHub release with the
-3 `.exe` + `SHA256SUMS`, published by a human. Also: `Swatinem/rust-cache` on the cargo jobs
-(**not** `repro`/release — they must clean-build), `concurrency: cancel-in-progress` on all 3
-workflows, `ci.yml`/`codeql.yml` `push: branches: ['**']` (not tags) + `paths-ignore` for
-`**/*.md`/`diagrams/**`/`mockups/**` (a docs-only commit, and any tag push, triggers neither —
-`release.yml` owns the tag path). **Version `0.1.0` → `0.2.0` (Батч 3.7) → `0.3.0` (T-173, Батч
-3.11); `v0.2.0` and `v0.3.0` tagged → `release.yml` each produced a DRAFT GitHub release
-(test-signed binaries + `SHA256SUMS`, `v0.3.0` also `.msix` + `.cer` + `Trust-TestCert.ps1`).
-`v0.3.0` was published 2026-09-06 (T-178) and is `latest`; `v0.2.0` stays a draft.** Version
-literals: 3 `crates/*/Cargo.toml` `version` + 2 path-dep specs + `Cargo.lock`
-(no `[workspace.package].version`); `VERSIONINFO` reads `CARGO_PKG_VERSION*` so it follows for
-free; `pack-msix.ps1` cross-checks the git tag against `cargo metadata` (`throw` on mismatch), so
-the bump must land before the tag.
-**Батч 3.8 (T-156 MSIX + T-70 local-state removal) done 2026-09-04 — Фаза 3 formally closed**
-(plan+advisor kickoff+closing). T-156: `packaging/AppxManifest.template.xml` (sideload
-placeholder identity, kickoff decision; `runFullTrust`; entry point + `windows.startupTask` both
-`dnsqb-watcher.exe`, T-150's idempotent launcher) + `packaging/pack-msix.ps1` (stages binaries +
-`assets/icon/`'s 3 MSIX PNGs + substituted manifest → `makeappx pack` → `signtool sign`, same
-ephemeral-or-`CODESIGN_PFX` model as T-102, `Subject` = `-Publisher` exactly or signing fails) +
-`release.yml`'s new `msix` job (attaches `.msix`+`.cer` to the tag draft release alongside the
-raw `.exe`s). Verified empirically end-to-end on this machine (Windows SDK 10.0.26100.0, same as
-CI) — pack+sign works against real `--release` binaries; **`Add-AppxPackage` checks
-`Cert:\LocalMachine\TrustedPeople` for the signer specifically (elevation required):
-`Cert:\CurrentUser\...` → `0x800B0109`, a cert in no checked store → `0x800B010A`,
-`\LocalMachine\Root` alone insufficient (T-178). `packaging/Trust-TestCert.ps1` (shipped next to
-the `.msix`) self-elevates and writes there via `X509Store`; `pack-msix.ps1` also forces a
-CryptoAPI key (`-Provider "Microsoft Strong Cryptographic Provider"`) — both lessons ported from
-sister project pakko (`windows-archiver-wrapper`, `github.com/pakkoapp-oss/pakko`).** T-70:
-`local_state::remove_all` (new module) — MSIX has no uninstall-time code hook at all, so clearing
-the trusted cert + 3 Credential Manager secrets is an in-app action (tray "Повністю видалити" +
-`/admin/ui` danger-zone card + `POST /admin/uninstall-local-state`), per-artifact report
-(`Removed`/`NotPresent`/`Failed`), never one collapsed bool. **T-195 extended the tray path**: it
-now also stops the whole app and a detached helper wipes all of `%LOCALAPPDATA%\dns-quorum-filter`
-(the HTTP route stays secrets-only — it runs *inside* the service and can't delete its own open
-dir). Also: `assets/gen-icon.py` +
-`assets/icon/` — one drawing source for the app icon everywhere (MSIX tile, README wordmark, a
-future Store listing/Linux icon), user-revised mid-batch from a low-contrast navy/cyan/white
-funnel to a two-tone (Windows accent blue + white) wireframe hexagon with vertex dots.
-**T-167 done 2026-09-04** (plan+advisor, 3 commits, TASKS-DONE.md): README rewritten for a lay
-reader (build/run steps taken through to a browser-DoH-config step, honestly capped at the
-still-unverified live browser→DoH pass; a new "Як працює фільтрація" section with the 8-step
-SPEC.md §5.3 pipeline + a lightweight `mermaid` flowchart, embedded directly rather than as a
-`diagrams/` file since it's a lay illustration, not a synced dev artifact); SECURITY.md's
-dependency table compressed to a current-state snapshot (57065→19099 chars, ~66%, same
-principle as this file's own Project State compression — every row's why-this-crate/`unsafe`-
-location/accepted-risk fact checked to survive, none dropped). **T-168 done 2026-09-05**
-(plan+advisor, 3 docs commits): `PERFORMANCE.md` (new) — critical-path complexity table +
-`examples/load_test.rs` (new manual harness, not CI) run showing degradation is **smooth and
-linear, zero failures** up to 3000 concurrent fresh connections / 2000 multiplexed streams;
-`overrides::decision`'s O(n) at ~10k entries is +17% p50, not a risk. Design decision in
-SPEC.md §1.1: bounded concurrency with **immediate reject** (not a deep queue), a generous
-backstop sized from server-side numbers. **T-169 done 2026-09-05** (plan+advisor kickoff+closing,
-5 commits): new `admission::ConnectionGate` (`tokio::sync::Semaphore` + `AtomicU64`, no
-`Mutex`/`Arc<Mutex>`) — `main.rs`'s accept loop takes an `OwnedSemaphorePermit` before
-`tokio::spawn`, and at the ceiling closes the TCP stream **before TLS** (`drop(stream)`, the
-kickoff-AskUserQuestion decision). Paired with `tokio::time::timeout` around `acceptor.accept` +
-`auto::Builder` http1 `header_read_timeout` / http2 keep-alive (a bare cap without those is
-itself a slow-loris DoS). New `[limits]` table in `resolver_config.toml`
-(`max_concurrent_connections` def 4096, `handshake_timeout_ms` 10000, `idle_timeout_ms` 30000;
-`0` or `> 1_000_000` is a fatal load error). `AdminStats.rejected_connections` (cumulative) +
-`active_connections` (live snapshot) on `GET /admin/status`. `[limits]` is not admin-mutable and
-`apply_admin_reset` does **not** rebuild the gate — a `[limits]` change needs a service restart
-(like `port`).
-**Батч 3.9 done 2026-09-06** (carried-forward Ф1 gates as honest verification, not new features):
-T-170 `DEFAULT_PROVIDER_IDS` decision, T-171/T-174/T-175 quorum re-measure (hypothesis confirmed,
-+6.3 pp), T-172 live "browser → local DoH" pass. **Батч 3.10 done 2026-09-06:** T-177 (app icon +
-`VERSIONINFO` in the three `.exe`) + T-176 (basic/advanced `/admin/ui` split + atomic
-`POST /admin/providers/set-category-enabled` + reworded tray tooltips; mockup user-approved).
-**Батч 3.11 done 2026-09-06** (T-173): version `0.2.0` → `0.3.0` (separate bump commit `bd2ec61`,
-CI-green incl. `repro`; closing-advisor), tag `v0.3.0` on it → `release.yml` (`34046773417`, all 3
-jobs success: `build-sign` test-signed + `msix` + `release` cross-path repro) → draft GitHub
-release. `sinkhole_probe` (mandatory pre-release) green. Carried T-176/T-177. **Phase 3 fully
-closed.** **T-178 (2026-09-06, post-Ф3 fix, plan+advisor):** the v0.3.0 draft's `.msix` failed to
-sideload (`0x800B010A`) — its notes pointed `Add-AppxPackage` trust at `LocalMachine\Root` (wrong
-store) and shipped no helper. Ported `packaging/Trust-TestCert.ps1` (self-elevating, writes
-`LocalMachine\TrustedPeople` via `X509Store`) + a CryptoAPI-key `pack-msix.ps1` from sister project
-pakko (`windows-archiver-wrapper`); patched the draft (7th asset + notes) and **published `v0.3.0`
-as `latest`** (user chose "publish as-is, test-signed"). T-51 / T-56 stay carried-forward backlog
-(blocked on out-of-MVP T-132 / T-134), not part of the Phase 3 close.
-Фаза 1 formally closed 2026-08-29; Крок 0 (Rust workspace, CI, RFC-conformance table T-1–T-19) done.
-Target platform is Windows (DECISIONS.md, 2026-08-25 — SPEC.md left it open); macOS/Linux are
-Фаза 6.
+**Current phase:** Фаза 4 (rating filter «bubble», per-country top-N zone infra, personal learned
+zone) fully closed 2026-09-11 — tag `v0.4.0` pushed, `release.yml` produced a draft GitHub release
+(build-sign + msix + cross-path repro), publish left to a human, same pattern as prior tags. Фаза 3
+(production hardening — watchdog, MSIX packaging) closed 2026-09-06 (`v0.3.0`, published/`latest`);
+Фаза 2 (cert automation) closed 2026-08-31; Фаза 1 (PoC) closed 2026-08-29.
 
-Carried into Фаза 3, not lost on the Ф2 close: **T-70** (packaged uninstaller must call
-`trust_store::uninstall()` + `key_store::delete_secret`, blocked on T-156 MSIX packaging); the
-**Ф1 metrics gate** — **metrics half closed by confirmation, T-174** (2026-09-05). T-171's first
-re-measure gave +0.8 pp ("not confirmed"), but that was an artifact of a block-signature bug:
-`cleanbrowsing-{security,adult}` block via NXDOMAIN while `BUILTIN_PRESETS` declared `NullIp`, so
-2 of the 4 Security presets contributed nothing. T-174 fixed the signature (`NullIpOrNxdomain`)
-and re-measured with the sample gated by **two independent unfiltered resolvers** (closing-advisor
-mitigation — 0 disagreements, so a filtering voter's NXDOMAIN is a real block, not a resolver-view
-difference), n=106: **Security-tier OR-quorum 76/106, +18 domains / +17.0 pp over Quad9 alone; 17
-malware domains blocked only by CleanBrowsing.** Hypothesis confirmed (DECISIONS.md 2026-09-05,
-PERFORMANCE.md "Quorum coverage … / Resolution — T-174"). **T-175 (2026-09-06)** added sinkhole-IP
-detection (see the `quorum` module row + Known-limitations); re-measure n=111: quorum **89.2 %**
-vs the now-visible best single (`dns4eu-protective` 82.9 %) → **+6.3 pp**. Hypothesis still
-confirmed — smaller margin because the best-single baseline is stronger once `dns4eu-protective`'s
-block-page-IP blocks are counted (it was 0 in T-174). The live "browser → local DoH" pass is
-still T-172.
-**`DEFAULT_PROVIDER_IDS` decided in T-170** (2026-09-05,
-DECISIONS.md): `quad9` + `cloudflare-malware` + `adguard` — the two §3.4/§3.5 Security-tier
-voters plus AdGuard for ads out of the box.
+**Not started:** Фаза 5 (ccTLD block §5.2 + i18n T-151), Фаза 6 (macOS/Linux port — see "Current
+phase boundaries" below for the architectural seam it needs). T-217/T-218 are open backlog, not
+blocking.
 
-Per-task history — design rationale, advisor catches, verification notes — is recorded in
-`TASKS-DONE.md` (one line + implementation note per task), `DECISIONS.md` (reversals of shipped
-decisions), and git. This section is the at-a-glance snapshot; it does not repeat that history.
+Full batch-by-batch history (rationale, advisor catches, commit hashes, verification notes) lives
+in `TASKS-DONE.md`; reversed/corrected decisions live in `DECISIONS.md`, git, and this file's
+"Documentation map". This section is a current-state snapshot only — it does not repeat that
+history.
 
 **Maintaining this section:** it is a snapshot, not a log. A finished task updates the phase line,
 the module table, and the workstream status, and adds a bullet under "Known limitations in shipped
 code" *only* if it leaves a live limitation there. The task's own narrative — rationale, advisor
-catches, verification notes — goes to `TASKS-DONE.md`, never here. (This file was compressed from
-~198k to ~62k chars on 2026-08-30 by moving 30 slices of appended narrative out; don't re-grow it.)
+catches, verification notes — goes to `TASKS-DONE.md`, never here. **This rule already failed once
+as prose alone** (file compressed 198k→62k chars on 2026-08-30 with this exact rule already
+written, regrew to 174k by 2026-09-11 anyway) — `.github/workflows/claude-md-size.yml` now
+enforces a hard byte-size ceiling in CI on every push that touches this file; if that check fails,
+move the new prose to its owner file, never raise the number.
 
 ### What's built
 
-`dnsqb-service` — a real `hyper` + `rustls` DoH listener on `127.0.0.1` (T-143), resolving queries
-end to end through the Фаза 1 pipeline (allowlist → blocklist → cache → quorum; T-39) plus live
-GeoIP filtering (SPEC.md §3.5 / §5.3 step 7) and the **rating filter «bubble» step 5** (§5.3,
-Batch 4.3 backend + 4.4 UI/route — default OFF; out-of-zone → BLOCK, in-zone → normal pipeline).
-The one intermediate SPEC.md §5.3 step still unbuilt is the ccTLD block (§5.2, Фаза 5). (There is
-no "voter scope" step any more — §5.1 was removed, T-179.) Since Батч 3.3, startup also spawns
-three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe server, `service.hb` touch, the
-in-memory `service→watcher` decision loop — §7.1 #7: it acts and logs but never persists, so that
-direction's `GaveUp` is **not durable** — the restart budget resets on every service restart, a
-symmetric un-fixable-without-§7.1-#7-violation counterpart to the watcher→service `restored` path).
-**T-210 (Батч RV):** this whole startup/serve-until-shutdown sequence lives in `orchestrate::run`
-(a lib module, `pub async fn run()`), not `main.rs` — `main.rs` is now a 3-line shim
-(`dnsqb_service::run().await`). `main.rs` is a separate crate that links this lib externally, so
-keeping the ~800-line body there forced ~20 internal helpers to stay `pub` at the crate root for
-no reason but that one file; moving it in let `lib.rs`'s `pub use` surface narrow from 49 to 32
-top-level re-export lines (compiler-verified: delete a re-export group, rebuild, the resulting
-`E0432` names the exact external consumer that still needs it — `dnsqb-tray`/`dnsqb-watcher`/
-`tests/{admin_client,conformance}`/`examples/*.rs`/`lib.rs`'s own doctests, never `pub(crate) use`,
-which would've been `unused_imports` noise since no in-crate module re-imports its own crate-root
-re-export). `examples/*.rs` (compiled by CI) turned out to pin most of `upstream`/parts of
-`quorum`/`wire` regardless, so the real narrowing is concentrated in what was genuinely
-orchestration-only: `cache_persist`, `log_persist`, `encrypted_file`, `tls`, `listener`,
-`key_store`, `reachability`, `pause_watch`, `cert_watch`, `pipeline::*`, and slices of
-`topn_updater`/`geoip_updater`/`geoip_credentials`/`cert`/`cert_rotation`. **`orchestrate::run` is
-called only from `dnsqb-service`'s own `main.rs`** — `dnsqb-watcher` links the same lib but must
-never call `run()` or its private `run_service_to_watcher_watchdog` (§7.1 #7's single-writer
-invariant depends on that boundary now being enforced by "who actually calls this," not by two
-physically separate `main.rs` files the way it was before this task).
+`dnsqb-service` — a real `hyper` + `rustls` DoH listener on `127.0.0.1`, resolving queries end to
+end through the pipeline (allowlist → blocklist → cache → quorum) plus live GeoIP filtering
+(SPEC.md §3.5 / §5.3 step 7) and the **rating filter «bubble» step 5** (§5.3, default OFF;
+out-of-zone → BLOCK, in-zone → normal pipeline). The one intermediate SPEC.md §5.3 step still
+unbuilt is the ccTLD block (§5.2, Фаза 5). (There is no "voter scope" step any more — §5.1 was
+removed.) Startup also spawns three detached `#[cfg(windows)]` watchdog tasks (heartbeat pipe
+server, `service.hb` touch, the in-memory `service→watcher` decision loop — §7.1 #7: it acts and
+logs but never persists, so that direction's `GaveUp` is **not durable** — the restart budget
+resets on every service restart, a symmetric un-fixable-without-§7.1-#7-violation counterpart to
+the watcher→service `restored` path).
+
+The whole startup/serve-until-shutdown sequence lives in `orchestrate::run` (a lib module, `pub
+async fn run()`), not `main.rs` — `main.rs` is a 3-line shim (`dnsqb_service::run().await`).
+**`orchestrate::run` is called only from `dnsqb-service`'s own `main.rs`** — `dnsqb-watcher` links
+the same lib but must never call `run()` or its private `run_service_to_watcher_watchdog` (§7.1
+#7's single-writer invariant depends on that boundary now being enforced by "who actually calls
+this," not by two physically separate `main.rs` files).
+
 Modules under `crates/dnsqb-service/src/`:
 
 | Module | Responsibility |
 |---|---|
-| `orchestrate` | T-210 (Батч RV) — `pub async fn run()`, `dnsqb-service`'s whole startup + accept-loop-until-`/admin/shutdown` sequence (moved here verbatim from `main.rs`). Owns `serve_until_shutdown` (T-169 connection-gate + handshake/idle timeouts), the config/overrides/cert/cache/query-log/GeoIP startup loads, and `spawn_watchdog_tasks`/`spawn_flag_watchers`/`spawn_public_http_tasks`. `main.rs` is now a 3-line shim calling `run()`. Called **only** from `dnsqb-service`'s own `main.rs` — see this section's own T-210 paragraph for the §7.1 #7 boundary this implies for `dnsqb-watcher` |
-| `admission` | T-169 — `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()` (cumulative), `active()` (max − available, live). Lives on `AppState` (`connection_gate()`); `main.rs`'s accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling; `live_stats` reads both counters into `AdminStats` |
-| `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability, filtering_paused, rating_filter }` bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read. `outcome.filters_unreachable` (T-155) → `DecisionSource::BaselineFallback`, never cached. **Step 5 rating filter (T-124):** `rating_filter_step` after the cache read, before `resolve` — `RatingFilterView { lists, personal, removed }` snapshots (`personal` — T-138, Батч 4.5, the personal learned zone, checked as a second independent `zone_match` call on a `lists` miss); out-of-zone → `rating_filter_block_with_meta` (`DecisionSource::RatingFilter`, **not cached**); in-zone exact (hygiene-eligible on whichever `ZoneLists` matched) + quorum `Block` → `QueryLogMeta.zone_removal` (lazy-hygiene action signal, not a log field) |
+| `orchestrate` | `pub async fn run()` — the whole startup + accept-loop-until-`/admin/shutdown` sequence. Owns `serve_until_shutdown` (connection-gate + handshake/idle timeouts), the config/overrides/cert/cache/query-log/GeoIP startup loads, and `spawn_watchdog_tasks`/`spawn_flag_watchers`/`spawn_public_http_tasks`. Called only from `dnsqb-service`'s own `main.rs` — see the §7.1 #7 boundary note above |
+| `admission` | `ConnectionGate` (bounded-concurrency backstop, SPEC.md §1.1): `tokio::sync::Semaphore` (lock-free permits) + `AtomicU64` reject count, **no** `Mutex`/`Arc<Mutex>`. `try_admit() -> Option<OwnedSemaphorePermit>` (owned so it survives `tokio::spawn`; releases on `Drop`), `rejected_count()` (cumulative), `active()` (max − available, live). Lives on `AppState` (`connection_gate()`); the accept loop calls `try_admit` before each `tokio::spawn`, `drop(stream)` (TCP-close before TLS) at the ceiling; `live_stats` reads both counters into `AdminStats` |
+| `pipeline` | `handle_query` request flow (takes `UpstreamContext { timeout, baseline_url, serve_baseline_fallback, reachability, filtering_paused, rating_filter }` bundle); `invalidate_changed` (cache eviction on override-list reload). Offline (T-152) → `offline_servfail_with_meta` before cache read. `outcome.filters_unreachable` (T-155) → `DecisionSource::BaselineFallback`, never cached. **Step 5 rating filter:** `rating_filter_step` after the cache read, before `resolve` — `RatingFilterView { lists, personal, removed }` snapshots (`personal` — the personal learned zone, checked as a second independent `zone_match` call on a `lists` miss); out-of-zone → `rating_filter_block_with_meta` (`DecisionSource::RatingFilter`, **not cached**); in-zone exact (hygiene-eligible on whichever `ZoneLists` matched) + quorum `Block` → `QueryLogMeta.zone_removal` (lazy-hygiene action signal, not a log field) |
 | `quorum` | OR-logic `resolve(&[ProviderEntry], baseline_url)` over a runtime voter list (T-72/T-73, T-154); `evaluate(BlockSignature, &Message, &[SinkholeNet])` (3 heuristics `NullIp` / `NxdomainVsBaseline` / `NullIpOrNxdomain`, **+ T-175 sinkhole-prefix branch**: an A/AAAA answer inside a preset's `upstream::sinkhole_nets_for(id)` prefix (v4 or v6; IPv4-mapped AAAA unwrapped) → `Signal::NeedsBaseline`, composes with the signature); `is_blocked` / `known_signal` also carry the `&[SinkholeNet]` param; early-return via `FuturesUnordered`; `VoterRecord { provider_id: String, .. }` / `VoterVerdict`. `QuorumOutcome` carries `filters_unreachable: bool` (every enabled voter `!Responded` — computed in `finalize_outcome` + early-block from raw `VoterOutcome`s, can coexist with a `Block`) and `baseline_answer: Option<Message>` |
 | `baseline_selector` | T-154(b) pure: `BASELINE_CHAIN` (Cloudflare Unfiltered → Quad9 Unsecured → Google, §3.4); `BaselineSelector` — sticky failover after `SWITCH_THRESHOLD`=3 consecutive full failures, `should_retry_primary` + `RETRY_PRIMARY_AFTER`=300s auto-return with hysteresis; `record(now, url_used, BaselineHealth) -> Option<BaselineEvent>`. Reader = hot path (`current()`); writer = the reachability prober |
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 30s only when both Online, else recheck 3s — so a building outage still probes fast); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
@@ -364,28 +64,28 @@ Modules under `crates/dnsqb-service/src/`:
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (7 producible: +`BaselineFallback` T-155 — the one whose `voters` is **not** empty; +`RatingFilter` T-124), `LogFilter` search, `clear`; `restore(entries, now)` (T-146 — seeds from `query-log.enc`, re-applies both the 1000/24h bounds) |
-| `rating_filter` | T-124 — pure step-5 core (SPEC.md §5.3). `ZoneSourceKind` (`CountryTopN(cc)`/`Global`/`GovernmentTopN(cc)`/`SciEdu`/`Personal` — T-122/T-123 Батч 4.2, T-138 Батч 4.5; closed enum now, all four kinds shipped), `ZoneSource { kind, registrables: HashSet }`, `ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — one suffix walk, both the membership test and the exact-match identity for lazy hygiene; a hit on any suffix in the union = in zone. **No PSL** — the published lists are registrable-only, and `curate_topn` skips bare public suffixes (`overrides::suffix_matches` precedent). **Blanket-suffix entries (Батч 4.2):** a `GovernmentTopN`/`SciEdu` source can hold a whole registrar-restricted domain space (`gov.ua`, `gov`, `edu`, `int`) as one entry — the same PSL-free suffix walk then covers every subdomain automatically. `ZoneSourceKind::hygiene_eligible()` (`false` for these two, `true` for the CrUX-derived kinds **and** `Personal`) + `ZoneLists::is_hygiene_eligible()` gate T-108 lazy hygiene at **two** layers — `zone_match` itself only lets `removed` suppress a hygiene-eligible source's match (structural, not just caller discipline), and `pipeline::rating_filter_step`'s `exact` additionally requires eligibility — so a false-positive quorum block of the bare suffix itself can never evict the whole namespace it covers. **`Personal` (T-138, Батч 4.5) deliberately lives in its own `AppState.rating_filter_personal_zone: Arc<ZoneLists>`, not folded into this module's own `ZoneLists`** — see that module's own doc/entry below and `pipeline`'s row above |
+| `rating_filter` | pure step-5 core (SPEC.md §5.3). `ZoneSourceKind` (`CountryTopN(cc)`/`Global`/`GovernmentTopN(cc)`/`SciEdu`/`Personal` — closed enum, all four kinds shipped), `ZoneSource { kind, registrables: HashSet }`, `ZoneLists(Vec<ZoneSource>)`. `zone_match(host, removed) -> Option<&str>` — one suffix walk, both the membership test and the exact-match identity for lazy hygiene; a hit on any suffix in the union = in zone. **No PSL** — the published lists are registrable-only, and `curate_topn` skips bare public suffixes (`overrides::suffix_matches` precedent). **Blanket-suffix entries:** a `GovernmentTopN`/`SciEdu` source can hold a whole registrar-restricted domain space (`gov.ua`, `gov`, `edu`, `int`) as one entry — the same PSL-free suffix walk then covers every subdomain automatically. `ZoneSourceKind::hygiene_eligible()` (`false` for these two, `true` for the CrUX-derived kinds **and** `Personal`) + `ZoneLists::is_hygiene_eligible()` gate lazy hygiene at **two** layers — `zone_match` itself only lets `removed` suppress a hygiene-eligible source's match (structural, not just caller discipline), and `pipeline::rating_filter_step`'s `exact` additionally requires eligibility — so a false-positive quorum block of the bare suffix itself can never evict the whole namespace it covers. **`Personal` deliberately lives in its own `AppState.rating_filter_personal_zone: Arc<ZoneLists>`, not folded into this module's own `ZoneLists`** — see the `pipeline` row above and the `personal_zone_*` rows below |
 | `topn_download` | T-124 pure helpers — `TOPN_RAW_BASE` (`raw.githubusercontent.com/.../data/topn/`, the T-105 stable-URL contract), `AVAILABLE_TOPN_LISTS: &[&str]` (`ua`/`us`/`de`/`pl`/`gb`/`global` — the distribution contract; surfaced as `RatingFilterStatusView.available_lists` **and**, since T-127, gates config loading via `validate_rating_filter_lists`, so *removing* a code is a breaking change), `list_url`/`sha256_sidecar_url`, `parse_list` (skip `#`/blank, lowercase, dedup), `verify_sha256` (sha256sum-style first token, 64 hex; a malformed sidecar never matches). Mirrors `geoip_download` |
-| `topn_updater` | T-124 — `run_topn_updater` (`loop { refresh_all_lists; park_until_due }`, `TOPN_CHECK_INTERVAL` 24h, `Notify` wake on `/admin/reset` **and `POST /admin/rating-filter`**); `refresh_one_list` fetch→verify→`paths::write_atomic(<app-data>/topn/<list>.txt)`→`parse_list`→`ZoneSource`; failed list keeps last-known-good. `load_zone_from_disk` seeds the bubble at startup (empty on fresh install, like `load_geoip_state(None)`). **Batch 4.4 (`173cf56`): always spawned by `main.rs` whenever an app-data dir exists** — no longer gated on `[rating_filter]` enabled+non-empty; `refresh_all_lists` re-reads the config snapshot each cycle and returns immediately while disabled (closes the "enable needs a restart" gap). **No DNS.** Mirrors `geoip_updater` |
-| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (T-169 — `LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (T-155, default `false`) + `persist_query_log` (T-146) + `persist_cache` (T-97) bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors. `validate_rating_filter_lists` (T-124, tightened T-127): two ordered checks — shape (`InvalidRatingFilterList`, `"uka"`) then `topn_download::AVAILABLE_TOPN_LISTS` membership (`UnknownRatingFilterList`, `"fr"` — well-formed, no dataset); both fatal at load / `400` on the route, so `lists ⊆ available_lists` always holds (DECISIONS.md 2026-09-10). Removing a code from `AVAILABLE_TOPN_LISTS` is now a breaking config change. **`[personal_zone]` (T-138, Батч 4.5) — `PersonalZoneConfig`, `Copy`:** `enabled` + `frequency_window_days`/`frequency_top_n`/`regularity_window_days`/`regularity_min_days`, `validate_personal_zone` (window fields `1..=90` — `MAX_PERSONAL_ZONE_WINDOW_DAYS`, `frequency_top_n != 0`, `1 <= regularity_min_days <= regularity_window_days`). Also **no admin route**, but deliberately **not** carried through `PersistTarget` — every write site reads a live `AppState.personal_zone_config_snapshot()` instead (see `dispatch`'s own row for why, and DECISIONS.md 2026-09-11) |
+| `topn_updater` | `run_topn_updater` (`loop { refresh_all_lists; park_until_due }`, `TOPN_CHECK_INTERVAL` 24h, `Notify` wake on `/admin/reset` **and `POST /admin/rating-filter`**); `refresh_one_list` fetch→verify→`paths::write_atomic(<app-data>/topn/<list>.txt)`→`parse_list`→`ZoneSource`; failed list keeps last-known-good. `load_zone_from_disk` seeds the bubble at startup (empty on fresh install, like `load_geoip_state(None)`). **Always spawned by `main.rs` whenever an app-data dir exists** — not gated on `[rating_filter]` enabled+non-empty; `refresh_all_lists` re-reads the config snapshot each cycle and returns immediately while disabled (enabling via the route needs no restart). **No DNS.** Mirrors `geoip_updater` |
+| `config` | `ResolverConfig` (TOML); `[providers]` / `[cache]` / `[geoip]` / `[limits]` (`LimitsConfig`: `max_concurrent_connections` + `handshake_timeout_ms` + `idle_timeout_ms`, `Copy`, live type holds `Duration`s, `0`/`>1_000_000` = fatal load error) tables + `serve_baseline_when_filters_unreachable` bool (default `false`) + `persist_query_log` + `persist_cache` bools (default `false`, **no admin route** — each carried through every rewrite via `PersistTarget` cross-field-read); per-field validation, loud errors. `validate_rating_filter_lists`: two ordered checks — shape (`InvalidRatingFilterList`, `"uka"`) then `topn_download::AVAILABLE_TOPN_LISTS` membership (`UnknownRatingFilterList`, `"fr"` — well-formed, no dataset); both fatal at load / `400` on the route, so `lists ⊆ available_lists` always holds. Removing a code from `AVAILABLE_TOPN_LISTS` is a breaking config change. **`[personal_zone]` — `PersonalZoneConfig`, `Copy`:** `enabled` + `frequency_window_days`/`frequency_top_n`/`regularity_window_days`/`regularity_min_days`, `validate_personal_zone` (window fields `1..=90` — `MAX_PERSONAL_ZONE_WINDOW_DAYS`, `frequency_top_n != 0`, `1 <= regularity_min_days <= regularity_window_days`). Also **no admin route**, but deliberately **not** carried through `PersistTarget` — every write site reads a live `AppState.personal_zone_config_snapshot()` instead (see the `dispatch` row below for why) |
 | `encrypted_file` | T-146 pure AEAD codec: `seal`/`open` over `XChaCha20Poly1305`; 6-byte cleartext header (`DQF1` / `FileKind` / version) is the AAD, validated **before** the AEAD open (`UnsupportedVersion` distinct from `Decrypt`); `EncryptedFileError` payload-free |
 | `persist_dto` | T-146 serde mirrors of `LogEntry` (`SystemTime`↔u64 millis, `RecordType`↔u16, `error_kind` `&'static str` re-interned through a closed set); `PersistedFileV1` wrapper (struct, additive); `to_json`/`from_json` |
 | `log_persist` | T-146: `persist_snapshot` (serialize→seal→`write_atomic`, testable core); `load_persisted_query_log` (startup — mint/read key, decrypt, seed; missing-key-with-file / corrupt → rename `.orphaned-<ts>` + empty, never overwrite); `run_query_log_persister` (60s + shutdown flush, thin impure shell). `paths::write_atomic` = temp + `sync_all` + `fs::rename` (Windows atomic-replace, scratch-probed). `rename_orphan` is `pub(crate)`, reused by `cache_persist` |
 | `cache_persist_dto` | T-97 serde form of the verdict cache. `PersistedCacheEntry { domain, qtype: u16, expiry_millis: u64, verdict: PCacheVerdict }` — `expiry_millis` is an **absolute wall-clock** deadline (the live `CacheEntry.expires_at` is a monotonic `Instant`, unserialisable); `to_json(snapshot, now_wall, now_mono)` filters `Verdict::Block` + non-fresh + converts `Instant`→wall (clocks injected for tests); `from_json(plaintext, now_wall)` drops any entry whose deadline already passed. `PCacheVerdict` keeps `Block` representable (format-stable) though `to_json` never emits it. `IpAddr` kept un-mirrored (has its own serde impl) |
 | `cache_persist` | T-97, sibling of `log_persist`: `persist_cache_snapshot` (→`seal(FileKind::Cache)`→`write_atomic`), `load_persisted_cache` (→`CacheInit { restore, flusher }`; independent `ciphertext_present` for `cache.enc`, shared `persistence-key`), `run_cache_persister` (60s + shutdown). `AppState::cache_snapshot`/`restore_cache` pass-throughs (lock dropped before `.await`) |
-| `zone_removal_persist` | T-108, Батч 4.5, another `log_persist` sibling: `zone-removals.enc`, shared `persistence-key` (operational state of an already-opted-in feature, not new personal disclosure — see `personal_zone_persist`'s row for the contrast). Gated on `[rating_filter].enabled`, re-checked every flush tick (not just startup) so toggling it off stops new flushes without a restart |
-| `personal_zone_stats` | T-138, Батч 4.5, pure core (no I/O). `DayIndex` (days-since-epoch, saturating both directions — never panics on a clock jump or a stale restored snapshot); `PersonalZoneStats` — per-domain fixed-length daily-count ring (`window_len_from_config` = `max(frequency_window_days, regularity_window_days)`), `MAX_TRACKED_DOMAINS = 2000` provable cap with LRU-ish eviction by `last_visited`. `record_visit` is the hot-path entry (`rotate_day` first, `saturating_add`, no allocation on an already-tracked hostname). `derive_qualifying_domains` — the SPEC.md §5.1.1 frequency-top-N **union** regularity-X-of-Y criteria. Records are queried *hostnames*, not registrables (no PSL) |
-| `personal_zone_persist` | T-138, Батч 4.5, `log_persist` sibling but sealed with its own, separate `personal-zone-key` (not the shared `persistence-key` — higher privacy tier). One task does rotate+republish+persist every cycle (no separate "did the day change" branch — recomputing is cheap at `MAX_TRACKED_DOMAINS` scale). `AppState.rating_filter_personal_zone: Arc<ZoneLists>` is fully independent of `rating_filter_zone` (different writers/cadences — see `rating_filter`'s own row) |
-| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation (T-48); `cert.pem` on disk, private key in the OS secret store via `key_store` (T-67 — Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` now holds **four** secrets — +`persistence-key:<hash>` (T-146, `load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; seals `query-log.enc` (T-146), `cache.enc` (T-97), **and** `zone-removals.enc` (T-108, Батч 4.5), `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`), +`personal-zone-key:<hash>` (T-138, Батч 4.5, `load_or_create_personal_zone_key` — a **deliberately separate** key sealing only `personal-zone.enc`, higher privacy tier than the three sharing `persistence-key`; both public functions now share one private `load_or_create_symmetric_key` mint-or-read core). `paths::write_atomic` (T-146) lives here too; `cert::migrate_legacy_key_into_store` copies a pre-T-67 plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first); the T-50 `icacls` ACL helpers were removed in T-163 (nothing writes a plaintext secret to disk any more); `CurrentUser\Root` trust-store install/uninstall (T-49) + read-only `trust_store::is_trusted(cert_path)` (T-191 — shared `trusted_state` core with `ensure_installed`, `certutil -dump`/`-store` only, no route, called directly by the tray icon's trust-watch thread; **all `certutil` spawns go through `certutil_command` with `CREATE_NO_WINDOW`, T-194** — else the background poll flashes a console window); `cert_rotation::rotate_certificate` (T-69) = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, no new primitive, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
+| `zone_removal_persist` | another `log_persist` sibling: `zone-removals.enc`, shared `persistence-key` (operational state of an already-opted-in feature, not new personal disclosure — see `personal_zone_persist`'s row for the contrast). Gated on `[rating_filter].enabled`, re-checked every flush tick (not just startup) so toggling it off stops new flushes without a restart |
+| `personal_zone_stats` | pure core (no I/O). `DayIndex` (days-since-epoch, saturating both directions — never panics on a clock jump or a stale restored snapshot); `PersonalZoneStats` — per-domain fixed-length daily-count ring (`window_len_from_config` = `max(frequency_window_days, regularity_window_days)`), `MAX_TRACKED_DOMAINS = 2000` provable cap with LRU-ish eviction by `last_visited`. `record_visit` is the hot-path entry (`rotate_day` first, `saturating_add`, no allocation on an already-tracked hostname). `derive_qualifying_domains` — the SPEC.md §5.1.1 frequency-top-N **union** regularity-X-of-Y criteria. Records are queried *hostnames*, not registrables (no PSL) |
+| `personal_zone_persist` | `log_persist` sibling but sealed with its own, separate `personal-zone-key` (not the shared `persistence-key` — higher privacy tier). One task does rotate+republish+persist every cycle (no separate "did the day change" branch — recomputing is cheap at `MAX_TRACKED_DOMAINS` scale). `AppState.rating_filter_personal_zone: Arc<ZoneLists>` is fully independent of `rating_filter_zone` (different writers/cadences — see `rating_filter`'s own row) |
+| `cert` / `paths` / `trust_store` / `cert_rotation` / `key_store` | self-signed leaf cert generation; `cert.pem` on disk, private key in the OS secret store via `key_store` (Windows Credential Manager through `keyring`; entry name = `dns-quorum-filter`/`doh-tls-private-key:<sha1(app-data dir)[..8]>` so a scratch instance never collides). `key_store` holds **four** secrets — `persistence-key:<hash>` (`load_or_create_persistence_key` — 32-byte `XChaCha20Poly1305` key; seals `query-log.enc`, `cache.enc`, **and** `zone-removals.enc`, `FileKind` in the AAD keeps them distinct; `getrandom` failure → `KeyStoreError::Rng`, no fallback; a stored key that isn't 32 bytes → `MalformedKey`; `orphaned_ciphertext` flag when a file exists but no key does — the "created exactly once" invariant rests on `instance::acquire`), `personal-zone-key:<hash>` (`load_or_create_personal_zone_key` — a **deliberately separate** key sealing only `personal-zone.enc`, higher privacy tier than the three sharing `persistence-key`; both public functions share one private `load_or_create_symmetric_key` mint-or-read core). `paths::write_atomic` lives here too; `cert::migrate_legacy_key_into_store` copies a pre-existing plaintext `key.pem` into the store once, and `discard_legacy_key_file` zero-and-unlinks it **only after** `tls` proves the stored key loads against `cert.pem` (so a mismatched plaintext key is never destroyed first — no plaintext-secret-write code path exists any more, see the gotchas section's `icacls` entry); `CurrentUser\Root` trust-store install/uninstall + read-only `trust_store::is_trusted(cert_path)` (shared `trusted_state` core with `ensure_installed`, `certutil -dump`/`-store` only, no route, called directly by the tray icon's trust-watch thread; **all `certutil` spawns go through `certutil_command` with `CREATE_NO_WINDOW`** — else the background poll flashes a console window); `cert_rotation::rotate_certificate` = ordered composition generate → `uninstall` (CN-exhaustive) → persist → `ensure_installed`, clear-before-persist forced by the shared CN, tray-only, needs a manual `dnsqb-service` restart to take effect |
 | `tls` | `load_or_generate_server_config` (runs the one-time `key.pem` migration, then loads `cert.pem` + the stored key, else regenerates — `CertOrigin::{Loaded,GeneratedFirstRun,Replaced}`) → `rustls::ServerConfig` (always `builder_with_provider(aws_lc_rs::default_provider())`) |
-| `local_state` | T-70 (Батч 3.8): `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
+| `local_state` | `remove_all(app_data_dir: Option<&Path>) -> UninstallReport` — the in-app "prepare for removal" MSIX needs (no uninstall-time code hook). Calls `trust_store::uninstall()` + `key_store::delete_secret` for all 3 keyring entries; each of the 4 artifacts reports independently (`ArtifactOutcome::{Removed,NotPresent,Failed(&'static str)}`), never one collapsed bool. `remove_all`/its private `remove_cert` are **deliberately untested** — `remove_cert` always runs the real `trust_store::uninstall()` (a `CurrentUser\Root` sweep), the same real-external-resource line `trust_store`'s and `cert_rotation`'s own tests refuse to cross; `remove_secret` (the real Removed/NotPresent/Failed decision) is tested directly instead |
 | `listener` | `bind_listener` / `BindError`; `127.0.0.1`-only; explicit error on port conflict, never a silent fallback |
-| `logging` | T-184 (Батч 3.12): `init_logging(role, app_data_dir)` — all 3 binaries call it once → `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`. Dependency-free `tracing_subscriber::fmt().with_writer(Arc<File>)` (no `tracing-appender`), fixed INFO, no `env-filter`; startup rotation to `.log.old` at 5 MiB. Debug build also writes stdout. Exists because T-181 removed the console — the file is the only diagnostic |
-| `lifecycle` | T-185 (Батч 3.12) / **T-193**: `stop.flag` (pause) / `quit.flag` (exit — watcher stops the service + exits). `set_/clear_/…_flag(app_data_dir)`; presence *is* the signal, contents unread. **Separate files, not `watchdog-state.json`** (§7.1 #7 single-writer kept). `dnsqb-watcher::main` clears both on startup → a fresh app launch lifts a pause. **T-193:** `stop.flag` is now read by `dnsqb-service` itself (`pause_watch`, below) — a pause keeps the service **up** serving the unfiltered baseline; the watcher no longer freezes or special-cases it. (DECISIONS.md 2026-09-07 + 2026-09-08) |
+| `logging` | `init_logging(role, app_data_dir)` — all 3 binaries call it once → `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`. Dependency-free `tracing_subscriber::fmt().with_writer(Arc<File>)` (no `tracing-appender`), fixed INFO, no `env-filter`; startup rotation to `.log.old` at 5 MiB. Debug build also writes stdout. Exists because T-181 removed the console — the file is the only diagnostic |
+| `lifecycle` | `stop.flag` (pause) / `quit.flag` (exit — watcher stops the service + exits). `set_/clear_/…_flag(app_data_dir)`; presence *is* the signal, contents unread. **Separate files, not `watchdog-state.json`** (§7.1 #7 single-writer kept). `dnsqb-watcher::main` clears both on startup → a fresh app launch lifts a pause. `stop.flag` is read by `dnsqb-service` itself (`pause_watch`, below) — a pause keeps the service **up** serving the unfiltered baseline; the watcher no longer freezes or special-cases it (DECISIONS.md) |
 | `pause_watch` | T-193: `run_pause_watcher(app_data, state)` — detached 1 s poll of `lifecycle::stop.flag` → `AppState::filtering_paused` (`RwLock<bool>`, `Copy`, no `Arc` — mirrors `reachability`). `handle_query` snapshots it into `UpstreamContext.filtering_paused` and shares the `!ProviderEntry::any_enabled` branch: paused ⇒ baseline pass-through, never cached, `DecisionSource::Quorum` + empty voters. Providers stay *enabled* (resume = zero config change). Overrides + offline fast path still win above it. Same "detached loop publishes a `Copy` value to `AppState`" shape as `reachability`; loop itself untested by precedent |
-| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate`, T-169 — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health`, T-86 — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (T-95 — reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog`. **T-127 (Батч 4.4):** `POST /admin/rating-filter` → `serve_admin_rating_filter` → `apply_rating_filter_change` (holds `persist_lock` across validate→swap→cache-rebuild-if-still-on→persist; `wake_rating_filter_refresh`; response built after the guard drops). `rating_filter_is_active(&RatingFilterConfig, &ZoneLists) -> bool` = `enabled && !zone.is_empty()` — the **single** authority, called by both `resolve_doh_request` (pipeline gate) and `rating_filter_status_view` (the 3 `AdminStatusResponse` builders), so the badge and the pipeline can never disagree. **Deliberately UNCHANGED by Батч 4.5 (T-138, advisor-caught, DECISIONS.md 2026-09-11)** — takes only the downloaded `ZoneLists`, never the personal one; the personal zone widens an already-active bubble, never activates one alone. **Not** in `FUZZ_EXCLUDED_ROUTES` (handler touches no external resource). **`record_personal_visit`/`restore_personal_zone`/`rotate_and_republish_personal_zone`/`restore_rating_filter_removed` (T-138/T-108, Батч 4.5)** on `AppState` — see `personal_zone_stats`/`personal_zone_persist`/`zone_removal_persist`'s own rows. Every `ResolverConfig`-literal write site (the 4 non-`/admin/rating-filter` config routes) reads a **live** `personal_zone_config_snapshot()`, not a `PersistTarget` echo — see DECISIONS.md 2026-09-11 for the pre-existing `rating_filter` staleness gap this deliberately didn't repeat |
-| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (T-95: `RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). **T-176:** the page is now basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, **rating-filter (T-127/T-111, Батч 4.4)**, danger-zone) — IDs unchanged, `main.js` cycles untouched. **Батч 4.4:** `RatingFilterStatusView`/`ZoneListStatusView`/`RatingFilterConfigUpdate` DTOs + `AdminClient::set_rating_filter`; `#rating-filter-body` card (own fetch/render off `GET /admin/status`, not the 2s poll — the zone combobox is a free-text input; `renderRatingFilterBadge` from `render()` *is* on the poll) + `#rating-filter-badge` slot. Palette is now Catppuccin Latte/Mocha (`style.css` + mockup). Mockup: `mockups/gui-dashboard.html` (user-approved, incl. Артборд E); UI-SPEC.md §2.1/§3.6. **T-204 (finding 3-B):** the `/admin/ui` hero's decisive priority ladder is now **server-side** — `AdminStatusResponse.hero_state: HeroStateView` (8 variants) computed by pure `admin::compute_hero_state(watchdog, network, paused, has_active_provider, cert)` (called from both status builders, like `rating_filter_is_active`); `cert` is `Option<CertTrustView>` — `None` "not yet polled" → `Protected`, never a fabricated `CertUnknown` (T-188 lesson). `ProvidersResponse` += `category_states: Vec<CategoryFilterView>` (Off/Partial/On fold, ex-JS `categoryState()`) + `master_switch_targets: Vec<Category>` (categories with ≥1 configured voter — the master-switch adult-opt-in guard, T-170). `main.js` is now pure render (`HERO_PRESENTATION` map + `heroPresentation()`; `SERVICE_UNREACHABLE` synthesised client-side on a failed fetch — the one state the server can't self-report). Decisive assertions live in `admin::hero_and_category_tests` (real Rust tests), not `MAIN_JS.contains(...)`. **Authority boundary:** `hero_state` drives the `/admin/ui` hero only — `dnsqb-tray/status.rs::from_response` keeps its own deliberately different ranking (Paused above the watchdog states, DECISIONS.md 2026-09-07/08); do not unify the tray onto this field. **T-205 (finding 3-A):** the `/admin/*` DTO is now versioned — `pub const ADMIN_DTO_SCHEMA_VERSION: u32` + `AdminStatusResponse.schema_version` (`#[serde(default)]` → `0` from a pre-versioning service); **every additive field carries `#[serde(default)]`** (with a `Default`/`#[default]` on its type — safe zero: `network`→`ONLINE`, `hero_state`→`PROTECTED`, `rating_filter`→off, …) so a newer consumer decoding an older service's response falls back instead of erroring; the load-bearing Ф1 fields (`active_providers`/`timeout_mode`/`timeout_ms`/`port`/`stats`/`persisted`) stay strict. `AdminClient::{status,apply,reset}` `tracing::warn!` on a version mismatch, never fail. When you add an `AdminStatusResponse` field: bump the const AND add `#[serde(default)]` |
-| `watchdog/` (SPEC.md §7 — Батчі 3.1–3.3) | **Primitives (3.1):** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly (3.3):** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param; loop-level T-93/T-94 tests here); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` — T-150 idempotency; **T-187** added the impure shell `ensure_sibling_running(app_data, role)` = read pid file → `verify_pid_alive` → `plan_launch` → `spawn_sibling`, re-exported from `lib.rs`, called by both `dnsqb-watcher` and the `dnsqb-tray` safety net). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
+| `dispatch` | route table (`ROUTES`), `serve` (generic over body type for testability), `resolve_doh_request`, `AppState<C>` (holds `in_flight: AtomicU64` **and** `gate: ConnectionGate` — `live_stats` fills `AdminStats.{in_flight, rejected_connections, active_connections}` from both); `serve_health` (`GET /health` — runs the local pipeline prefix for a sentinel domain, no upstream call); `read_watchdog_view(paths, now)` (reads `watchdog-state.json`, projects to `Option<WatchdogStatusView>`, stale/absent/internal-state → `None`, `now` injectable) fills `AdminStatusResponse.watchdog`. `POST /admin/rating-filter` → `serve_admin_rating_filter` → `apply_rating_filter_change` (holds `persist_lock` across validate→swap→cache-rebuild-if-still-on→persist; `wake_rating_filter_refresh`; response built after the guard drops). `rating_filter_is_active(&RatingFilterConfig, &ZoneLists) -> bool` = `enabled && !zone.is_empty()` — the **single** authority, called by both `resolve_doh_request` (pipeline gate) and `rating_filter_status_view` (the 3 `AdminStatusResponse` builders), so the badge and the pipeline can never disagree. **Deliberately takes only the downloaded `ZoneLists`, never the personal one** — the personal zone widens an already-active bubble, never activates one alone (an earlier draft that also checked the personal zone's emptiness here would let an `enabled=true`, empty-`lists` config get silently activated by personal-zone entries alone). **Not** in `FUZZ_EXCLUDED_ROUTES` (handler touches no external resource). `record_personal_visit`/`restore_personal_zone`/`rotate_and_republish_personal_zone`/`restore_rating_filter_removed` on `AppState` — see `personal_zone_stats`/`personal_zone_persist`/`zone_removal_persist`'s own rows. Every `ResolverConfig`-literal write site (the 4 non-`/admin/rating-filter` config routes) reads a **live** `personal_zone_config_snapshot()`, not a `PersistTarget` echo — deliberately not repeating the `rating_filter` field's own pre-existing `PersistTarget` staleness gap (DECISIONS.md) |
+| `admin` / `admin_ui` | `/admin/*` JSON DTOs + `AdminClient` (incl. `AdminClient::health()` → `HealthResponse`, `set_category_enabled`); `WatchdogStatusView` (`RESTARTING` [incl. `BackoffWait`] / `GAVE_UP`, a 2-variant UI projection of the 7-variant `WatchdogState`, narrower than §7.1 #7 by design); embedded browser config page (`include_str!` HTML/CSS/JS, strict CSP, no `unsafe-inline`). Basic view (hero protection status + master/category toggles + browser-setup card, fan-out/pass-through notices kept in basic) + a native `<details>` "Розширені" wrapping the technical cards (timeout mode, per-provider, cache, geoip, rating-filter, danger-zone). `RatingFilterStatusView`/`ZoneListStatusView`/`RatingFilterConfigUpdate` DTOs + `AdminClient::set_rating_filter`; `#rating-filter-body` card (own fetch/render off `GET /admin/status`, not the 2s poll — the zone combobox is a free-text input; `renderRatingFilterBadge` from `render()` *is* on the poll) + `#rating-filter-badge` slot. Mockup: `mockups/gui-dashboard.html`; UI-SPEC.md §2.1/§3.6. The `/admin/ui` hero's decisive priority ladder is **server-side** — `AdminStatusResponse.hero_state: HeroStateView` (8 variants) computed by pure `admin::compute_hero_state(watchdog, network, paused, has_active_provider, cert)` (called from both status builders, like `rating_filter_is_active`); `cert` is `Option<CertTrustView>` — `None` "not yet polled" → `Protected`, never a fabricated `CertUnknown`. `ProvidersResponse` += `category_states: Vec<CategoryFilterView>` (Off/Partial/On fold) + `master_switch_targets: Vec<Category>` (categories with ≥1 configured voter — the master-switch adult-opt-in guard). `main.js` is pure render (`HERO_PRESENTATION` map + `heroPresentation()`; `SERVICE_UNREACHABLE` synthesised client-side on a failed fetch — the one state the server can't self-report). Decisive assertions live in `admin::hero_and_category_tests` (real Rust tests), not `MAIN_JS.contains(...)`. **Authority boundary: `hero_state` drives the `/admin/ui` hero only — `dnsqb-tray/status.rs::from_response` keeps its own deliberately different ranking (Paused above the watchdog states); do not unify the tray onto this field.** The `/admin/*` DTO is versioned — `pub const ADMIN_DTO_SCHEMA_VERSION: u32` + `AdminStatusResponse.schema_version` (`#[serde(default)]` → `0` from a pre-versioning service); **every additive field carries `#[serde(default)]`** (with a `Default`/`#[default]` on its type — safe zero: `network`→`ONLINE`, `hero_state`→`PROTECTED`, `rating_filter`→off, …) so a newer consumer decoding an older service's response falls back instead of erroring; the load-bearing Ф1 fields (`active_providers`/`timeout_mode`/`timeout_ms`/`port`/`stats`/`persisted`) stay strict. `AdminClient::{status,apply,reset}` `tracing::warn!` on a version mismatch, never fail. **When you add an `AdminStatusResponse` field: bump the const AND add `#[serde(default)]`.** |
+| `watchdog/` (SPEC.md §7) | **Primitives:** `instance` (T-92: `Role` ∈ service/watcher/tray, `acquire` → `share_mode(0)` `<role>.lock` guard, `write_pid_file`/`read_pid_file`); `frame`/`channel` (T-84 pure: 20-byte `Frame`; `channel_status(misses)` → `Signal\|NoSignal` at `MISS_THRESHOLD`=3, no `Dead`); `pipe` (T-84 `#[cfg(windows)]` named-pipe; server `respond_once` + `recreate`, client `ping`); `heartbeat_file` (T-85: `touch`/`read` + pure `is_stale(now, mtime, threshold)`). **Decision core (3.2):** `vote` (T-87/T-88: two fixed-arity fns, never a slice — `vote_watcher_checks_service` 2-of-3, `vote_service_checks_watcher` unanimous → `Liveness`); `backoff` (T-90: `next_backoff` over `[1,2,4,8,16]s`, cap 16); `budget` (T-91: `RestartBudget::register_attempt(now)` → `{Allowed,GaveUp}`, 5/600s rolling per-target; `::restored(window, attempts)` from persisted fields — a watcher restart doesn't reset the count); `pid_check` (T-89: `verify_pid_alive(pid, expected_exe)` → `{Alive,Gone,IdentityMismatch}` via `sysinfo`, PID **+** exe identity); `spawn` (pure `resolve_sibling_path` rejects non-absolute; thin `spawn_sibling` → `NotFound`, never PATH/CWD; no `kill`); `state` (`WatchdogState` 7-variant + `WatchdogTarget` 2-variant + `WatchdogStateFile` §7.1 #7 + atomic `write`/`read`; `last_error: Option<WatchdogErrorLabel>` closed enum); `transition` (pure total automaton step, returns next state only). **Assembly:** `loop_driver` (pure `LoopDriver::{new,restored}` + `tick(now, &ChannelObs) -> TickOutcome{state, effects: Vec<Effect>}` — owns miss counters / `RestartBudget` / backoff deadline / spawn-once latch; `Direction::{WatcherToService, ServiceToWatcher}` a param); `launcher` (pure `plan_launch(Option<&PidFile>, Option<PidCheck>) -> {AlreadyRunning, Spawn}` idempotency; the impure shell `ensure_sibling_running(app_data, role)` = read pid file → `verify_pid_alive` → `plan_launch` → `spawn_sibling`, re-exported from `lib.rs`, called by both `dnsqb-watcher` and the `dnsqb-tray` safety net). The running I/O shells live in the two `main.rs` (`#[cfg(windows)]`, untested by the `dnsqb-service` main precedent). |
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup; `GeoipSource` = DB-IP Lite (default) or MaxMind GeoLite2 (opt-in, Basic auth, `.tar.gz` extract — T-80). `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
@@ -393,163 +93,135 @@ write route, the full set enumerated in `dispatch::ROUTES` (a path/method not in
 never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset`,
 `/admin/shutdown`; `GET|POST /admin/overrides[/add|/remove]`, `/admin/cache-config[/apply]`,
 `/admin/geoip[/add|/remove]`, `GET|POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
-(T-162/T-163, MaxMind creds → OS secret store; POST stores then runs a save-time probe → `check`,
-and updates the live `GeoipSource` + wakes the updater; `refresh_health` on the view flags a key
-that started failing later), `GET /admin/providers`
-+ `POST /admin/providers/{add,remove,set-enabled,set-category-enabled}` (T-72/T-73; provider list
-edited here, **not** `/admin/config` — which carries `timeout_mode` +
-`serve_baseline_when_filters_unreachable` (T-155). `set-category-enabled` T-176 — flips every
-voter in one `Category` atomically, one `resolver_config.toml` write; turning on an empty
-`ADULT_CONTENT` adds `opendns-familyshield` in the same txn, `EMPTY_ADULT_CATEGORY_DEFAULT_PRESET`,
-DECISIONS.md 2026-09-06),
-`/admin/log[/clear]`; `POST /admin/rating-filter` (T-127 — `RatingFilterConfigUpdate
-{ enabled, lists }`, full replace; shares `persist_lock`; validates `lists` shape +
-`AVAILABLE_TOPN_LISTS` membership → `400`; wakes `run_topn_updater`; rebuilds the verdict
-cache when it leaves the filter on; **not** in `FUZZ_EXCLUDED_ROUTES`);
-`POST /admin/uninstall-local-state` (T-70 — no body fields, never touches
-`resolver_config.toml`);
-`GET /admin/cert-status` (T-188 — `CertStatusResponse { trusted: CertTrustView }`, three-state
-`TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate. **T-211:** now a pure read of
+(MaxMind creds → OS secret store; POST stores then runs a save-time probe → `check`, and updates
+the live `GeoipSource` + wakes the updater; `refresh_health` on the view flags a key that started
+failing later), `GET /admin/providers`
++ `POST /admin/providers/{add,remove,set-enabled,set-category-enabled}` (provider list edited
+here, **not** `/admin/config` — which carries `timeout_mode` +
+`serve_baseline_when_filters_unreachable`. `set-category-enabled` flips every voter in one
+`Category` atomically, one `resolver_config.toml` write; turning on an empty `ADULT_CONTENT` adds
+`opendns-familyshield` in the same txn, `EMPTY_ADULT_CATEGORY_DEFAULT_PRESET`, DECISIONS.md),
+`/admin/log[/clear]`; `POST /admin/rating-filter` (`RatingFilterConfigUpdate { enabled, lists }`,
+full replace; shares `persist_lock`; validates `lists` shape + `AVAILABLE_TOPN_LISTS` membership →
+`400`; wakes `run_topn_updater`; rebuilds the verdict cache when it leaves the filter on; **not**
+in `FUZZ_EXCLUDED_ROUTES`); `POST /admin/uninstall-local-state` (no body fields, never touches
+`resolver_config.toml`); `GET /admin/cert-status` (`CertStatusResponse { trusted: CertTrustView }`,
+three-state `TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate — a pure read of
 `AppState.cert_trust` (`RwLock<Option<CertTrustView>>` — `None` "never checked" ≠ `Some(Unknown)`,
 collapses to `UNKNOWN` on the wire), a cache kept warm by the detached `cert_watch::run_cert_trust_watch`
 60 s poll (`spawn_blocking(is_trusted)` on `<app-data>/cert.pem`); `/admin/install-cert` →
-`Trusted` and `/admin/uninstall-local-state` → `NotTrusted` poke it synchronously. No longer spawns
-`certutil` per call → **removed from `FUZZ_EXCLUDED_ROUTES`**) + `POST /admin/install-cert` (T-188 —
-`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
+`Trusted` and `/admin/uninstall-local-state` → `NotTrusted` poke it synchronously; spawns no
+`certutil` per call → **not** in `FUZZ_EXCLUDED_ROUTES`) + `POST /admin/install-cert`
+(`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
 `CurrentUser\Root` like `/admin/uninstall-local-state`; **stays** in `FUZZ_EXCLUDED_ROUTES` — mutating);
 `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
-**not** an admin route: `GET /health` (T-86, watchdog channel 3 — no CSRF gate, read-only,
+**not** an admin route: `GET /health` (watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
 creds are their own OS secret-store entry with a single writer (that one POST route), not part of
 `resolver_config.toml` — no shared lock.
-Every route that re-serializes `resolver_config.toml` shares
-`state.persist_lock` and reads the other fields' live values before saving — the cross-field-read
-discipline, the recurring bug class in this project (T-57 / T-139 / T-149 / T-47 / T-77).
+
+**Every route that re-serializes `resolver_config.toml` shares `state.persist_lock` and reads the
+other fields' live values before saving** — skipping this (writing one field from a stale
+in-memory copy of the rest) is this project's single most recurring bug class: reading a field
+live but not holding the lock across the read+write, or vice versa, silently discards a
+concurrent write to an unrelated field. Related: "A failed disk save must surface `persisted:
+false`" under "Recurring patterns" below is the client-visible symptom of the same lock
+discipline lapsing.
 
 `dnsqb-tray` — tray icon (`tray-icon` / `tao` / `rfd`), polls `/admin/status` on its own OS thread.
-Menu **rebuilt in T-185** (Варіант B lifecycle group at the bottom): "Відкрити налаштування"
-(browser → `/admin/ui`) · "Скинути кеш і лог" (soft `/admin/reset`) · "Про програму" · "Майстер
-налаштування" (T-188 — manual re-entry to the first-run wizard) · cert group
-(T-49/T-69: "Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю видалити" (T-70;
-**T-195:** clears cert+secrets, shows the report, writes `stop.flag`+`quit.flag`, spawns a detached
-hidden `powershell` (`self_uninstall.rs`) that waits for every DNS-QF process to exit then wipes all
-of `%LOCALAPPDATA%\dns-quorum-filter`, opens `ms-settings:appsfeatures` via `explorer.exe`, then
-sets `QUIT_REQUESTED` so the event loop exits) ·
-**"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; **T-193:** pause =
-`set_stop_flag` **only** (no `/admin/shutdown`) behind a confirm dialog — the service stays up and
-serves the unfiltered baseline via `pause_watch`; resume = `clear_stop_flag` +
+Menu (lifecycle group at the bottom): "Відкрити налаштування" (browser → `/admin/ui`) · "Скинути
+кеш і лог" (soft `/admin/reset`) · "Про програму" · "Майстер налаштування" (manual re-entry to the
+first-run wizard) · cert group ("Встановити"/"Видалити"/"Перевипустити сертифікат") · "Повністю
+видалити" (clears cert+secrets, shows the report, writes `stop.flag`+`quit.flag`, spawns a
+detached hidden `powershell` (`self_uninstall.rs`) that waits for every DNS-QF process to exit
+then wipes all of `%LOCALAPPDATA%\dns-quorum-filter`, opens `ms-settings:appsfeatures` via
+`explorer.exe`, then sets `QUIT_REQUESTED` so the event loop exits) ·
+**"Призупинити ↔ Відновити фільтрацію"** (label flips on `stop.flag`; pause = `set_stop_flag`
+**only** (no `/admin/shutdown`) behind a confirm dialog — the service stays up and serves the
+unfiltered baseline via `pause_watch`; resume = `clear_stop_flag` +
 `ensure_sibling_running(Service)` (idempotent no-op unless both siblings died mid-pause))
 · **"Відновити нагляд"** (`ensure_sibling_running(Watcher)` — the only manual recovery for a dead
 watcher) · **"Сховати іконку"** (exits the tray only) · **"Вийти з DNS Quorum Filter"** (confirm
 dialog → `set_stop_flag` + `set_quit_flag` + `ControlFlow::Exit`; the watcher's next tick sees
-`quit.flag`, stops the service and exits). Cert/rotation notes unchanged (a rotation needs a
-manual `dnsqb-service` restart before the new cert is served). Also takes the `Tray`
-single-instance guard + writes `tray.pid` on startup (T-150), and (T-187) runs
-`ensure_sibling_running(Watcher)` as a safety net if launched standalone. Replaced the deleted
-Tauri `dnsqb-ui` (T-149, DECISIONS.md). Tray runtime icon **(T-191, Батч 3.14):** four colour
-blobs `crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` (`gen-icon.py`'s
-`make_tray_glyph(size, colour)`, GitHub Primer palette; the pre-T-183 blob was a stale `dnsqb-ui`
-teal square). `status::icon_colour(TrayStatus, cert_trusted) -> IconColour` picks one:
-🟢 `Filtering` (incl. a partial degraded count — T-196: a recovered blip is not an alarm) · 🟡
-`Filtering` when **every** recent quorum query degraded (`degraded_events == degraded_window`, T-196),
+`quit.flag`, stops the service and exits). A rotation needs a manual `dnsqb-service` restart
+before the new cert is served. Also takes the `Tray` single-instance guard + writes `tray.pid` on
+startup, and runs `ensure_sibling_running(Watcher)` as a safety net if launched standalone.
+
+Tray runtime icon: four colour blobs `crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin`
+(`gen-icon.py`'s `make_tray_glyph(size, colour)`, GitHub Primer palette). `status::icon_colour(TrayStatus,
+cert_trusted) -> IconColour` picks one:
+🟢 `Filtering` (incl. a partial degraded count — a recovered blip is not an alarm) · 🟡
+`Filtering` when **every** recent quorum query degraded (`degraded_events == degraded_window`),
 `ServiceRestarting`, `Offline` · ⚪ `Paused`,
 `NoActiveProvider` · 🔴 `Unreachable`, `ServiceGaveUp`, **and `Filtering` when the cert isn't
 trusted** (override — flips `Filtering` **only**; `NoActiveProvider`/`Paused`/`Offline`/watchdog
-stay their row colour, SPEC §3/§8.1 "pass-through ≠ failure" + the T-185 paused-tooltip test). The
-cert issue reaches those other states as a `status::cert_warning` tooltip suffix
-(`compose_tooltip`), not a red glyph. `cert_trusted` = read-only `trust_store::is_trusted(cert.pem)`
-polled by a **dedicated thread** (`status::spawn_trust_watch` — `certutil` is blocking, off the 2s
-poll loop; the displayed flag seeds `true` so "unknown" ≠ "untrusted", but the poll *cadence*
-(`next_delay`) keys on a **confirmed `Ok(true)`** — an `Err` first poll before `cert.pem` exists
-takes the 2→5→15→60→300s back-off ladder, not the 300s slow branch, or a fresh install shows green
-for 5 min; cert menu items call `request_recheck()`). `refresh_tray` commits `last_colour` only on
-`set_icon` success. **First-run onboarding (T-188, Батч 3.13):** `onboarding` module — pure
-`should_offer_onboarding(cert_confirmed, cert_trusted, seen)` (fires only on a **confirmed**
-untrusted reading — `TrustState.is_confirmed()`, set on the first `Ok(_)`; `cert.pem` is absent
-when the tray starts on a fresh install, T-187) + `onboarding.seen` marker file in app-data (NOT
-`lifecycle.rs` — that's cleared on startup; this must survive launches). `maybe_offer_onboarding`
-(once-per-process latch, called each event-loop tick) → `run_setup_wizard` (own `std::thread`,
-`rfd` Yes/No; on Yes reuses `spawn_cert_action` → `ensure_installed` → marker + open `/admin/ui`
-**only on success**). Same wizard on the "Майстер налаштування" menu item.
-Tooltip states:
-`Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (T-95 — read from `watchdog-state.json` via
-`status::watchdog_override`, checked **before** `/admin/status`, ranked above `NoActiveProvider` —
-DECISIONS.md 2026-09-02) / `Paused` (T-185 — read straight from `stop.flag` in the poll thread,
-ranked **above** the watchdog/admin states: while paused the watchdog file goes stale by design
-and the service is deliberately down, so without this a pause reads as a misleading `Unreachable`) /
-`Offline` (T-152 — `from_response` returns it before `NoActiveProvider`
-when `AdminStatusResponse.network == OFFLINE`; ranked below the watchdog states, above 0-voters —
-DECISIONS.md 2026-09-03) / `NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream
-tooltip suffix when `AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK`
-log entries — T-56, narrowed; T-155 added `BASELINE_FALLBACK`). **The tray *icon* (T-191) only goes
-amber on `degraded_events == degraded_window` (T-196) — a partial count is a recovered blip, tooltip
-only.** **T-176:** the tooltip *strings*
-were reworded for a lay reader (`DNS Quorum Filter:` prefix, `Filtering` → "захищає — N/M
-заблоковано", no "резолвінг"/"апстрім") — the state set and priority logic are unchanged.
-**T-128 (Батч 4.4):** `TrayStatus::Filtering` gained `rating_filter_active: bool` (from
-`AdminStatusResponse.rating_filter.active`); `compose_tooltip` appends "— рейтинг-фільтр
-«бульбашка» активний" **after** the degraded suffix, **only when `active`** (Fork B —
-`enabled` but no list — gets no tray suffix; the `/admin/ui` card's own notice covers it).
-The icon colour is untouched — the bubble is a scope choice, not a health signal (same
-"pass-through ≠ failure" rule as `NoActiveProvider`).
+stay their row colour, SPEC §3/§8.1 "pass-through ≠ failure"). The cert issue reaches those other
+states as a `status::cert_warning` tooltip suffix (`compose_tooltip`), not a red glyph.
+`cert_trusted` = read-only `trust_store::is_trusted(cert.pem)` polled by a **dedicated thread**
+(`status::spawn_trust_watch` — `certutil` is blocking, off the 2s poll loop; the displayed flag
+seeds `true` so "unknown" ≠ "untrusted", but the poll *cadence* (`next_delay`) keys on a
+**confirmed `Ok(true)`** — an `Err` first poll before `cert.pem` exists takes the 2→5→15→60→300s
+back-off ladder, not the 300s slow branch, or a fresh install shows green for 5 min; cert menu
+items call `request_recheck()`). `refresh_tray` commits `last_colour` only on `set_icon` success.
 
-`dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main` since Батч 3.3.
+**First-run onboarding:** `onboarding` module — pure `should_offer_onboarding(cert_confirmed,
+cert_trusted, seen)` (fires only on a **confirmed** untrusted reading — `TrustState.is_confirmed()`,
+set on the first `Ok(_)`; `cert.pem` is absent when the tray starts on a fresh install) +
+`onboarding.seen` marker file in app-data (NOT `lifecycle.rs` — that's cleared on startup; this
+must survive launches). `maybe_offer_onboarding` (once-per-process latch, called each event-loop
+tick) → `run_setup_wizard` (own `std::thread`, `rfd` Yes/No; on Yes reuses `spawn_cert_action` →
+`ensure_installed` → marker + open `/admin/ui` **only on success**). Same wizard on the "Майстер
+налаштування" menu item.
+
+**Tooltip states:** `Unreachable` / `ServiceRestarting` / `ServiceGaveUp` (read from
+`watchdog-state.json` via `status::watchdog_override`, checked **before** `/admin/status`, ranked
+above `NoActiveProvider`) / `Paused` (read straight from `stop.flag` in the poll thread, ranked
+**above** the watchdog/admin states: while paused the watchdog file goes stale by design and the
+service is deliberately down, so without this a pause reads as a misleading `Unreachable`) /
+`Offline` (`from_response` returns it before `NoActiveProvider` when
+`AdminStatusResponse.network == OFFLINE`; ranked below the watchdog states, above 0-voters) /
+`NoActiveProvider` / `Filtering`; `Filtering` appends a degraded-upstream tooltip suffix when
+`AdminStats.degraded_events > 0` (raw counts over the last 20 `QUORUM`/`BASELINE_FALLBACK` log
+entries). **The tray *icon* only goes amber on `degraded_events == degraded_window` — a partial
+count is a recovered blip, tooltip only.** `TrayStatus::Filtering` also carries
+`rating_filter_active: bool` (from `AdminStatusResponse.rating_filter.active`); `compose_tooltip`
+appends "— рейтинг-фільтр «бульбашка» активний" **after** the degraded suffix, **only when
+`active`** (`enabled` but no list gets no tray suffix — the `/admin/ui` card's own notice covers
+it). The icon colour is untouched by this — the bubble is a scope choice, not a health signal
+(same "pass-through ≠ failure" rule as `NoActiveProvider`).
+
+`dnsqb-watcher` — the watchdog process (SPEC.md §7), real `main`.
 `#[tokio::main(flavor = "current_thread")]` (§7.1 #9 — flavor, not features, keeps it
 single-threaded: the `dnsqb-service` lib dep unifies `rt-multi-thread` in regardless).
-`windows_subsystem = "windows"` under `not(debug_assertions)` (T-181) — the MSIX entry point,
-so a console-subsystem build made the Start-menu tile open a terminal whose close killed the
-group. Startup: `dnsqb-watcher::main` **clears both `stop.flag` / `quit.flag`** (T-185 — a fresh
-launch is a clean slate, so an app restart also lifts a pause); `Watcher` guard + `watcher.pid`;
-**idempotent launcher (T-150 / T-187)** — `ensure_sibling_running(Tray)` **first** (icon in ~0.2 s),
-then `ensure_sibling_running(Service)`, once each; a second watcher instance (re-clicked tile) hits
+`windows_subsystem = "windows"` under `not(debug_assertions)` — the MSIX entry point, so a
+console-subsystem build made the Start-menu tile open a terminal whose close killed the group.
+Startup: `dnsqb-watcher::main` **clears both `stop.flag` / `quit.flag`** (a fresh launch is a
+clean slate, so an app restart also lifts a pause); `Watcher` guard + `watcher.pid`; **idempotent
+launcher** — `ensure_sibling_running(Tray)` **first** (icon in ~0.2 s), then
+`ensure_sibling_running(Service)`, once each; a second watcher instance (re-clicked tile) hits
 `AlreadyRunning` → `ensure_sibling_running(Tray)` + `exit(0)` ("click the tile again = show the
-icon"), clearing only `quit.flag`. Then the `watcher→service` loop (5s tick:
-IPC ping/pong channel 1, `service.hb`/`watcher.hb` channel 2, `GET /health` via cert-pinned
-`AdminClient` channel 3; `LoopDriver` 2-of-3 vote; `spawn_sibling(Service)` on a confirmed-dead
-service; **sole writer** of `watchdog-state.json`, rewritten every tick for `mtime` freshness).
-The loop checks `quit.flag` (→ stop service, `exit(0)`). **T-193 removed the `stop.flag` freeze
-entirely** — the pre-T-193 pause killed the service (`/admin/shutdown`), which is the only reason
-the freeze existed; now a pause keeps the service **up** (it reads `stop.flag` itself via
-`pause_watch` and serves the unfiltered baseline), so the normal tick sees a healthy service and
-is a no-op. A genuine crash mid-pause now respawns (the new service re-reads `stop.flag`).
-Children are spawned detached
-(T-182 — `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` via safe `creation_flags`, fallback to
-`DETACHED_PROCESS` alone on `ERROR_ACCESS_DENIED`). `resume`s a <90s-old state file via
-`LoopDriver::restored`. Depends on `dnsqb-service` as a lib (§7.1 #6).
+icon"), clearing only `quit.flag`. Then the `watcher→service` loop (5s tick: IPC ping/pong channel
+1, `service.hb`/`watcher.hb` channel 2, `GET /health` via cert-pinned `AdminClient` channel 3;
+`LoopDriver` 2-of-3 vote; `spawn_sibling(Service)` on a confirmed-dead service; **sole writer** of
+`watchdog-state.json`, rewritten every tick for `mtime` freshness). The loop checks `quit.flag`
+(→ stop service, `exit(0)`). **A pause keeps the service up** (it reads `stop.flag` itself via
+`pause_watch` and serves the unfiltered baseline, not killed by the watcher), so the normal tick
+sees a healthy service and is a no-op; a genuine crash mid-pause respawns (the new service
+re-reads `stop.flag`). Children are spawned detached (`DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`
+via safe `creation_flags`, fallback to `DETACHED_PROCESS` alone on `ERROR_ACCESS_DENIED`).
+`resume`s a <90s-old state file via `LoopDriver::restored`. Depends on `dnsqb-service` as a lib
+(§7.1 #6).
 
 ### GeoIP workstream (Фаза 2)
 
-Done: T-74 (`GeoipReader`), T-75 (background updater), T-76 (pipeline wiring + `[geoip]` config +
-`DecisionSource::Geoip`), T-79 (`geoip_country` in the log), T-82 (unit-test task, docs-only), T-77
-(admin routes + `/admin/ui` card), T-78 (DB build-date indicator), T-161 (`resolved_ip_country` on
-every real-answer log row), T-80 (opt-in MaxMind GeoLite2 source — `geoip_updater` branches on `GeoipSource`; Basic-auth
-download of the modern permalink, opportunistic `.tar.gz.sha256`, in-memory `.mmdb` extraction
-from the tarball), T-81 (attribution footer
-`#credits` on `/admin/ui` — DB-IP link-back + **CC BY 4.0** (confirmed direct against db-ip.com),
-MaxMind GeoLite2 "advanced mode" line, app Apache-2.0; static HTML, no DTO), T-162 (admin route +
-`/admin/ui` card for MaxMind creds + save-time `check` probe + `database_source` closed enum
-showing the *loaded* source), T-163 (MaxMind creds → OS secret store + one-time file migration +
-`icacls` helpers removed; `GeoipSource` on `AppState` + `Notify` wake so a creds change needs no
-restart; `MaxmindHealth`/`refresh_health` detecting a key that starts failing at a later refresh —
-3 commits).
-
-**The GeoIP workstream (T-74–T-82) is complete.** Фаза 2 as a whole is **closed 2026-08-31** (see
-the Project state phase line above for what carried into Фаза 3). **T-72/T-73 backend done**
-(2026-08-31, plan+advisor, split into a backend commit + a `/admin/ui`-card commit) — `quorum` is
-no longer hardcoded to two providers: runtime `[[providers]]` list, all 10 §3.4 presets +
-custom-URL entry, 3
-`BlockSignature` heuristics, 4 `/admin/providers/*` routes, `AdminConfigUpdate` loses `providers`,
-`AdminStatusResponse.providers` → `active_providers`. **T-164** (ECS-enabled upstream preset,
-ex-`ecs_option_for_upstream` stub) was **rejected 2026-08-31** — a live probe showed
-`dns11.quad9.net` forwards the client's real /24 to every authoritative server with no option
-from us, and a `127.0.0.1` resolver can't coarsen it. ECS stays a deliberate non-target (not a
-gap): verified by reading, not a test — no code path constructs an ECS option, `quorum::resolve`
-forwards the client `Message` unmodified, and `attach_edns` (the only OPT-writing helper) has no
-production caller. SPEC §3.4 "Розглянуті й відхилені провайдери", TASKS-DONE.md T-164. The
-second/third-platform work
-(T-68/T-70 macOS halves, T-71, T-83) is now its own final **`## Фаза 6`** in TASKS.md / SPEC.md
-— a planned target, deferred to last (no macOS access here), with a standing architectural
-invariant that platform code stays behind a liftable seam (see "Current phase boundaries").
+**Complete, closed 2026-08-31.** T-74–T-82 (reader, background updater, pipeline wiring, admin
+routes/UI, MaxMind opt-in source + OS-secret-store creds) — full per-task history in
+`TASKS-DONE.md`. Runtime provider list is no longer hardcoded to two (T-72/T-73: 10 §3.4 presets +
+custom-URL entry, 3 `BlockSignature` heuristics, 4 `/admin/providers/*` routes). **T-164**
+(ECS-enabled upstream) was **rejected** — Quad9 forwards the client's real /24 regardless, a
+`127.0.0.1` resolver can't coarsen it; rationale in SPEC.md §3.4 "Розглянуті й відхилені
+провайдери". Second/third-platform work (macOS/Linux halves) is `## Фаза 6` in TASKS.md/SPEC.md —
+planned, deferred, with the standing seam requirement in "Current phase boundaries" below.
 
 GeoIP design invariants (SPEC.md §3.5): the verdict is never cached — a cheap local lookup applied
 live on every cached-or-fresh ALLOW, so a blocked-country-list change takes effect on the next
@@ -561,28 +233,15 @@ every-provider-disabled pass-through are exempt from GeoIP *filtering* but still
 
 ### Фаза 1 closure — open gaps (not numbered tasks; see SPEC.md's closure paragraph)
 
-- ~~No test anywhere exercises the real "browser → local DoH" leg~~ — **closed by T-172
-  (2026-09-06).** Live discriminant negative control via chrome-devtools MCP: Chrome 152 with
-  `dns_over_https.mode = "secure"` + `templates = https://127.0.0.1:8443/dns-query` (no silent
-  system-resolver fallback), `neverssl.com` blocklisted mid-session → Chrome `ERR_ADDRESS_INVALID`
-  (resolved to `0.0.0.0`, not `ERR_NAME_NOT_RESOLVED`) **and** time-correlated `BLOCKLIST` rows
-  (`A` + `HTTPS_SVCB`) in `/admin/log`; `www.google.com` / random `*.neverssl.com` rows nobody
-  queried by hand = independent corroboration. `ERR_ADDRESS_INVALID` (not `ERR_NAME_NOT_RESOLVED`)
-  also = first end-to-end proof of the SPEC.md §3.2 invariant against a live browser (NULL `0.0.0.0`,
-  not NXDOMAIN → no resolver fallback). Ran against an **automation-profile** Chrome (real binary +
-  real `chrome://settings/security` path, but not the user's daily profile). Manual run (not CI),
-  like `phase1_metrics`. Procedure in `README.md` ("Перевірка: браузер → локальний DoH"); raw
-  output in scratchpad `t172_browser_doh_pass_2026-09-06.txt`.
-- ~~T-66's metrics did not confirm the quorum hypothesis (AdGuard 0/38, n=1)~~ — **closed by
-  confirmation, T-174 (2026-09-05).** T-171 first re-measured (n=122, +0.8 pp, "not confirmed"),
-  then a follow-up found `cleanbrowsing-{security,adult}` were declared `NullIp` but block via
-  NXDOMAIN — 2 of 4 Security presets weren't counting. T-174 fixed the signature and re-measured
-  with a two-independent-unfiltered-resolver gate (closing-advisor; 0 disagreements), n=106:
-  Security-tier OR-quorum **+17.0 pp over Quad9 alone**, 17 malware domains caught only by
-  CleanBrowsing. Hypothesis confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md). **T-175
-  (2026-09-06)** re-measured with sinkhole-IP detection on (n=111): quorum **89.2 %** vs the
-  best single (`dns4eu-protective` 82.9 %, was 0 in T-174 — block-page IP) → **+6.3 pp**. Still
-  confirmed; smaller margin against a stronger baseline.
+Both open gaps from Ф1's closure are resolved; full methodology, raw output paths, and re-measure
+numbers are in `TASKS-DONE.md` (T-172, T-174, T-175) — kept only as one-liners here:
+
+- Live "browser → local DoH" test — **closed by T-172 (2026-09-06)**, verified via
+  chrome-devtools MCP against a real Chrome `secure` DoH config. Procedure in `README.md`
+  ("Перевірка: браузер → локальний DoH").
+- Quorum-hypothesis metrics — **closed by confirmation, T-174/T-175 (2026-09-05/06)**: quorum
+  **89.2 %** vs. best single voter **82.9 %** (`dns4eu-protective`), +6.3 pp. Hypothesis
+  confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md).
 
 ### Known limitations in shipped code (no task number; the full open backlog is in TASKS.md)
 
@@ -782,21 +441,12 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   for windows-msvc, no `deny.toml` change. `unsafe` FFI is contained in
   `windows-native-keyring-store`, `#![forbid(unsafe_code)]` intact.
 - `chacha20poly1305` (`default-features = false`, `features = ["alloc", "zeroize"]`) + `getrandom`
-  (promoted transitive→direct, like `url` at T-72) — T-146's `encrypted_file` AEAD. RustCrypto,
-  chosen over promoting `aws-lc-rs` (user decision 2026-09-03 — pure Rust, no C toolchain). 4 new
-  crates (`chacha20poly1305`/`aead`/`poly1305`/`universal-hash`); `chacha20`/`cipher` 0.5/
-  `crypto-common` 0.2 move dev-only→runtime (were via `proptest`'s `rand`); `cargo update -p
-  chacha20` pins the tree off yanked 0.10.1 → non-yanked 0.10.2, `cargo audit` 12→11.
-  `multiple-versions` ticks (`block-buffer` 0.10/0.12, `crypto-common` 0.1/0.2) — `warn`, gate
-  green; no `deny.toml` change (all `MIT OR Apache-2.0`). `unsafe` SIMD contained in
-  `chacha20`/`poly1305`, `#![forbid(unsafe_code)]` intact. SECURITY.md row.
+  — T-146's `encrypted_file` AEAD. RustCrypto, chosen over `aws-lc-rs` (user decision 2026-09-03 —
+  pure Rust, no C toolchain). Full vetting/rationale: SECURITY.md row.
 - `sysinfo` (`default-features = false`, `features = ["system"]`) — `watchdog::pid_check::
-  verify_pid_alive` (T-89): the recycled-PID guard §7 requires before a restart. Named by SPEC.md
-  §7.1 #3. Pulls the transitive `winapi` 0.3.9 (via `ntapi`) + the `windows` 0.62 family —
-  0 new advisories, no `deny.toml` change (licences already allowed), `multiple-versions` stays a
-  warn; `unsafe` FFI contained in `ntapi`/`windows-*`, `#![forbid(unsafe_code)]` intact. Links
-  into `dnsqb-service` though only `dnsqb-watcher` calls it (§7.1 #6). Full reasoning: SECURITY.md
-  `sysinfo` row.
+  verify_pid_alive` (T-89): the recycled-PID guard §7 requires before a restart (SPEC.md §7.1 #3).
+  Links into `dnsqb-service` though only `dnsqb-watcher` calls it (§7.1 #6). Full vetting/rationale:
+  SECURITY.md `sysinfo` row.
 - `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot`;
   depends on `dnsqb-service` as a library for `AdminClient`.
 - Dev-only: `tempfile` (`overrides` load tests), `x509-parser` (`cert` DER assertions), `proptest`
@@ -1179,63 +829,14 @@ reasoning (search by section number rather than re-deriving a decision from scra
   first draft had `CertError::AppDataDir(#[from] paths::PathsError)`; fixed by dropping the
   `#[from]`/source-chain and using a flat `CertError::MissingLocalAppData` variant instead, the
   same shape as the enum's other single-cause env-var-missing variants (`cert.rs`, T-50).
-- **The `icacls` ACL helpers were deleted in T-163** (`cert::write_user_restricted_file` /
-  `restrict_to_current_user` / `other_principals` / `icacls_path` — nothing writes a plaintext
-  secret to disk any more; code in git history). The next several gotchas are kept as durable
-  *lessons*, not a live-code index — the strongest being: "confirmed empirically on one machine"
-  is a weaker class of evidence than CI on the actual target image.
-- **`icacls` resolves a bare, unqualified `%USERNAME%` against the local machine first** —
-  confirmed empirically (`icacls <path> /grant:r <name>:F` with no domain/computer prefix), not
-  assumed from docs. No need to build a `%USERDOMAIN%\%USERNAME%` principal string, which the
-  first draft of T-50's plan carried "just in case" — advisor review flagged that `USERDOMAIN` can
-  diverge from what `icacls` actually resolves on some account types, and the empirical check
-  showed the bare form works and echoes back as `<computer>\<user>:(F)`, so the domain lookup (and
-  its own failure mode) was dropped entirely rather than kept unused.
-- **A truncate-in-place file write (`fs::write`/shell `>` redirection to an existing path)
-  preserves that file's ACL** — it does not delete-and-recreate the file, so restricting an ACL on
-  an empty file *before* writing its real contents (rather than after) actually works, and isn't
-  undone by the subsequent write. Confirmed empirically with a scratch probe before relying on it
-  in `cert::write_key_file` (T-50) — the create-then-restrict-then-write ordering exists
-  specifically to avoid a TOCTOU window where the private key sits on disk under a wider,
-  inherited ACL even briefly (advisor review of the plan caught the first draft's
-  write-then-restrict ordering as exactly that gap).
-- **A substring denylist (`!stdout.contains("SYSTEM")`, `!stdout.contains("Everyone")`, ...) is
-  not proof that an ACL restriction actually narrowed anything** — it can't distinguish "no
-  residual grant" from "that word just doesn't happen to appear," and it can false-fail on a
-  machine whose hostname/account name happens to contain one of the denied words. For `icacls`
-  output specifically, count non-blank, non-summary lines instead and assert there's exactly one
-  — a direct structural proof of "exactly one ACE," matching the real output shape confirmed by an
-  actual restricted-file probe, not a shape assumed from docs (`cert.rs`'s
-  `write_key_file_creates_a_file_restricted_to_the_current_user_only` test, T-50 — caught by
-  advisor review of the diff before commit, the same "test that passes without proving the
-  property" shape as the `IsCa::NoCa` gotcha above).
-- **`icacls <path> /inheritance:r /grant:r <user>:F` in a single pass is not sufficient to
-  restrict a file to one principal — confirmed only by CI, not by a local probe.**
-  `/inheritance:r` removes only *inherited* ACEs; `/grant:r` replaces only the *same
-  principal's* own prior explicit grant — neither touches another principal's pre-existing
-  *explicit* ACE. On the Windows 11 Pro dev machine, a freshly created file's only ACEs were
-  inherited, so this single pass happened to leave exactly one entry and the first-written
-  test passed. On the GitHub-hosted `windows-latest` CI runner, a freshly created file already
-  carries **explicit** `SYSTEM`/`Administrators`/local-admin grants (not inherited), which the
-  single pass left untouched — CI failed with 3 ACEs where the test expected 1, a case the dev
-  machine could not reproduce no matter how carefully probed there. Fixed with a second phase:
-  read the ACL back and `/remove:g` every principal that isn't the target user, so the result
-  is self-correcting against whatever a given Windows image's default file ACL happens to be,
-  rather than hardcoding a denylist of expected group names (`cert::restrict_to_current_user`,
-  T-50). **Lesson beyond this one bug: "confirmed empirically" on a single machine is not the
-  same class of evidence as CI on the actual target image** — this project's empirical-
-  verification discipline (scratch probes, real command output) still needs the probe run
-  somewhere representative of where the code will actually execute, not just wherever the
-  agent happens to be developing.
-- **Matching an `icacls`-printed principal against a bare `%USERNAME%` needs a suffix
-  comparison, not equality.** `icacls` always prints the qualified form
-  (`DESKTOP-PA\Pa`, `runnervmeef0v\runneradmin`), never the bare account name passed to
-  `/grant`. A first draft of the CI fix compared `principal != keep` with `keep` set to the
-  bare `%USERNAME%` value — that treated the tool's own just-granted principal as "extra" and
-  stripped it too, leaving the file with zero ACEs and turning the very next `fs::write` into
-  an `Access is denied (os error 5)`. Caught immediately by this module's own new test, not by
-  CI a second time. Fixed by comparing only the segment after the last `\` in the printed
-  principal, case-insensitively (`cert::other_principals`, T-50).
+- **The `icacls` ACL helpers (T-50: `write_user_restricted_file` / `restrict_to_current_user` /
+  `other_principals` / `icacls_path`) were deleted in T-163** — nothing writes a plaintext secret
+  to disk any more, so the tool-specific `icacls` lessons that lived here (bare-`%USERNAME%`
+  resolution, ACE-count assertions, the single-pass-vs-two-phase restriction gap, principal-suffix
+  matching) no longer apply to any live code path; full detail in git history / `TASKS-DONE.md`
+  T-163 if that pattern ever recurs. The one lesson from this code that generalizes beyond `icacls`
+  itself — local-machine verification isn't CI verification — is kept live under "Check the actual
+  CI run after every push" in the Commands section above, not restated here.
 - **`rustls::pki_types::PemObject` (the trait providing `from_pem_slice`/`from_pem_file`) lives at
   `rustls::pki_types::pem::PemObject`, not `rustls::pki_types::PemObject`** — the compiler's own
   suggested-import diagnostic named the correct path immediately, but `use rustls::pki_types::{...,
