@@ -142,6 +142,7 @@ mod listener;
 mod local_state;
 mod log_persist;
 mod logging;
+mod orchestrate;
 mod overrides;
 mod paths;
 mod pause_watch;
@@ -207,6 +208,7 @@ pub use listener::{bind_listener, BindError};
 pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
 pub use log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
 pub use logging::init as init_logging;
+pub use orchestrate::run;
 pub use overrides::{
     InvalidEntry, InvalidReason, ListKind, OverrideEntry, OverrideError, OverrideLists,
 };
