@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project state
 
 **Current phase:** Фаза 4 (rating filter «bubble», per-country top-N zone infra, personal learned
-zone) fully closed 2026-09-11 — tag `v0.4.0` pushed, `release.yml` produced a draft GitHub release
-(build-sign + msix + cross-path repro), publish left to a human, same pattern as prior tags. Фаза 3
-(production hardening — watchdog, MSIX packaging) closed 2026-09-06 (`v0.3.0`, published/`latest`);
+zone) fully closed 2026-09-11 — tag `v0.4.0` published as GitHub `latest` 2026-09-12 (moved once
+mid-smoke-test to include the T-219 MSIX cert-trust fix, Батч 4.7.A, before publishing). Фаза 3
+(production hardening — watchdog, MSIX packaging) closed 2026-09-06 (`v0.3.0`, no longer `latest`);
 Фаза 2 (cert automation) closed 2026-08-31; Фаза 1 (PoC) closed 2026-08-29.
 
 **Not started:** Фаза 5 (ccTLD block §5.2 + i18n T-151), Фаза 6 (macOS/Linux port — see "Current
