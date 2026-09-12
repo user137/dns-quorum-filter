@@ -38,6 +38,7 @@
 //! tick via `ControlFlow::WaitUntil` instead.
 
 mod browser;
+mod browser_nudge;
 mod onboarding;
 mod self_uninstall;
 mod status;
@@ -54,7 +55,7 @@ use dnsqb_service::{
 use status::{IconColour, TrayStatus, TrustState};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tao::event_loop::{ControlFlow, EventLoop};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
@@ -188,6 +189,12 @@ fn main() {
         }
     };
 
+    // T-229: the earliest-launch stamp for the browser-nudge threshold below
+    // must be written unconditionally at every startup (idempotent — only the
+    // first call ever actually creates the file), not lazily on first poll
+    // tick, so a tray that never reaches a later tick still has it recorded.
+    browser_nudge::mark_first_seen_if_absent(&app_data, SystemTime::now());
+
     let status_handle = status::spawn(app_data.clone(), port);
     let trust = status::spawn_trust_watch(app_data.join("cert.pem"));
 
@@ -220,6 +227,7 @@ fn main() {
     let mut last_paused = stop_flag_is_set(&app_data);
     let mut last_flag_check = Instant::now();
     let mut onboarding_offered = false;
+    let mut browser_nudge_offered = false;
 
     let event_loop: EventLoop<()> = EventLoop::new();
     event_loop.run(move |_event, _target, control_flow| {
@@ -247,6 +255,7 @@ fn main() {
             &mut last_colour,
         );
         maybe_offer_onboarding(&mut onboarding_offered, &app_data, port, &trust, trusted);
+        maybe_offer_browser_nudge(&mut browser_nudge_offered, &app_data, observed);
 
         // T-185: flip the pause/resume label when `stop.flag` appears or is
         // removed (by this menu, or by a fresh watcher launch clearing it) —
@@ -662,6 +671,36 @@ fn maybe_offer_onboarding(
     if onboarding::should_offer_onboarding(trust.is_confirmed(), trusted, seen) {
         *offered = true;
         run_setup_wizard(app_data, port, trust);
+    }
+}
+
+/// One-shot "point your browser at this" nudge (T-229, detection half only —
+/// see `browser_nudge`'s module doc for why rendering isn't wired up yet).
+/// Fires at most once **per process** (`offered` latch only) — deliberately
+/// does **not** write the persisted `browser-nudge.seen` marker, since
+/// nothing is actually shown to the user yet; burning that one-shot latch
+/// here would mean the real notification, once a renderer is chosen, could
+/// never fire on a machine that already ran this build. `should_offer_
+/// browser_nudge` still reads `seen` as an input — a future renderer sets it
+/// for real once it renders something.
+/// [`browser_nudge::should_offer_browser_nudge`] is the pure predicate.
+fn maybe_offer_browser_nudge(offered: &mut bool, app_data: &Path, observed: TrayStatus) {
+    if *offered {
+        return;
+    }
+    let total_queries = match observed {
+        TrayStatus::Filtering { total, .. } => Some(total),
+        _ => None,
+    };
+    let seen = browser_nudge::browser_nudge_seen(app_data);
+    let first_seen = browser_nudge::first_seen(app_data);
+    if browser_nudge::should_offer_browser_nudge(SystemTime::now(), first_seen, total_queries, seen)
+    {
+        *offered = true;
+        tracing::info!(
+            "no browser appears to have used the local DoH endpoint yet (T-229 nudge condition \
+             met — not yet rendered, see browser_nudge's module doc)"
+        );
     }
 }
 
