@@ -391,6 +391,9 @@ numbers are in `TASKS-DONE.md` (T-172, T-174, T-175) — kept only as one-liners
   appears within seconds, and only *post-reset* queries get recorded (verified: 2 queries sent
   before the reset recorded nothing, 2 sent after showed up as `loaded: [{list:"personal",
   domains:2}]`). Needs its own plan+advisor cycle before fixing — full record TASKS.md T-221.
+- **`self_uninstall.rs`'s app-data wipe helper is a no-op on the packaged MSIX build (T-222,
+  found 2026-09-12, not fixed)** — same virtualization gap as T-219, in a subsystem T-219's fix
+  never touched. Full record TASKS.md T-222.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
   delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
   but nothing calls it for the *TLS key* entry on uninstall. A left-behind
