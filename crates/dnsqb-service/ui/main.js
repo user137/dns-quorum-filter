@@ -21,6 +21,61 @@ const timeoutConfigBody = document.getElementById("timeout-config-body");
 const ratingFilterBody = document.getElementById("rating-filter-body");
 const ratingFilterBadge = document.getElementById("rating-filter-badge");
 
+// T-159: short per-card help text, one entry per "?" toggle below. Text is
+// authored in UI-SPEC.md §3.8 (the docs-map owner of field descriptions,
+// not invented on the fly here) - this object is a verbatim mirror, not a
+// second source of truth. Deliberately one flat object, not text scattered
+// across each render function: when T-151 (i18n) lands, this is the one
+// place that needs to become a locale lookup instead of a file-wide hunt.
+const FIELD_HELP = {
+  providers: "Кожен увімкнений провайдер перевіряє домен незалежно; якщо хоч " +
+    "один каже «блокувати» — кворум блокує (OR-логіка). Більше провайдерів " +
+    "— ширше покриття, але й більше третіх сторін бачать ваші запити.",
+  timeoutMode: "Як трактувати провайдера, що не відповів вчасно. «fail_open» " +
+    "(типово) — пропустити, вважаючи безпечним; «fail_closed» — заблокувати; " +
+    "«degraded» — як fail_open, але явно позначає рішення неповним у лозі.",
+  cache: "Мін./макс. час життя запису кешу (обмежує TTL від провайдера), " +
+    "скільки тримати «заблоковано», і скільки записів кеш утримує " +
+    "одночасно, перш ніж почне витісняти найстаріші.",
+  overrides: "Власні винятки поверх кворуму: allowlist завжди дозволяє, " +
+    "blocklist завжди блокує, незалежно від відповіді провайдерів. При " +
+    "конфлікті між списками виграє allowlist.",
+  logFilters: "Пошук і фільтри діють лише в межах поточного вікна журналу " +
+    "— останні ~1000 запитів або 24 години; старіші записи вже не " +
+    "зберігаються.",
+};
+
+// Native <details><summary> - zero JS beyond construction, keyboard-
+// accessible (Enter/Space) out of the box, works on touch where a
+// hover-only tooltip wouldn't (T-159's own two options, this is #1).
+function helpDetails(key) {
+  const details = document.createElement("details");
+  details.className = "field-help";
+  const summary = document.createElement("summary");
+  summary.textContent = "?";
+  summary.setAttribute("aria-label", "Довідка");
+  const text = document.createElement("p");
+  text.textContent = FIELD_HELP[key];
+  details.appendChild(summary);
+  details.appendChild(text);
+  return details;
+}
+
+// `<h3>` only permits phrasing content - nesting a `<details>` (flow
+// content) inside one is invalid HTML; browsers silently recover (verified
+// in Chrome) but that's "true by observed behavior," not provable from the
+// markup, and Firefox is a first-class target here (scenario 12). Returns
+// a flex row with the heading and the help toggle as siblings instead.
+function cardHeading(text, helpKey) {
+  const row = document.createElement("div");
+  row.className = "card-heading-row";
+  const heading = document.createElement("h3");
+  heading.textContent = text;
+  row.appendChild(heading);
+  row.appendChild(helpDetails(helpKey));
+  return row;
+}
+
 // T-176 / T-204: the basic view's one large element. The decisive priority
 // ladder (watchdog > offline > paused > 0-voters > cert) moved to the server
 // (admin.rs::compute_hero_state, finding 3-B) and arrives as
@@ -242,7 +297,7 @@ function renderTimeoutConfig(status) {
       ? `<div class="notice warn">Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.</div>`
       : "";
   timeoutConfigBody.innerHTML = `
-    <h3>Поведінка при збої</h3>
+    <div class="card-heading-row"><h3>Поведінка при збої</h3><details class="field-help"><summary aria-label="Довідка">?</summary><p>${FIELD_HELP.timeoutMode}</p></details></div>
     ${configWarning}
     <div class="radio-group">
       ${["fail_open", "fail_closed", "degraded"]
@@ -463,9 +518,7 @@ function overrideListItem(entry, list, conflicts) {
 function renderOverrides(data) {
   overridesBody.textContent = "";
 
-  const heading = document.createElement("h3");
-  heading.textContent = "Списки виключень";
-  overridesBody.appendChild(heading);
+  overridesBody.appendChild(cardHeading("Списки виключень", "overrides"));
 
   // T-47, advisor-caught: an add/remove that live-applies but fails to
   // persist must be visible, not just silently reflected in the response -
@@ -605,9 +658,7 @@ const CACHE_CONFIG_FIELDS = [
 function renderCacheConfig(data) {
   cacheConfigBody.textContent = "";
 
-  const heading = document.createElement("h3");
-  heading.textContent = "Кеш";
-  cacheConfigBody.appendChild(heading);
+  cacheConfigBody.appendChild(cardHeading("Кеш", "cache"));
 
   // Same "silent data loss" concern as #overrides-body's own persisted
   // warning (T-47) - a live-applied change that failed to persist must be
@@ -1366,9 +1417,7 @@ const logResults = document.createElement("div");
 function buildLogFilterRow() {
   logBody.textContent = "";
 
-  const heading = document.createElement("h3");
-  heading.textContent = "Лог запитів";
-  logBody.appendChild(heading);
+  logBody.appendChild(cardHeading("Лог запитів", "logFilters"));
 
   const filterRow = document.createElement("div");
   filterRow.className = "log-filter-row";
@@ -1820,9 +1869,7 @@ function customProviderForm() {
 function renderProviders(data) {
   providersBody.textContent = "";
 
-  const heading = document.createElement("h3");
-  heading.textContent = "Провайдери-voter'и";
-  providersBody.appendChild(heading);
+  providersBody.appendChild(cardHeading("Провайдери-voter'и", "providers"));
 
   // T-176: this same ProvidersResponse also drives the basic-view master +
   // category toggles, the fan-out privacy line and the pass-through warning

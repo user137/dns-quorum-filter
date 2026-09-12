@@ -71,6 +71,33 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.6rem;
 }
 
+/* T-159: a small "?" toggle next to a card heading - native <details>, not
+   a hover-only tooltip (works on touch, keyboard-reachable via Tab/Enter
+   out of the box). <h3> only permits phrasing content, so the toggle is a
+   flex-row sibling of the heading (main.js's cardHeading()), never nested
+   inside it - nesting would be invalid HTML even though browsers recover. */
+.card-heading-row { display: flex; align-items: center; margin: 0 0 0.6rem; }
+.card-heading-row h3 { margin: 0; }
+.field-help {
+  display: inline-block; margin-left: 0.4rem;
+}
+.field-help summary {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--line); color: var(--text-muted);
+  font-size: 10px; list-style: none; user-select: none;
+}
+.field-help summary::-webkit-details-marker { display: none; }
+.field-help summary:hover, .field-help summary:focus-visible {
+  border-color: var(--accent); color: var(--accent); outline: none;
+}
+.field-help[open] summary { background: var(--line-soft); }
+.field-help p {
+  margin: 0.35rem 0 0; padding: 0.5rem 0.65rem; max-width: 32em;
+  font-size: 12px; color: var(--text-muted); background: var(--line-soft);
+  border-radius: 6px;
+}
+
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0.4rem 0; border-bottom: 1px solid var(--line-soft);
