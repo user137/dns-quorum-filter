@@ -260,7 +260,13 @@ numbers are in `TASKS-DONE.md` (T-172, T-174, T-175) — kept only as one-liners
   a restart — a live config reload (`/admin/reset`) picks up the new thresholds but
   `PersonalZoneStats`'s ring stays sized to whatever `window_len` it was constructed with; a
   *smaller* window is correctly capped at derive time, a *larger* one is under-served until
-  `from_persisted` rebuilds it with the new size on the next process start.
+  `from_persisted` rebuilds it with the new size on the next process start. **A separate, deeper
+  gap on the same table (T-221):** the *other* thresholds (`frequency_top_n`/`regularity_min_days`)
+  aren't read from the restart-time TOML at all at derive time — `rotate_and_republish_personal_zone`
+  reads them from a live `AppState` snapshot that starts at compiled defaults and is never
+  initialized from `resolver_config.toml` at startup, only by `/admin/reset` (or 2 other admin
+  routes). A config-file-only `[personal_zone]` change (no admin route exists for this table) needs
+  one `/admin/reset` call to take effect at all, restart or not.
 - **Encrypted query-log persistence (T-146)** — best-effort scrub only (no defence vs VSS shadow
   copies / SSD wear-levelling, same honesty as `key_store::overwrite_with_zeros`); a hard crash
   loses ≤60s of the log tail (periodic full-snapshot rewrite, not append-only — deliberate); an
@@ -371,6 +377,20 @@ numbers are in `TASKS-DONE.md` (T-172, T-174, T-175) — kept only as one-liners
   fails even when the old cert really is gone) and `local_state::remove_all`'s cert artifact
   (always reports `Failed`). Not MSIX-specific, predates v0.4.0. Needs its own plan+advisor cycle
   before fixing — full record TASKS.md T-220.
+- **`[personal_zone].enabled = true` in `resolver_config.toml` has no effect at process startup
+  (T-221, found 2026-09-12, not fixed).** `AppState::new` hardcodes `personal_zone_config` to
+  `PersonalZoneConfig::default()` (`enabled: false`); `restore_personal_zone` (called once at
+  startup) only seeds `stats`/`zone`, never `config` — no startup code path calls
+  `update_personal_zone_config`, only three `/admin/*` write routes do. The feature is inert from
+  boot until then (`record_personal_visit`'s gate reads the same stuck flag, so visits aren't
+  recorded either), not merely unpersisted — `personal-zone.enc` never appearing is a symptom, and
+  `AdminStatusResponse.rating_filter.personal_zone_enabled` reads `false` right after boot even
+  with the TOML set `true` (one-HTTP-call symptom, a natural regression-test anchor).
+  `POST /admin/reset` is a live (undocumented) workaround: confirmed live — it calls
+  `update_personal_zone_config` + wakes the flusher, the field flips to `true`, `personal-zone.enc`
+  appears within seconds, and only *post-reset* queries get recorded (verified: 2 queries sent
+  before the reset recorded nothing, 2 sent after showed up as `loaded: [{list:"personal",
+  domains:2}]`). Needs its own plan+advisor cycle before fixing — full record TASKS.md T-221.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
   delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
   but nothing calls it for the *TLS key* entry on uninstall. A left-behind
