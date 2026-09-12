@@ -92,15 +92,30 @@ use crate::cert::CERT_COMMON_NAME;
 const MAX_MATCHING_ENTRIES: usize = 16;
 
 /// `certutil -store`'s exit code when nothing matches the given `CertId` —
-/// confirmed empirically 2026-08-29 (`0x80090011 NTE_NOT_FOUND` / "Object was
-/// not found") for a `CommonName`-based lookup against `CurrentUser\Root`
-/// specifically. [`confirmed_thumbprints_for_common_name`] is the one place
-/// this constant is load-bearing (it must tell a genuine "confirmed nothing
-/// there" apart from "certutil failed for some other reason"); if a future
-/// caller reuses it against a different lookup form and this code turns out
-/// not to generalize, that needs its own empirical check, not an assumption
-/// that it carries over.
-const NOT_FOUND_EXIT_CODE: i32 = 17;
+/// `0x80090011` / `NTE_NOT_FOUND` ("Object was not found") for a
+/// `CommonName`-based lookup against `CurrentUser\Root` specifically.
+/// [`confirmed_thumbprints_for_common_name`] is the one place this constant
+/// is load-bearing (it must tell a genuine "confirmed nothing there" apart
+/// from "certutil failed for some other reason"); if a future caller reuses
+/// it against a different lookup form and this code turns out not to
+/// generalize, that needs its own empirical check, not an assumption that it
+/// carries over.
+///
+/// **T-220 (2026-08-29 → fixed 2026-09-13): this constant was originally
+/// written as the decimal `17`** — the low byte of `0x80090011`, i.e. what a
+/// POSIX shell's own 8-bit-truncated `$?` reports after running `certutil`
+/// manually, not what the compiled Windows binary's own
+/// `std::process::ExitStatus::code()` returns (the real, untruncated 32-bit
+/// value). Because this was the *only* value `confirmed_thumbprints_for_common_name`
+/// ever treated as "confirmed empty," [`uninstall`] could never actually
+/// observe a confirmed-empty store and so could never return `Ok(())`,
+/// against a genuinely empty store included — see
+/// `confirmed_thumbprints_for_common_name_reports_a_sentinel_cn_as_confirmed_empty`'s
+/// regression test below, which fails against the old `17` and passes
+/// against this value. Written as a cast from the hex `HRESULT`-shaped
+/// literal, not a bare decimal, so the bit pattern documented above stays
+/// grep-able.
+const NOT_FOUND_EXIT_CODE: i32 = 0x8009_0011_u32.cast_signed();
 
 /// Errors installing/uninstalling the local `DoH` certificate in
 /// `CurrentUser\Root`.
@@ -321,9 +336,22 @@ fn thumbprints_for_common_name(common_name: &str) -> Result<Vec<String>, TrustSt
 fn confirmed_thumbprints_for_common_name(
     common_name: &str,
 ) -> Result<Vec<String>, TrustStoreError> {
-    let output = store_lookup_output(common_name)?;
+    classify_confirmed_lookup(&store_lookup_output(common_name)?)
+}
+
+/// Pure classification half of [`confirmed_thumbprints_for_common_name`],
+/// split out purely so the three-way exit-code branch above (this whole
+/// function's reason to exist) is unit-testable against a synthetic
+/// `Output` — no `certutil` spawn, no store access. **Does not by itself
+/// prove [`NOT_FOUND_EXIT_CODE`] is the right value** — that's what
+/// `confirmed_thumbprints_for_common_name_reports_a_sentinel_cn_as_confirmed_empty`
+/// (a real, read-only `certutil` call) is for; a synthetic-`Output` test
+/// against this function alone would be circular for that specific question.
+fn classify_confirmed_lookup(
+    output: &std::process::Output,
+) -> Result<Vec<String>, TrustStoreError> {
     if output.status.success() {
-        return Ok(parse_thumbprints(&output));
+        return Ok(parse_thumbprints(output));
     }
     if output.status.code() == Some(NOT_FOUND_EXIT_CODE) {
         return Ok(Vec::new());
@@ -530,10 +558,85 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        addstore_temp_path, certutil_command, certutil_path, is_trusted, local_cert_thumbprint,
-        uninstall_loop, MAX_MATCHING_ENTRIES,
+        addstore_temp_path, certutil_command, certutil_path, classify_confirmed_lookup,
+        confirmed_thumbprints_for_common_name, is_trusted, local_cert_thumbprint, uninstall_loop,
+        MAX_MATCHING_ENTRIES,
     };
+    use std::os::windows::process::ExitStatusExt;
     use std::path::Path;
+    use std::process::{ExitStatus, Output};
+
+    /// A synthetic `certutil -store` result - no process spawn, no store
+    /// access. Only used by the three `classify_confirmed_lookup` branch
+    /// tests below; see that function's own doc comment for why it can't
+    /// stand in for the real-`certutil` regression test above.
+    fn synthetic_output(code: u32, stdout: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(code),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn classify_confirmed_lookup_parses_every_thumbprint_on_success() {
+        let output = synthetic_output(0, "Cert Hash(sha1): AA11\r\nCert Hash(sha1): BB22\r\n");
+        match classify_confirmed_lookup(&output) {
+            Ok(thumbprints) => {
+                assert_eq!(thumbprints, vec!["AA11".to_string(), "BB22".to_string()]);
+            }
+            Err(err) => panic!("expected Ok on a successful exit status, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_confirmed_lookup_treats_the_not_found_code_as_confirmed_empty() {
+        let output = synthetic_output(0x8009_0011, "");
+        match classify_confirmed_lookup(&output) {
+            Ok(thumbprints) => assert!(
+                thumbprints.is_empty(),
+                "expected zero thumbprints, got {thumbprints:?}"
+            ),
+            Err(err) => panic!("expected Ok(empty) for the not-found code, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_confirmed_lookup_surfaces_an_unrecognised_failure_as_list_failed() {
+        let output = synthetic_output(1, "");
+        match classify_confirmed_lookup(&output) {
+            Ok(thumbprints) => panic!("expected ListFailed, got Ok({thumbprints:?})"),
+            Err(super::TrustStoreError::ListFailed(Some(1))) => {}
+            Err(other) => panic!("expected ListFailed(Some(1)), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn confirmed_thumbprints_for_common_name_reports_a_sentinel_cn_as_confirmed_empty() {
+        // T-220 regression test. Read-only (`-store`, never `-addstore`/
+        // `-delstore`) - safe to run for real against `CurrentUser\Root`,
+        // same "spawn the real certutil, no store mutation" precedent as
+        // `local_cert_thumbprint_matches_a_real_certutil_dump_of_the_same_file`
+        // below. A synthetic `ExitStatus` built from a hardcoded exit code
+        // would be circular here (it would just prove the code matches
+        // whatever `NOT_FOUND_EXIT_CODE` already says) - this instead pins
+        // the constant to what the real compiled Windows binary's
+        // `certutil -store` genuinely reports for a `CommonName` guaranteed
+        // absent from any real store (the same parameterization
+        // `thumbprints_for_common_name`'s own doc comment calls out this
+        // function's sibling for).
+        let sentinel = "dns-quorum-filter-sentinel-absent-t220-regression-test";
+        match confirmed_thumbprints_for_common_name(sentinel) {
+            Ok(thumbprints) => assert!(
+                thumbprints.is_empty(),
+                "a sentinel CommonName must report zero matches, got {thumbprints:?}"
+            ),
+            Err(err) => panic!(
+                "expected a confirmed-empty result for an absent CommonName, got {err:?} - \
+                 NOT_FOUND_EXIT_CODE does not match this machine's real certutil exit code"
+            ),
+        }
+    }
 
     #[test]
     fn addstore_temp_path_is_content_addressed_under_system_root_temp() {

@@ -510,6 +510,17 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   the one `-addstore` write) — full root-cause chain and fix verification in `TASKS-DONE.md`'s
   T-219 entry, don't re-derive it. `certutil -store`/`-delstore` (no file-path arg — `uninstall`'s
   code path) were **not** affected.
+- **A POSIX shell truncates a spawned process's exit code to its low byte; `std::process::
+  ExitStatus::code()` on a compiled Windows binary does not** — `trust_store::NOT_FOUND_EXIT_CODE`
+  (T-49) was set to `17` from a manual `certutil -store` no-match check run through a shell, but
+  the real, untruncated Windows exit code for that same result is `-2146893807`/`0x80090011`
+  (`NTE_NOT_FOUND`) — `17` is exactly its low byte (`-2146893807 mod 256`). Every downstream
+  comparison against the shell-observed value silently never matched the real one; fixed and full
+  story in `TASKS-DONE.md`'s T-220 entry, don't re-derive it. General lesson: never transcribe a
+  subprocess exit code observed via a shell (`$?`/`echo %ERRORLEVEL%`) directly into Rust constants
+  meant to match `ExitStatus::code()` — read it from a real `std::process::Output` (or, for a
+  regression test, a real spawn against a value guaranteed to hit that branch — a synthetic
+  `ExitStatus` built from the same wrong constant would prove nothing).
 - **The `windows` MCP server's `ui_click` (UIA element-name-based) can report success while a
   native Win32 dialog (an `rfd` message box, a CryptUI confirmation) never receives the click** —
   observed twice 2026-09-12, dialog stayed open after a "successful" click. `autoit`'s

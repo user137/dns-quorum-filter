@@ -132,15 +132,6 @@ TASKS-DONE.md, never here.
   wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
   no live banner until the page is reloaded or the card is interacted with. Acceptable; stated,
   not a live push.
-- **`trust_store::uninstall()` can never return `Ok(())` against the real store (T-220, found
-  2026-09-12, not fixed).** `NOT_FOUND_EXIT_CODE = 17` (T-49) doesn't match the real, untruncated
-  `certutil -store` empty-result exit code (`-2146893807`/`0x80090011` — `17` was only ever the
-  POSIX-shell-truncated value). `confirmed_thumbprints_for_common_name`, the sole way
-  `uninstall_loop` confirms the store is empty, therefore hits `ListFailed` on every call —
-  affecting `cert_rotation::rotate_certificate` (live-reproduced: tray "Перевипустити сертифікат"
-  fails even when the old cert really is gone) and `local_state::remove_all`'s cert artifact
-  (always reports `Failed`). Not MSIX-specific, predates v0.4.0. Needs its own plan+advisor cycle
-  before fixing — full record TASKS.md T-220.
 - **`[personal_zone].enabled = true` in `resolver_config.toml` has no effect at process startup
   (T-221, found 2026-09-12, not fixed).** `AppState::new` hardcodes `personal_zone_config` to
   `PersonalZoneConfig::default()` (`enabled: false`); `restore_personal_zone` (called once at
