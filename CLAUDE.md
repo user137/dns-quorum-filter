@@ -362,6 +362,15 @@ numbers are in `TASKS-DONE.md` (T-172, T-174, T-175) — kept only as one-liners
   wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
   no live banner until the page is reloaded or the card is interacted with. Acceptable; stated,
   not a live push.
+- **`trust_store::uninstall()` can never return `Ok(())` against the real store (T-220, found
+  2026-09-12, not fixed).** `NOT_FOUND_EXIT_CODE = 17` (T-49) doesn't match the real, untruncated
+  `certutil -store` empty-result exit code (`-2146893807`/`0x80090011` — `17` was only ever the
+  POSIX-shell-truncated value). `confirmed_thumbprints_for_common_name`, the sole way
+  `uninstall_loop` confirms the store is empty, therefore hits `ListFailed` on every call —
+  affecting `cert_rotation::rotate_certificate` (live-reproduced: tray "Перевипустити сертифікат"
+  fails even when the old cert really is gone) and `local_state::remove_all`'s cert artifact
+  (always reports `Failed`). Not MSIX-specific, predates v0.4.0. Needs its own plan+advisor cycle
+  before fixing — full record TASKS.md T-220.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
   delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
   but nothing calls it for the *TLS key* entry on uninstall. A left-behind
