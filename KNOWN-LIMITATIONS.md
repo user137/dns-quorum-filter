@@ -128,9 +128,6 @@ TASKS-DONE.md, never here.
   wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
   no live banner until the page is reloaded or the card is interacted with. Acceptable; stated,
   not a live push.
-- **`self_uninstall.rs`'s app-data wipe helper is a no-op on the packaged MSIX build (T-222,
-  found 2026-09-12, not fixed)** — same virtualization gap as T-219, in a subsystem T-219's fix
-  never touched. Full record TASKS.md T-222.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
   delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
   but nothing calls it for the *TLS key* entry on uninstall. A left-behind

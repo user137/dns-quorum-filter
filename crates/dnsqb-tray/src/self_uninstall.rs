@@ -21,9 +21,111 @@
 //! into a directory being erased. If any process survives the wait the helper
 //! `exit`s *without* deleting; otherwise it loops `Remove-Item -Recurse
 //! -Force` until the directory is gone.
+//!
+//! **T-222 (found 2026-09-12 smoke test, fixed 2026-09-13): the same
+//! MSIX-virtualization gap T-219 found in `trust_store.rs`, in this
+//! completely different subsystem.** `app_data` (the *logical*
+//! `%LOCALAPPDATA%\dns-quorum-filter`) is transparently redirected to its
+//! real physical location
+//! (`%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\Local\
+//! dns-quorum-filter`) only for a process that itself has package identity —
+//! `dnsqb-tray.exe` running packaged does, the spawned unpackaged
+//! `powershell.exe` above does not (confirmed for `certutil.exe`
+//! specifically at T-219; never checked for this module's own spawn until
+//! this fix). The helper's own `Test-Path` therefore always saw the logical
+//! path as absent and its wait-then-delete loop bailed out on the very
+//! first check, silently, `Remove-Item` never once invoked. [`resolve_target`]
+//! is the fix: resolve the real physical directory from *this* (packaged)
+//! process's own view before spawning the helper, and hand that path to the
+//! script instead — the same "give the unpackaged child a path it can
+//! actually see" shape T-219's `-addstore` fix already used, applied to a
+//! whole-directory delete instead of a single staged file.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// This process's own MSIX `PackageFamilyName` (`<Name>_<PublisherHash>`),
+/// parsed from `exe_dir_name` — the `WindowsApps\<Name>_<Version>_<Arch>__
+/// <PublisherHash>\` install-folder naming convention. Pure string parsing,
+/// no filesystem access, so it's unit-testable without a real install.
+///
+/// `None` for anything that doesn't match this shape (`target\debug`/
+/// `target\release` for an unpackaged dev/CI build has no `__` at all) —
+/// [`resolve_target`]'s caller falls back to the logical `app_data` path
+/// unchanged in that case, which is already correct for an unpackaged
+/// build.
+///
+/// **Never hardcode a specific hash.** A different code-signing certificate
+/// (an ephemeral `pack-msix.ps1` test build with no `-PfxPath`) gets a
+/// genuinely different `PublisherHash` each time it's repacked — confirmed
+/// this session (the real release's hash and the scenario-24 update-test
+/// build's hash differed). This must be resolved fresh every run, never
+/// cached or assumed stable across builds.
+fn package_family_name(exe_dir_name: &str) -> Option<String> {
+    let (left, hash) = exe_dir_name.rsplit_once("__")?;
+    let (name, _version_and_arch) = left.split_once('_')?;
+    if name.is_empty() || hash.is_empty() {
+        return None;
+    }
+    Some(format!("{name}_{hash}"))
+}
+
+/// Pure: the real, unvirtualized physical directory an MSIX-packaged
+/// process's own `app_data` (the logical `%LOCALAPPDATA%\dns-quorum-filter`)
+/// redirects to for that process, given `local_app_data`/`exe_dir_name`
+/// explicitly rather than reading the environment here — same reasoning as
+/// `paths::resolve_app_data_dir`'s own doc comment: testable without
+/// mutating the real process environment, which `std::env::set_var` can't
+/// do safely under `#![forbid(unsafe_code)]` on this toolchain regardless
+/// (it's an `unsafe fn`). Does **not** check whether the result exists on
+/// disk — that real I/O stays in [`resolve_target`], the impure shell.
+///
+/// `None` when this doesn't look like a packaged install
+/// ([`package_family_name`] returned `None`) — [`resolve_target`] falls
+/// back to `app_data` unchanged in that case, correct for an unpackaged
+/// build.
+fn physical_app_data_dir(
+    local_app_data: &std::ffi::OsStr,
+    exe_dir_name: &str,
+    app_data: &Path,
+) -> Option<PathBuf> {
+    let pfn = package_family_name(exe_dir_name)?;
+    Some(
+        Path::new(local_app_data)
+            .join("Packages")
+            .join(pfn)
+            .join("LocalCache")
+            .join("Local")
+            .join(app_data.file_name()?),
+    )
+}
+
+/// The impure shell around [`physical_app_data_dir`]: reads this process's
+/// own `current_exe()` and `%LOCALAPPDATA%`, resolves the physical path if
+/// this is a packaged install **and** that directory actually exists, and
+/// falls back to `app_data` itself in every other case (an unpackaged
+/// build, `current_exe()`/`%LOCALAPPDATA%` unavailable, or a computed path
+/// that isn't actually there — never fatal, the caller is about to spawn a
+/// best-effort helper regardless).
+fn resolve_target(app_data: &Path) -> PathBuf {
+    let resolved = (|| {
+        let exe = std::env::current_exe().ok()?;
+        let exe_dir_name = exe.parent()?.file_name()?.to_str()?;
+        let local_app_data = std::env::var_os("LOCALAPPDATA")?;
+        let candidate = physical_app_data_dir(&local_app_data, exe_dir_name, app_data)?;
+        candidate.is_dir().then_some(candidate)
+    })();
+    if let Some(candidate) = resolved {
+        tracing::info!("app-data wipe: using packaged-physical path");
+        candidate
+    } else {
+        tracing::info!(
+            "app-data wipe: using logical path (unpackaged build, or no packaged-physical \
+             directory found)"
+        );
+        app_data.to_path_buf()
+    }
+}
 
 /// Absolute path to `powershell.exe`, resolved from `%SystemRoot%` — the same
 /// never-a-PATH-lookup discipline as [`crate::browser`]'s `rundll32.exe`.
@@ -80,8 +182,16 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path) -> Option<String> {
 /// Spawn the detached wipe helper for `app_data`. Best-effort: a validation
 /// failure or a spawn error is logged, not propagated — the tray is about to
 /// exit regardless.
+///
+/// **T-222:** the path actually handed to the spawned (unpackaged) helper is
+/// [`resolve_target`]'s result, not `app_data` itself — on a packaged
+/// install that's the real physical directory, never the logical alias the
+/// helper can't see. `build_wipe_script`'s own validation still runs against
+/// whichever path this resolves to (it accepts both — see that function's
+/// own doc for why).
 pub fn spawn_app_data_dir_wipe(app_data: &Path) {
-    let Some(script) = build_wipe_script(app_data) else {
+    let target = resolve_target(app_data);
+    let Some(script) = build_wipe_script(&target) else {
         tracing::warn!("app-data wipe skipped: the directory failed validation");
         return;
     };
@@ -148,13 +258,71 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_wipe_script_for, powershell_exe};
+    use super::{
+        build_wipe_script_for, package_family_name, physical_app_data_dir, powershell_exe,
+    };
     use std::path::Path;
 
     const LOCALAPPDATA: &str = "C:\\Users\\x\\AppData\\Local";
 
     fn target() -> String {
         format!("{LOCALAPPDATA}\\dns-quorum-filter")
+    }
+
+    // T-222 regression coverage — see this module's own doc comment for the
+    // full root-cause story (same MSIX-virtualization class as T-219).
+
+    #[test]
+    fn package_family_name_parses_a_real_windowsapps_install_dir_name() {
+        // The exact shape observed live this session for both the real
+        // release and a differently-signed scenario-24 test build.
+        assert_eq!(
+            package_family_name("dns-quorum-filter_0.4.1.0_x64__8d78tvs37tgae"),
+            Some("dns-quorum-filter_8d78tvs37tgae".to_string())
+        );
+    }
+
+    #[test]
+    fn package_family_name_is_none_for_an_unpackaged_dev_build_dir() {
+        // `target\debug`/`target\release` - no `__` separator at all.
+        assert_eq!(package_family_name("debug"), None);
+        assert_eq!(package_family_name("release"), None);
+    }
+
+    #[test]
+    fn package_family_name_is_none_for_a_malformed_shape() {
+        // No underscore before the `__` split - can't separate name from
+        // version/arch.
+        assert_eq!(package_family_name("noNameSeparator__somehash"), None);
+        // No `__` at all.
+        assert_eq!(package_family_name("dns-quorum-filter_0.4.1.0_x64"), None);
+    }
+
+    #[test]
+    fn physical_app_data_dir_builds_the_packages_localcache_path() {
+        let resolved = physical_app_data_dir(
+            std::ffi::OsStr::new(LOCALAPPDATA),
+            "dns-quorum-filter_0.4.1.0_x64__8d78tvs37tgae",
+            Path::new(&target()),
+        );
+        assert_eq!(
+            resolved,
+            Some(Path::new(
+                r"C:\Users\x\AppData\Local\Packages\dns-quorum-filter_8d78tvs37tgae\LocalCache\Local\dns-quorum-filter"
+            ).to_path_buf())
+        );
+    }
+
+    #[test]
+    fn physical_app_data_dir_is_none_for_an_unpackaged_exe_dir() {
+        assert_eq!(
+            physical_app_data_dir(
+                std::ffi::OsStr::new(LOCALAPPDATA),
+                "release",
+                Path::new(&target())
+            ),
+            None
+        );
     }
 
     #[test]

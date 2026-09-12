@@ -508,8 +508,19 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   reads/writes that same path fine; confirmed release-blocking on a live v0.4.0 MSIX
   2026-09-12, fixed (pure-Rust SHA-1 thumbprint for reads, a `%SystemRoot%\Temp` staged copy for
   the one `-addstore` write) — full root-cause chain and fix verification in `TASKS-DONE.md`'s
-  T-219 entry, don't re-derive it. `certutil -store`/`-delstore` (no file-path arg — `uninstall`'s
-  code path) were **not** affected.
+  T-219 entry, don't re-derive it. `certutil -store`/`-delstore` (T-219's own scope, no file-path
+  arg) were not affected **by that specific `certutil` gap** — but the underlying rule is general,
+  not certutil-specific: **any** spawned unpackaged child process sees a packaged app's logical
+  `%LOCALAPPDATA%` path as absent, regardless of which tool or file it's touching. A second,
+  independent instance hit this in a different subsystem — T-222 (`dnsqb-tray`'s app-data wipe
+  helper, a spawned `powershell.exe`) — confirmed 2026-09-13, same root cause, different code path.
+  Reusable fix technique (both T-219 and T-222): derive the real `PackageFamilyName` from
+  `std::env::current_exe()`'s own install-dir name — `WindowsApps\<Name>_<Version>_<Arch>__
+  <PublisherHash>` → `<Name>_<PublisherHash>` — then address the physical file at
+  `%LOCALAPPDATA%\Packages\<PFN>\LocalCache\Local\...` instead of the logical path, for any
+  spawned-child code path. Never hardcode a `PublisherHash` — it changes with the signing
+  certificate (confirmed empirically: a real release build and an ephemeral test-signed build
+  produced different hashes for the same app).
 - **A POSIX shell truncates a spawned process's exit code to its low byte; `std::process::
   ExitStatus::code()` on a compiled Windows binary does not** — `trust_store::NOT_FOUND_EXIT_CODE`
   (T-49) was set to `17` from a manual `certutil -store` no-match check run through a shell, but
