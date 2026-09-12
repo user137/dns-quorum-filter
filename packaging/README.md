@@ -34,11 +34,19 @@
 
   ```powershell
   Import-Certificate -FilePath dist\dns-quorum-filter.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
-  Add-AppxPackage -Path dist\dns-quorum-filter.msix
+  Add-AppxPackage -Path dist\dns-quorum-filter.msix -ForceTargetApplicationShutdown
   ```
 
   Undo the trust with `.\Trust-TestCert.ps1 -Remove` (run before removing the app — MSIX has no
   uninstall-time hook, T-70).
+
+  **`-ForceTargetApplicationShutdown` (T-223):** without it, `Add-AppxPackage` on an
+  already-installed, running version fails with `0x80073D02` ("needs to be closed") — Windows
+  does not auto-close a Win32-in-MSIX (Desktop Bridge) app for an update the way it does a
+  sandboxed UWP app. The flag (not `-ForceApplicationShutdown`, which also tears down dependency
+  packages — this manifest declares none) force-closes `dnsqb-service`/`-tray`/`-watcher`
+  themselves, so an update never needs a manual "Exit" from the tray first. `Trust-TestCert.ps1
+  -Install` already passes it.
 
 ## The icon lives outside this directory
 

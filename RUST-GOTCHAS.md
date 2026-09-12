@@ -521,6 +521,20 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   spawned-child code path. Never hardcode a `PublisherHash` — it changes with the signing
   certificate (confirmed empirically: a real release build and an ephemeral test-signed build
   produced different hashes for the same app).
+- **Windows does not auto-close a Win32-in-MSIX (Desktop Bridge) app for an install-time update,
+  unlike a sandboxed UWP app** — re-running `Add-AppxPackage` on a newer same-`PackageFamilyName`
+  build while any of its processes (`dnsqb-service`/`-tray`/`-watcher`) is still alive fails with
+  `0x80073D02` ("needs to be closed"), confirmed live in smoke-test scenario 24 (0.4.0→0.4.1).
+  Fix is deployment-side, not app code: `Add-AppxPackage -Path <msix> -ForceTargetApplicationShutdown`
+  force-closes the package's own processes so the update proceeds with no manual exit first — full
+  story in `TASKS-DONE.md`'s T-223 entry. **`-ForceTargetApplicationShutdown`, not
+  `-ForceApplicationShutdown`** — the latter also tears down *dependency* packages
+  (`<PackageDependency>` in the manifest), the former only the package's own processes; check the
+  manifest for dependencies before picking either (this project's `AppxManifest.template.xml` has
+  none, so the narrower flag is correct and Microsoft's own guidance recommends it as the default
+  choice regardless). **No `-Update` needed** — that switch's semantics are about *dependency*
+  packages ("removed when the parent app is removed"), not the general same-family/higher-version
+  upgrade rule, which already applies on the default `AddSet` where both shutdown flags live.
 - **A POSIX shell truncates a spawned process's exit code to its low byte; `std::process::
   ExitStatus::code()` on a compiled Windows binary does not** — `trust_store::NOT_FOUND_EXIT_CODE`
   (T-49) was set to `17` from a manual `certutil -store` no-match check run through a shell, but

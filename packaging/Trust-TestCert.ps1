@@ -24,7 +24,11 @@
 
 .PARAMETER Install
     After trusting the certificate, also run Add-AppxPackage on
-    dns-quorum-filter.msix next to the .cer.
+    dns-quorum-filter.msix next to the .cer. Passes
+    -ForceTargetApplicationShutdown (T-223), so re-running this on an
+    already-installed, running app upgrades in place instead of failing
+    with 0x80073D02 ("needs to be closed") -- no manual "Exit" from the
+    tray needed first.
 
 .PARAMETER Remove
     Undo: delete the certificate from Cert:\LocalMachine\TrustedPeople instead of
@@ -165,7 +169,13 @@ if ($Install -and -not $Remove) {
     }
     Write-Host "Installing $msix ..."
     try {
-        Add-AppxPackage -Path $msix -ErrorAction Stop
+        # -ForceTargetApplicationShutdown (T-223): the manifest declares no
+        # <PackageDependency>, so this (rather than -ForceApplicationShutdown,
+        # which also tears down dependency packages) is the documented,
+        # narrowest option -- closes dnsqb-service/-tray/-watcher itself if
+        # an older version is already running, so an update never hits
+        # 0x80073D02 and never needs a manual tray "Exit" first.
+        Add-AppxPackage -Path $msix -ForceTargetApplicationShutdown -ErrorAction Stop
         Write-Host "Installed. Look for 'DNS Quorum Filter' in the Start menu." -ForegroundColor Green
     } catch {
         throw "Add-AppxPackage failed: $_"
