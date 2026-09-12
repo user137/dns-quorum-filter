@@ -200,6 +200,14 @@ async function applyCurrentConfig() {
 // successful apply.
 let configPersistFailed = false;
 
+// T-228: a read-only cache of status.network for the two cards that fetch
+// their own data off the 2s poll (#rating-filter-body, #geoip-maxmind-body)
+// and so never see it directly - updated by render() on every poll tick.
+// Used only to disable/explain controls that need a live network fetch to
+// do anything (a fresh bubble zone, the MaxMind save-time probe), never to
+// gate anything that only reads/writes local config.
+let lastNetworkStatus = "ONLINE";
+
 // T-139: percentage is derived here, not stored server-side - `total`/`blocked`
 // are already the source of truth (`admin::compute_stats`), a third persisted
 // field would just be able to drift from them. `total === 0` (log window empty,
@@ -262,6 +270,11 @@ function renderTimeoutConfig(status) {
 }
 
 function render(status) {
+  // `|| "ONLINE"` makes the fail-open default provable from this line alone
+  // (not just true by the server's own NetworkStatusView::#[default] Online)
+  // - an older/malformed response missing `network` must not read as offline
+  // and lock out the two guarded controls below.
+  lastNetworkStatus = status.network || "ONLINE";
   renderProtectionHero(heroPresentation(status.hero_state, status.stats));
   // T-128: the always-visible rating-filter «bubble» badge. On the 2s poll
   // path (unlike the #rating-filter-body card) so it can't go stale; a
@@ -1043,7 +1056,23 @@ function renderMaxmind(data) {
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.textContent = "Зберегти";
+  // T-228: saving runs a save-time probe against MaxMind (SERVICES.md/
+  // dispatch.rs's own doc: "POST stores then runs a save-time probe -
+  // check") - offline, that probe just times out and the existing
+  // MAXMIND_CHECK_MESSAGES.FAILED text ("MaxMind відхилив креденшели
+  // (401/403)") would misleadingly read as a bad key rather than no
+  // network. Block before the request, name the real reason, instead of
+  // showing a wrong diagnosis after a doomed fetch.
+  if (lastNetworkStatus === "OFFLINE") {
+    saveBtn.disabled = true;
+    saveBtn.title = "Немає з'єднання з інтернетом - перевірку ключа неможливо виконати.";
+  }
   saveBtn.addEventListener("click", async () => {
+    if (lastNetworkStatus === "OFFLINE") {
+      errorLine.textContent =
+        "Немає з'єднання з інтернетом - перевірку ключа неможливо виконати.";
+      return;
+    }
     const accountId = accountInput.value.trim();
     const licenseKey = keyInput.value.trim();
     if (!accountId || !licenseKey) {
@@ -2547,6 +2576,16 @@ function renderRatingFilter(status) {
   confirmBtn.type = "button";
   confirmBtn.className = "rf-confirm";
   confirmBtn.textContent = "Підтвердити ввімкнення";
+  // T-228: enabling wakes run_topn_updater (SPEC.md §5.3 / dispatch.rs), which
+  // fetches any picked zone that isn't already cached on disk - offline, that
+  // fetch just fails in the background with no feedback here beyond the
+  // existing "завантажується…" placeholder staying stuck forever. Block
+  // before the request instead of leaving that silent.
+  if (lastNetworkStatus === "OFFLINE") {
+    confirmBtn.disabled = true;
+    confirmBtn.title =
+      "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+  }
   confirmRow.appendChild(cancelBtn);
   confirmRow.appendChild(confirmBtn);
   card.appendChild(confirmRow);
@@ -2601,6 +2640,12 @@ function renderRatingFilter(status) {
   saveBtn.className = "rf-save";
   saveBtn.textContent = "Зберегти зони";
   saveBtn.hidden = true;
+  // T-228: same reasoning as confirmBtn above - saving a changed zone set
+  // wakes the same updater for whichever picked zone isn't cached yet.
+  if (lastNetworkStatus === "OFFLINE") {
+    saveBtn.disabled = true;
+    saveBtn.title = "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+  }
   card.appendChild(saveBtn);
 
   let activeIndex = -1;
@@ -2831,6 +2876,11 @@ function renderRatingFilter(status) {
   });
   cancelBtn.addEventListener("click", clearArm);
   confirmBtn.addEventListener("click", async () => {
+    if (lastNetworkStatus === "OFFLINE") {
+      errorLine.textContent =
+        "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+      return;
+    }
     try {
       renderRatingFilter(await setRatingFilter(true, [...picked]));
     } catch (err) {
@@ -2838,6 +2888,11 @@ function renderRatingFilter(status) {
     }
   });
   saveBtn.addEventListener("click", async () => {
+    if (lastNetworkStatus === "OFFLINE") {
+      errorLine.textContent =
+        "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+      return;
+    }
     try {
       renderRatingFilter(await setRatingFilter(rf.enabled, [...picked]));
     } catch (err) {
