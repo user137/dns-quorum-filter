@@ -39,6 +39,7 @@
 
 mod browser;
 mod browser_nudge;
+mod nudge_popup;
 mod onboarding;
 mod self_uninstall;
 mod status;
@@ -46,7 +47,7 @@ mod status;
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
     set_quit_flag, set_stop_flag, stop_flag_is_set, write_pid_file, AdminClient, AdminClientError,
-    GuardError, InstanceRole, ResolverConfig,
+    GuardError, InstanceGuard, InstanceRole, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -138,6 +139,54 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Батч 3.12 closing).
 const FLAG_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
+/// The single-instance guard, pid file, watcher safety-net, and config load
+/// `main` needs before it can build anything — extracted only to keep `main`
+/// itself under clippy's line-count lint (same "cohesive extracted helper"
+/// discipline as `refresh_tray`/`maybe_offer_onboarding`, not a behaviour
+/// change). Exits the process on any unrecoverable failure, exactly as this
+/// code did inline; `None` is only the expected "another instance is
+/// already running" idempotent exit, not an error.
+fn bootstrap(app_data: &Path) -> Option<(InstanceGuard, u16)> {
+    // SPEC.md §7.1 #2/#3: one tray per app-data directory, and a `tray.pid`
+    // the watcher's launcher reads to decide whether to spawn one (T-150) —
+    // without it, every watcher (re)start would spawn another tray. A second
+    // instance (a double-clicked shortcut, the watcher relaunching) just
+    // exits; that is the idempotent-launcher behaviour, not an error. `tao`'s
+    // event loop never returns, so the guard is released by the OS on exit
+    // (its whole `share_mode(0)` design) rather than by `Drop`.
+    let guard = match acquire_instance_guard(app_data, InstanceRole::Tray) {
+        Ok(guard) => guard,
+        Err(GuardError::AlreadyRunning(_)) => {
+            tracing::info!("another dnsqb-tray instance is already running, exiting");
+            return None;
+        }
+        Err(err) => {
+            tracing::error!("could not acquire the tray single-instance lock: {err}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(err) = write_pid_file(app_data, InstanceRole::Tray) {
+        tracing::warn!("could not write the tray pid file: {err}");
+    }
+
+    // T-187 safety net: normally the watcher spawns this tray, so a watcher is
+    // already up. But if `dnsqb-tray.exe` was launched on its own (a stray
+    // double-click of the wrong file), bring the watcher up so the user isn't
+    // left with an unsupervised or absent service. Not an inversion of the
+    // hierarchy — the watcher stays the root; this is idempotent and a no-op
+    // when a watcher is already running.
+    ensure_sibling_running(app_data, InstanceRole::Watcher);
+
+    let port = match ResolverConfig::load(&app_data.join("resolver_config.toml")) {
+        Ok(config) => config.port,
+        Err(err) => {
+            tracing::error!("failed to load resolver_config.toml: {err}");
+            std::process::exit(1);
+        }
+    };
+    Some((guard, port))
+}
+
 fn main() {
     let app_data = match app_data_dir() {
         Ok(dir) => {
@@ -151,42 +200,8 @@ fn main() {
         }
     };
 
-    // SPEC.md §7.1 #2/#3: one tray per app-data directory, and a `tray.pid`
-    // the watcher's launcher reads to decide whether to spawn one (T-150) —
-    // without it, every watcher (re)start would spawn another tray. A second
-    // instance (a double-clicked shortcut, the watcher relaunching) just
-    // exits; that is the idempotent-launcher behaviour, not an error. `tao`'s
-    // event loop never returns, so the guard is released by the OS on exit
-    // (its whole `share_mode(0)` design) rather than by `Drop`.
-    let _guard = match acquire_instance_guard(&app_data, InstanceRole::Tray) {
-        Ok(guard) => guard,
-        Err(GuardError::AlreadyRunning(_)) => {
-            tracing::info!("another dnsqb-tray instance is already running, exiting");
-            return;
-        }
-        Err(err) => {
-            tracing::error!("could not acquire the tray single-instance lock: {err}");
-            std::process::exit(1);
-        }
-    };
-    if let Err(err) = write_pid_file(&app_data, InstanceRole::Tray) {
-        tracing::warn!("could not write the tray pid file: {err}");
-    }
-
-    // T-187 safety net: normally the watcher spawns this tray, so a watcher is
-    // already up. But if `dnsqb-tray.exe` was launched on its own (a stray
-    // double-click of the wrong file), bring the watcher up so the user isn't
-    // left with an unsupervised or absent service. Not an inversion of the
-    // hierarchy — the watcher stays the root; this is idempotent and a no-op
-    // when a watcher is already running.
-    ensure_sibling_running(&app_data, InstanceRole::Watcher);
-
-    let port = match ResolverConfig::load(&app_data.join("resolver_config.toml")) {
-        Ok(config) => config.port,
-        Err(err) => {
-            tracing::error!("failed to load resolver_config.toml: {err}");
-            std::process::exit(1);
-        }
+    let Some((_guard, port)) = bootstrap(&app_data) else {
+        return;
     };
 
     // T-229: the earliest-launch stamp for the browser-nudge threshold below
@@ -228,9 +243,10 @@ fn main() {
     let mut last_flag_check = Instant::now();
     let mut onboarding_offered = false;
     let mut browser_nudge_offered = false;
+    let mut browser_nudge_popup: Option<nudge_popup::NudgePopup> = None;
 
     let event_loop: EventLoop<()> = EventLoop::new();
-    event_loop.run(move |_event, _target, control_flow| {
+    event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + EVENT_POLL_INTERVAL);
 
         // T-195: the "Повністю видалити" worker sets this once the report
@@ -255,7 +271,15 @@ fn main() {
             &mut last_colour,
         );
         maybe_offer_onboarding(&mut onboarding_offered, &app_data, port, &trust, trusted);
-        maybe_offer_browser_nudge(&mut browser_nudge_offered, &app_data, observed);
+        drive_browser_nudge(
+            &mut browser_nudge_offered,
+            &app_data,
+            observed,
+            target,
+            &tray_icon,
+            &event,
+            &mut browser_nudge_popup,
+        );
 
         // T-185: flip the pause/resume label when `stop.flag` appears or is
         // removed (by this menu, or by a fresh watcher launch clearing it) —
@@ -674,17 +698,44 @@ fn maybe_offer_onboarding(
     }
 }
 
-/// One-shot "point your browser at this" nudge (T-229, detection half only —
-/// see `browser_nudge`'s module doc for why rendering isn't wired up yet).
-/// Fires at most once **per process** (`offered` latch only) — deliberately
-/// does **not** write the persisted `browser-nudge.seen` marker, since
-/// nothing is actually shown to the user yet; burning that one-shot latch
-/// here would mean the real notification, once a renderer is chosen, could
-/// never fire on a machine that already ran this build. `should_offer_
-/// browser_nudge` still reads `seen` as an input — a future renderer sets it
-/// for real once it renders something.
+/// T-229: offers the nudge popup if due, then closes it (click or expiry).
+/// One call site keeps this batch of tightly-coupled state out of `main`'s
+/// own body — the same reason `refresh_tray`/`maybe_offer_onboarding` are
+/// already their own functions.
+fn drive_browser_nudge(
+    offered: &mut bool,
+    app_data: &Path,
+    observed: TrayStatus,
+    target: &tao::event_loop::EventLoopWindowTarget<()>,
+    tray_icon: &TrayIcon,
+    event: &tao::event::Event<()>,
+    popup: &mut Option<nudge_popup::NudgePopup>,
+) {
+    maybe_offer_browser_nudge(offered, app_data, observed, target, tray_icon, popup);
+    if popup
+        .as_ref()
+        .is_some_and(|p| p.should_close(event, nudge_popup::POPUP_LIFETIME))
+    {
+        *popup = None;
+    }
+}
+
+/// One-shot "point your browser at this" nudge (T-229). Fires at most once
+/// **per process** (`offered` latch) regardless of whether rendering
+/// actually succeeds — a failed render (e.g. no monitor detected) is not
+/// worth retrying every tick. The persisted `browser-nudge.seen` marker is
+/// only written once [`nudge_popup::spawn`] actually returns a window — that
+/// marker means "shown", not "decided to show", so a rendering failure can't
+/// silently burn the one-shot latch a future launch could still use.
 /// [`browser_nudge::should_offer_browser_nudge`] is the pure predicate.
-fn maybe_offer_browser_nudge(offered: &mut bool, app_data: &Path, observed: TrayStatus) {
+fn maybe_offer_browser_nudge(
+    offered: &mut bool,
+    app_data: &Path,
+    observed: TrayStatus,
+    target: &tao::event_loop::EventLoopWindowTarget<()>,
+    tray_icon: &TrayIcon,
+    popup: &mut Option<nudge_popup::NudgePopup>,
+) {
     if *offered {
         return;
     }
@@ -697,10 +748,12 @@ fn maybe_offer_browser_nudge(offered: &mut bool, app_data: &Path, observed: Tray
     if browser_nudge::should_offer_browser_nudge(SystemTime::now(), first_seen, total_queries, seen)
     {
         *offered = true;
-        tracing::info!(
-            "no browser appears to have used the local DoH endpoint yet (T-229 nudge condition \
-             met — not yet rendered, see browser_nudge's module doc)"
-        );
+        if let Some(window) = nudge_popup::spawn(target, tray_icon.rect()) {
+            *popup = Some(window);
+            browser_nudge::mark_browser_nudge_seen(app_data);
+        } else {
+            tracing::warn!("browser nudge popup failed to render");
+        }
     }
 }
 

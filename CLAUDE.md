@@ -319,8 +319,9 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   verify_pid_alive` (T-89): the recycled-PID guard §7 requires before a restart (SPEC.md §7.1 #3).
   Links into `dnsqb-service` though only `dnsqb-watcher` calls it (§7.1 #6). Full vetting/rationale:
   SECURITY.md `sysinfo` row.
-- `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot`;
-  depends on `dnsqb-service` as a library for `AdminClient`.
+- `crates/dnsqb-tray`: `tray-icon` / `tao` / `rfd` (`default-features = false`) / `parking_lot` /
+  `softbuffer` (T-229, `default-features = false` — its default features are Linux-only windowing
+  backends); depends on `dnsqb-service` as a library for `AdminClient`.
 - Dev-only: `tempfile` (`overrides` load tests), `x509-parser` (`cert` DER assertions), `proptest`
   (`default-features = false`, `std` — no `fork`/`timeout` process-spawning tail).
 

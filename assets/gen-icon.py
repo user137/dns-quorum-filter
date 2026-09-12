@@ -163,6 +163,49 @@ def make_tray_glyph(size: int, colour) -> Image.Image:
     return img
 
 
+# T-229 (2026-09-13): a small, borderless, auto-dismissing popup near the
+# tray icon, nudging the user once that no browser appears to be using the
+# local DoH endpoint yet. Pre-rendered as a static RGBA image — the copy is
+# fixed and one language today (T-151 i18n is unstarted) — rather than
+# rendered at runtime, so `dnsqb-tray` needs no font/text-layout dependency
+# of its own, only a pixel blit (`softbuffer`): the same "everything in, no
+# runtime asset I/O" choice as the tray glyphs above.
+POPUP_WIDTH = 540
+POPUP_HEIGHT = 108
+POPUP_TEXT = (
+    "Жоден браузер ще не використовує DNS Quorum Filter.\n"
+    "Відкрийте налаштування, щоб це виправити."
+)
+# A dark neutral slate, not the accent colour — this is a passive notice, not
+# a brand moment, and it must read clearly against any desktop wallpaper.
+POPUP_BG = (0x20, 0x2A, 0x33)
+
+
+def make_browser_nudge_popup(
+    width: int = POPUP_WIDTH, height: int = POPUP_HEIGHT, text: str = POPUP_TEXT
+) -> Image.Image:
+    """A small, fully-opaque notice card — no transparency: this is its own
+    borderless top-level window, not composited over anything else."""
+    img = Image.new("RGBA", (width, height), (*POPUP_BG, 255))
+    draw = ImageDraw.Draw(img)
+    padding = round(width * 0.05)
+    glyph_radius = height * 0.24
+    draw_hex_shield(draw, padding + glyph_radius, height / 2, glyph_radius, ACCENT)
+
+    font = load_bold_font(round(height * 0.14))
+    text_x = padding * 2 + glyph_radius * 2
+    text_bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=round(height * 0.10))
+    text_h = text_bbox[3] - text_bbox[1]
+    draw.multiline_text(
+        (text_x, (height - text_h) / 2 - text_bbox[1]),
+        text,
+        font=font,
+        fill=WHITE,
+        spacing=round(height * 0.10),
+    )
+    return img
+
+
 def make_ico(path: Path) -> None:
     """Multi-resolution Windows .ico for the executables' embedded icon.
     The base frame must be the largest — Pillow's ICO writer drops any
@@ -206,6 +249,14 @@ def main() -> None:
             f"wrote {path} ({len(blob)} bytes, "
             f"{TRAY_ICON_SIZE}x{TRAY_ICON_SIZE} RGBA, transparent bg)"
         )
+
+    popup_path = TRAY_RGBA_DIR / "browser-nudge-rgba.bin"
+    popup_blob = make_browser_nudge_popup().tobytes()
+    popup_path.write_bytes(popup_blob)
+    print(
+        f"wrote {popup_path} ({len(popup_blob)} bytes, "
+        f"{POPUP_WIDTH}x{POPUP_HEIGHT} RGBA, opaque bg)"
+    )
 
 
 if __name__ == "__main__":

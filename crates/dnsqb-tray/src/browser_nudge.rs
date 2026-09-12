@@ -1,30 +1,26 @@
-//! T-229 (detection half only, 2026-09-13) — whether it's worth mentioning,
-//! once, that no browser appears to have queried the local `DoH` endpoint yet.
+//! T-229 — whether it's worth mentioning, once, that no browser appears to
+//! have queried the local `DoH` endpoint yet.
 //!
-//! **This module deliberately decides only *when*, never *how*.** The user's
-//! own ask ("небільшe спливаюче біля трею, не на весь екран, не по центру")
-//! rules out `rfd`'s centered native dialogs (already used by `onboarding`),
-//! and the two real rendering options each carry a cost bigger than this
-//! module: a Windows balloon tip needs either a new direct dependency or a
-//! hand-rolled `unsafe` `Shell_NotifyIcon` registration (this project is
-//! `#![forbid(unsafe_code)]` everywhere, and `tray-icon` 0.21's cross-platform
-//! `TrayIcon` exposes `window_handle()` but not the private `uID` it
-//! registered its own icon under, so a balloon can't just reuse the existing
-//! icon's `NOTIFYICONDATA` entry — it would need a second, separate
-//! registration); a custom `tao` popup window needs a rendering dependency
-//! this crate doesn't otherwise have (rendering text, not just showing a
-//! native dialog). Both are real architectural additions to a
-//! `#![forbid(unsafe_code)]` crate and belong in front of the user, not
-//! picked silently — see TASKS-DONE.md's T-229 entry.
+//! **This module deliberately decides only *when*, never *how*** — the
+//! actual on-screen popup is `nudge_popup.rs`, a deliberate split so the
+//! timing predicate stays trivially unit-testable (no window, no monitor,
+//! no event loop needed to test it). The user's own ask ("небільшe
+//! спливаюче біля трею, не на весь екран, не по центру") ruled out `rfd`'s
+//! centered native dialogs (`onboarding`'s own mechanism) and a Windows
+//! balloon tip (`tray-icon` 0.21 exposes the real tray icon's
+//! `window_handle()` but not the private `uID` it registered under, so a
+//! balloon can't attach to the existing icon without a second, separate
+//! `Shell_NotifyIcon` registration) — see `nudge_popup`'s module doc for
+//! what was built instead.
 //!
-//! What *is* built here, mirroring `onboarding.rs`'s exact shape: a pure
-//! decision (`should_offer_browser_nudge`) plus the on-disk state it reads —
-//! a `first-seen.stamp` (written once, ever, the earliest launch this app
-//! has been observed at) and a `browser-nudge.seen` latch (T-229's own
-//! one-time marker, distinct from `onboarding.seen` — the two nudges fire
-//! independently). `main.rs` wires this to the poll loop and, for now, logs
-//! rather than rendering — swapping in a real notification later only means
-//! replacing that one call, not touching the decision logic above it.
+//! Mirrors `onboarding.rs`'s exact shape: a pure decision
+//! (`should_offer_browser_nudge`) plus the on-disk state it reads — a
+//! `first-seen.stamp` (written once, ever, the earliest launch this app has
+//! been observed at) and a `browser-nudge.seen` latch (T-229's own one-time
+//! marker, distinct from `onboarding.seen` — the two nudges fire
+//! independently). `main.rs` calls `mark_browser_nudge_seen` only once
+//! `nudge_popup::spawn` actually returns a window, never at the moment the
+//! predicate merely evaluates true — see that function's own doc comment.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -64,12 +60,9 @@ pub fn browser_nudge_seen(app_data_dir: &Path) -> bool {
 /// `onboarding::mark_onboarding_seen`: a failed write just means the check
 /// re-evaluates true next tick, which is self-correcting, not a crash.
 ///
-/// **Not called anywhere yet** — `main.rs`'s wiring deliberately calls only
-/// the in-process `offered` latch, never this, because nothing is actually
-/// shown to the user until a renderer is chosen (see the module doc); this
-/// is the seam that renderer will call once it exists. Exercised only by
-/// this module's own round-trip test in the meantime.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Called by `main.rs` only at the point `nudge_popup::spawn` actually
+/// returns a window — never at the moment the condition merely evaluates
+/// true, so a rendering failure never burns this one-shot marker.
 pub fn mark_browser_nudge_seen(app_data_dir: &Path) {
     if let Err(err) = std::fs::write(seen_path(app_data_dir), []) {
         tracing::warn!("could not write {BROWSER_NUDGE_SEEN_NAME}: {err}");

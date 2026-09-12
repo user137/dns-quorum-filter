@@ -12,6 +12,7 @@ path = "src/main.rs"
 dnsqb-service = { path = "../dnsqb-service", version = "0.4.0" }
 parking_lot = "0.12"
 rfd = { version = "0.15.4", default-features = false }
+softbuffer = { version = "0.4.8", default-features = false }
 tao = "0.31.1"
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "net", "time"] }
 tracing = "0.1.41"
