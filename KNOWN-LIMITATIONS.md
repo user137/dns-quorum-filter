@@ -180,4 +180,10 @@ TASKS-DONE.md, never here.
   `ServiceRestarting`/`ServiceGaveUp` + `/admin/status.watchdog`); browser-DoH-usage detection
   (indicator condition 1) is still unbuilt (blocked on T-134). The full single-indicator UI (all
   conditions as competing states, not a `Filtering` suffix) is still future.
+- **`user-country`'s GeoIP download URL has no fallback candidate (T-226(б), 2026-09-12)** —
+  unlike DB-IP's two calendar-month URLs, `sapics/ip-location-db` publishes only one rolling
+  release asset for this file, and its own README already records renaming its distribution once
+  (June 2026). If the asset is ever renamed again, every refresh attempt fails forever; the
+  existing "keep last-known-good + `tracing::warn!`" behavior absorbs it silently — the only
+  user-visible signal is an aging `database_built_at_ms` on the GeoIP card, nothing louder.
 

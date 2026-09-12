@@ -5396,3 +5396,65 @@ max_capacity).
 (`helpDetails`/`FIELD_HELP`/UI-SPEC.md §3.8), коли підніметься окремо.
 
 **Коміт:** `8d44e53`.
+
+### T-226(б) — новий дефолт GeoIP-джерела: `user-country` замість DB-IP Lite, DB-IP не видалено (2026-09-12, plan+advisor kickoff+closing)
+
+**Запит:** T-226(б) початково просив дослідити стороннє GitHub-дзеркало GeoLite2
+(`P3TERX/GeoLite.mmdb`) як дефолтне джерело. Дослідження (не реалізація — окремий явний запит
+користувача) з'ясувало: дані того дзеркала юридично вимагають попередньої письмової згоди
+MaxMind на переповсюдження (перевірено напряму за `maxmind.com/en/geolite/eula`) — реальний,
+підтверджений ризик. Подальше дослідження за проханням користувача ("Дивно що немає жодного
+відкритого списку країн та їх айпі") знайшло `sapics/ip-location-db`'s `user-country` — набір,
+зібраний напряму з публічних даних п'яти регіональних реєстрів IP-адрес (RIR) + архівів
+маршрутизації (RouteViews/RIPE RIS) + публічних geofeed-даних, ліцензія **PDDL** (суспільне
+надбання, атрибуція не потрібна), 97.49% збіг з GeoLite2 по IPv4-країнах (власне порівняння
+проєкту-джерела). Користувач вирішив зробити це джерело новим дефолтом, явно назвавши мотивацію:
+уникнути реєстрації, максимізувати автономність застосунку.
+
+**Advisor-catch на plan-review (до реалізації):** перша редакція плану пропонувала повністю
+**видалити** `GeoipSource::DbIpLite`. Advisor вказав на нестиковку: DB-IP Lite вже й так не
+вимагає реєстрації — аргумент користувача стосується MaxMind (opt-in і так), не DB-IP. План
+переписано — `UserCountry` додано як **третій** варіант enum, `DbIpLite` лишився повністю
+робочим, просто більше не дефолт для свіжого встановлення. Advisor також підняв: (1) єдиний
+фіксований URL без другого кандидата на випадок перейменування релізу — під час реалізації
+підтверджено, що в репозиторії `sapics/ip-location-db` існує лише 2 релізні теги всього
+(`latest`, `checksum`), тож другого кандидата справді нема; лишається на "keep last-known-good"
+поведінці, як і для DB-IP/MaxMind; (2) чи sha256-сайдкар справді існує — під час реалізації
+з'ясувалося, що **так**, просто під окремим тегом релізу (`checksum`, не поруч із самим файлом) —
+перевірено наживо, хеш точно збігається із завантаженим файлом; це дало сильнішу, hard-fail
+sha256-перевірку замість початково запланованої слабшої TLS-only гарантії.
+
+**Критичний баг сумісності схеми, знайдений лише прямим завантаженням і запитом реального
+файлу** (не з документації): `geoip.rs`'s `GeoipReader::country()` декодував лише вкладений шлях
+`["country", "iso_code"]` (формат DB-IP/GeoLite2). Реальний запис `user-country.mmdb` —
+**плаский** `{"country_code": "XX"}`. Без фіксу GeoIP-фільтрація виглядала б налаштованою й
+активною (бейдж, адмін-UI, логи), але мовчки ніколи б не спрацьовувала — `country()` завжди
+повертав би `None`. Виправлено додаванням плаского шляху як fallback; нова тестова фікстура
+`flat-country-test.mmdb` (згенерована локально інструментом `mmdb-writer` 0.2.7, MIT-ліцензія,
+не runtime-залежність — див. `tests/fixtures/geoip/README.md`).
+
+**Реалізація:** `geoip_download.rs` (`USER_COUNTRY_URL`/`USER_COUNTRY_SHA256_URL`, DB-IP-код не
+чіпало); `geoip_updater.rs` (`GeoipSource::UserCountry`,
+`try_user_country_release[_bounded]`/`fetch_user_country_checksum_sidecar`, новий
+`#[ignore]`d live-тест `fetch_and_verify_against_live_user_country` — фактично запущений цієї
+сесії, GitHub доступний з dev-sandbox на відміну від `db-ip.com`: підтверджено завантаження,
+sha256-збіг, `database_type == "country ipvAll"`, реальний IPv6-лукап); `geoip.rs`
+(nested→flat fallback у `country()`, нові тести); `admin.rs` (`DatabaseSource::UserCountry`,
+`classify()`'s `"ipvall"`-гілка, wire-рядок `USER_COUNTRY`); `orchestrate.rs::load_geoip_source`
++ `dispatch.rs`'s `apply_admin_reset`/`serve_admin_geoip_maxmind_clear` (усі три "немає MaxMind
+creds" гілки узгоджено на новому дефолті); UI (`main.js`'s `DATABASE_SOURCE_LABELS`,
+`index.html`'s `#credits`-футер — новий рядок з атрибуцією `sapics/ip-location-db`, юридично не
+обов'язковою при PDDL, доданою як жест прозорості поряд із незмінним обов'язковим рядком DB-IP).
+
+**Повний гейт пройдено:** `cargo build`/`clippy -D warnings`/`fmt --check`/
+`test --workspace --lib --bins` (804 passed)/`test --test conformance`/`test --test admin_client`/
+`test --workspace --doc`/`test --workspace --examples`/`cargo doc` (RUSTDOCFLAGS=-D warnings)/
+`cargo deny check` — усе зелене, без нових залежностей (`sha2` вже був у дереві для MaxMind).
+
+**Наслідки в доках:** `SECURITY.md`, `CONFIGURATION.md`, `SERVICES.md`, `SPEC.md`, `UI-SPEC.md`,
+`CLAUDE.md` (модуль-таблиця + GeoIP workstream), `diagrams/ui-dto-model.md`/`ui-navigation.md`
+(ground-truth ritual), `DECISIONS.md` (повний запис рішення й розвороту щодо видалення DB-IP).
+
+**Не змінено:** `GeoipSource::DbIpLite` (весь код, T-75) і `GeoipSource::Maxmind` (T-80/T-162/
+T-163) — обидва лишаються повністю робочими; `GEOIP_CHECK_INTERVAL` (24h); поведінка автозапуску
+апдейтера в `orchestrate.rs` (уже "качається сам", без нового гейтингу).

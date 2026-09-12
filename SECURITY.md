@@ -84,7 +84,21 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   T-80's MaxMind advanced mode fetches a Basic-auth'd `.tar.gz` from `download.maxmind.com` and
   extracts the `.mmdb` member in memory (`tar` crate, read-only, bounded) before the same atomic
   swap; a `.tar.gz.sha256` sidecar is verified opportunistically (present mismatch → hard fail,
-  absent → the TLS + gzip-CRC + structural-parse fallback).
+  absent → the TLS + gzip-CRC + structural-parse fallback). **T-226(б), 2026-09-12: the
+  fresh-install default GeoIP source is now `sapics/ip-location-db`'s `user-country`** (a bare
+  `.mmdb`, no gzip/tar wrapper), chosen over the originally-proposed GeoLite2 mirror after research
+  found that mirror's underlying data requires MaxMind's prior written consent to redistribute
+  (`maxmind.com/en/geolite/eula`) — a real legal risk `user-country` avoids entirely, since it's
+  built directly from the public RIR delegated-stats files/BGP routing archives it's licensed
+  PDDL (public domain) for. Its sha256 sidecar is confirmed to genuinely exist (published under a
+  separate `checksum` release tag, verified this session to match a live download exactly) — a
+  stronger integrity story than the merely-opportunistic DB-IP/MaxMind sidecars, though still
+  wired the same opportunistic-fetch/hard-fail-on-mismatch way in code. `GeoipSource::DbIpLite`'s
+  code is kept, not deleted, but is no longer selectable by any config field or route — a cheap
+  revert path, not a live option; an upgraded install's already-on-disk DB-IP file still serves
+  (and still gets `DatabaseSource::DbIpLite`'s classification/attribution) until its first
+  successful `user-country` refresh replaces it. See DECISIONS.md 2026-09-12 for the full
+  reasoning.
 - **Browser silent DoH-fallback** — open, not fully closed: if `dnsqb-service` errors or times out,
   the browser may silently fall back to system DNS, bypassing quorum entirely with no built-in
   mitigation in the current design (SPEC.md, Відкриті питання, п.10).
@@ -178,7 +192,7 @@ any accepted risk that isn't obvious from the crate's name.
 | `maxminddb` 0.30.3 (+`ipnetwork`) | `default-features = false` — no `mmap`/`simdutf8`/`unsafe-str-decode`; reads the whole DB into an owned `Vec<u8>` instead | Keeps `#![forbid(unsafe_code)]` true for this crate's usage with no exception needed |
 | `flate2` 1.1.9 | `miniz_oxide` backend — pure Rust, no C toolchain, same `forbid(unsafe_code)` reasoning as `maxminddb` | — |
 | `sha1` 0.10.7 | Verifies the DB-IP `.sha1` sidecar — chosen to match what db-ip.com actually publishes, not for collision resistance | Threat model here is cross-host consistency, not a resourced adversary |
-| `sha2` 0.10.9 | Same role for MaxMind's `.sha256` sidecar | — |
+| `sha2` 0.10.9 | Same role for MaxMind's `.sha256` sidecar, and (T-226(б)) `user-country`'s `.sha256` sidecar — a genuinely confirmed one, not merely opportunistic | — |
 | `tar` 0.4.46 (+`filetime`) | Read-only, in-memory `.tar.gz` extraction — no path is ever built from an archive entry, so there's **no path-traversal surface**. Chosen over a hand-rolled tar parser for the same reason as `hickory-proto`: untrusted network input into a hand-written parser | — |
 | `keyring` 4.2.0 (+`keyring-core`, `windows-native-keyring-store`) | The single boundary storing four secrets — the TLS key, MaxMind credentials, the shared persistence key, and (Батч 4.5) the separate personal-zone key; `v1` feature is required (compile error without it) | `unsafe` Win32 FFI is contained in `windows-native-keyring-store`, `forbid(unsafe_code)` intact. **`v1` also pulls non-Windows store crates into `Cargo.lock`; they never compile for windows-msvc and `cargo deny` ignores them, but `cargo audit` reads `Cargo.lock` with no graph-target filter — a future advisory against one of them would still redden CI.** A stated, live maintenance liability, not history. |
 | `sysinfo` 0.39.6 (+`ntapi`→`winapi` 0.3.9, `windows` 0.62 family) | The one caller: `verify_pid_alive` — PID+exe-identity check before a watchdog restart (§7.1 #3) | `unsafe` FFI is contained in `ntapi`/`windows-*`, `forbid(unsafe_code)` intact. **This is the same FFI stack §7.1 #2 *rejected* for the `single-instance` guard crate (which had a trivial safe lock-file alternative) — accepted here because no such alternative exists for a process-*identity* check.** The asymmetry is the decision, not an oversight. Links into `dnsqb-service` though only `dnsqb-watcher` calls it (§7.1 #6, accepted). |

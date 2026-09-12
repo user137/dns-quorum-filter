@@ -713,9 +713,21 @@ fn build_geoip_init(
     }
 }
 
+/// T-226(б): `user-country` (`sapics/ip-location-db`, PDDL/public-domain, no
+/// registration) is the fresh-install default since 2026-09-12 — replacing
+/// DB-IP Lite in that role. **`GeoipSource::DbIpLite` is not selectable by
+/// any of the three branches below any more** (advisor-caught on closing
+/// review) — there is no persisted `GeoipSource` config field, so this
+/// function (plus its two `dispatch.rs` mirrors,
+/// `apply_admin_reset`/`serve_admin_geoip_maxmind_clear`) is the *entire*
+/// decision; the variant is kept in the enum only as a cheap revert path
+/// (see `geoip_updater.rs`'s own doc comment), not as a live option today.
+/// All three "no working `MaxMind` credentials" branches below
+/// intentionally agree on the same fallback value — three branches silently
+/// disagreeing on the default would be its own latent bug.
 fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
     let Some(dir) = app_data else {
-        return GeoipSource::DbIpLite;
+        return GeoipSource::UserCountry;
     };
     if let Err(err) = migrate_legacy_credentials_file(dir) {
         tracing::warn!("MaxMind credentials migration failed ({err}), using stored/none");
@@ -728,12 +740,12 @@ fn load_geoip_source(app_data: Option<&Path>) -> GeoipSource {
             GeoipSource::Maxmind(creds)
         }
         Ok(None) => {
-            tracing::info!("GeoIP source: DB-IP Lite (default; no MaxMind credentials stored)");
-            GeoipSource::DbIpLite
+            tracing::info!("GeoIP source: user-country (default; no MaxMind credentials stored)");
+            GeoipSource::UserCountry
         }
         Err(err) => {
-            tracing::warn!("ignoring stored MaxMind credentials ({err}), using DB-IP Lite");
-            GeoipSource::DbIpLite
+            tracing::warn!("ignoring stored MaxMind credentials ({err}), using user-country");
+            GeoipSource::UserCountry
         }
     }
 }

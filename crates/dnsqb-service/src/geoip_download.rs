@@ -1,10 +1,12 @@
 //! Pure helpers for the `GeoIP` database updater: DB-IP Lite candidate
 //! download-URL construction (the URL embeds the calendar year-month, T-75),
-//! bounded gzip decompression, and — for T-80's `MaxMind GeoLite2` advanced
+//! bounded gzip decompression, — for T-80's `MaxMind GeoLite2` advanced
 //! mode — permalink-URL construction and bounded `.tar.gz` member
-//! extraction. Kept separate from `geoip_updater.rs`'s network/orchestration
-//! code so this arithmetic / decompression / un-tar logic is testable with
-//! plain byte buffers, no HTTP mocking needed — `geoip_updater.rs`'s own
+//! extraction, and — for T-226(б)'s `sapics/ip-location-db` `user-country`
+//! source, the new fresh-install default — its fixed download/checksum
+//! URLs. Kept separate from `geoip_updater.rs`'s network/orchestration code
+//! so this arithmetic / decompression / un-tar logic is testable with plain
+//! byte buffers, no HTTP mocking needed — `geoip_updater.rs`'s own
 //! `#[ignore]`d live tests are what exercise the real network paths.
 
 use std::io::Read;
@@ -13,17 +15,53 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::read::GzDecoder;
 
 /// Base URL DB-IP Lite's Country-level `MaxMind`-format database is served
-/// from, no registration required (SPEC.md §3.5).
+/// from, no registration required (SPEC.md §3.5). Still fully supported —
+/// T-226(б) added a new default alongside this, it did not replace it.
 pub(crate) const DB_IP_BASE_URL: &str = "https://download.db-ip.com/free/";
+
+/// `sapics/ip-location-db`'s combined IPv4+IPv6 country database (T-226(б),
+/// the new fresh-install default, SPEC.md §3.5) — a single rolling GitHub
+/// release asset, no calendar-month rotation needed (unlike
+/// [`DB_IP_BASE_URL`]'s monthly-dated files). PDDL-licensed (public domain,
+/// built from the five Regional Internet Registries' own delegated-stats
+/// files + BGP routing archives + public geofeeds — DECISIONS.md 2026-09-12),
+/// no registration. **Confirmed during implementation: this repository
+/// publishes only two release tags total (`latest`, this file; `checksum`,
+/// its sidecars) — no dated/versioned releases exist to use as a second
+/// download-URL fallback candidate the way [`candidate_download_urls`]'s
+/// two DB-IP dates do.** If this asset is ever renamed again (the upstream
+/// project's own README already notes doing so once, June 2026), this
+/// module has no second URL to fall back to — the existing "keep
+/// last-known-good on any refresh failure" behavior (`geoip_updater.rs`'s
+/// own doc comment) is what absorbs that, unchanged.
+pub(crate) const USER_COUNTRY_URL: &str =
+    "https://github.com/sapics/ip-location-db/releases/download/latest/user-country.mmdb";
+
+/// The sha256 sidecar for [`USER_COUNTRY_URL`] — published under a
+/// **separate** `checksum` release tag, not next to the database file
+/// itself (confirmed during implementation: `user-country.mmdb.sha256`
+/// lives at this fixed URL, standard `sha256sum`-style content, verified
+/// this session to match a freshly downloaded `user-country.mmdb` exactly).
+/// Unlike DB-IP's/MaxMind's *opportunistic* sidecars (this project's own
+/// "found → hard-fail on mismatch; absent → structural-parse fallback"
+/// policy), this one is confirmed to exist and be kept in sync, so
+/// `geoip_updater.rs`'s fetch for this source treats a fetch failure here
+/// (not a mismatch) the same opportunistic way — the URL just doesn't need
+/// its own year/month arithmetic to construct.
+pub(crate) const USER_COUNTRY_SHA256_URL: &str =
+    "https://github.com/sapics/ip-location-db/releases/download/checksum/user-country.mmdb.sha256";
 
 /// The `MaxMind GeoLite2` edition this service downloads in advanced mode
 /// (T-80) — a fixed country-level edition id, never user input.
 pub(crate) const MAXMIND_EDITION: &str = "GeoLite2-Country";
 
-/// Upper bound on the compressed download. The real file is a few MB as of
-/// 2026-08 (per a live web search — `download.db-ip.com` itself isn't
-/// reachable from this project's dev environment to measure directly); this
-/// is generous headroom, not a measured limit.
+/// Upper bound on the compressed download (DB-IP's/MaxMind's `.gz`/`.tar.gz`)
+/// **or** the bare download for a source with no compression step at all
+/// (`user-country.mmdb`, T-226(б) — confirmed 7,598,873 bytes as of
+/// 2026-09-12, well inside this bound). The "compressed" name is a holdover
+/// from when this constant only covered gzip-wrapped sources; kept rather
+/// than renamed since the value and the headroom philosophy — generous, not
+/// a measured limit — both still apply unchanged to the new bare-file case.
 pub(crate) const MAX_GEOIP_COMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Upper bound on the decompressed database — gzip-bomb headroom, not a
@@ -286,6 +324,21 @@ mod tests {
         assert_eq!(
             checksum_sidecar_url("https://download.db-ip.com/free/x.mmdb.gz"),
             "https://download.db-ip.com/free/x.mmdb.gz.sha1"
+        );
+    }
+
+    #[test]
+    fn user_country_urls_are_fixed_and_on_separate_release_tags() {
+        // Confirmed during implementation: `latest` (the database) and
+        // `checksum` (its sidecar) are genuinely separate GitHub release
+        // tags in this upstream repo, not two assets under one release.
+        assert_eq!(
+            USER_COUNTRY_URL,
+            "https://github.com/sapics/ip-location-db/releases/download/latest/user-country.mmdb"
+        );
+        assert_eq!(
+            USER_COUNTRY_SHA256_URL,
+            "https://github.com/sapics/ip-location-db/releases/download/checksum/user-country.mmdb.sha256"
         );
     }
 

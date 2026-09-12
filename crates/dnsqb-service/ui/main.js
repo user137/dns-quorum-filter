@@ -796,9 +796,10 @@ async function removeGeoipCountry(country) {
   return response.json();
 }
 
-// T-162: `DatabaseSource` wire strings → human labels.
+// T-162/T-226(б): `DatabaseSource` wire strings → human labels.
 const DATABASE_SOURCE_LABELS = {
   DB_IP_LITE: "DB-IP Lite",
+  USER_COUNTRY: "user-country (дані реєстрів IP-адрес)",
   GEO_LITE2: "MaxMind GeoLite2",
   OTHER: "інше джерело",
 };

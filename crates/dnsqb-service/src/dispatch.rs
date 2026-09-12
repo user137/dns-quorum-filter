@@ -939,10 +939,10 @@ impl<C: DohClient + Sync> AppState<C> {
     ) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         // T-163: a MaxMind source starts `Pending` (no background refresh has
-        // run yet); DB-IP Lite is `NotApplicable`.
+        // run yet); DB-IP Lite/user-country are `NotApplicable`.
         let initial_health = match &geoip.source {
             GeoipSource::Maxmind(_) => MaxmindHealth::Pending,
-            GeoipSource::DbIpLite => MaxmindHealth::NotApplicable,
+            GeoipSource::DbIpLite | GeoipSource::UserCountry => MaxmindHealth::NotApplicable,
         };
         Self {
             client,
@@ -1025,12 +1025,12 @@ impl<C: DohClient + Sync> AppState<C> {
     /// share. Callers pair this with [`Self::wake_geoip_refresh`] so the
     /// background updater acts on the change immediately. Also resets the
     /// `MaxMind` health signal: a fresh `Maxmind` source is `Pending` (the
-    /// woken refresh's outcome resolves it), a `DbIpLite` source is
-    /// `NotApplicable`.
+    /// woken refresh's outcome resolves it), a `DbIpLite`/`UserCountry`
+    /// source is `NotApplicable`.
     pub(crate) fn update_geoip_source(&self, source: GeoipSource) {
         let health = match &source {
             GeoipSource::Maxmind(_) => MaxmindHealth::Pending,
-            GeoipSource::DbIpLite => MaxmindHealth::NotApplicable,
+            GeoipSource::DbIpLite | GeoipSource::UserCountry => MaxmindHealth::NotApplicable,
         };
         *self.geoip_source.write() = Arc::new(source);
         self.update_maxmind_health(health);
@@ -1794,15 +1794,16 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // this whole function's read-of-credentials → `update_geoip_source`, so a
     // concurrent `/admin/geoip/maxmind[/clear]` POST can't commit its own
     // source change in the gap between reset's read and reset's write (which
-    // would leave the store holding a key while the live source is DB-IP Lite
-    // until the next reset/restart). The credential read itself is a
+    // would leave the store holding a key while the live source is the
+    // default until the next reset/restart). The credential read itself is a
     // synchronous Credential Manager round-trip and stays **outside**
     // `persist_lock` — the source isn't part of the `resolver_config.toml`
     // cross-field-read invariant that lock protects.
     let _geoip_source_guard = state.geoip_source_lock.lock();
     let geoip_source = match geoip_credentials::load(&paths.app_data_dir()) {
         Ok(Some(creds)) => GeoipSource::Maxmind(creds),
-        Ok(None) => GeoipSource::DbIpLite,
+        // T-226(б): mirrors `orchestrate::load_geoip_source`'s own default.
+        Ok(None) => GeoipSource::UserCountry,
         Err(err) => {
             tracing::warn!(
                 "MaxMind credentials reload failed on reset ({err}), keeping the current GeoIP source"
@@ -2731,8 +2732,9 @@ where
             },
             None => false,
         };
-        // Back to DB-IP Lite as the live source, effective now.
-        state.update_geoip_source(GeoipSource::DbIpLite);
+        // Back to the default source (T-226(б): user-country) as the live
+        // source, effective now.
+        state.update_geoip_source(GeoipSource::UserCountry);
         state.wake_geoip_refresh();
         persisted
     };

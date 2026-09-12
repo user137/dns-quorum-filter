@@ -240,8 +240,9 @@ classDiagram
         +String country
     }
     class DatabaseSource {
-        <<T-162, реалізовано — enum>>
+        <<T-162/T-226(б), реалізовано — enum>>
         DB_IP_LITE
+        USER_COUNTRY
         GEO_LITE2
         OTHER
     }
@@ -518,7 +519,7 @@ UI-SPEC.md §3.5's чернеткового `GeoIPConfig` (`blocked_countries`, 
 ## `database_source` + `MaxmindCredentialsView`/`MaxmindCredentialsRequest`/`MaxmindCredentialCheck`/`MaxmindRefreshHealth` (T-162/T-163)
 
 `GeoipCountriesResponse` отримує `database_source: Option<DatabaseSource>` — закритий enum
-(`DB_IP_LITE`/`GEO_LITE2`/`OTHER`), класифікований **на сервері** з метаданих
+(`DB_IP_LITE`/`USER_COUNTRY`/`GEO_LITE2`/`OTHER`), класифікований **на сервері** з метаданих
 завантаженого reader-а (`GeoipReader::database_type()`), не з налаштованого `GeoipSource`: ці
 двоє розходяться саме тоді, коли це важливо (креденшели MaxMind задані, але відхилені — файл
 досі DB-IP Lite). Той самий "response-тип ніколи не повертає невірифікований рядок дослівно"
@@ -535,8 +536,9 @@ MaxMind GeoLite2 (креденшели з T-163 — в OS secret store, не у 
 
 `MaxmindRefreshHealth` (T-163) — комплементарний сигнал: чи **збережені** креденшели досі
 приймаються на плановому 24-год фоновому оновленні (ключ можна відкликати вже після
-прийняття). `NOT_APPLICABLE` (джерело — DB-IP Lite) / `PENDING` (MaxMind, фонове оновлення ще
-не завершилось) / `ACCEPTED` / `AUTH_REJECTED` (останнє оновлення отримало 401/403 — картка
+прийняття). `NOT_APPLICABLE` (джерело — DB-IP Lite або, від T-226(б), `user-country`) /
+`PENDING` (MaxMind, фонове оновлення ще не завершилось) / `ACCEPTED` /
+`AUTH_REJECTED` (останнє оновлення отримало 401/403 — картка
 `/admin/ui` показує попередження). Транзієнтна помилка (мережа/таймаут) не чіпає відомий
 вердикт. Зміна креденшелів (`POST /admin/geoip/maxmind[/clear]`, `POST /admin/reset`) діє
 одразу — джерело в `AppState`, апдейтер будиться через `tokio::sync::Notify`.

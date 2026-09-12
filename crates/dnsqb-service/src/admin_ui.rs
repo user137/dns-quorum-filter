@@ -223,6 +223,15 @@ mod tests {
             credits.contains("publicsuffix.org") && credits.contains("MPL 2.0"),
             "Public Suffix List attribution must be in the #credits footer (T-180)"
         );
+        // T-226(б): not legally required (PDDL/public-domain), but a
+        // courtesy credit for the new fresh-install default source, kept
+        // alongside the still-required DB-IP line rather than replacing it
+        // (an upgraded install's already-on-disk DB-IP file can still be
+        // served/classified as such until its first user-country refresh).
+        assert!(
+            credits.contains("sapics/ip-location-db") && credits.contains("PDDL"),
+            "user-country courtesy attribution must be in the #credits footer (T-226(б))"
+        );
     }
 
     #[test]

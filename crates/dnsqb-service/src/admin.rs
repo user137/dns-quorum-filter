@@ -959,8 +959,13 @@ pub struct GeoipCountriesResponse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DatabaseSource {
-    /// DB-IP Lite Country (SPEC.md §3.5's registration-free default).
+    /// DB-IP Lite Country (SPEC.md §3.5's original registration-free
+    /// default; kept, not removed, at T-226(б)).
     DbIpLite,
+    /// `sapics/ip-location-db`'s `user-country` (T-226(б), SPEC.md §3.5's
+    /// fresh-install default since 2026-09-12) — PDDL/public-domain, no
+    /// registration.
+    UserCountry,
     /// `MaxMind` `GeoLite2` Country (T-80's opt-in advanced mode).
     GeoLite2,
     /// A loaded database whose `database_type` matches neither known
@@ -970,13 +975,19 @@ pub enum DatabaseSource {
 
 impl DatabaseSource {
     /// Classifies a raw `maxminddb` `database_type` string. DB-IP Lite
-    /// publishes `DBIP-Country-Lite`, `MaxMind` `GeoLite2-Country`; anything
-    /// else is [`DatabaseSource::Other`].
+    /// publishes `DBIP-Country-Lite`, `MaxMind` `GeoLite2-Country`,
+    /// `sapics/ip-location-db`'s `user-country` publishes `country ipvAll`
+    /// (verified directly against the real downloaded file, T-226(б) — not
+    /// guessed); anything else is [`DatabaseSource::Other`]. Checked in this
+    /// order because none of the three substrings overlap — confirmed, not
+    /// assumed, before picking an order that would otherwise matter.
     #[must_use]
     pub fn classify(database_type: &str) -> Self {
         let lowered = database_type.to_ascii_lowercase();
         if lowered.contains("dbip") {
             Self::DbIpLite
+        } else if lowered.contains("ipvall") {
+            Self::UserCountry
         } else if lowered.contains("geolite2") {
             Self::GeoLite2
         } else {
@@ -2312,10 +2323,16 @@ mod maxmind_dto_tests {
         // verified against a real database, not assumed: `"DBIP-Country-Lite"`
         // printed from a live db-ip.com download 2026-08-31 (no separator, so
         // the lowercased `.contains("dbip")` holds); `"GeoLite2-Country"` is
-        // `maxminddb`'s own upstream test-fixture value.
+        // `maxminddb`'s own upstream test-fixture value; `"country ipvAll"`
+        // (T-226(б)) read directly off a freshly downloaded real
+        // `user-country.mmdb` file, 2026-09-12.
         assert_eq!(
             DatabaseSource::classify("DBIP-Country-Lite"),
             DatabaseSource::DbIpLite
+        );
+        assert_eq!(
+            DatabaseSource::classify("country ipvAll"),
+            DatabaseSource::UserCountry
         );
         assert_eq!(
             DatabaseSource::classify("GeoLite2-Country"),
@@ -2330,6 +2347,7 @@ mod maxmind_dto_tests {
     #[test]
     fn database_source_wire_strings_are_screaming_snake_case() {
         assert_eq!(json_of(&DatabaseSource::DbIpLite), "\"DB_IP_LITE\"");
+        assert_eq!(json_of(&DatabaseSource::UserCountry), "\"USER_COUNTRY\"");
         assert_eq!(json_of(&DatabaseSource::GeoLite2), "\"GEO_LITE2\"");
         assert_eq!(json_of(&DatabaseSource::Other), "\"OTHER\"");
     }

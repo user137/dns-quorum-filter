@@ -218,16 +218,26 @@
     </div>
   </details>
 
-  <!-- T-81: attribution / credits. Static markup, no JS and no DTO - it must
-       be present on every render because this page displays GeoIP-derived
-       country data (the log's resolved_ip_country column, the GeoIP card),
-       and DB-IP Lite's CC BY 4.0 licence requires a link back to db-ip.com
-       on any page that shows results derived from the database (confirmed
-       2026-08-30 against db-ip.com's own download page - the required
-       snippet is exactly the "IP Geolocation by DB-IP" link below). The
-       MaxMind line is scoped to "advanced mode" because GeoLite2 data is
-       only in use when the operator has opted in (T-80). Kept outside both
-       levels so it renders on every state.
+  <!-- T-81/T-226(б): attribution / credits. Static markup, no JS and no DTO
+       - it must be present on every render because this page displays
+       GeoIP-derived country data (the log's resolved_ip_country column, the
+       GeoIP card). DB-IP Lite's CC BY 4.0 licence requires a link back to
+       db-ip.com on any page that shows results derived from the database
+       (confirmed 2026-08-30 against db-ip.com's own download page - the
+       required snippet is exactly the "IP Geolocation by DB-IP" link
+       below) - kept unconditionally because an upgraded install's
+       already-on-disk `geoip.mmdb` can still be DB-IP-derived until its
+       first successful `user-country` refresh replaces it (T-226(б) is a
+       new fresh-install default, not a migration - `GeoipSource::DbIpLite`
+       itself is no longer selectable by any config/route, but the file it
+       already wrote to disk keeps being served and classified as such).
+       The user-country line credits sapics/ip-location-db
+       (PDDL/public-domain - no attribution legally required, but a short
+       courtesy credit for source transparency, same reasoning DECISIONS.md
+       records for this choice). The MaxMind line is scoped to "advanced
+       mode" because GeoLite2 data is only in use when the operator has
+       opted in (T-80). Kept outside both levels so it renders on every
+       state.
        T-180: the CrUX line is the app-side half of the rating-filter
        "bubble" source attribution (repo-side: data/topn/README.md). CrUX is
        CC BY 4.0 (Google); the derived lists are normalised to registrable
@@ -237,7 +247,13 @@
   <footer id="credits">
     <p>DNS Quorum Filter — <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache License 2.0</a>.</p>
     <p>
-      GeoIP-дані:
+      GeoIP-дані (типове джерело):
+      <a href="https://github.com/sapics/ip-location-db" target="_blank" rel="noopener noreferrer">sapics/ip-location-db</a>
+      («user-country», побудовано з відкритих даних регіональних реєстрів IP-адрес (RIR) та архівів
+      маршрутизації), ліцензія
+      <a href="https://opendatacommons.org/licenses/pddl/1-0/" target="_blank" rel="noopener noreferrer">PDDL 1.0</a>
+      (суспільне надбання).
+      Попереднє типове джерело, дані якого можуть і далі використовуватись до першого оновлення бази:
       <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a>
       — база «IP to Country Lite», ліцензія
       <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.

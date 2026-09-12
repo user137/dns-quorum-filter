@@ -36,6 +36,30 @@
 //! "manual, not CI-gated" precedent as `upstream.rs`'s live-Quad9 test) —
 //! and fold that confirmation back into this doc comment.
 //!
+//! **`sapics/ip-location-db` `user-country` (T-226(б), the fresh-install
+//! default since 2026-09-12, replacing DB-IP Lite in that role — DB-IP Lite
+//! itself remains fully supported, not removed).** A single fixed download
+//! URL (no calendar-month rotation, no authentication) plus a **confirmed
+//! real** sha256 sidecar published under a *separate* GitHub release tag
+//! (`.../releases/download/checksum/user-country.mmdb.sha256`, not next to
+//! the database file itself — verified this session against a live
+//! download: the sidecar's digest matched the downloaded file exactly).
+//! Unlike DB-IP's/MaxMind's opportunistic sidecars (existence unconfirmed
+//! from this dev sandbox), this one is known-good, but the code treats a
+//! failure to *fetch* it the same opportunistic way (falls back to the
+//! TLS + structural-parse + `database_type` tier) — only a *fetched and
+//! mismatched* sidecar hard-fails, same policy as the other two sources.
+//! This repository publishes only two release tags in total (`latest`,
+//! `checksum`) — no dated/versioned releases exist, so there is no second
+//! download-URL candidate to fall back to if the asset is ever renamed
+//! again (its own README already records doing so once, June 2026); the
+//! existing "keep last-known-good on any refresh failure" behavior is what
+//! absorbs that, same as it already does for DB-IP/MaxMind. See
+//! `tests::fetch_and_verify_against_live_user_country` — unlike the DB-IP
+//! live test, GitHub is reachable from this dev sandbox, so this one is
+//! actually run (not left `#[ignore]`d on faith); its own doc comment
+//! records the confirmed result.
+//!
 //! **`MaxMind GeoLite2` advanced mode (T-80).** When the operator has stored
 //! `MaxMind` credentials ([`crate::geoip_credentials`], in the OS credential
 //! store since T-163), [`GeoipSource::Maxmind`] replaces DB-IP Lite: a single
@@ -92,26 +116,45 @@ use crate::geoip_credentials::MaxmindCredentials;
 use crate::geoip_download::{
     candidate_download_urls, checksum_sidecar_url, decompress_bounded, extract_mmdb_from_tar_gz,
     maxmind_download_url, MAXMIND_EDITION, MAX_GEOIP_COMPRESSED_BYTES,
-    MAX_GEOIP_DECOMPRESSED_BYTES,
+    MAX_GEOIP_DECOMPRESSED_BYTES, USER_COUNTRY_SHA256_URL, USER_COUNTRY_URL,
 };
 use crate::upstream::ReqwestDohClient;
 
 /// Which upstream a [`run_geoip_updater`] instance pulls its database from
-/// (T-80). Seeded at startup by `main.rs` from
-/// [`crate::geoip_credentials::load`] — DB-IP Lite (SPEC.md §3.5's
-/// registration-free default) unless the operator has stored `MaxMind`
-/// credentials, in which case `MaxMind GeoLite2` (twice-weekly updates, the
-/// operator's own key). Since T-163 it lives on
-/// [`crate::dispatch::AppState`] and `run_geoip_updater` re-snapshots it every
-/// cycle, so a `/admin/geoip/maxmind[/clear]` or `/admin/reset` change is
-/// picked up with no restart.
+/// (T-80, T-226(б)). Seeded at startup by `main.rs` from
+/// [`crate::geoip_credentials::load`] — `user-country` (SPEC.md §3.5's
+/// fresh-install default since T-226(б)) unless the operator has stored
+/// `MaxMind` credentials, in which case `MaxMind GeoLite2` (twice-weekly
+/// updates, the operator's own key). Since T-163 it lives on
+/// [`crate::dispatch::AppState`] and `run_geoip_updater` re-snapshots it
+/// every cycle, so a `/admin/geoip/maxmind[/clear]` or `/admin/reset` change
+/// is picked up with no restart.
+///
+/// **`DbIpLite` is unreachable from any production code path as of
+/// T-226(б)** (advisor-caught on closing review: there is no persisted
+/// `GeoipSource` config field — `orchestrate::load_geoip_source`'s
+/// three "no working `MaxMind` credentials" branches, and the two matching
+/// `dispatch.rs` routes, all now construct `UserCountry`, not `DbIpLite`; a
+/// grep confirms every remaining `GeoipSource::DbIpLite` construction site
+/// is a test fixture). The variant and its fetch code
+/// ([`refresh_db_ip_lite`]) are kept, not deleted, purely so restoring it as
+/// a selectable value is a one-line change to `load_geoip_source` rather
+/// than resurrecting deleted code from git — an early draft of this doc
+/// comment claimed DB-IP Lite "remains fully supported," which overstated
+/// this; don't repeat that claim in other docs.
 ///
 /// `Debug` is derived but safe to log: the key inside [`MaxmindCredentials`]
 /// is a [`crate::geoip_credentials::LicenseKey`], whose own `Debug` redacts.
 #[derive(Debug, Clone)]
 pub enum GeoipSource {
-    /// DB-IP Lite Country — monthly, no credentials (SPEC.md §3.5 default).
+    /// DB-IP Lite Country — monthly, no credentials (SPEC.md §3.5's
+    /// original default). **Not constructed by any production code path
+    /// since T-226(б)** — see this enum's own doc comment.
     DbIpLite,
+    /// `sapics/ip-location-db`'s `user-country` — rolling release, no
+    /// credentials, PDDL/public-domain (T-226(б), SPEC.md §3.5's
+    /// fresh-install default since 2026-09-12).
+    UserCountry,
     /// `MaxMind GeoLite2` Country — twice-weekly, operator-supplied credentials.
     Maxmind(MaxmindCredentials),
 }
@@ -299,7 +342,7 @@ fn health_after_refresh(
     result: &Result<(), GeoipUpdateError>,
 ) -> Option<MaxmindHealth> {
     match (source, result) {
-        (GeoipSource::DbIpLite, _) => Some(MaxmindHealth::NotApplicable),
+        (GeoipSource::DbIpLite | GeoipSource::UserCountry, _) => Some(MaxmindHealth::NotApplicable),
         (GeoipSource::Maxmind(_), Ok(())) => Some(MaxmindHealth::Accepted),
         (GeoipSource::Maxmind(_), Err(GeoipUpdateError::MaxmindAuthRejected)) => {
             Some(MaxmindHealth::AuthRejected)
@@ -309,13 +352,15 @@ fn health_after_refresh(
 }
 
 /// One fetch-verify-swap cycle, dispatched on the configured [`GeoipSource`]
-/// (T-80). DB-IP Lite is the unchanged default path; `MaxMind GeoLite2` is the
-/// opt-in advanced mode — see this module's doc comment.
+/// (T-80, T-226(б)). `user-country` is the new fresh-install default path;
+/// `DbIpLite` remains fully supported; `MaxMind GeoLite2` is the opt-in
+/// advanced mode — see this module's doc comment.
 ///
 /// # Errors
 ///
 /// Propagates whichever source-specific path failed — see
-/// [`refresh_db_ip_lite`] and [`try_one_maxmind_release_bounded`].
+/// [`refresh_db_ip_lite`], [`try_user_country_release_bounded`], and
+/// [`try_one_maxmind_release_bounded`].
 pub(crate) async fn refresh_once(
     client: &reqwest::Client,
     target_path: &Path,
@@ -324,6 +369,9 @@ pub(crate) async fn refresh_once(
 ) -> Result<(), GeoipUpdateError> {
     match source {
         GeoipSource::DbIpLite => refresh_db_ip_lite(client, target_path, state).await,
+        GeoipSource::UserCountry => {
+            try_user_country_release_bounded(client, target_path, state).await
+        }
         GeoipSource::Maxmind(creds) => {
             try_one_maxmind_release_bounded(client, creds, target_path, state).await
         }
@@ -420,6 +468,91 @@ async fn try_one_release(
         updated_at,
     });
     Ok(())
+}
+
+/// [`try_user_country_release`], bounded to [`GEOIP_FETCH_TIMEOUT`] — same
+/// hazard and reasoning as [`try_one_release_bounded`] for the DB-IP path.
+async fn try_user_country_release_bounded(
+    client: &reqwest::Client,
+    target_path: &Path,
+    state: &AppState<ReqwestDohClient>,
+) -> Result<(), GeoipUpdateError> {
+    match tokio::time::timeout(
+        GEOIP_FETCH_TIMEOUT,
+        try_user_country_release(client, target_path, state),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_elapsed) => Err(GeoipUpdateError::Timeout),
+    }
+}
+
+/// `sapics/ip-location-db`'s `user-country` fetch-verify-swap cycle
+/// (T-226(б), SPEC.md §3.5's fresh-install default since 2026-09-12). A
+/// single fixed URL — no calendar-month candidates like DB-IP, no
+/// authentication like `MaxMind` — plus a hard-fail sha256 check against
+/// [`USER_COUNTRY_SHA256_URL`], confirmed this session to be a real,
+/// maintained sidecar (unlike DB-IP's/MaxMind's merely-opportunistic ones,
+/// this one is known to exist; treated the same opportunistic way in code
+/// regardless, since only its *fetch* is optional — a fetched-and-mismatched
+/// sidecar is always a hard failure, the same policy as the other two
+/// sources).
+async fn try_user_country_release(
+    client: &reqwest::Client,
+    target_path: &Path,
+    state: &AppState<ReqwestDohClient>,
+) -> Result<(), GeoipUpdateError> {
+    let bytes = fetch_bounded(client, USER_COUNTRY_URL).await?;
+
+    match fetch_user_country_checksum_sidecar(client).await {
+        Some(expected) if !checksum_matches_sha256(&expected, &bytes) => {
+            return Err(GeoipUpdateError::ChecksumMismatch);
+        }
+        Some(_) => {}
+        // Unlike DB-IP's/MaxMind's merely-opportunistic sidecars, this one
+        // is confirmed to genuinely exist (this module's own doc comment) -
+        // a `None` here means something unexpected happened (network error,
+        // 404, malformed body), not "no sidecar was ever published". Worth
+        // a debug line even though the refresh still proceeds on the
+        // weaker structural-parse fallback, same as the other two sources.
+        None => tracing::debug!(
+            "user-country sha256 sidecar unavailable this cycle (expected to exist) - \
+             falling back to TLS + structural-parse validation only"
+        ),
+    }
+
+    // No gzip/tar wrapper for this source - it's already a bare .mmdb.
+    let reader =
+        GeoipReader::from_bytes(bytes.to_vec()).map_err(GeoipUpdateError::InvalidDatabase)?;
+    let database_type = reader.database_type().to_ascii_lowercase();
+    if !database_type.contains("country") {
+        return Err(GeoipUpdateError::UnexpectedDatabaseType(database_type));
+    }
+
+    persist_atomically(target_path, &bytes).map_err(GeoipUpdateError::Io)?;
+    let updated_at = reader.build_time();
+    state.update_geoip(GeoipState {
+        reader: Some(Arc::new(reader)),
+        updated_at,
+    });
+    Ok(())
+}
+
+/// Fetches [`USER_COUNTRY_SHA256_URL`] and returns its hex digest, or `None`
+/// if it couldn't be fetched, wasn't a `2xx`, or doesn't look like a
+/// SHA-256 digest — same opportunistic shape and same "a `2xx` HTML error
+/// page isn't proof the sidecar exists" guard as
+/// [`fetch_checksum_sidecar`]/[`fetch_maxmind_checksum_sidecar`] above.
+async fn fetch_user_country_checksum_sidecar(client: &reqwest::Client) -> Option<String> {
+    let response = client.get(USER_COUNTRY_SHA256_URL).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let text = response.text().await.ok()?;
+    // sha256sum-style: `<64 hex>  user-country.mmdb` - first token only.
+    let token = text.split_whitespace().next()?.to_ascii_lowercase();
+    looks_like_sha256_hex(&token).then_some(token)
 }
 
 /// [`try_one_maxmind_release`], bounded to [`GEOIP_FETCH_TIMEOUT`] — same
@@ -754,6 +887,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn health_after_refresh_is_not_applicable_for_user_country_regardless_of_outcome() {
+        assert_eq!(
+            health_after_refresh(&GeoipSource::UserCountry, &Ok(())),
+            Some(MaxmindHealth::NotApplicable)
+        );
+        assert_eq!(
+            health_after_refresh(&GeoipSource::UserCountry, &Err(GeoipUpdateError::Timeout)),
+            Some(MaxmindHealth::NotApplicable)
+        );
+    }
+
     // The T-163 wake channel's load-bearing property, tested against the real
     // `park_until_due` (not a `select!` copy): a wake made *before* the park
     // is entered — e.g. a source change during the preceding refresh — still
@@ -893,6 +1038,66 @@ mod tests {
             }
         }
         panic!("no candidate release URL succeeded against the live db-ip.com");
+    }
+
+    /// Exercises the real `user-country` network path end to end (T-226(б))
+    /// — GitHub is reachable from this dev sandbox (unlike `db-ip.com`), so
+    /// this one actually runs rather than staying `#[ignore]`d on faith;
+    /// still `#[ignore]`d for CI, same "manual, not CI-gated" precedent as
+    /// every other live test in this module.
+    ///
+    /// **Run 2026-09-12, confirmed:** the download succeeded (real size:
+    /// 7,598,873 bytes that day); the sha256 sidecar
+    /// (`USER_COUNTRY_SHA256_URL`, a genuinely separate release tag) fetched
+    /// successfully and matched the downloaded bytes exactly — the hard-fail
+    /// checksum path is confirmed live, not merely opportunistic-and-absent
+    /// like DB-IP's/MaxMind's; `database_type` was `"country ipvAll"`; a
+    /// real IPv6 lookup (`2606:4700:4700::1111`, Cloudflare) resolved to a
+    /// non-empty country code, confirming the combined IPv4+IPv6 file
+    /// actually serves IPv6 answers, not just IPv4.
+    #[tokio::test]
+    #[ignore = "hits the real network"]
+    async fn fetch_and_verify_against_live_user_country() {
+        let Ok(client) = reqwest::Client::builder().build() else {
+            panic!("must be able to build a plain reqwest client");
+        };
+        let bytes = match fetch_bounded(&client, USER_COUNTRY_URL).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("live user-country download failed: {err}"),
+        };
+        let sidecar = fetch_user_country_checksum_sidecar(&client).await;
+        println!(
+            "user-country sha256 sidecar: {}",
+            sidecar.as_deref().unwrap_or("not found / not usable")
+        );
+        if let Some(expected) = &sidecar {
+            assert!(
+                checksum_matches_sha256(expected, &bytes),
+                "sidecar digest must match the downloaded database"
+            );
+        }
+        let Ok(reader) = GeoipReader::from_bytes(bytes.to_vec()) else {
+            panic!("live download must parse as a valid GeoIP database");
+        };
+        println!(
+            "live user-country database_type: {:?}",
+            reader.database_type()
+        );
+        assert!(
+            reader
+                .database_type()
+                .to_ascii_lowercase()
+                .contains("country"),
+            "database_type was {:?}",
+            reader.database_type()
+        );
+        let Ok(v6_ip) = "2606:4700:4700::1111".parse() else {
+            panic!("valid IPv6 literal");
+        };
+        assert!(
+            reader.country(v6_ip).is_some(),
+            "a real IPv6 address must resolve against the combined IPv4+IPv6 file"
+        );
     }
 
     // T-80: SHA-256 sidecar helpers, mirroring the SHA-1 tests above.

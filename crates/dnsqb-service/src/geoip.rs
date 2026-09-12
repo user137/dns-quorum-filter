@@ -9,13 +9,20 @@
 //! doesn't fetch or verify a database file itself (T-75's `geoip_updater.rs`
 //! owns that).
 //!
-//! Deliberately reads via [`maxminddb::LookupResult::decode_path`]'s
-//! `["country", "iso_code"]` path rather than the crate's typed
-//! `geoip2::Country` struct — that path is the de facto standard `MaxMind`
-//! `DB` layout both DB-IP Lite (the SPEC.md §3.5 default) and `MaxMind`'s
-//! own `GeoLite2` (the T-80 advanced-mode alternative) use, so this reader
-//! doesn't need to know or care which of the two produced the file it's
-//! pointed at.
+//! Deliberately reads via [`maxminddb::LookupResult::decode_path`] rather
+//! than the crate's typed `geoip2::Country` struct, and tries **two**
+//! record shapes (T-226(б)): the nested `["country", "iso_code"]` path —
+//! the de facto standard `MaxMind` DB layout both DB-IP Lite (SPEC.md §3.5's
+//! original default) and `MaxMind`'s own `GeoLite2` (T-80's advanced-mode
+//! alternative) use — tried first, then a flat `["country_code"]` field if
+//! the nested path decodes to `None`. The flat shape is what
+//! `sapics/ip-location-db`'s `user-country` dataset (T-226(б)'s new default
+//! source) actually publishes — confirmed by downloading the real file and
+//! querying it directly, not assumed from documentation; decoding only the
+//! nested path against it would have silently returned `None` for every
+//! single IP, a filter that looks configured and active but never matches
+//! anything. This reader doesn't need to know which source produced the
+//! file it's pointed at, but does need to know both shapes that exist.
 //!
 //! Built with `maxminddb`'s default features only (`mmap`/`simdutf8`/
 //! `unsafe-str-decode` all opt-in and left off) — this crate is
@@ -115,7 +122,7 @@ impl GeoipReader {
     /// associates with `ip`, or `None` if `ip` isn't found there.
     ///
     /// "Not found" is the normal, expected outcome for large swaths of
-    /// address space (private/reserved ranges, gaps in DB-IP Lite's
+    /// address space (private/reserved ranges, gaps in a source's
     /// coverage) — not an error, matching SPEC.md §3.5's "порожній список
     /// країн — nop, не помилка" framing for the filter this feeds (T-76).
     /// A lookup-level error (e.g. an IPv6 address against an IPv4-only
@@ -123,6 +130,14 @@ impl GeoipReader {
     /// this is a live per-query filter, not a fallible pipeline step, and
     /// SPEC.md never asks the resolution path to fail because a `GeoIP`
     /// lookup on one address didn't apply cleanly.
+    ///
+    /// Tries the nested `["country", "iso_code"]` shape first (DB-IP
+    /// Lite/MaxMind `GeoLite2`), then the flat `["country_code"]` shape
+    /// (`sapics/ip-location-db`'s `user-country`, T-226(б)) if the nested
+    /// path decodes to `None` — see this module's own doc comment for why
+    /// both are needed. The lookup itself (`self.reader.lookup`) runs once;
+    /// only the two `decode_path` calls are tried in sequence, both against
+    /// the same already-resolved record.
     ///
     /// Returns a borrowed `&str`, not an owned `String` — T-76 will call
     /// this once per resolved IP on the busiest path in the service (every
@@ -134,12 +149,17 @@ impl GeoipReader {
     /// type can avoid for free.
     #[must_use]
     pub fn country(&self, ip: IpAddr) -> Option<&str> {
-        self.reader
-            .lookup(ip)
-            .ok()?
+        let record = self.reader.lookup(ip).ok()?;
+        record
             .decode_path::<&str>(&path!["country", "iso_code"])
             .ok()
             .flatten()
+            .or_else(|| {
+                record
+                    .decode_path::<&str>(&path!["country_code"])
+                    .ok()
+                    .flatten()
+            })
     }
 }
 
@@ -304,6 +324,49 @@ mod tests {
         // not a data-offset miss, and must still come back `None`, not
         // panic or propagate.
         assert_eq!(reader.country(ip), None);
+    }
+
+    /// `sapics/ip-location-db`'s `user-country` fixture — flat
+    /// `{"country_code": "XX"}` records, unlike `GeoIP2-Country-Test.mmdb`'s
+    /// nested shape above. See `tests/fixtures/geoip/README.md` for
+    /// provenance/generation. Proves the fallback path added at T-226(б),
+    /// not just the nested one every other test in this module exercises.
+    fn flat_fixture_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/geoip/flat-country-test.mmdb")
+    }
+
+    fn open_flat_fixture() -> GeoipReader {
+        let Ok(reader) = GeoipReader::open(&flat_fixture_path()) else {
+            panic!("flat fixture must load");
+        };
+        reader
+    }
+
+    #[test]
+    fn country_falls_back_to_the_flat_country_code_field_when_the_nested_path_is_absent() {
+        let reader = open_flat_fixture();
+        assert_eq!(reader.country(se_ip()), Some("SE"));
+        assert_eq!(reader.country(gb_ip()), Some("GB"));
+    }
+
+    #[test]
+    fn country_returns_none_for_an_unmatched_address_against_the_flat_fixture() {
+        let reader = open_flat_fixture();
+        assert_eq!(reader.country(unmatched_ip()), None);
+    }
+
+    #[test]
+    fn blocking_country_matches_against_the_flat_schema_fixture_too() {
+        // The whole point of the T-226(б) fix: a caller-level function like
+        // `blocking_country` must keep working unchanged against a
+        // flat-shaped database, not just the nested one it was originally
+        // written against.
+        let reader = open_flat_fixture();
+        assert_eq!(
+            blocking_country(Some(&reader), &["SE".to_string()], &[se_ip()]),
+            Some("SE".to_string())
+        );
     }
 
     #[test]
