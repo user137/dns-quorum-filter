@@ -430,6 +430,15 @@ function overrideListItem(entry, list, conflicts) {
     try {
       await removeOverride(entry.domain, entry.is_wildcard, list);
       await refreshOverrides();
+      // T-224: without this, a log-row "В allowlist"/"В blocklist" button
+      // that was disabled+"✓ Додано" for this exact domain stays stuck that
+      // way after the override is removed here - refreshLog() rebuilds
+      // #log-results (safe per its own comment below), giving that row a
+      // fresh, re-clickable button. Same trade-off the log-row add handler
+      // above already accepts for refreshOverrides(): this applies whatever
+      // filter is currently sitting in #log-search/#log-decision/#log-voter,
+      // even if the user hasn't pressed "Пошук" yet.
+      await refreshLog();
     } catch (err) {
       renderOverridesError(err);
     }
