@@ -791,9 +791,12 @@ pub struct AppState<C: DohClient + Sync> {
     /// `geoip_refresh_wake`.
     rating_filter_refresh_wake: Arc<Notify>,
     /// T-138 (Батч 4.5) — live `[personal_zone]` config snapshot, mirrors
-    /// `rating_filter_config`. Sole writer: `update_personal_zone_config`
-    /// (from `apply_admin_reset`, a hand-edited reload — no dedicated admin
-    /// route this batch, same as `rating_filter` before T-127).
+    /// `rating_filter_config`. Written only through `update_personal_zone_config`,
+    /// called from two places: `apply_admin_reset` (a hand-edited reload — no
+    /// dedicated admin route this batch, same as `rating_filter` before
+    /// T-127) and, since T-221, `restore_personal_zone` (startup — see that
+    /// function's own doc for why the field otherwise never left its
+    /// `AppState::new` default).
     personal_zone_config: RwLock<Arc<PersonalZoneConfig>>,
     /// T-138 — the raw per-domain daily-count aggregate: the hot path writes
     /// to it on every already-ALLOW-and-Quorum-passed query
@@ -966,7 +969,11 @@ impl<C: DohClient + Sync> AppState<C> {
             // once at startup before the listener accepts traffic (the same
             // "construct empty, restore separately" shape `restore_cache`
             // already uses) — a fresh, empty store is a safe placeholder in
-            // the meantime.
+            // the meantime. (T-221: before 2026-09-13, `restore_personal_zone`
+            // didn't yet take a `config` argument, so this default was, in
+            // practice, the only value this field ever held at runtime unless
+            // `apply_admin_reset` happened to run later — see that function's
+            // own doc comment for the fix.)
             personal_zone_config: RwLock::new(Arc::new(PersonalZoneConfig::default())),
             personal_zone_stats: RwLock::new(PersonalZoneStats::new(
                 1,
@@ -1216,13 +1223,30 @@ impl<C: DohClient + Sync> AppState<C> {
         self.personal_zone_stats.write().record_visit(host, today);
     }
 
-    /// Re-seeds the personal-zone stats/derived-zone pair at startup (Батч
-    /// 4.5), once before the listener accepts traffic — the same
-    /// "construct empty in `new`, restore separately" shape
+    /// Re-seeds the personal-zone stats/derived-zone/config triple at
+    /// startup (Батч 4.5), once before the listener accepts traffic — the
+    /// same "construct empty in `new`, restore separately" shape
     /// [`Self::restore_cache`]/[`Self::restore_rating_filter_removed`] use.
-    pub(crate) fn restore_personal_zone(&self, stats: PersonalZoneStats, zone: ZoneLists) {
+    ///
+    /// **`config` (T-221, added 2026-09-13):** before this parameter
+    /// existed, `AppState::new` always left `personal_zone_config` at
+    /// `PersonalZoneConfig::default()` (`enabled: false`) and nothing at
+    /// startup ever called [`Self::update_personal_zone_config`] to correct
+    /// it — the on-disk `[personal_zone]` table's `enabled`/threshold
+    /// fields were silently ignored until an operator happened to trigger
+    /// `apply_admin_reset` (the only other caller of that method). The
+    /// stats/zone restore above was never affected — this fixes the
+    /// config half of the same "restore separately" step, not a new bug in
+    /// it.
+    pub(crate) fn restore_personal_zone(
+        &self,
+        stats: PersonalZoneStats,
+        zone: ZoneLists,
+        config: PersonalZoneConfig,
+    ) {
         *self.personal_zone_stats.write() = stats;
         *self.rating_filter_personal_zone.write() = Arc::new(zone);
+        self.update_personal_zone_config(config);
     }
 
     /// Rolls the personal-zone stats forward to `today`, re-derives the
@@ -7237,11 +7261,11 @@ mod tests {
                 crate::rating_filter::ZoneSourceKind::Personal,
                 ["learned.example".to_string()],
             )]),
+            crate::config::PersonalZoneConfig {
+                enabled: true,
+                ..crate::config::PersonalZoneConfig::default()
+            },
         );
-        state.update_personal_zone_config(crate::config::PersonalZoneConfig {
-            enabled: true,
-            ..crate::config::PersonalZoneConfig::default()
-        });
         let status = admin_status(&state, true);
         assert!(status.rating_filter.personal_zone_enabled);
         assert!(
@@ -7254,6 +7278,40 @@ mod tests {
         assert!(
             status.rating_filter.active,
             "the seeded downloaded `ua` list alone must still gate active"
+        );
+    }
+
+    // T-221 regression: before this fix, `restore_personal_zone` silently
+    // dropped its `config` argument (it didn't even exist as a parameter) —
+    // `AppState::new`'s hardcoded `PersonalZoneConfig::default()`
+    // (`enabled: false`) was, in practice, the only value the live gate at
+    // `record_personal_visit`/the derivation thresholds ever saw at
+    // startup, no matter what `[personal_zone].enabled` said in
+    // `resolver_config.toml`. This is the same symptom
+    // `GET /admin/status`'s `rating_filter.personal_zone_enabled` showed
+    // live during the v0.4.0 smoke test.
+    #[test]
+    fn restore_personal_zone_applies_its_config_argument() {
+        let state = state_with(no_op_client());
+        assert!(
+            !state.personal_zone_config_snapshot().enabled,
+            "sanity: AppState::new's own placeholder must start disabled"
+        );
+        state.restore_personal_zone(
+            crate::personal_zone_stats::PersonalZoneStats::new(
+                1,
+                crate::personal_zone_stats::DayIndex::from_system_time(SystemTime::now()),
+            ),
+            ZoneLists::default(),
+            crate::config::PersonalZoneConfig {
+                enabled: true,
+                ..crate::config::PersonalZoneConfig::default()
+            },
+        );
+        assert!(
+            state.personal_zone_config_snapshot().enabled,
+            "restore_personal_zone must apply its config argument - a real \
+             startup passes resolver_config.toml's [personal_zone] table here"
         );
     }
 
@@ -7278,6 +7336,7 @@ mod tests {
                 crate::rating_filter::ZoneSourceKind::Personal,
                 ["learned.example".to_string()],
             )]),
+            crate::config::PersonalZoneConfig::default(),
         );
         let status = admin_status(&state, true);
         assert!(

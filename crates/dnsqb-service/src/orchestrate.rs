@@ -240,7 +240,16 @@ pub async fn run() {
     state.restore_cache(cache_restore).await;
     // T-108/T-138: seed the overlay/personal zone too, same as the cache above.
     state.restore_rating_filter_removed(zone_removals_restore);
-    state.restore_personal_zone(personal_zone_stats_restore, personal_zone_restore);
+    // T-221: `resolver_config.personal_zone` must be threaded through here
+    // explicitly - `AppState::new` never sees it (it always constructs
+    // `PersonalZoneConfig::default()`, see that call's own comment), and
+    // this was the missing call that left `[personal_zone].enabled` from
+    // `resolver_config.toml` unobserved until an `/admin/reset`.
+    state.restore_personal_zone(
+        personal_zone_stats_restore,
+        personal_zone_restore,
+        resolver_config.personal_zone,
+    );
     spawn_query_log_persister(&state, query_log_flusher);
     spawn_cache_persister(&state, cache_flusher);
     spawn_zone_removal_persister(&state, zone_removals_flusher);

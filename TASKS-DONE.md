@@ -5470,6 +5470,72 @@ rotate_certificate` (трей "Перевипустити сертифікат" 
 `test --workspace --lib --bins` (808 passed, +4 нових проти 804 до фіксу)/`cargo doc -D warnings` —
 усе зелено.
 
+### T-221 — `[personal_zone].enabled` не долітав до живого гейта на старті (Батч 4.7.B, 2026-09-13, plan+advisor)
+
+**Root cause:** `AppState::new` (`dispatch.rs`) жорстко ставив `personal_zone_config` на
+`PersonalZoneConfig::default()` (`enabled: false`). `restore_personal_zone` — єдине місце, звідки
+`orchestrate.rs`'s `run()` міг би виправити це на старті — приймала лише `stats: PersonalZoneStats`
++ `zone: ZoneLists`, ніколи `config: PersonalZoneConfig`, попри те що власний doc-коментар поля
+`personal_zone_config` (та й `restore_personal_zone`'s власний) прямо стверджував протилежне —
+"real values come in via `restore_personal_zone`". Жоден виклик `update_personal_zone_config` не
+існував ніде в `orchestrate.rs` — лише в трьох `/admin/*`-хендлерах (`apply_admin_reset` та два
+тестові). Наслідок: `record_personal_visit`'s гейт і `rotate_and_republish_personal_zone`'s
+дериваційні пороги (`frequency_top_n`/`regularity_min_days`) читали застряглий `false`/дефолтний
+знімок від старту, доки щось не викликало `/admin/reset` — `[personal_zone]` з TOML фактично ніколи
+не долітав. Повна історія знахідки (дискримінаційний тест до/після, друге незалежне підтвердження
+сценарієм 22b) — TASKS.md's попередній запис T-221 (тепер закритий).
+
+**Фікс:** `restore_personal_zone` отримала третій параметр `config: PersonalZoneConfig` і викликає
+`self.update_personal_zone_config(config)` — той самий, уже наявний метод, яким і так користується
+`apply_admin_reset`, жодного нового шляху запису. `orchestrate.rs`'s єдиний реальний виклик
+передає `resolver_config.personal_zone` (той самий уже завантажений TOML, що вже передається у
+`rating_filter`/`cache`/`geoip` кількома рядками вище того самого виклику `AppState::new`) —
+`PersonalZoneConfig` є `Copy`, тож жодних проблем із володінням.
+
+**Регресійний тест, написаний test-first, підтверджено падінням проти самого бага (не
+синтетичного):** `restore_personal_zone_applies_its_config_argument` — тимчасово замінено тіло
+фіксу на `let _ = config;` (де реальний фікс мав викликати `update_personal_zone_config`), тест
+впав з очікуваним панічним повідомленням; фікс відновлено побайтово (звірено `diff` з бекапом у
+скретчпаді), той самий тест пройшов. Два вже наявні тести
+(`rating_filter_status_view_includes_the_personal_zone_source_and_flag`,
+`a_personal_zone_alone_never_activates_the_bubble`), що раніше самі демонстрували обхідний шлях
+(окремий виклик `update_personal_zone_config` одразу після `restore_personal_zone` в одному з них),
+тепер передають `config` третім аргументом самого виклику — фікс більше не приховано за старим
+воркераундом.
+
+**Живо підтверджено, не лише юніт-тестами:** скретч-інстанс (`LOCALAPPDATA`, порт 8443) з
+holодним стартом і `resolver_config.toml`, що містить ЛИШЕ
+```toml
+[personal_zone]
+enabled = true
+```
+(решта полів `[personal_zone]` — дефолт через struct-level `#[serde(default)]` на
+`PersonalZoneConfigFile`, підтверджено читанням `config.rs`) → `GET /admin/status` одразу після
+старту (жодного `/admin/reset`) → `rating_filter.personal_zone_enabled: true`,
+`loaded: [{list:"personal",domains:0}]` — точна протилежність задокументованого симптому
+(`false` попри `true` в TOML).
+
+**Перевірено, не припущено (advisor-catch): `personal_zone_persist::load_persisted_personal_zone`
+(startup-час відновлення `personal-zone.enc`/розмір кільця `PersonalZoneStats`, звана з
+`load_rating_filter_persistence` до конструювання `AppState`) НЕ була другим прикладом того самого
+бага.** Її сигнатура бере `cfg: PersonalZoneConfig` напряму параметром, і `orchestrate.rs`'s
+виклик передає `resolver_config.personal_zone` — те саме вже завантажене TOML-значення, ніколи
+`AppState`-знімок. Тобто розмір кільця й рішення "чи взагалі читати диск" (`if !cfg.enabled {
+return empty(); }`) завжди були коректні від старту — T-221 торкався виключно живого гейта,
+збереженого в `AppState.personal_zone_config`, не цього окремого, вже-правильного шляху.
+
+**Уточнює, не скасовує, окремий сусідній ліміт (`KNOWN-LIMITATIONS.md` пункт (f), Rating
+filter):** window-length (`frequency_window_days`/`regularity_window_days`) зміна через
+`/admin/reset` і далі не змінює вже сконструйований розмір кільця `PersonalZoneStats` до
+наступного рестарту — це ІНША, менш серйозна й раніше вже задокументована якість-обмеження, T-221
+її не торкався і не міг торкнутись (не той шар). Формулювання пункту (f) звужено назад до
+оригінального опису, T-221-підпункт видалено як вирішений.
+
+**Повна верифікація:** `cargo build`/`clippy --all-targets -D warnings`/`fmt --check`/
+`test --workspace --lib --bins` (809 passed, +1 проти 808 після T-220)/
+`test --test conformance -p dnsqb-service` (18 passed, 2 ignored — торкались `dispatch.rs`)/
+`cargo doc -D warnings` — усе зелено.
+
 ### T-226(а) — name-assisted `<datalist>` на полі коду GeoIP-країни (Батч 4.7.A, 2026-09-13)
 
 **Запит:** підтверджено 2026-09-12 (Батч 4.7.A аудит): поле вводу коду блокованої країни

@@ -1032,37 +1032,29 @@ HTTP-маршрутів + hero-стану. **Тегається як `v0.4.0` р
   реальному видаленні — тепер має коректно повертати `Removed`). Обидва — прогнозовано, не
   підтверджено живим прогоном; потребують живого підтвердження при наступній MSIX-установці.
   Повний build/clippy/fmt/test (808, +4 нових) — зелено. Повний запис: TASKS-DONE.md.
-- [ ] T-221 — **Знайдено 2026-09-12, НЕ виправлено.** `[personal_zone].enabled = true` в
-  `resolver_config.toml` не долітає до живого гейта, який реально читають гарячі шляхи — фіча
-  залишається інертною від запуску, доки щось не викличе `update_personal_zone_config`. `AppState::
-  new` (`dispatch.rs:964`) ініціалізує `personal_zone_config` жорстко на `PersonalZoneConfig::
-  default()` (`enabled: false`, `config.rs:357`); doc-коментар поля стверджує, що «реальне значення
-  приходить через `restore_personal_zone`, викликану один раз на старті» — але `restore_personal_
-  zone` (`dispatch.rs:1217-1220`) приймає лише `stats`+`zone`, НЕ `config` (сам розмір кільця
-  `PersonalZoneStats` рахується коректно зі стартового `cfg` через `load_persisted_personal_zone`
-  → `window_len_from_config` — це НЕ зламано). Жодного виклику `update_personal_zone_config` немає
-  ніде в `orchestrate.rs` — лише в трьох `/admin/*`-хендлерах. Наслідок: `record_personal_visit`
-  (`dispatch.rs:1206`, гейт на той самий застряглий `false`-прапор) не записує візити, і
-  `rotate_and_republish_personal_zone`'s дериваційні пороги (`frequency_top_n`/`regularity_min_days`
-  тощо, `dispatch.rs:1233`) теж беруться з того самого застряглого снепшоту, не з TOML — доки
-  прапор лишається `false`, `personal_zone_persist`'s `tick` (`personal_zone_persist.rs:194`)
-  щоцикл виходить без запису, `personal-zone.enc` не з'являється. **Спостережуваний симптом одним
-  HTTP-викликом:** `GET /admin/status` → `rating_filter.personal_zone_enabled` читає `false`
-  одразу після старту, попри `true` в TOML — природний якір для регрес-тесту. **Живо підтверджено
-  дискримінаційним тестом до/після:** 2 запити ДО `POST /admin/reset` — 0 записаних візитів; той
-  самий `/admin/reset` (коректно викликає `update_personal_zone_config`+`wake_personal_zone_refresh`)
-  → поле стало `true`, `personal-zone.enc` з'явився за секунди; 2 запити ПІСЛЯ reset'а →
-  `loaded: [{list:"personal", domains:2}]`, точний збіг. Довело баг і водночас дало робочий
-  (недокументований) обхідний шлях. **Друге незалежне підтвердження (сценарій 22b, graceful
-  exit + релонч через плитку Пуску):** свіжий процес після повного виходу й релончу знову показав
-  `personal_zone_enabled: false` при `true` в TOML — без force-kill чи ручного редагування
-  конфігу. `loaded: [{list:"personal", domains:2}]` (ті самі 2 домени) коректно відновились із
-  `personal-zone.enc` при старті — підтверджує, що саме відновлення зони з диска не зламане,
-  зламаний лише живий прапор `enabled`. **Виправляє наявний запис "Known limitations" пункт (f)**
-  нижче (Rating filter) — уточнено, що дериваційні пороги не застосовуються без `/admin/reset`,
-  саме розмір кільця через рестарт лишається коректним (це не було зламано). Потребує власного
-  plan+advisor циклу перед фіксом (питання порядку виклику відносно `restore_personal_zone`, і чи
-  має власний гейт flusher-задачі читати стартовий `cfg` замість `AppState`-снепшоту).
+- [x] T-221 — **Знайдено 2026-09-12, виправлено 2026-09-13 (plan+advisor).** `[personal_zone].
+  enabled = true` в `resolver_config.toml` не долітав до живого гейта — `AppState::new` жорстко
+  ставив `personal_zone_config` на `PersonalZoneConfig::default()`, і `restore_personal_zone`
+  (єдиний виклик на старті, `orchestrate.rs`) приймала лише `stats`+`zone`, НІКОЛИ `config`, попри
+  власний doc-коментар, що обіцяв протилежне. **Фікс:** `restore_personal_zone` тепер бере третій
+  параметр `config: PersonalZoneConfig` і викликає `update_personal_zone_config(config)` (той
+  самий метод, яким і так користується `apply_admin_reset` — жодного нового шляху запису);
+  `orchestrate.rs` передає `resolver_config.personal_zone` (той самий уже завантажений TOML, що й
+  `rating_filter`/`cache`/`geoip` вище того самого виклику). **Регрес-тест test-first, підтверджено
+  падінням проти бага** (тимчасовий `let _ = config;` замість реального виклику — впав з очікуваним
+  паніком; відновлено, той самий тест пройшов): `restore_personal_zone_applies_its_config_argument`.
+  Два наявні тести (`rating_filter_status_view_includes_the_personal_zone_source_and_flag`,
+  `a_personal_zone_alone_never_activates_the_bubble`), що раніше самі демонстрували обхідний шлях
+  (окремий виклик `update_personal_zone_config` одразу після `restore_personal_zone`), тепер
+  передають `config` напряму третім аргументом — не приховують фікс за старим воркераундом. **Живо
+  підтверджено в скретч-інстансі:** `resolver_config.toml` з лише `[personal_zone]\nenabled = true`
+  (решта полів — дефолт через struct-level `#[serde(default)]`) → холодний старт → `GET
+  /admin/status` → `rating_filter.personal_zone_enabled: true` **одразу, без жодного
+  `/admin/reset`** — точна протилежність симптому, який був задокументований нижче. Повний
+  build/clippy/fmt/test (809 passed)/conformance (18 passed, 2 ignored)/doc — зелено. **Виправляє
+  наявний запис "Known limitations" пункт (f)** нижче (Rating filter) — дериваційні пороги й
+  запис візитів тепер застосовуються від старту, не лише після `/admin/reset`; сам розмір кільця
+  через рестарт і так рахувався коректно (не було зламано). Повний запис: TASKS-DONE.md.
 - [ ] T-222 — **Знайдено 2026-09-12, НЕ виправлено. `self_uninstall.rs`'s app-data wipe-хелпер —
   повний no-op на пакованому MSIX-білді (той самий клас бага, що й T-219, в ІНШІЙ, ще не
   зачепленій підсистемі).** `spawn_app_data_dir_wipe` бере `app_data` з `paths::app_data_dir()`
