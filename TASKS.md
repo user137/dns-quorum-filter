@@ -1005,19 +1005,19 @@ HTTP-маршрутів + hero-стану. **Тегається як `v0.4.0` р
   іде, не вигадується на льоту в коді). Поза межами Ф1 formally (жоден Ф1-документ це не вимагав),
   але низький ризик/розмір — можна підняти раніше інших backlog-задач, якщо пріоритет.
 
-- [ ] T-217 — **Перенесено з «Поза фазами» 2026-09-12 (сюди, у 4.7.A) — фікс-патерн уже
-  відпрацьований для `[personal_zone]` у Батчі 4.5** (той самий клас, живий-снепшот-замість-TOML).
-  Живе конфіг-застосування — по одному коміту й короткому цільовому advisor-огляду перед мержем
-  достатньо, повний plan+advisor kickoff не потрібен. **Знайдено, не виправлено, Батч 4.5 (DECISIONS.md 2026-09-11).**
+- [x] T-217 — **Знайдено Батч 4.5 (DECISIONS.md 2026-09-11), виправлено 2026-09-12.**
   `dispatch.rs`'s `apply_admin_config`/`apply_cache_config`/`apply_geoip_change`/
-  `apply_provider_change` читають застарілий `state.persist.rating_filter.clone()` (статичний
-  знімок, взятий один раз при `AppState::new`), не живий `state.rating_filter_config`. Якщо
-  користувач міняє `[rating_filter]` через `POST /admin/rating-filter` (T-127, Батч 4.4), а тоді
-  викликає будь-який із цих чотирьох маршрутів — той маршрут мовчки повертає `resolver_config.toml`
-  до застарілого значення `rating_filter` (у пам'яті стан лишається коректним до рестарту). Той
-  самий клас, що T-57/T-139/T-149/T-47/T-77. Виправлення: замінити на `*state.
-  rating_filter_config_snapshot()` у всіх чотирьох місцях, той самий патерн, що вже застосований
-  для `[personal_zone]` у Батчі 4.5.
+  `apply_provider_change` читали застарілий `state.persist.rating_filter.clone()` (статичний
+  знімок з `AppState::new`), не живий `state.rating_filter_config_snapshot()`. Фікс: усі чотири
+  сайти тепер читають `(*state.rating_filter_config_snapshot()).clone()` (не `*deref`, як для
+  `[personal_zone]`, — `RatingFilterConfig` містить `Vec<String>`, не `Copy`). Коментарі біля
+  кожного сайту, що описували стару (тепер невірну) причину "not admin-mutable", теж виправлено.
+  **Регресійний тест написаний test-first і перевірено, що він падає проти старого коду:**
+  `serve_admin_cache_config_apply_preserves_a_live_rating_filter_change` — `update_rating_filter_config`
+  напряму, тоді виклик непов'язаного `/admin/cache-config/apply`, перевірка, що `[rating_filter]`
+  на диску не відкотився до `RatingFilterConfig::default()`; тимчасово повернув старий код через
+  скретч-скрипт, підтвердив падіння з точним `left/right` diff, відновив фікс. Повний
+  build/clippy/fmt/test/conformance — зелено. Повний запис: TASKS-DONE.md.
 
 #### 4.7.B — потребують власного plan+advisor циклу (security-sensitive / архітектурні)
 

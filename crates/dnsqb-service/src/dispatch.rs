@@ -335,9 +335,15 @@ pub struct PersistTarget {
     /// `[limits]` table on save — the same cross-field-read requirement the
     /// three fields above already have.
     pub limits: LimitsConfig,
-    /// T-124/T-126 — the `[rating_filter]` table (SPEC.md §5.3). No admin
-    /// route this batch (Батч 4.4), so like `limits` it's set once at
-    /// startup and carried through every config rewrite verbatim.
+    /// T-124/T-126 — the `[rating_filter]` table (SPEC.md §5.3), set once at
+    /// startup. T-127 later gave it a live admin route
+    /// (`POST /admin/rating-filter`), so — unlike `limits` above — every
+    /// config-rewrite site now reads `rating_filter_config_snapshot()`
+    /// instead of this field (T-217; same live-read pattern `[personal_zone]`
+    /// uses, which was never added here at all for exactly this reason).
+    /// Kept as the startup seed and for the ~35 test fixtures that construct
+    /// a `PersistTarget` directly; not read anywhere else in production code
+    /// — a deliberate, documented state, not a TODO.
     pub rating_filter: RatingFilterConfig,
     /// Where `resolver_config.toml`/`overrides.toml` live, or `None` if no
     /// app-data directory was available at startup (same tolerance
@@ -1576,14 +1582,14 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
-                // T-124/T-126 cross-field read: not admin-mutable, carried
-                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
-                rating_filter: state.persist.rating_filter.clone(),
-                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
-                // construction-time snapshot in `PersistTarget`), this reads
-                // the *live* config directly — no dedicated admin route
-                // exists to have gone stale against, so there was no reason
-                // to introduce the same staleness gap for a new field.
+                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
+                // a static construction-time snapshot, stale as soon as
+                // `POST /admin/rating-filter` (T-127) changed the live value):
+                // reads the *live* config, same as `personal_zone` below.
+                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
+                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
+                // above — no dedicated admin route exists to have gone stale
+                // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
             };
@@ -2137,14 +2143,14 @@ fn apply_cache_config<C: DohClient + Sync>(
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
-                // T-124/T-126 cross-field read: not admin-mutable, carried
-                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
-                rating_filter: state.persist.rating_filter.clone(),
-                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
-                // construction-time snapshot in `PersistTarget`), this reads
-                // the *live* config directly — no dedicated admin route
-                // exists to have gone stale against, so there was no reason
-                // to introduce the same staleness gap for a new field.
+                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
+                // a static construction-time snapshot, stale as soon as
+                // `POST /admin/rating-filter` (T-127) changed the live value):
+                // reads the *live* config, same as `personal_zone` below.
+                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
+                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
+                // above — no dedicated admin route exists to have gone stale
+                // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
                 providers,
@@ -2293,14 +2299,14 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
-                // T-124/T-126 cross-field read: not admin-mutable, carried
-                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
-                rating_filter: state.persist.rating_filter.clone(),
-                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
-                // construction-time snapshot in `PersistTarget`), this reads
-                // the *live* config directly — no dedicated admin route
-                // exists to have gone stale against, so there was no reason
-                // to introduce the same staleness gap for a new field.
+                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
+                // a static construction-time snapshot, stale as soon as
+                // `POST /admin/rating-filter` (T-127) changed the live value):
+                // reads the *live* config, same as `personal_zone` below.
+                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
+                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
+                // above — no dedicated admin route exists to have gone stale
+                // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
                 providers,
@@ -2802,14 +2808,14 @@ where
                 // live values or an unrelated toggle would blank them.
                 persist_query_log: state.persist.persist_query_log,
                 persist_cache: state.persist.persist_cache,
-                // T-124/T-126 cross-field read: not admin-mutable, carried
-                // verbatim so an unrelated toggle doesn't blank `[rating_filter]`.
-                rating_filter: state.persist.rating_filter.clone(),
-                // T-138 (Батч 4.5): unlike `rating_filter` above (a static
-                // construction-time snapshot in `PersistTarget`), this reads
-                // the *live* config directly — no dedicated admin route
-                // exists to have gone stale against, so there was no reason
-                // to introduce the same staleness gap for a new field.
+                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
+                // a static construction-time snapshot, stale as soon as
+                // `POST /admin/rating-filter` (T-127) changed the live value):
+                // reads the *live* config, same as `personal_zone` below.
+                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
+                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
+                // above — no dedicated admin route exists to have gone stale
+                // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 limits: state.persist.limits,
                 providers: after.clone(),
@@ -5199,6 +5205,60 @@ mod tests {
                     },
                     "an unrelated cache-config write must not blank or reset \
                      a hand-edited [personal_zone] table"
+                );
+            }
+            Err(err) => panic!("the saved file must load back: {err}"),
+        }
+    }
+
+    // T-217 fix, empirical proof (same shape as the T-138 `personal_zone`
+    // test right above, which this test's own doc comment already forward-
+    // references as "T-217, a known staleness gap"): `apply_cache_config`
+    // used to read `state.persist.rating_filter.clone()` - a `PersistTarget`
+    // snapshot fixed at `state_with_persist()` construction time above, never
+    // updated by `POST /admin/rating-filter` (T-127)'s live
+    // `update_rating_filter_config`. Set a non-default `[rating_filter]` live
+    // (the same call `serve_admin_rating_filter` makes), then call a
+    // *completely unrelated* write route and confirm the live value survives
+    // on disk instead of being reset back to `RatingFilterConfig::default()`.
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_preserves_a_live_rating_filter_change() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let live_rating_filter = RatingFilterConfig {
+            enabled: true,
+            lists: vec!["ua".to_string(), "global".to_string()],
+        };
+        state.update_rating_filter_config(live_rating_filter.clone());
+
+        let cache_update = non_default_cache_config_update();
+        match serve(admin_cache_config_apply_request(cache_update), state).await {
+            Ok(response) => assert_eq!(response.status(), StatusCode::OK),
+            Err(err) => match err {},
+        }
+
+        match ResolverConfig::load(&path) {
+            Ok(loaded) => {
+                assert_eq!(
+                    loaded.rating_filter, live_rating_filter,
+                    "an unrelated cache-config write must not reset a live \
+                     [rating_filter] change back to the stale PersistTarget snapshot"
                 );
             }
             Err(err) => panic!("the saved file must load back: {err}"),

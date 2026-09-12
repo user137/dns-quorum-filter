@@ -5263,3 +5263,69 @@ success-шляхах цього файлу — стан може застарі�
 який реальний офлайн би виставив через `render(status)`.
 
 **Коміт:** `389f335` (docs+code, один коміт, разом з TASKS.md).
+
+### T-217 — `[rating_filter]` стале `PersistTarget`-читання в чотирьох конфіг-маршрутах (Батч 4.7.A, 2026-09-12)
+
+**Root cause:** знайдено ще в Батчі 4.5 (DECISIONS.md 2026-09-11), той самий клас, що
+T-57/T-139/T-149/T-47/T-77 — `dispatch.rs`'s `apply_admin_config`/`apply_cache_config`/
+`apply_geoip_change`/`apply_provider_change` читали `state.persist.rating_filter.clone()`, статичний
+знімок, узятий один раз при `AppState::new()`, ніколи не оновлюваний після T-127's
+`POST /admin/rating-filter`. Наслідок: зміна `[rating_filter]` через той маршрут, а тоді будь-який
+з чотирьох інших маршрутів — мовчки відкочує `resolver_config.toml`'s `[rating_filter]` до старого
+значення на диску (живий стан у пам'яті лишався коректним до рестарту, тож бага не було видно без
+рестарту сервісу).
+
+**Фікс:** усі чотири сайти тепер `(*state.rating_filter_config_snapshot()).clone()` —
+`rating_filter_config_snapshot()` уже існував (доданий разом з T-127), просто не був підключений
+до цих чотирьох write-сайтів. `RatingFilterConfig` містить `Vec<String>` (`lists`), тож не
+`Copy` — на відміну від `[personal_zone]`'s патерну (`*state.personal_zone_config_snapshot()`,
+`PersonalZoneConfig` є `Copy`), тут потрібен явний `.clone()` після деref. Коментарі біля кожного
+сайту, що описували стару причину ("not admin-mutable, carried verbatim"), виправлено — вона
+стала фактично невірною відколи з'явився T-127's маршрут.
+
+**Регресійний тест, написаний test-first (за прецедентом сусіднього T-138-тесту, чий власний
+коментар уже наперед посилався на T-217 як "known staleness gap"):**
+`serve_admin_cache_config_apply_preserves_a_live_rating_filter_change` — встановлює
+`RatingFilterConfig{enabled:true, lists:["ua","global"]}` через `update_rating_filter_config`
+(той самий виклик, що робить `serve_admin_rating_filter`), тоді викликає непов'язаний
+`POST /admin/cache-config/apply`, перевіряє, що `[rating_filter]` на диску лишається живим
+значенням, а не `RatingFilterConfig::default()`. **Емпірично підтверджено, що тест ловить баг**
+(не лише "проходить із фіксом"): скретч-Python-скрипт тимчасово повернув усі 4 сайти на
+`state.persist.rating_filter.clone()`, тест впав з точним `left: {enabled:false,lists:[]} / right:
+{enabled:true,lists:["ua","global"]}`, фікс відновлено з бекапу в скретчпаді сесії.
+
+**Повна верифікація:** `cargo build`/`clippy -D warnings`/`fmt --check`/
+`test --workspace --lib --bins` — усе зелено; `cargo test --test conformance -p dnsqb-service` —
+18 passed, 2 ignored (незмінно) — торкались resolver-суміжного коду (`dispatch.rs`), тож
+conformance-набір прогнано за стандартним правилом проєкту.
+
+**Closing-advisor catch, перевірено й закрито того самого сеансу:** advisor попередив, що це може
+бути той самий клас бага, що T-221 (`personal_zone_config` захардкожений на `default()` в
+`AppState::new`, ніколи не заповнюваний зі старту) — тобто `rating_filter_config_snapshot()` міг
+теж бути порожнім знімком, який ЦЕЙ фікс тепер повертає замість застарілого, але хоча б
+початково-коректного `PersistTarget`-значення. **Перевірено грепом, НЕ той випадок:**
+`AppState::new`'s `rating_filter_config: RwLock::new(Arc::new(geoip.rating_filter_config))`
+(`dispatch.rs:955`) бере значення як параметр конструктора (на відміну від `personal_zone_config`'s
+жорстко закодованого `default()` за два рядки нижче), а `orchestrate.rs`'s `build_geoip_init`
+явно ставить `rating_filter_config: rf.clone()` де `rf = &resolver_config.rating_filter` — реальне
+завантажене значення з TOML. Startup seeding коректний, T-221-подібного розриву тут немає.
+
+**Два доки-дрейфи, виправлені в тому самому коміті (advisor-catch):** (1) CLAUDE.md's `dispatch`
+рядок стверджував, що `[personal_zone]` "deliberately not repeating the `rating_filter` field's
+own pre-existing `PersistTarget` staleness gap" — фактично невірно після цього фіксу, переписано.
+(2) DECISIONS.md's 2026-09-11 запис (є) називав це "не виправлено в цьому батчі" без прив'язки до
+майбутнього виправлення — додано резольв-примітку з посиланням на T-217/цей запис ("ніколи не
+депрекейтити документ мовчки").
+
+**Свідоме, задокументоване рішення (не TODO):** `PersistTarget.rating_filter` лишається в
+структурі — стартовий сід (`orchestrate.rs` заповнює з `resolver_config.rating_filter`) і ціль
+для ~35 тестових фікстур, що конструюють `PersistTarget` напряму, але **не читається більше ніде
+в продакшн-коді**. Doc-коментар самого поля оновлено, щоб це було видно на місці, не лише в
+TASKS-DONE.md.
+
+**Покриття тестом:** лише `apply_cache_config` має прямий регресійний тест (за прецедентом T-138);
+`apply_admin_config`/`apply_geoip_change`/`apply_provider_change` доведено виправленими тим самим
+скретч-revert-скриптом (усі 4 сайти повернуто разом, тест впав), але не мають окремих
+per-route тестів — той самий рівень покриття, що вже прийнятий для T-138's аналогічного фіксу.
+
+**Коміт:** див. наступний коміт (буде вписано хешем після push, той самий процес, що T-224/T-228).

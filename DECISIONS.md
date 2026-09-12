@@ -1722,7 +1722,10 @@ overlay (T-108) застосовується до обох викликів од
 уже-опт-ін фічі (множина вже заблокованих quorum'ом registrable, той самий приватнісний рівень, що
 `cache.enc`), не новою розкриттям персональної історії, тому не потребує окремого секрету.
 
-**(є) Знайдено, не виправлено в цьому батчі: `PersistTarget.rating_filter` — застарілий знімок.**
+**(є) Знайдено, не виправлено в цьому батчі: `PersistTarget.rating_filter` — застарілий знімок.
+Виправлено пізніше, T-217, 2026-09-12 (Батч 4.7.A) — усі чотири сайти тепер читають
+`rating_filter_config_snapshot()`, той самий live-патерн, що вже описаний нижче для
+`[personal_zone]`; повний запис у TASKS-DONE.md.**
 `dispatch.rs`'s `apply_admin_config`/`apply_cache_config`/`apply_geoip_change`/
 `apply_provider_change` читають `state.persist.rating_filter.clone()` — статичний знімок, взятий
 рівно один раз при старті `AppState::new` і ніколи не оновлюваний після. Якщо користувач змінює
