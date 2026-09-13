@@ -1725,6 +1725,21 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   Нова build-залежність → вет у `SECURITY.md` + `deny.toml` (нова ліцензія ймовірна).
   `#![forbid(unsafe_code)]` має лишитися цілим (перевірити — деякі resource-крейти чисті).
   Дрібна, self-contained; plan не потрібен, closing-advisor опційно.
+- [ ] T-230 — **Адмінка: у «Розширених» — список усіх фонових джобів (назва + періодичність),
+  read-only спершу, редагованість інтервалу — по-джобно** (запит користувача 2026-09-13, мід-турн
+  під час Батчу 7.2). Інвентар ширший за "апдейтери": `run_geoip_updater` (24h),
+  `run_topn_updater` (24h), майбутній `run_blocklist_updater` (24h, Батч 7.3),
+  `run_reachability_prober` (30s/3s адаптивно + `OFFLINE_CONFIRM_CYCLES`),
+  `run_query_log_persister` (60s), `run_cache_persister` (60s), `run_zone_removal_persister`,
+  `run_personal_zone_task` (60s), `cert_watch::run_cert_trust_watch` (60s),
+  `pause_watch::run_pause_watcher` (1s), і три watchdog-цикли (5s tick, SPEC.md §7).
+  **Перегляд (read-only) — безпечний і малий крок; редагованість — не блоком.** Watchdog-тик
+  завʼязаний на `MISS_THRESHOLD`/`vote`/`backoff` (SPEC.md §7) — редагований користувачем 5s-тик
+  може зламати таймінгові припущення 2-з-3 голосування, це Три Б user-safety питання, не
+  зручність конфігу; лишити watchdog-цикли поза редагованим підмножиною, або окремо обґрунтувати.
+  Редагування будь-якого з решти тягне вже наявні патерни проєкту: `persist_lock`-дисципліна,
+  `persisted: false` на невдалому збереженні, `#[serde(default)]` + бамп
+  `ADMIN_DTO_SCHEMA_VERSION`. Backend перед UI (наявний рецидивний патерн проєкту).
 
 ## Батч RV — ремедіація внутрішнього код-ревʼю (2026-09-10)
 
