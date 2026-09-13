@@ -95,6 +95,16 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    одного списку — лог warn, лишається last-known-good файл. `POST /admin/reset` **і**
    `POST /admin/rating-filter` будять таск (останній — щоб увімкнення дало перше завантаження за
    секунди). **Без DNS.**
+5b. **Завжди запускає фонову задачу публічних блок-лист-бандлів** (T-218, Батч 7.3,
+   `run_blocklist_updater`) — доки є тека app-data, незалежно від `[blocklist_bundles].enabled`
+   (той самий "always spawn, gate internally" патерн, що `run_topn_updater`, п. 5a вище). На
+   старті `<app-data>/blocklists/*.txt` **не** тепло-читається (на відміну від `geoip.mmdb`/
+   `topn/*.txt`) — набір лишається порожнім до першого циклу задачі, яка виконується одразу.
+   Поки вимкнено чи `sources` явно порожній — таск no-op-ить щоцикл. Коли активний: по одному
+   HTTPS GET на кожне **обране** джерело (`[blocklist_bundles].sources` — усі поточні
+   `blocklist_download::BLOCKLIST_SOURCES`, якщо ключ не вказано) раз на 24 год, атомарна заміна
+   файлу, `Arc`-своп на `AppState`. Невдале джерело — лог warn, лишається last-known-good файл.
+   `POST /admin/reset` будить таск. **Без DNS.** Пайплайн-крок 2 ще не читає результат (7.4+).
 6. Запускає **фоновий reachability-проб-таск** (T-152, Батч 3.4) — раз на ~30 s (частіше поки
    офлайн) б'є `HEAD` по кількох незалежних `generate_204`-класу маркерах (Google / Cloudflare /
    Apple); «сирий» вердикт `OFFLINE` — лише коли **всі** впали, а публікується `OFFLINE` тільки
