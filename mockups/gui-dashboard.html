@@ -311,15 +311,19 @@
      free-text combobox — the source set is known and finite, unlike
      rating-filter's growing zone catalogue. Mirrors .rf-picked li's layout,
      swaps the remove-× for a checkbox since sources aren't user-added. */
-  .bl-list { list-style: none; margin: 0.45rem 0 0; padding: 0; }
+  .bl-list { list-style: none; margin: 0.3rem 0 0; padding: 0; }
   .bl-list li {
-    display: flex; align-items: center; gap: 0.5rem;
+    display: flex; align-items: flex-start; gap: 0.5rem;
     padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft); font-size: 12px;
   }
   .bl-list li:last-child { border-bottom: none; }
-  .bl-list .nm { flex: 1 1 auto; font-weight: 600; }
-  .bl-list .meta { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .bl-list input[type="checkbox"] { margin-top: 0.15rem; }
+  .bl-row { flex: 1 1 auto; min-width: 0; }
+  .bl-row-top { display: flex; align-items: baseline; gap: 0.5rem; justify-content: space-between; }
+  .bl-list .nm { font-weight: 600; }
+  .bl-list .meta { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .bl-list .meta.stale { color: var(--warn); }
+  .bl-list .desc { font-size: 10.5px; color: var(--text-muted); margin: 0.1rem 0 0; }
   .bl-attrib { font-size: 10.5px; color: var(--text-muted); margin: 0.5rem 0 0; }
   .bl-attrib a { color: inherit; }
 
@@ -1037,6 +1041,14 @@
       <strong>вимкнено</strong>, як і рейтинг-фільтр.
     </p>
     <p class="rationale">
+      <strong>Групування + підпис під кожним джерелом (за відгуком користувача, 2026-09-13) —
+      без цього вмикач нічого не пояснює.</strong> Джерела згруповані за призначенням, той самий
+      принцип, що вже несе список voter'ів кворуму (`#providers-body`, групування за
+      SECURITY/ADS_TRACKERS/ADULT_CONTENT) — тут два кластери, «Реклама й трекери» та «Безпека й
+      загрози», плюс один короткий рядок-опис під назвою кожного джерела (що саме воно ловить).
+      Точна межа кластерів і формулювання підписів — не остаточні, лише перший прохід.
+    </p>
+    <p class="rationale">
       <strong>Не є остаточним DTO-контрактом.</strong> Статус-на-джерело в кадрі 2 малює дані, яких
       сьогодні не несе жоден `AdminStatusResponse`-зріз — за прецедентом
       <code>RatingFilterStatusView</code>/<code>ZoneListStatusView</code> це майбутня окрема задача
@@ -1083,15 +1095,19 @@
                   <span class="rf-title">Блокувати за публічними бандл-списками</span>
                   <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
                 </div>
+                <div class="rf-sub">Реклама й трекери</div>
                 <ul class="bl-list">
-                  <li><input type="checkbox" checked aria-label="HaGeZi Multi PRO"><span class="nm">HaGeZi Multi PRO</span><span class="meta">оновлено 3 год тому</span></li>
-                  <li><input type="checkbox" checked aria-label="HaGeZi TIF"><span class="nm">HaGeZi Threat Intelligence Feeds</span><span class="meta">оновлено 3 год тому</span></li>
-                  <li><input type="checkbox" checked aria-label="HaGeZi NRD/DGA"><span class="nm">HaGeZi NRD / DGA</span><span class="meta stale">збій оновлення — попередня версія</span></li>
-                  <li><input type="checkbox" checked aria-label="HaGeZi DynDNS"><span class="nm">HaGeZi Dynamic DNS</span><span class="meta">оновлено 3 год тому</span></li>
-                  <li><input type="checkbox" checked aria-label="HaGeZi Badware Hoster"><span class="nm">HaGeZi Badware Hoster</span><span class="meta">оновлено 3 год тому</span></li>
-                  <li><input type="checkbox" checked aria-label="HaGeZi Most Abused TLDs"><span class="nm">HaGeZi Most Abused TLDs</span><span class="meta">оновлено 3 год тому</span></li>
-                  <li><input type="checkbox" checked aria-label="AdGuard DNS filter"><span class="nm">AdGuard DNS filter</span><span class="meta">оновлено 1 год тому</span></li>
-                  <li><input type="checkbox" checked aria-label="1Hosts Lite"><span class="nm">1Hosts Lite</span><span class="meta">оновлено 8 днів тому</span></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi Multi PRO"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Multi PRO</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Реклама, трекери, шкідливе ПЗ — основний набір</p></div></li>
+                  <li><input type="checkbox" checked aria-label="AdGuard DNS filter"><div class="bl-row"><div class="bl-row-top"><span class="nm">AdGuard DNS filter</span><span class="meta">оновлено 1 год тому</span></div><p class="desc">Той самий клас, окреме джерело — ширше покриття</p></div></li>
+                  <li><input type="checkbox" checked aria-label="1Hosts Lite"><div class="bl-row"><div class="bl-row-top"><span class="nm">1Hosts Lite</span><span class="meta">оновлено 8 днів тому</span></div><p class="desc">Те саме, легший список — менше хибних блокувань</p></div></li>
+                </ul>
+                <div class="rf-sub">Безпека й загрози</div>
+                <ul class="bl-list">
+                  <li><input type="checkbox" checked aria-label="HaGeZi TIF"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Threat Intelligence Feeds</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Індикатори компрометації, фішинг</p></div></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi NRD/DGA"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi NRD / DGA</span><span class="meta stale">збій оновлення — попередня версія</span></div><p class="desc">Щойно зареєстровані й алгоритмічно згенеровані домени (malware C2)</p></div></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi DynDNS"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Dynamic DNS</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Динамічні DNS-хостнейми, часто зловживані</p></div></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi Badware Hoster"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Badware Hoster</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Хостери, відомі розповсюдженням шкідливого ПЗ</p></div></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi Most Abused TLDs"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Most Abused TLDs</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Домени в TLD із високим рівнем зловживань</p></div></li>
                 </ul>
                 <p class="bl-attrib">Джерела: <a href="#" onclick="return false">HaGeZi</a>, <a href="#" onclick="return false">AdGuard DNS filter</a> (GPL-3.0) · <a href="#" onclick="return false">1Hosts Lite</a> (MPL-2.0)</p>
               </div>
@@ -1149,6 +1165,10 @@
         потрібен той самий warn+confirm, що E?</li>
       <li>Артборд F: чи додавати індивідуальні чекбокси per-джерело (як показано — можна вимкнути
         одне джерело, лишивши інші), чи один master-перемикач без гранулярності?</li>
+      <li>Артборд F (додано за відгуком 2026-09-13): групування «Реклама й трекери» / «Безпека й
+        загрози» — ці дві категорії, чи ближче до кворум-категорій SECURITY/ADS_TRACKERS/
+        ADULT_CONTENT? Підписи під джерелами — одне речення, як показано, чи потрібна детальніша
+        картка/тултип на клік?</li>
     </ul>
   </section>
 </div>
