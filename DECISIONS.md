@@ -2015,3 +2015,83 @@ RwLock<Arc<BlocklistBundleState>>` — той самий патерн, що `Cac
 абзац "Сховище", розмір-цифри виправлено), цей файл (коригувальні нотатки в записі kickoff'у
 вище). Не в обсязі: `blocklist_updater.rs` (мережа/оркестрація/своп), пайплайн-wiring кроку 2,
 конфіг, admin-route, реальний UI — Батчі 7.2+.
+
+## 2026-09-13 — T-218 Батч 7.4 (частина 1): суфіксний (wildcard) збіг для блок-лист-бандла
+
+**Контекст.** Батчі 7.1–7.3 залишили `BlocklistBundleState::contains_domain` навмисно відкритим
+питанням (7.1's closing-review, знахідка #2): чи має збіг на `example.com` покривати
+`sub.example.com`, залежно від того, wildcard чи exact-семантику публікує кожне конкретне
+джерело. Метод мав `#[allow(dead_code)]` і без викликача — набір існував, але жоден запит його
+не консультував. Користувач обрав саме цей шматок Батчу 7.4+ наступним (не admin-route/DTO, не
+status-view, не UI-рендер).
+
+**Розв'язання: суфіксний (wildcard) збіг для всіх 7 джерел, обґрунтування за змістом записів, не
+за назвою URL-шляху** (перший чорновик плану рахував "6 із 7 wildcard/-шлях" — advisor-корекція,
+рахунок за шляхом оманливий):
+- Явний `wildcard/`-шлях (4): `hagezi-multi-pro`/`tif`/`dyndns`/`hoster` — HaGeZi сам публікує і
+  `wildcard/`, і `domains/`-варіант саме для цього розрізнення.
+- `domains/`-шлях, але суфіксна семантика правильна за змістом (3): `hagezi-nrd`/`hagezi-dga` —
+  записи це щойно зареєстровані домени цілком, сенс NRD/DGA-детекції в самому факті реєстрації,
+  не в конкретному хості під нею; `1hosts-lite` — уже на рівні реєстрованого домену за
+  побудовою hosts-стиль ad/tracker-списку.
+- Формат, не шлях (1): `adguard-dns-filter`'s `||domain^` — anchor-правило adblock-специфікації,
+  за визначенням відповідає домену і всім піддоменам незалежно від назви файлу.
+
+Узгоджується з тим, що SPEC.md §5 вже стверджував до цього батчу: "крок 2 не розрізняє
+походження запису" — бандл-збіги отримують той самий wildcard-суфіксний контракт, що й ручні
+blocklist-записи.
+
+**Ризик "голий TLD блокує пів інтернету" мітигований на двох незалежних рівнях, не лише на
+рівні відбору джерел** (Батч 7.1 вже виключив HaGeZi Most Abused TLDs звідти): сам обхід
+структурно ніколи не тестує кандидата з одним лейблом — `while let Some(_) =
+candidate.split_once('.')` гарантує щонайменше одну крапку в кожному протестованому кандидаті,
+доведено з умови циклу, не з пам'яті про відбір джерел. Це **свідомо суворіша** відмінність від
+`rating_filter::ZoneLists::zone_match` (який тестує голий останній лейбл) — перший чорновик плану
+помилково називав обидва цикли ідентичними, виправлено advisor-рев'ю до реалізації.
+
+**Advisor-рев'ю до реалізації також уточнило:**
+- `DecisionSourceView::BlocklistBundle` не потребує бампу `ADMIN_DTO_SCHEMA_VERSION` — цей DTO
+  живе лише на `GET /admin/log`, а `AdminClient` не має методу, що читає лог; єдиний споживач —
+  `include_str!`-вбудований `/admin/ui`-JS, завжди той самий білд.
+- `PDecisionSource`'s новий варіант сумісний лише в один бік: старий файл → новий білд читає
+  нормально, але новий білд, що записав `blocklist_bundle`, після даунгрейду на старий білд
+  ловить `.orphaned-<ts>` як будь-який інший корумпований файл — той самий, уже прийнятий коштом,
+  що мали `RatingFilter`/`BaselineFallback`.
+- Механічне оновлення 53 тестових літералів `UpstreamContext { ... }` пройшло **без** Python-
+  скрипта з підрахунком дужок (перший чорновик плану це пропонував) — компілятор сам перелічує
+  кожен пропущений сайт через `E0063`, вставка одного й того самого однорядкового поля туди
+  безпечніша, ніж брейс-парсер, що міг неправильно порахувати вкладені `Some(RatingFilterView {
+  ... })`.
+
+**Advisor-рев'ю після реалізації довиловило:**
+- `DECISION_SOURCE_LABELS` у `crates/dnsqb-service/ui/main.js` не мав рядка для нового варіанта
+  — мапа має graceful fallback (невідомий ключ рендериться як сирий wire-рядок, той самий гап,
+  що вже існує для `BASELINE_FALLBACK`), але оскільки кожен інший продукований варіант має
+  переклад (за прецедентом T-124's `RATING_FILTER`), додано `BLOCKLIST_BUNDLE: "Блок-лист-бандл"`
+  тим самим проходом.
+- `handle_query`'s крок-1/2-пролог (allowlist/blocklist/bundle + похідні domain/qtype/log_domain)
+  винесено в окрему `overrides_step` (повертає `ControlFlow`) — вимушено `clippy::too_many_lines`
+  після додавання нового кроку, не запланована архітектурна зміна; поведінка ідентична (той самий
+  фіксований порядок кроків, `domain` лишається `String`, що йде далі в `CacheKey::new`).
+
+**Наслідки в коді:** `blocklist_updater.rs` — `contains_domain` → `matches_domain` (суфіксний
+обхід), новий `is_empty()`, новий `#[cfg(test)]`-конструктор `from_domains`. `pipeline.rs` —
+`UpstreamContext.blocklist_bundles: Option<&BlocklistBundleState>`, новий
+`blocklist_bundle_response_with_meta`/`blocklist_bundle_hit`, новий `overrides_step` (вище), крок
+2 розширено. `query_log.rs` — `DecisionSource::BlocklistBundle`. `admin.rs`/`persist_dto.rs` —
+дзеркальні варіанти в `DecisionSourceView`/`PDecisionSource` (обидва напрями `From`). `dispatch.rs`
+— `blocklist_bundles_is_active` (дзеркало `rating_filter_is_active`), знімки бандла/конфігу в
+`resolve_doh_request`. 9 нових юніт/інтеграційних тестів. `cargo test --workspace --lib --bins`
+(861 тест) / `clippy --workspace --all-targets -- -D warnings` / `fmt --all -- --check` /
+`doc --no-deps --document-private-items` (`RUSTDOCFLAGS=-D warnings`) / `--test conformance` /
+`--test admin_client` / `--workspace --doc` — усі зелені, увесь workspace.
+
+**Наслідки в доках:** `SPEC.md` §5 (нотатка про реальне підключення + суфіксну семантику),
+`CONFIGURATION.md` (`[blocklist_bundles].enabled`'s описане значення розширено — тепер і
+"блокує запити", не лише "завантажує списки"), `KNOWN-LIMITATIONS.md` (нова нотатка:
+`enabled=true` + `sources=Some([])` з раніше заповненим бандлом лишається активним і блокує
+безстроково — той самий клас застряглості, що вже мають `rating_filter`/`topn_updater`, але з
+більшим blast radius і без status-view до Батчу 7.4-частина-2, щоб оператор побачив причину),
+`PERFORMANCE.md` (новий hot-path-факт), `CLAUDE.md`/`TASKS.md` (синхронізовано). Не в обсязі:
+admin-route/DTO для live per-source toggling, `/admin/status`-view, `/admin/ui`-рендер (Артборд F
+вже затверджений, чекає DTO) — Батч 7.4, частина 2+.

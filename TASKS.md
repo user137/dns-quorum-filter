@@ -1514,6 +1514,34 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   перемикання, `/admin/status`-view, `/admin/ui`-рендер, pipeline-wiring кроку 2 до
   `contains_domain` (7.1's відкрите питання про wildcard-vs-exact семантику лишається) — усе 7.4+.
 
+  **[x] Батч 7.4, частина 1 (2026-09-13, plan-mode + advisor до і після реалізації) —
+  pipeline-wiring кроку 2, розв'язано 7.1's відкрите питання.** Обраний користувачем шматок
+  Батчу 7.4+ (не admin-route/DTO, не status-view, не UI). Розв'язання: **суфіксний (wildcard)
+  збіг** для всіх 7 джерел, обґрунтування за змістом записів (HaGeZi's `wildcard/`-шлях там, де
+  він є; NRD/DGA/1Hosts — суфіксна семантика правильна за змістом навіть без `wildcard/`-шляху;
+  AdGuard's `||domain^` — anchor-правило за специфікацією), не за назвою URL-шляху (перший
+  чорновик плану рахував "6 із 7 wildcard/-шлях" — advisor-корекція). Обхід структурно ніколи не
+  тестує голий TLD-кандидат (`while let Some(_) = candidate.split_once('.')`), свідомо суворіше
+  за `rating_filter::ZoneLists::zone_match`. `contains_domain` → `matches_domain`. Новий
+  `DecisionSource::BlocklistBundle` (+ дзеркала в `DecisionSourceView`/`PDecisionSource`, обидва
+  напрями `From`; жодного бампу `ADMIN_DTO_SCHEMA_VERSION` — цей DTO ходить лише через
+  `GET /admin/log`, не через жоден версійований `AdminClient`-метод). `UpstreamContext` +=
+  `blocklist_bundles: Option<&BlocklistBundleState>`, гейт — новий `blocklist_bundles_is_active`
+  (дзеркало `rating_filter_is_active`). `handle_query`'s крок-1/2-пролог винесено в окрему
+  `overrides_step` (повертає `ControlFlow`) — вимушено `clippy::too_many_lines` після нового
+  кроку, не заплановано заздалегідь; поведінка ідентична. Закриваючий advisor-рев'ю довиловив:
+  (1) `DECISION_SOURCE_LABELS` у `main.js` без рядка для нового варіанта (мав graceful fallback,
+  але додано `BLOCKLIST_BUNDLE: "Блок-лист-бандл"` за прецедентом T-124's `RATING_FILTER`); (2)
+  `overrides_step`-екстракцію треба задокументувати як мід-імплементаційний форк, не мовчки; (3)
+  `CONFIGURATION.md`/`KNOWN-LIMITATIONS.md` пропущені з doc-sync списку. Усі три виправлено тим
+  самим проходом. 9 нових юніт/інтеграційних тестів (Три Б: happy path/boundary/misuse/error).
+  `cargo test --workspace --lib --bins` (861 тестів) / `clippy --workspace --all-targets -D
+  warnings` / `fmt --all -- --check` / `doc --no-deps --document-private-items` / `--test
+  conformance` / `--test admin_client` / `--workspace --doc` — усі зелені, увесь workspace.
+  DECISIONS.md 2026-09-13 ("Батч 7.4"). Не в обсязі: admin-route/DTO для живого per-source
+  перемикання, `/admin/status`-view, `/admin/ui`-рендер (Артборд F вже затверджений, чекає
+  DTO) — Батч 7.4, частина 2+.
+
 ## Поза фазами / бэклог
 
 - [ ] T-132 — **Уточнено 2026-08-29 (SPEC.md §2)**: NSS DB автоматизація для Firefox

@@ -267,7 +267,7 @@ regularity_min_days     = 5
 `query-log.enc`/`cache.enc` (операційний стан уже-опт-ін фічі, не нове розкриття персональних
 даних). Гейт — `[rating_filter].enabled`, не `[personal_zone].enabled`.
 
-### `[blocklist_bundles]` — публічні блок-лист-бандли (SPEC.md §5 крок 2, T-218, Батч 7.3)
+### `[blocklist_bundles]` — публічні блок-лист-бандли (SPEC.md §5 крок 2, T-218, Батч 7.3+7.4)
 
 ```toml
 [blocklist_bundles]
@@ -277,7 +277,7 @@ enabled = false
 
 | Поле | Тип | Дефолт | Опис |
 |---|---|---|---|
-| `enabled` | `bool` | `false` | Чи качати й застосовувати публічні блок-лист-бандли (крок 2 конвеєра, SPEC.md §5). |
+| `enabled` | `bool` | `false` | **Дві дії, не одна:** чи качає фоновий `run_blocklist_updater` вибрані джерела, **і** (від Батчу 7.4) чи реально консультує їх крок 2 конвеєра (`SPEC.md §5`) на кожному запиті — до Батчу 7.4 набір лише завантажувався, жоден запит його не питав. |
 | `sources` | `Vec<String>` або відсутній | відсутній | Підмножина id джерел із `BLOCKLIST_SOURCES` (наразі: `hagezi-multi-pro`, `hagezi-tif`, `hagezi-nrd`, `hagezi-dga`, `hagezi-dyndns`, `hagezi-hoster`, `adguard-dns-filter`, `1hosts-lite`). Невідомий id → `ConfigError::UnknownBlocklistBundleSource`, фатальна помилка завантаження. |
 
 **Три різні стани `sources`, не два — важливо для оператора, який вручну редагує файл:**

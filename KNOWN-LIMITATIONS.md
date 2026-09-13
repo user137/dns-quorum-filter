@@ -156,4 +156,14 @@ TASKS-DONE.md, never here.
   (June 2026). If the asset is ever renamed again, every refresh attempt fails forever; the
   existing "keep last-known-good + `tracing::warn!`" behavior absorbs it silently — the only
   user-visible signal is an aging `database_built_at_ms` on the GeoIP card, nothing louder.
+- **`[blocklist_bundles]` can stay actively blocking on a stale, non-empty set with no way for
+  the operator to see why (T-218, Батч 7.4)** — `enabled = true` with `sources = Some([])` (or a
+  config edit that shrinks `sources` to an empty explicit list) makes `refresh_all_sources`
+  return before touching the bundle, same as `enabled = false`; `blocklist_bundles_is_active`
+  only checks `config.enabled`, not whether `sources` is now empty, so a *previously* populated
+  bundle keeps blocking every query indefinitely. Same already-accepted class of staleness as
+  `[rating_filter]`/`topn_updater::refresh_all_lists` (an emptied `lists` doesn't clear the zone
+  either), but a larger blast radius here (up to ~5.5M hashed entries, not a curated top-N list)
+  and, until the Батч 7.4-частина-2 `/admin/status` per-source view exists, no UI signal at all
+  for why queries are suddenly blocked.
 

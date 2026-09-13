@@ -23,6 +23,7 @@ about, not a coordinated attack.
 |---|---|---|
 | 1. Allowlist | O(n) linear scan, `OverrideLists::decision` | n = allowlist entries |
 | 2. Blocklist | O(n) linear scan, same function, same pass | n = blocklist entries |
+| 2b. Public blocklist bundle (T-218 Батч 7.4, opt-in) | O(L log m) suffix walk over the query host's labels, each step an O(log m) binary search over the sorted hashed set; zero network, runs before the cache read on **every** query when active (not just A/AAAA) | L = labels in the host (≤ ~10), m = deduplicated bundle size (up to ~5.5M hashes, ~44 MB resident) — independent of zone/list size otherwise |
 | 3. ccTLD block | not implemented (Фаза 5, TASKS.md T-115) | — |
 | 4. Cache | O(1) amortized, `moka` concurrent hash map lookup | bounded by `max_capacity` (10 000) |
 | 5. Rating filter «bubble» (T-124) | O(L) suffix walk over the query host's labels, each step an O(1) `HashSet` lookup against the zone union and the removal overlay; zero network | L = labels in the host (≤ ~10) — independent of zone size |
