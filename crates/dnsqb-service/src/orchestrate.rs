@@ -37,6 +37,7 @@
 //! be discovered by whoever next reads this file from `dnsqb-watcher`'s
 //! side.
 
+use crate::blocklist_updater::run_blocklist_updater;
 use crate::cache::Cache;
 use crate::cache_persist::{load_persisted_cache, run_cache_persister, CacheInit};
 use crate::cert_watch::run_cert_trust_watch;
@@ -250,6 +251,14 @@ pub async fn run() {
         personal_zone_restore,
         resolver_config.personal_zone,
     );
+    // T-218 Фаза 7, Батч 7.3: seed the live `[blocklist_bundles]` config the
+    // same way — `AppState::new` always constructs the placeholder `Default`
+    // (see that field's own doc), so this call is what actually observes a
+    // hand-edited `resolver_config.toml` value until an `/admin/reset`. No
+    // disk-warm-start here (see `blocklist_updater::load_blocklist_bundles_from_disk`'s
+    // own doc for why that stays deferred) — `run_blocklist_updater`'s first
+    // cycle, spawned below, fills `AppState.blocklist_bundles` instead.
+    state.update_blocklist_bundles_config(resolver_config.blocklist_bundles.clone());
     spawn_query_log_persister(&state, query_log_flusher);
     spawn_cache_persister(&state, cache_flusher);
     spawn_zone_removal_persister(&state, zone_removals_flusher);
@@ -433,7 +442,7 @@ fn spawn_personal_zone_task(
     }
 }
 
-/// Spawns the two background tasks that talk to public third parties over
+/// Spawns the background tasks that talk to public third parties over
 /// their own plainly-configured `reqwest::Client` (public-CA validation, no
 /// pool shared with the pinned-cert admin channel or the `DoH` client):
 ///
@@ -447,7 +456,12 @@ fn spawn_personal_zone_task(
 ///   wakes it and the first real download follows within seconds;
 /// - the network-reachability prober (T-152 — a few `generate_204`-class
 ///   markers), deliberately **not** wired to `/health` or any watchdog
-///   channel, so a network outage can never read as a dead service.
+///   channel, so a network outage can never read as a dead service;
+/// - the public blocklist-bundle updater (T-218 Фаза 7, Батч 7.3 —
+///   `raw.githubusercontent.com`/`adguardteam.github.io`), spawned whenever
+///   an app-data directory exists. Same "always spawned, config decides"
+///   posture as the top-N updater above: `refresh_all_sources` re-reads
+///   `[blocklist_bundles]` each cycle and no-ops while disabled/empty.
 fn spawn_public_http_tasks(
     state: &Arc<AppState<ReqwestDohClient>>,
     geoip_path: Option<PathBuf>,
@@ -464,7 +478,7 @@ fn spawn_public_http_tasks(
             tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
         }
     }
-    match (app_data, reqwest::Client::builder().build()) {
+    match (app_data.clone(), reqwest::Client::builder().build()) {
         (Some(dir), Ok(client)) => {
             tokio::spawn(run_topn_updater(client, dir, Arc::clone(state)));
         }
@@ -483,6 +497,19 @@ fn spawn_public_http_tasks(
         }
         Err(err) => {
             tracing::error!("failed to build the reachability probe HTTP client: {err}");
+        }
+    }
+    match (app_data, reqwest::Client::builder().build()) {
+        (Some(dir), Ok(client)) => {
+            tokio::spawn(run_blocklist_updater(client, dir, Arc::clone(state)));
+        }
+        (Some(_), Err(err)) => {
+            tracing::error!("failed to build the blocklist-bundle update HTTP client: {err}");
+        }
+        (None, _) => {
+            tracing::warn!(
+                "no app-data directory available, public blocklist bundles cannot refresh"
+            );
         }
     }
 }

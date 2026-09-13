@@ -38,8 +38,8 @@ use crate::baseline_selector::BaselineSelector;
 use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
-    validate_country_code, ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig,
-    RatingFilterConfig, ResolverConfig,
+    validate_country_code, BlocklistBundlesConfig, ConfigError, GeoipConfig, LimitsConfig,
+    PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
 };
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
@@ -836,14 +836,29 @@ pub struct AppState<C: DohClient + Sync> {
     system_region: Option<String>,
     /// T-218 Фаза 7, Батч 7.2 — the public blocklist-bundle set (SPEC.md §5
     /// step 2 extension). Same `RwLock<Arc<_>>` whole-value-swap shape as
-    /// `rating_filter_zone`. **Never restored/refreshed this batch** —
-    /// `blocklist_updater::refresh_all_sources`/`load_blocklist_bundles_from_disk`
-    /// exist but nothing calls them yet (no `[blocklist_bundles]` config, no
-    /// spawn in `orchestrate.rs` — see that module's own doc comment), so
-    /// this field stays at its empty `Default` for the whole lifetime of the
-    /// process until Батч 7.3 wires a caller. Not yet read by the pipeline
-    /// either — pipeline wiring is also 7.3+.
+    /// `rating_filter_zone`. **Batch 7.3**: `run_blocklist_updater` is now
+    /// spawned (`orchestrate::spawn_public_http_tasks`) and swaps this on
+    /// every successful cycle — but starts empty (`AppState::new`'s
+    /// `Default`) until that task's first cycle completes; no disk-warm-start
+    /// this batch (advisor review, Батч 7.3 — `load_blocklist_bundles_from_disk`
+    /// stays uncalled, see its own doc). Not yet read by the pipeline —
+    /// pipeline wiring is 7.4+.
     blocklist_bundles: RwLock<Arc<BlocklistBundleState>>,
+    /// T-218 Фаза 7, Батч 7.3 — the live `[blocklist_bundles]` config
+    /// snapshot. Same shape/role as `rating_filter_config`: set once at
+    /// startup (`orchestrate::run`), reloaded by `apply_admin_reset`,
+    /// re-read fresh every `run_blocklist_updater` cycle. **Every
+    /// `ResolverConfig`-literal write site in this file must read this live**
+    /// (`(*state.blocklist_bundles_config_snapshot()).clone()`), never
+    /// `state.persist` — the same T-217 cross-field-read requirement
+    /// `rating_filter`/`personal_zone` already have; this field was never
+    /// added to `PersistTarget` for exactly that reason.
+    blocklist_bundles_config: RwLock<Arc<BlocklistBundlesConfig>>,
+    /// T-218 Фаза 7, Батч 7.3 — wakes `run_blocklist_updater` out of its
+    /// inter-cycle sleep when `apply_admin_reset` reloads a hand-edited
+    /// `[blocklist_bundles]` table. Same one-permit `Notify` semantics as
+    /// `rating_filter_refresh_wake`.
+    blocklist_bundles_refresh_wake: Arc<Notify>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -1009,6 +1024,8 @@ impl<C: DohClient + Sync> AppState<C> {
             rating_filter_personal_zone: RwLock::new(Arc::new(ZoneLists::default())),
             personal_zone_refresh_wake: Arc::new(Notify::new()),
             blocklist_bundles: RwLock::new(Arc::new(BlocklistBundleState::default())),
+            blocklist_bundles_config: RwLock::new(Arc::new(BlocklistBundlesConfig::default())),
+            blocklist_bundles_refresh_wake: Arc::new(Notify::new()),
             system_region: geoip.system_region,
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
@@ -1164,16 +1181,43 @@ impl<C: DohClient + Sync> AppState<C> {
     /// One `Arc::clone` snapshot of the public blocklist-bundle set (T-218
     /// Батч 7.2). Called by `blocklist_updater::refresh_all_sources` (to
     /// carry a source's `last_updated` forward across a fallback) — no
-    /// pipeline reader yet (7.3+).
+    /// pipeline reader yet (7.4+).
     pub(crate) fn blocklist_bundles_snapshot(&self) -> Arc<BlocklistBundleState> {
         Arc::clone(&self.blocklist_bundles.read())
     }
 
     /// Swaps in a freshly-built [`BlocklistBundleState`] — the sole writer is
-    /// `blocklist_updater::refresh_all_sources`, not yet called from anywhere
-    /// in production this batch (module doc).
+    /// `blocklist_updater::refresh_all_sources`, spawned by
+    /// `orchestrate::spawn_public_http_tasks` as of Батч 7.3.
     pub(crate) fn update_blocklist_bundles(&self, bundle: BlocklistBundleState) {
         *self.blocklist_bundles.write() = Arc::new(bundle);
+    }
+
+    /// One `Arc::clone` snapshot of the live `[blocklist_bundles]` config
+    /// (T-218 Батч 7.3) — read once per `run_blocklist_updater` cycle and by
+    /// every `ResolverConfig`-literal write site in this file (see the
+    /// field's own doc comment for why).
+    pub(crate) fn blocklist_bundles_config_snapshot(&self) -> Arc<BlocklistBundlesConfig> {
+        Arc::clone(&self.blocklist_bundles_config.read())
+    }
+
+    /// Swaps in a freshly-loaded `[blocklist_bundles]` config — written at
+    /// startup (`orchestrate::run`) and by `apply_admin_reset`.
+    pub(crate) fn update_blocklist_bundles_config(&self, config: BlocklistBundlesConfig) {
+        *self.blocklist_bundles_config.write() = Arc::new(config);
+    }
+
+    /// Wakes `run_blocklist_updater` out of its inter-cycle sleep (T-218
+    /// Батч 7.3) — called by `apply_admin_reset` after a config reload, same
+    /// pattern as `wake_rating_filter_refresh`.
+    pub(crate) fn wake_blocklist_bundles_refresh(&self) {
+        self.blocklist_bundles_refresh_wake.notify_one();
+    }
+
+    /// The `Notify` handle `run_blocklist_updater` parks on between cycles
+    /// (T-218 Батч 7.3), paired with [`Self::wake_blocklist_bundles_refresh`].
+    pub(crate) fn blocklist_bundles_refresh_wake_handle(&self) -> Arc<Notify> {
+        Arc::clone(&self.blocklist_bundles_refresh_wake)
     }
 
     /// One `Arc::clone` snapshot of the lazy-hygiene removal overlay
@@ -1669,6 +1713,7 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // above — no dedicated admin route exists to have gone stale
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
+                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
                 limits: state.persist.limits,
             };
             match config.save(&paths.config) {
@@ -1972,6 +2017,12 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // `rating_filter_zone` above.
     state.update_personal_zone_config(config.personal_zone);
     state.wake_personal_zone_refresh();
+    // T-218 Батч 7.3: reload the `[blocklist_bundles]` table too and wake
+    // `run_blocklist_updater`, the same completeness gap the reloads above
+    // close. The built set itself is left untouched (the updater rebuilds it
+    // on its own next woken cycle) — same split as `rating_filter_zone`.
+    state.update_blocklist_bundles_config(config.blocklist_bundles);
+    state.wake_blocklist_bundles_refresh();
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -2231,6 +2282,7 @@ fn apply_cache_config<C: DohClient + Sync>(
                 // above — no dedicated admin route exists to have gone stale
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
+                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
                 limits: state.persist.limits,
                 providers,
                 cache: new_config,
@@ -2387,6 +2439,7 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 // above — no dedicated admin route exists to have gone stale
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
+                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
                 limits: state.persist.limits,
                 providers,
                 cache: cache_config,
@@ -2555,6 +2608,7 @@ fn apply_rating_filter_change<C: DohClient + Sync>(
                     // T-138: live snapshot, same reasoning as the other
                     // ResolverConfig-literal sites in this file.
                     personal_zone: *state.personal_zone_config_snapshot(),
+                    blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
                     limits: state.persist.limits,
                     providers,
                     cache: cache_config,
@@ -2897,6 +2951,7 @@ where
                 // above — no dedicated admin route exists to have gone stale
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
+                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
                 limits: state.persist.limits,
                 providers: after.clone(),
                 cache: cache_config,
@@ -3660,7 +3715,10 @@ mod tests {
         WatchdogStatusView, ZoneListStatusView,
     };
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
-    use crate::config::{LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig};
+    use crate::config::{
+        BlocklistBundlesConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig,
+        ResolverConfig,
+    };
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
@@ -7239,6 +7297,34 @@ mod tests {
         let start = tokio::time::Instant::now();
         wake.notified().await;
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    // T-218 Фаза 7, Батч 7.3: the same "wake reaches the updater's Notify"
+    // property for the blocklist-bundle refresher.
+    #[tokio::test(start_paused = true)]
+    async fn wake_blocklist_bundles_refresh_reaches_the_handle_the_updater_parks_on() {
+        let state = state_with(no_op_client());
+        let wake = state.blocklist_bundles_refresh_wake_handle();
+        state.wake_blocklist_bundles_refresh();
+        let start = tokio::time::Instant::now();
+        wake.notified().await;
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn update_blocklist_bundles_config_is_observed_by_the_next_snapshot() {
+        let state = state_with(no_op_client());
+        assert!(
+            !state.blocklist_bundles_config_snapshot().enabled,
+            "sanity: AppState::new's own placeholder must start disabled"
+        );
+        state.update_blocklist_bundles_config(BlocklistBundlesConfig {
+            enabled: true,
+            sources: Some(vec!["hagezi-multi-pro".to_string()]),
+        });
+        let snapshot = state.blocklist_bundles_config_snapshot();
+        assert!(snapshot.enabled);
+        assert_eq!(snapshot.sources, Some(vec!["hagezi-multi-pro".to_string()]));
     }
 
     // T-108/advisor: the lazy-hygiene overlay and the zone `Arc` have

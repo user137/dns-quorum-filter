@@ -48,6 +48,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::cache::CacheConfig;
 use crate::timeout::TimeoutMode;
 use crate::topn_download::AVAILABLE_TOPN_LISTS;
@@ -184,6 +185,13 @@ pub enum ConfigError {
     /// filters. Safe to echo.
     #[error("[rating_filter] list {0:?} is not a distributed zone list")]
     UnknownRatingFilterList(String),
+    /// A `[blocklist_bundles]` `sources` entry names no published bundle
+    /// source (T-218 Фаза 7, Батч 7.3) — not one of
+    /// [`crate::blocklist_download::BLOCKLIST_SOURCES`]'s ids. Payload is a
+    /// source id (`"hagezi-multi-pro"`), never a domain name — safe to echo,
+    /// same class as [`ConfigError::UnknownRatingFilterList`].
+    #[error("[blocklist_bundles] source {0:?} is not a published bundle source")]
+    UnknownBlocklistBundleSource(String),
     /// A `[personal_zone]` `*_window_days` field was `0` or exceeded
     /// [`MAX_PERSONAL_ZONE_WINDOW_DAYS`] (T-138, Батч 4.5) — `0` would make
     /// every inclusion check vacuously empty, and an unbounded value would
@@ -395,6 +403,70 @@ fn validate_personal_zone(
     })
 }
 
+/// The `[blocklist_bundles]` table (T-218 Фаза 7, Батч 7.3, SPEC.md §5 step 2
+/// extension) — the opt-in public blocklist-bundle layer alongside quorum.
+///
+/// **Default off** (SPEC.md §5.3 п.8's "opt-in, mandatory" posture, same as
+/// [`RatingFilterConfig`]/[`PersonalZoneConfig`]). **`sources` is
+/// `Option<Vec<String>>`, not a plain `Vec` like [`RatingFilterConfig::lists`]
+/// — deliberately, after two rounds of advisor review (Батч 7.3):**
+///
+/// - Round 1: Артборд F (`mockups/gui-dashboard.html`) shows every source
+///   checked immediately on enable, so a hand-edited `enabled = true` with no
+///   `sources` key must behave the same way, not silently filter nothing (the
+///   footgun a plain empty-by-default `Vec`, mirroring `rating_filter.lists`,
+///   would create here).
+/// - Round 2: resolving "no key present" to a concrete list of every
+///   *current* `BLOCKLIST_SOURCES` id at load time, then writing that
+///   resolved list back out on the next [`ResolverConfig::save`] (any of
+///   `dispatch.rs`'s 5 write sites, not just a blocklist-bundle-specific
+///   route), freezes a snapshot of *today's* id set into the file — a source
+///   removed or renamed later (this project already did that once, dropping
+///   `HaGeZi`'s Most Abused TLDs in Батч 7.1) then fails
+///   [`validate_blocklist_bundle_sources`] on the *next* load for every
+///   install that ever triggered a save, even ones that never touched
+///   `[blocklist_bundles]` themselves.
+///
+/// **`None` therefore means "track every currently-published source",
+/// resolved fresh each time it's consulted — never frozen by a save.**
+/// `Some(ids)` is an explicit operator-chosen subset (still validated per
+/// [`ConfigError::UnknownBlocklistBundleSource`] — an explicit choice is held
+/// to the normal "hand-edit typo is a loud error" standard); `Some(vec![])`
+/// is a valid, explicitly-inert selection, distinct from `None`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlocklistBundlesConfig {
+    /// Whether `blocklist_updater::run_blocklist_updater` fetches and the
+    /// (future, Батч 7.4+) pipeline step consults the bundle set. Default
+    /// `false`.
+    pub enabled: bool,
+    /// `None` = every published source, resolved live (struct doc);
+    /// `Some(ids)` = an explicit, validated, deduplicated, order-preserving
+    /// subset.
+    pub sources: Option<Vec<String>>,
+}
+
+/// Validates an explicit `[blocklist_bundles] sources` list (T-218 Батч
+/// 7.3) — called only when the key is present (`None` skips this entirely,
+/// struct doc on [`BlocklistBundlesConfig`]). Each entry must be a known
+/// [`crate::blocklist_download::BLOCKLIST_SOURCES`] id (exact, case-sensitive
+/// match — these are fixed kebab-case literals, not a two-letter code
+/// needing case-folding like [`validate_rating_filter_lists`] handles).
+/// Deduplicated, first-seen order preserved.
+pub(crate) fn validate_blocklist_bundle_sources(
+    raw: &[String],
+) -> Result<Vec<String>, ConfigError> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for entry in raw {
+        if !BLOCKLIST_SOURCES.iter().any(|s| s.id == entry) {
+            return Err(ConfigError::UnknownBlocklistBundleSource(entry.clone()));
+        }
+        if !out.contains(entry) {
+            out.push(entry.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// Resolver config, loaded once at startup (T-144). No longer `Copy` as of
 /// T-76 — `geoip.blocked_countries` is a `Vec<String>`, so this type is
 /// `Clone` only now (every other field stays individually `Copy`, so a
@@ -472,6 +544,15 @@ pub struct ResolverConfig {
     /// `persist_query_log`/`persist_cache`); carried through every config
     /// rewrite via [`crate::dispatch::PersistTarget`].
     pub personal_zone: PersonalZoneConfig,
+    /// T-218 Фаза 7, Батч 7.3 — the `[blocklist_bundles]` public
+    /// blocklist-bundle layer (SPEC.md §5 step 2 extension). Default off, no
+    /// admin route yet (7.4+, hand-edit only for now, same as
+    /// `[personal_zone]` before its own route lands); every
+    /// `ResolverConfig`-literal write site in `dispatch.rs` reads a **live**
+    /// `blocklist_bundles_config_snapshot()` instead of this field (the same
+    /// T-217 live-read fix `rating_filter`/`personal_zone` already apply —
+    /// never added to `PersistTarget`).
+    pub blocklist_bundles: BlocklistBundlesConfig,
 }
 
 impl Default for ResolverConfig {
@@ -490,6 +571,7 @@ impl Default for ResolverConfig {
             persist_cache: false,
             rating_filter: RatingFilterConfig::default(),
             personal_zone: PersonalZoneConfig::default(),
+            blocklist_bundles: BlocklistBundlesConfig::default(),
         }
     }
 }
@@ -586,6 +668,27 @@ impl ResolverConfig {
         }
         let rating_filter_lists = validate_rating_filter_lists(&file.rating_filter.lists)?;
         let personal_zone = validate_personal_zone(&file.personal_zone)?;
+        // `None` (no `sources` key) skips validation entirely — it means
+        // "every current source", not an empty explicit list (struct doc on
+        // `BlocklistBundlesConfig`); only an explicit `Some(_)` gets the
+        // usual "hand-edit typo is a loud error" validation.
+        let blocklist_bundle_sources = match &file.blocklist_bundles.sources {
+            None => None,
+            Some(raw) => Some(validate_blocklist_bundle_sources(raw)?),
+        };
+        if file.blocklist_bundles.enabled
+            && matches!(&blocklist_bundle_sources, Some(ids) if ids.is_empty())
+        {
+            // Loud, not silent (this file's own "hand-edit, warn on a
+            // surprising-but-valid state" convention) — an *explicit* empty
+            // `sources = []` under `enabled = true` is a switch that reads on
+            // and filters nothing, unlike `[rating_filter] lists = []`
+            // (harmless there; Батч 7.3's advisor review, struct doc above).
+            // Omitting the key entirely (`None`) never reaches this branch.
+            tracing::warn!(
+                "[blocklist_bundles] is enabled with an explicit empty sources list - it will filter nothing"
+            );
+        }
 
         Ok(Self {
             port: file.port,
@@ -609,6 +712,10 @@ impl ResolverConfig {
                 lists: rating_filter_lists,
             },
             personal_zone,
+            blocklist_bundles: BlocklistBundlesConfig {
+                enabled: file.blocklist_bundles.enabled,
+                sources: blocklist_bundle_sources,
+            },
         })
     }
 
@@ -660,6 +767,10 @@ impl ResolverConfig {
                 frequency_top_n: self.personal_zone.frequency_top_n,
                 regularity_window_days: self.personal_zone.regularity_window_days,
                 regularity_min_days: self.personal_zone.regularity_min_days,
+            },
+            blocklist_bundles: BlocklistBundlesConfigFile {
+                enabled: self.blocklist_bundles.enabled,
+                sources: self.blocklist_bundles.sources.clone(),
             },
             limits: LimitsConfigFile {
                 max_concurrent_connections: self.limits.max_concurrent_connections,
@@ -808,6 +919,8 @@ struct ResolverConfigFile {
     rating_filter: RatingFilterConfigFile,
     /// T-138 (Батч 4.5) — see [`ResolverConfig::personal_zone`].
     personal_zone: PersonalZoneConfigFile,
+    /// T-218 Фаза 7, Батч 7.3 — see [`ResolverConfig::blocklist_bundles`].
+    blocklist_bundles: BlocklistBundlesConfigFile,
     /// T-169 — see [`ResolverConfig::limits`].
     limits: LimitsConfigFile,
 }
@@ -900,6 +1013,7 @@ impl Default for ResolverConfigFile {
                 regularity_window_days: defaults.personal_zone.regularity_window_days,
                 regularity_min_days: defaults.personal_zone.regularity_min_days,
             },
+            blocklist_bundles: BlocklistBundlesConfigFile::default(),
             limits: LimitsConfigFile::default(),
         }
     }
@@ -955,6 +1069,20 @@ struct GeoipConfigFile {
 struct RatingFilterConfigFile {
     enabled: bool,
     lists: Vec<String>,
+}
+
+/// TOML-facing shape for [`BlocklistBundlesConfig`] (T-218 Фаза 7, Батч 7.3)
+/// — same "graceful partial, loud typo" split every other nested table here
+/// uses, plain `#[derive(Default)]` (an absent `sources` key deserializes to
+/// `None` — struct doc on [`BlocklistBundlesConfig`] explains why that means
+/// "every current source", not an empty list). Membership validation of an
+/// explicit `Some(_)` happens in [`ResolverConfig::load`] via
+/// [`validate_blocklist_bundle_sources`], not here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct BlocklistBundlesConfigFile {
+    enabled: bool,
+    sources: Option<Vec<String>>,
 }
 
 /// TOML-facing shape for [`PersonalZoneConfig`] (T-138, Батч 4.5) — a plain,
@@ -1015,8 +1143,8 @@ impl Default for CacheConfigFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        CacheConfig, ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig,
-        RatingFilterConfig, ResolverConfig,
+        BlocklistBundlesConfig, CacheConfig, ConfigError, GeoipConfig, LimitsConfig,
+        PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
     };
     use crate::timeout::TimeoutMode;
     use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
@@ -1080,6 +1208,7 @@ mod tests {
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 personal_zone: PersonalZoneConfig::default(),
+                blocklist_bundles: BlocklistBundlesConfig::default(),
             }
         );
     }
@@ -1335,6 +1464,7 @@ mod tests {
                 lists: vec!["ua".to_string(), "global".to_string()],
             },
             personal_zone: PersonalZoneConfig::default(),
+            blocklist_bundles: BlocklistBundlesConfig::default(),
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -1724,6 +1854,163 @@ mod tests {
             ResolverConfig::load(&path),
             Err(ConfigError::Toml(_))
         ));
+    }
+
+    // T-218 Фаза 7, Батч 7.3: [blocklist_bundles] - default off, but unlike
+    // [rating_filter] a missing `sources` key defaults to *every* published
+    // source id, not empty (advisor review - Артборд F shows every source
+    // checked on enable; struct doc on `BlocklistBundlesConfig` has the full
+    // rationale). An unknown source id is a loud load-time error, same
+    // "hand-edited file, no silent no-op" discipline every table here has.
+
+    #[test]
+    fn blocklist_bundles_is_off_by_default_and_sources_defaults_to_none() {
+        let (_dir, path) = temp_config_path();
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a missing file must still load: {err}"),
+        };
+        assert_eq!(config.blocklist_bundles, BlocklistBundlesConfig::default());
+        assert!(!config.blocklist_bundles.enabled);
+        assert_eq!(
+            config.blocklist_bundles.sources, None,
+            "an absent [blocklist_bundles] table means \"every current source\", not a frozen list \
+             (advisor review round 2 - a plain empty-Vec-by-default would freeze today's id set into \
+             the file on the first unrelated admin save)"
+        );
+    }
+
+    #[test]
+    fn blocklist_bundles_enabled_with_no_sources_key_stays_none() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[blocklist_bundles]\nenabled = true\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("enabled with no sources key must still load: {err}"),
+        };
+        assert!(config.blocklist_bundles.enabled);
+        assert_eq!(
+            config.blocklist_bundles.sources, None,
+            "an omitted sources key must stay None (\"every current source\"), never a frozen Vec"
+        );
+    }
+
+    #[test]
+    fn blocklist_bundles_enabled_with_an_explicit_empty_sources_list_still_loads() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[blocklist_bundles]\nenabled = true\nsources = []\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => {
+                assert!(config.blocklist_bundles.enabled);
+                assert_eq!(
+                    config.blocklist_bundles.sources,
+                    Some(Vec::new()),
+                    "an explicit empty list is Some(vec![]), distinct from the None default"
+                );
+            }
+            Err(err) => {
+                panic!("an explicit empty sources list must still load (loud, not an error): {err}")
+            }
+        }
+    }
+
+    #[test]
+    fn load_of_a_blocklist_bundles_table_dedups_its_sources() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[blocklist_bundles]\nenabled = true\nsources = [\"hagezi-multi-pro\", \"1hosts-lite\", \"hagezi-multi-pro\"]\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a valid [blocklist_bundles] table must load: {err}"),
+        };
+        assert_eq!(
+            config.blocklist_bundles.sources,
+            Some(vec![
+                "hagezi-multi-pro".to_string(),
+                "1hosts-lite".to_string()
+            ]),
+            "order preserved, duplicate dropped"
+        );
+    }
+
+    #[test]
+    fn load_rejects_an_unknown_blocklist_bundle_source() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[blocklist_bundles]\nsources = [\"not-a-real-source\"]\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::UnknownBlocklistBundleSource(entry)) if entry == "not-a-real-source"
+        ));
+    }
+
+    #[test]
+    fn blocklist_bundle_source_ids_are_case_sensitive() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[blocklist_bundles]\nsources = [\"HaGeZi-Multi-Pro\"]\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::UnknownBlocklistBundleSource(_))
+        ));
+    }
+
+    #[test]
+    fn save_then_load_round_trips_a_blocklist_bundles_table_with_an_explicit_selection() {
+        let (_dir, path) = temp_config_path();
+        let config = ResolverConfig {
+            blocklist_bundles: BlocklistBundlesConfig {
+                enabled: true,
+                sources: Some(vec!["hagezi-tif".to_string()]),
+            },
+            ..ResolverConfig::default()
+        };
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to reload what was just saved: {err}"),
+        };
+        assert_eq!(loaded.blocklist_bundles, config.blocklist_bundles);
+    }
+
+    // Advisor review round 2: saving a config whose `blocklist_bundles` was
+    // never touched (still `None`) must round-trip as `None`, not get
+    // silently rewritten to a frozen `Some(<today's ids>)` - the whole point
+    // of the `Option` design (struct doc on `BlocklistBundlesConfig`).
+    #[test]
+    fn save_then_load_of_an_untouched_blocklist_bundles_table_stays_none() {
+        let (_dir, path) = temp_config_path();
+        let config = ResolverConfig::default();
+        assert_eq!(config.blocklist_bundles.sources, None);
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to reload what was just saved: {err}"),
+        };
+        assert_eq!(
+            loaded.blocklist_bundles.sources, None,
+            "an unrelated save must never freeze today's BLOCKLIST_SOURCES into the file"
+        );
     }
 
     // T-76: [geoip] - default empty (SPEC.md §3.5's own stated default: an

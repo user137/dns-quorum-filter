@@ -7,18 +7,17 @@
 //! pure per-line parsing stays in `blocklist_download`, everything that
 //! touches the network or the filesystem lives here.
 //!
-//! **This batch builds functions and tests only — nothing here is spawned
-//! from `orchestrate.rs` yet.** `[blocklist_bundles]` config and an admin
-//! route (Батч 7.3) don't exist yet, so there is no way to enable/disable or
-//! pick a subset of sources; an unconditional 24h refetch of all ~111 MB on
-//! every service instance with zero consumers (the pipeline doesn't read this
-//! yet either) would be needless network traffic (project's network-
-//! politeness principle) for a feature nobody can turn off. `refresh_all_sources`
-//! and `load_blocklist_bundles_from_disk` therefore carry `#[allow(dead_code)]`
-//! for now, same temporary status `blocklist_download.rs` itself carried
-//! before this batch — removed in 7.3 alongside the `loop { refresh; park }`
-//! wrapper, the wake channel, and the `tokio::spawn` call in
-//! `orchestrate::spawn_public_http_tasks`.
+//! **Батч 7.3** wires this up end to end: [`run_blocklist_updater`] is spawned
+//! by `orchestrate::spawn_public_http_tasks` (same shape as
+//! `topn_updater::run_topn_updater`) and [`refresh_all_sources`] reads the
+//! live `[blocklist_bundles]` config every cycle — `enabled = false` or an
+//! empty `sources` selection makes it a no-op **before** any filesystem or
+//! network call, same order `topn_updater::refresh_all_lists` checks in.
+//! Startup itself does **not** warm-load `<app-data>/blocklists/*.txt`
+//! this batch (advisor review, Батч 7.3 — see [`load_blocklist_bundles_from_disk`]'s
+//! own doc for why that call stays deferred): `blocklist_bundles` on
+//! `AppState` starts empty and [`run_blocklist_updater`]'s first cycle (which
+//! runs immediately, before any park) populates it.
 //!
 //! **No `.sha256` sidecar for any of the 7 sources** (`data/blocklists/
 //! CANDIDATES.md` §3, verified 2026-09-13) — unlike `topn_updater`, there is
@@ -26,20 +25,24 @@
 //! just falls back to whatever `<id>.txt` is already on disk, the same
 //! "keep last-known-good" posture `topn_updater`/`geoip_updater` already use.
 //!
-//! **`sources` has two different shapes depending on which path built it** —
-//! worth knowing before 7.3 builds a status view over it: [`refresh_all_sources`]
-//! always pushes one [`BlocklistSourceStatus`] per [`BLOCKLIST_SOURCES`] entry
-//! (8, even a freshly-failed one), while [`load_blocklist_bundles_from_disk`]
-//! pushes one only for each file actually present — a fresh install with no
-//! files yet yields an **empty** `sources`, not 8 "never updated" rows.
+//! **`BlocklistSourceStatus.sources`'s shape differs by path** — worth
+//! knowing before a future batch builds a status view over it:
+//! [`refresh_all_sources`] pushes one entry per *currently-selected* source
+//! (per `[blocklist_bundles] sources` — `config.rs`'s own doc on
+//! `BlocklistBundlesConfig` has the `None`-means-"every source" semantics),
+//! even a freshly-failed one, while [`load_blocklist_bundles_from_disk`]
+//! pushes one only for each file actually present on disk — a fresh install
+//! with no files yet yields an **empty** `sources`, not one row per source.
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
+use tokio::sync::Notify;
 
 use crate::blocklist_download::{
     finalize, hash_adblock_domains, hash_plain_domains, BlocklistSource, SourceFormat,
@@ -64,6 +67,13 @@ const BLOCKLIST_DIR: &str = "blocklists";
 /// forever — a silent *permanent* staleness bug, not the transient one this
 /// design is supposed to tolerate. 600s clears 128 MB even at ~1.7 Mbit/s.
 const BLOCKLIST_FETCH_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// How often to re-check the selected sources for a fresh revision. Several
+/// (`HaGeZi` Multi PRO/TIF/DynDNS/Hoster) update every few hours upstream,
+/// but a daily poll is the same "generous headroom, not a race to be first"
+/// cadence [`crate::topn_updater::TOPN_CHECK_INTERVAL`] already settled on
+/// (module doc's network-politeness principle).
+const BLOCKLIST_CHECK_INTERVAL: Duration = Duration::from_hours(24);
 
 /// Per-source refresh failure. Mirrors `topn_updater::TopnRefreshError` minus
 /// the sidecar/checksum variants (module doc — no source publishes one).
@@ -95,7 +105,7 @@ impl BlocklistRefreshError {
     }
 }
 
-/// Per-source metadata for the eventual admin status view (Батч 7.3+, not
+/// Per-source metadata for the eventual admin status view (Батч 7.4+, not
 /// built this batch — hence the struct-level `#[allow(dead_code)]` below:
 /// `entry_count`/`last_error` are written this batch but have no reader
 /// until that view exists).
@@ -141,8 +151,8 @@ impl BlocklistBundleState {
     /// are wildcard (`wildcard/*-onlydomains.txt`, `||domain^`) or exact
     /// (`domains/*.txt`) — 7.1's closing-review finding #2 left this open,
     /// and this method deliberately doesn't prejudge it; the suffix-walk
-    /// pipeline wiring is Батч 7.3's job.
-    #[allow(dead_code)] // no caller until 7.3 wires pipeline step 2 to this
+    /// pipeline wiring is Батч 7.4's job.
+    #[allow(dead_code)] // no caller until 7.4 wires pipeline step 2 to this
     pub(crate) fn contains_domain(&self, domain: &str) -> bool {
         let Ok(domain) = normalize_domain(domain) else {
             return false;
@@ -173,9 +183,16 @@ fn hash_source_body(format: SourceFormat, body: &str, seed: &RandomState) -> Vec
 /// [`RandomState`] (there is no previous one to reuse at startup, same as
 /// the first `refresh_all_sources` cycle would do anyway).
 ///
-/// **No caller this batch** (see module doc) — 7.3 calls this once at
-/// startup, the same "construct empty, restore separately" shape
-/// `orchestrate::run` already uses for `load_zone_from_disk`/`restore_cache`.
+/// **Deliberately still no caller as of Батч 7.3** (advisor review): calling
+/// this synchronously at startup — before the listener accepts traffic, the
+/// same point `load_zone_from_disk`/`restore_cache` run at — reads and hashes
+/// up to `MAX_BLOCKLIST_BYTES` × 8 sources; `load_zone_from_disk`'s own files
+/// are three orders of magnitude smaller, so its "warm-load at startup"
+/// precedent doesn't carry over without measuring the real cost first. A
+/// future batch that wants a warm start without waiting for
+/// `run_blocklist_updater`'s first cycle can wire this in then, with that
+/// measurement done. Until then `AppState.blocklist_bundles` simply starts
+/// empty and that first cycle (runs immediately, no park before it) fills it.
 #[allow(dead_code)]
 pub(crate) fn load_blocklist_bundles_from_disk(app_data: Option<&Path>) -> BlocklistBundleState {
     let Some(dir) = app_data else {
@@ -278,18 +295,62 @@ async fn refresh_one_source_bounded(
     }
 }
 
-/// One full refresh cycle: fetch every [`BLOCKLIST_SOURCES`] entry
-/// sequentially (not `FuturesUnordered` — this is a background bulk refetch,
-/// not the latency-sensitive quorum fan-out), fall back to last-known-good on
-/// a per-source failure, and atomically swap the combined result into
-/// `state`. **No caller this batch** — see module doc; 7.3's `loop { refresh;
-/// park }` wrapper calls this once per cycle.
-#[allow(dead_code)]
+/// Runs one refresh right away, then every [`BLOCKLIST_CHECK_INTERVAL`] (or
+/// sooner if `apply_admin_reset` wakes it) — exact shape of
+/// `topn_updater::run_topn_updater`. Spawned by
+/// `orchestrate::spawn_public_http_tasks` whenever an app-data directory
+/// exists; [`refresh_all_sources`] itself re-reads the config snapshot each
+/// cycle and returns immediately while disabled, so an always-running idle
+/// task is the price of letting a hand-edit + `/admin/reset` enable the
+/// bundles with no restart.
+pub async fn run_blocklist_updater(
+    client: reqwest::Client,
+    app_data: PathBuf,
+    state: Arc<AppState<ReqwestDohClient>>,
+) {
+    let wake = state.blocklist_bundles_refresh_wake_handle();
+    loop {
+        refresh_all_sources(&client, &app_data, &state).await;
+        park_until_due(&wake).await;
+    }
+}
+
+/// Park between refresh cycles: return when the periodic timer elapses **or**
+/// a `wake_blocklist_bundles_refresh()` signal fires. Identical shape to
+/// `topn_updater::park_until_due` (a `notify_one` left before this is entered
+/// is remembered — one permit — so a config reload during an in-flight
+/// refresh still resolves the next park immediately).
+async fn park_until_due(wake: &Notify) {
+    tokio::select! {
+        () = tokio::time::sleep(BLOCKLIST_CHECK_INTERVAL) => {}
+        () = wake.notified() => tracing::info!("blocklist-bundle refresh woken by a config reload"),
+    }
+}
+
+/// One full refresh cycle: fetch every currently-selected
+/// [`BLOCKLIST_SOURCES`] entry sequentially (not `FuturesUnordered` — this is
+/// a background bulk refetch, not the latency-sensitive quorum fan-out), fall
+/// back to last-known-good on a per-source failure, and atomically swap the
+/// combined result into `state`. Reads `state.blocklist_bundles_config_snapshot()`
+/// fresh every call (so `POST /admin/reset` can flip `enabled`/`sources`
+/// without a restart, same as `topn_updater::refresh_all_lists`) and is a
+/// no-op — before any filesystem or network access — when disabled or no
+/// source is selected. Called by [`run_blocklist_updater`]'s loop.
 pub(crate) async fn refresh_all_sources(
     client: &reqwest::Client,
     app_data: &Path,
     state: &AppState<ReqwestDohClient>,
 ) {
+    let config = state.blocklist_bundles_config_snapshot();
+    if !config.enabled {
+        return;
+    }
+    // `None` = every current `BLOCKLIST_SOURCES` id (config.rs's
+    // `BlocklistBundlesConfig` doc); `Some(ids)` = an explicit subset,
+    // `Some(vec![])` explicitly inert.
+    if matches!(&config.sources, Some(ids) if ids.is_empty()) {
+        return;
+    }
     let dir = app_data.join(BLOCKLIST_DIR);
     if let Err(err) = std::fs::create_dir_all(&dir) {
         tracing::warn!("could not create the blocklist-bundle directory, skipping refresh: {err}");
@@ -298,8 +359,19 @@ pub(crate) async fn refresh_all_sources(
     let previous = state.blocklist_bundles_snapshot();
     let seed = RandomState::new();
     let mut domains = Vec::new();
-    let mut sources = Vec::with_capacity(BLOCKLIST_SOURCES.len());
-    for source in BLOCKLIST_SOURCES {
+    let is_selected = |id: &str| {
+        config
+            .sources
+            .as_ref()
+            .is_none_or(|ids| ids.iter().any(|sel| sel == id))
+    };
+    let mut sources = Vec::with_capacity(
+        config
+            .sources
+            .as_ref()
+            .map_or(BLOCKLIST_SOURCES.len(), Vec::len),
+    );
+    for source in BLOCKLIST_SOURCES.iter().filter(|s| is_selected(s.id)) {
         match refresh_one_source_bounded(client, source, &dir, &seed).await {
             Ok(hashes) => {
                 sources.push(BlocklistSourceStatus {
@@ -351,9 +423,17 @@ mod tests {
 
     use super::{
         hash_source_body, load_blocklist_bundles_from_disk, BlocklistRefreshError,
-        BLOCKLIST_FETCH_TIMEOUT,
+        BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
     };
     use crate::blocklist_download::SourceFormat;
+
+    #[test]
+    fn check_interval_is_a_day() {
+        assert_eq!(
+            BLOCKLIST_CHECK_INTERVAL,
+            std::time::Duration::from_hours(24)
+        );
+    }
 
     #[test]
     fn hash_source_body_dispatches_plain_domain_format() {
