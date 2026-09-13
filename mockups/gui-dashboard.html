@@ -8,7 +8,10 @@
   Артборд F (публічні блок-лист-бандли — T-218, Фаза 7) доданий 2026-09-13,
   чекає окремого затвердження; на відміну від E, для T-218 користувач явно
   попросив дизайн-рев'ю перед будь-яким кодом (TASKS.md), тож тут маркер
-  дійсно гейтить реалізацію, не лише формальність. Локальний файл — відкривається
+  дійсно гейтить реалізацію, не лише формальність. Переглянуто того ж дня за
+  відгуком: картка перенесена з «Розширені» у базову секцію «Списки
+  виключень» (не нішева фіча — розширює саме Blocklist), список 8 джерел
+  згортається у власний вкладений `<details>`. Локальний файл — відкривається
   будь-яким браузером, без збірки; має перемикач теми зверху.
   Ground-truth для UI-SPEC.md §2/§3 і diagrams/ui-navigation.md.
   Попередній повнофункційний макет (вкладковий, до T-149) — в історії git.
@@ -326,6 +329,19 @@
   .bl-list .desc { font-size: 10.5px; color: var(--text-muted); margin: 0.1rem 0 0; }
   .bl-attrib { font-size: 10.5px; color: var(--text-muted); margin: 0.5rem 0 0; }
   .bl-attrib a { color: inherit; }
+
+  /* Артборд F, revised: source list collapses behind its own native
+     <details> (no JS, same mechanic as details.advanced but lighter-weight —
+     nested one level in, so no card border of its own). Default collapsed;
+     the master switch + one-line description stay visible either way. */
+  details.bl-sources { margin-top: 0.6rem; }
+  details.bl-sources > summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
+    font-size: 11px; font-weight: 600; color: var(--text-muted); padding: 0.15rem 0;
+  }
+  details.bl-sources > summary::-webkit-details-marker { display: none; }
+  details.bl-sources > summary .chev { margin-left: auto; transition: transform .12s; }
+  details.bl-sources[open] > summary .chev { transform: rotate(90deg); }
 
   .stat-row { display: flex; flex-wrap: wrap; gap: 1.3rem; }
   .stat { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -1030,15 +1046,21 @@
     <h2>Артборд F</h2>
     <p class="board-title">Публічні блок-лист-бандли — картка (T-218, Фаза 7, kickoff 2026-09-13)</p>
     <p class="rationale">
-      Картка <code>#blocklist-bundles-body</code> живе всередині <code>&lt;details&gt;</code> «Розширені»,
-      одразу після <code>#rating-filter-body</code> (той самий "нішева опційна фіча" клас) і перед
-      <code>#danger-zone-body</code> (danger zone лишається візуально останньою). Перемикач — той самий
-      обрамлений блок зі своїм заголовком, що <code>.rf-card</code> вже використовує. <strong>На
-      відміну від рейтинг-фільтра, набір джерел тут фіксований і відомий заздалегідь</strong> (8
-      звірених джерел — CANDIDATES.md §3) — тому список джерел не пошук-комбобокс, а простий чекліст
-      із текстовим статусом на джерело (останнє оновлення / збій із фолбеком на попередню версію —
-      ілюструє атомарний своп без вікна недоступності, DECISIONS.md 2026-09-13). Дефолт —
-      <strong>вимкнено</strong>, як і рейтинг-фільтр.
+      <strong>Розміщення переглянуто за відгуком користувача 2026-09-13.</strong> Перший прохід
+      клав картку в <code>&lt;details&gt;</code> «Розширені» поруч із рейтинг-фільтром — але цей
+      механізм не нішевий у тому ж сенсі: він розширює саме <strong>Blocklist</strong> (§5, крок 2),
+      а «Списки виключень» (<code>#overrides-body</code>) — уже Ф1-екран **високого** пріоритету
+      (UI-SPEC.md §2, на відміну від «Розширені»'s «найнижчий — нішеве»). Ховати перемикач за
+      розкриттям, яке більшість користувачів ніколи не відкриє, суперечило б власній меті фічі.
+      Картка тепер сидить <strong>у базовій секції «Списки виключень»</strong>, поза
+      <code>&lt;details&gt;</code> узагалі.
+    </p>
+    <p class="rationale">
+      <strong>Згортання списку джерел (та сама вимога відгуку) — власний вкладений
+      <code>&lt;details class="bl-sources"&gt;</code>,</strong> той самий безJS-механізм, що
+      зовнішнє «Розширені», лише легший. Master-перемикач і один рядок опису лишаються завжди
+      видимими; повний перелік 8 джерел — за кліком на «Джерела (8)», згорнутий за замовчуванням.
+      Не всі підуть дивитись деталі — досить бачити, що фіча є й що вона робить.
     </p>
     <p class="rationale">
       <strong>Групування + підпис під кожним джерелом (за відгуком користувача, 2026-09-13) —
@@ -1057,44 +1079,74 @@
     <div class="frames">
 
       <div class="device">
-        <div class="cap">Вимкнено (стан за замовчуванням)</div>
+        <div class="cap">Вимкнено — базовий вигляд, «Розширені» лишаються закритими й порожніми для цієї фічі</div>
         <div class="screen">
           <h1 class="app">DNS Quorum Filter</h1>
           <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
             <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
           </div>
-          <details class="advanced" open>
-            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
-            <div class="advanced-body">
-              <div class="subhead">Публічні блок-лист-бандли</div>
-              <div class="rf-card">
-                <div class="rf-head">
-                  <span class="rf-title">Блокувати за публічними бандл-списками</span>
-                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
-                </div>
-                <p class="rf-desc">Доповнює кворум статичними публічними списками (реклама/трекери/шкідливе/DGA/crypto). Опційно, дефолт вимкнено. Не замінює кворум — той самий пайплайн, лише крок 2.</p>
+          <div class="card">
+            <h3>Списки виключень</h3>
+            <p style="font-size:11px;color:var(--frame-muted);margin:0 0 .6rem">Allowlist / Blocklist — редактор (Ф1, поза обсягом цього артборда).</p>
+            <div class="rf-card">
+              <div class="rf-head">
+                <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
               </div>
+              <p class="rf-desc">Доповнює кворум статичними публічними списками (реклама/трекери/шкідливе/DGA). Опційно, дефолт вимкнено. Той самий пайплайн, лише крок 2 (Blocklist).</p>
             </div>
+          </div>
+          <details class="advanced">
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
           </details>
         </div>
       </div>
 
       <div class="device">
-        <div class="cap">Увімкнено — 8 джерел зі статусом</div>
+        <div class="cap">Увімкнено, список джерел згорнуто (стан одразу після ввімкнення)</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <div class="card">
+            <h3>Списки виключень</h3>
+            <p style="font-size:11px;color:var(--frame-muted);margin:0 0 .6rem">Allowlist / Blocklist — редактор (Ф1, поза обсягом цього артборда).</p>
+            <div class="rf-card">
+              <div class="rf-head">
+                <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
+              </div>
+              <p class="rf-desc">Активно, 8 джерел. Той самий пайплайн, лише крок 2 (Blocklist).</p>
+              <details class="bl-sources">
+                <summary>Джерела (8) <span class="chev">›</span></summary>
+              </details>
+            </div>
+          </div>
+          <details class="advanced">
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+          </details>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Увімкнено, список джерел розгорнуто — груповано, з підписом</div>
         <div class="screen">
           <h1 class="app">DNS Quorum Filter</h1>
           <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.4rem">
             <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
           </div>
-          <details class="advanced" open>
-            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
-            <div class="advanced-body">
-              <div class="subhead">Публічні блок-лист-бандли</div>
-              <div class="rf-card">
-                <div class="rf-head">
-                  <span class="rf-title">Блокувати за публічними бандл-списками</span>
-                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
-                </div>
+          <div class="card">
+            <h3>Списки виключень</h3>
+            <p style="font-size:11px;color:var(--frame-muted);margin:0 0 .6rem">Allowlist / Blocklist — редактор (Ф1, поза обсягом цього артборда).</p>
+            <div class="rf-card">
+              <div class="rf-head">
+                <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
+              </div>
+              <p class="rf-desc">Активно, 8 джерел. Той самий пайплайн, лише крок 2 (Blocklist).</p>
+              <details class="bl-sources" open>
+                <summary>Джерела (8) <span class="chev">›</span></summary>
                 <div class="rf-sub">Реклама й трекери</div>
                 <ul class="bl-list">
                   <li><input type="checkbox" checked aria-label="HaGeZi Multi PRO"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Multi PRO</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Реклама, трекери, шкідливе ПЗ — основний набір</p></div></li>
@@ -1110,9 +1162,9 @@
                   <li><input type="checkbox" checked aria-label="HaGeZi Most Abused TLDs"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Most Abused TLDs</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Домени в TLD із високим рівнем зловживань</p></div></li>
                 </ul>
                 <p class="bl-attrib">Джерела: <a href="#" onclick="return false">HaGeZi</a>, <a href="#" onclick="return false">AdGuard DNS filter</a> (GPL-3.0) · <a href="#" onclick="return false">1Hosts Lite</a> (MPL-2.0)</p>
-              </div>
+              </details>
             </div>
-          </details>
+          </div>
         </div>
       </div>
 
@@ -1123,23 +1175,24 @@
           <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
             <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
           </div>
-          <details class="advanced" open>
-            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
-            <div class="advanced-body">
-              <div class="subhead">Публічні блок-лист-бандли</div>
-              <div class="rf-card">
-                <div class="rf-head">
-                  <span class="rf-title">Блокувати за публічними бандл-списками</span>
-                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
-                </div>
-                <div class="notice warn" style="margin:.5rem 0 0">Увімкнено, перше завантаження триває — попередня (порожня) версія лишається чинною, фільтрація діятиме, щойно перший атомарний своп завершиться. Це не помилка.</div>
+          <div class="card">
+            <h3>Списки виключень</h3>
+            <p style="font-size:11px;color:var(--frame-muted);margin:0 0 .6rem">Allowlist / Blocklist — редактор (Ф1, поза обсягом цього артборда).</p>
+            <div class="rf-card">
+              <div class="rf-head">
+                <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
+              </div>
+              <div class="notice warn" style="margin:.5rem 0 0">Увімкнено, перше завантаження триває — попередня (порожня) версія лишається чинною, фільтрація діятиме, щойно перший атомарний своп завершиться. Це не помилка.</div>
+              <details class="bl-sources" open>
+                <summary>Джерела (8) <span class="chev">›</span></summary>
                 <ul class="bl-list">
                   <li><input type="checkbox" checked disabled aria-label="HaGeZi Multi PRO"><span class="nm">HaGeZi Multi PRO</span><span class="meta stale">завантажується…</span></li>
                   <li><input type="checkbox" checked disabled aria-label="1Hosts Lite"><span class="nm">1Hosts Lite</span><span class="meta stale">завантажується…</span></li>
                 </ul>
-              </div>
+              </details>
             </div>
-          </details>
+          </div>
         </div>
       </div>
 
@@ -1158,8 +1211,9 @@
       <li>Артборд E: підтвердження при ввімкненні — inline-крок (як показано), чи модальний діалог <code>rfd</code>, як у «Повністю видалити»?</li>
       <li>Артборд E: бейдж активності — просто «активний» (як показано) чи з числом доменів у зоні?</li>
       <li>Артборд F: простий чекліст із текстовим статусом (як показано) чи щось ближче до
-        `/admin/providers`'s категорійних рядків? Немає бейджа активності під hero, як у E, —
-        потрібен, чи бандли менш критичні для щоденної видимості?</li>
+        `/admin/providers`'s категорійних рядків? Тепер, коли картка в базовому вигляді (не
+        «Розширені»), чи потрібен ще й бейдж активності під hero, як у E, чи досить видимості
+        самої картки в «Списках виключень»?</li>
       <li>Артборд F: увімкнення — без кроку підтвердження (на відміну від E), бо це доповнення
         кворуму, не "заблокує переважну більшість інтернету". Достатньо inline-опису, чи
         потрібен той самий warn+confirm, що E?</li>
@@ -1169,6 +1223,11 @@
         загрози» — ці дві категорії, чи ближче до кворум-категорій SECURITY/ADS_TRACKERS/
         ADULT_CONTENT? Підписи під джерелами — одне речення, як показано, чи потрібна детальніша
         картка/тултип на клік?</li>
+      <li>Артборд F (переглянуто за відгуком 2026-09-13): картка перенесена з «Розширені» у
+        «Списки виключень», список джерел згортається окремим `&lt;details&gt;` — саме
+        розміщення й закритий-за-замовчуванням список джерел ок, чи список має бути одразу
+        розгорнутий при першому вмиканні (як показано в кадрі 3), а згортання — лише при
+        повторному відкритті сторінки?</li>
     </ul>
   </section>
 </div>
