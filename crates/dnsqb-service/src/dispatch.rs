@@ -35,6 +35,7 @@ use crate::admin::{
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
 use crate::baseline_selector::BaselineSelector;
+use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
     validate_country_code, ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig,
@@ -833,6 +834,16 @@ pub struct AppState<C: DohClient + Sync> {
     /// like the state above. Feeds only `rating_filter_status_view`'s
     /// `suggested_list` hint — never written into `rating_filter_config`.
     system_region: Option<String>,
+    /// T-218 Фаза 7, Батч 7.2 — the public blocklist-bundle set (SPEC.md §5
+    /// step 2 extension). Same `RwLock<Arc<_>>` whole-value-swap shape as
+    /// `rating_filter_zone`. **Never restored/refreshed this batch** —
+    /// `blocklist_updater::refresh_all_sources`/`load_blocklist_bundles_from_disk`
+    /// exist but nothing calls them yet (no `[blocklist_bundles]` config, no
+    /// spawn in `orchestrate.rs` — see that module's own doc comment), so
+    /// this field stays at its empty `Default` for the whole lifetime of the
+    /// process until Батч 7.3 wires a caller. Not yet read by the pipeline
+    /// either — pipeline wiring is also 7.3+.
+    blocklist_bundles: RwLock<Arc<BlocklistBundleState>>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -997,6 +1008,7 @@ impl<C: DohClient + Sync> AppState<C> {
             )),
             rating_filter_personal_zone: RwLock::new(Arc::new(ZoneLists::default())),
             personal_zone_refresh_wake: Arc::new(Notify::new()),
+            blocklist_bundles: RwLock::new(Arc::new(BlocklistBundleState::default())),
             system_region: geoip.system_region,
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
@@ -1147,6 +1159,21 @@ impl<C: DohClient + Sync> AppState<C> {
     /// `rating_filter_removed` (its own separate writer).
     pub(crate) fn update_rating_filter_zone(&self, zone: ZoneLists) {
         *self.rating_filter_zone.write() = Arc::new(zone);
+    }
+
+    /// One `Arc::clone` snapshot of the public blocklist-bundle set (T-218
+    /// Батч 7.2). Called by `blocklist_updater::refresh_all_sources` (to
+    /// carry a source's `last_updated` forward across a fallback) — no
+    /// pipeline reader yet (7.3+).
+    pub(crate) fn blocklist_bundles_snapshot(&self) -> Arc<BlocklistBundleState> {
+        Arc::clone(&self.blocklist_bundles.read())
+    }
+
+    /// Swaps in a freshly-built [`BlocklistBundleState`] — the sole writer is
+    /// `blocklist_updater::refresh_all_sources`, not yet called from anywhere
+    /// in production this batch (module doc).
+    pub(crate) fn update_blocklist_bundles(&self, bundle: BlocklistBundleState) {
+        *self.blocklist_bundles.write() = Arc::new(bundle);
     }
 
     /// One `Arc::clone` snapshot of the lazy-hygiene removal overlay

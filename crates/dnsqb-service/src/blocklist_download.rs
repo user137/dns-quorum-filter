@@ -1,9 +1,9 @@
 //! Pure helpers for the public blocklist-bundle core (T-218, Фаза 7): source
 //! table, streaming parse-and-hash for the two published formats (plain
 //! domain lists and the `AdGuard` adblock-syntax subset), and the final
-//! sort+dedup pass. Kept separate from the future network/orchestration
-//! module (`blocklist_updater`, Батч 7.2) — same split as
-//! [`crate::topn_download`] / [`crate::topn_updater`].
+//! sort+dedup pass. Kept separate from the network/orchestration module
+//! (`blocklist_updater`, Батч 7.2 — the sole caller of everything below) —
+//! same split as [`crate::topn_download`] / [`crate::topn_updater`].
 //!
 //! **Why hashes, not domain strings (DECISIONS.md 2026-09-13).** The eight
 //! source URLs total ~111 MB — `HaGeZi` TIF/NRD/DGA alone are tens of MB each,
@@ -21,11 +21,6 @@
 //! `RandomState` seed lives alongside the `Vec<u64>` it built and always
 //! travels with it through the same `Arc` swap, so a lookup can never use a
 //! seed mismatched to the set it's searching.
-//!
-//! **This module has no caller yet** — `blocklist_updater` (Батч 7.2) wires
-//! it into `AppState`. `#[allow(dead_code)]` below is temporary, removed the
-//! same batch a caller lands.
-#![allow(dead_code)]
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;

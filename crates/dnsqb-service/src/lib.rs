@@ -124,6 +124,7 @@ mod admin_ui;
 mod admission;
 mod baseline_selector;
 mod blocklist_download;
+mod blocklist_updater;
 mod cache;
 mod cache_persist;
 mod cache_persist_dto;
