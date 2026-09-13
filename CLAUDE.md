@@ -11,8 +11,10 @@ mid-smoke-test to include the T-219 MSIX cert-trust fix, Батч 4.7.A, before 
 Фаза 2 (cert automation) closed 2026-08-31; Фаза 1 (PoC) closed 2026-08-29.
 
 **Not started:** Фаза 5 (ccTLD block §5.2 + i18n T-151), Фаза 6 (macOS/Linux port — see "Current
-phase boundaries" below for the architectural seam it needs). Фаза 7 (T-218) kickoff closed
-2026-09-13; no code/design yet.
+phase boundaries" below for the architectural seam it needs). **In progress:** Фаза 7 (T-218) —
+kickoff + design (Артборд F) closed 2026-09-13; Батч 7.1 (pure download/parse/hash core,
+`blocklist_download`) shipped same day. `blocklist_updater.rs` (network/orchestration/atomic
+swap, Батч 7.2) and pipeline wiring (7.3+) not started.
 
 Full batch-by-batch history (rationale, advisor catches, commit hashes, verification notes) lives
 in `TASKS-DONE.md`; reversed/corrected decisions live in `DECISIONS.md`, git, and this file's
