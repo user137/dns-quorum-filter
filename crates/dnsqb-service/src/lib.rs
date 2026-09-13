@@ -136,6 +136,7 @@ mod geoip;
 mod geoip_credentials;
 mod geoip_download;
 mod geoip_updater;
+mod install_region;
 mod key_store;
 mod lifecycle;
 mod listener;

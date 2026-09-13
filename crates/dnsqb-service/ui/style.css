@@ -478,13 +478,44 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .rf-picked .rf-x:hover { color: var(--bad); }
 .rf-empty { font-size: 11.5px; color: var(--text-muted); margin: 0.45rem 0 0; }
 
+/* T-227: the region-matched suggestion hint — accent-tinted like .rf-card
+   itself (a hint, not a warning), shown above the combobox while nothing is
+   picked yet. `:not([hidden])` is required, not a specificity nicety: the
+   browser's own `[hidden] { display: none }` rule lives in the *user-agent*
+   stylesheet, and any *author* rule that sets `display` on the same element
+   always wins over a UA rule regardless of selector specificity — so an
+   unconditional `display: flex` here would keep the hint visible even with
+   `hidden` set on the element. Caught by live-clicking the rendered page
+   (a self-signed-cert scratch instance, `hidden` still holding the DOM
+   attribute), not by the `MAIN_JS.contains(...)` tests, which only assert
+   the JS logic exists, not that the CSS actually lets it hide. Audit any
+   author rule that sets `display` on an element toggled via `.hidden = ...`
+   for this same failure — see `.rf-confirm-row` below, found the same way
+   during this same live check (pre-existing since T-127, not new here). */
+.notice.rf-suggestion:not([hidden]) {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+.rf-suggestion-add {
+  flex: none; padding: 0.3rem 0.6rem; border: 1px solid var(--accent);
+  border-radius: 6px; background: var(--accent); color: var(--paper);
+  font-size: 11.8px; cursor: pointer;
+}
+
 .rf-save {
   margin-top: 0.6rem; padding: 0.35rem 0.7rem;
   border: 1px solid var(--accent); border-radius: 6px;
   background: var(--accent); color: var(--paper);
   font-size: 12.3px; cursor: pointer;
 }
-.rf-confirm-row {
+/* T-227 fix (pre-existing since T-127): `:not([hidden])` — see the
+   `.notice.rf-suggestion` comment above for why a bare `display: flex` here
+   defeats `confirmRow.hidden = true` in main.js and leaves the OFF→ON
+   arm-confirm row ("Скасувати"/"Підтвердити ввімкнення") permanently on
+   screen — the exact §8.1 "an always-on warning ≡ no warning" failure the
+   arm-confirm gate exists to prevent, found live-clicking this same card. */
+.rf-confirm-row:not([hidden]) {
   display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.5rem;
 }
 .rf-confirm-row button {

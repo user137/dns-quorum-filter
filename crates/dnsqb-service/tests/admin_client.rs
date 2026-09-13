@@ -74,6 +74,7 @@ fn test_state() -> Arc<AppState<UnusedClient>> {
             source: GeoipSource::DbIpLite,
             rating_filter_config: RatingFilterConfig::default(),
             rating_filter_zone: ZoneLists::default(),
+            system_region: None,
         },
         QueryLog::default(),
         PersistTarget {

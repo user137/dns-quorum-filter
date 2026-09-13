@@ -2934,6 +2934,36 @@ function renderRatingFilter(status) {
   sub.textContent = "Зони доступності";
   card.appendChild(sub);
 
+  // T-227: a suggested zone matching the machine's own system region — a
+  // hint only, shown while nothing is picked yet. Never pre-picks on its
+  // own (SPEC.md §8.1 "an always-on warning ≡ no warning" cuts both ways —
+  // a silent pre-check the user didn't click is the same failure via a
+  // different path); adding it still requires this explicit button, and the
+  // usual "Зберегти зони" step still applies after that.
+  const suggestionNotice = document.createElement("div");
+  suggestionNotice.className = "notice rf-suggestion";
+  suggestionNotice.hidden = true;
+  const suggestionText = document.createElement("span");
+  suggestionNotice.appendChild(suggestionText);
+  const suggestionBtn = document.createElement("button");
+  suggestionBtn.type = "button";
+  suggestionBtn.className = "rf-suggestion-add";
+  suggestionBtn.textContent = "Додати";
+  suggestionNotice.appendChild(suggestionBtn);
+  card.appendChild(suggestionNotice);
+
+  function syncSuggestion() {
+    suggestionNotice.hidden = !rf.suggested_list || picked.size > 0;
+    if (!suggestionNotice.hidden) {
+      suggestionText.textContent =
+        `Рекомендовано для вашого регіону: ${ratingFilterZoneLabel(rf.suggested_list)}. `;
+    }
+  }
+
+  suggestionBtn.addEventListener("click", () => {
+    toggleCode(rf.suggested_list);
+  });
+
   // Picked codes are re-seeded from the server's normalised echo on every
   // render (this file's "no local optimistic state" rule). User edits
   // mutate this render-scoped Set; the "Зберегти зони" button appears when
@@ -3055,6 +3085,7 @@ function renderRatingFilter(status) {
         renderPicked();
         renderMenu();
         syncSaveBtn();
+        syncSuggestion();
       });
       li.appendChild(removeBtn);
       pickedList.appendChild(li);
@@ -3134,6 +3165,7 @@ function renderRatingFilter(status) {
     renderPicked();
     renderMenu();
     syncSaveBtn();
+    syncSuggestion();
   }
 
   function openMenu() {
@@ -3237,6 +3269,7 @@ function renderRatingFilter(status) {
 
   renderPicked();
   syncSaveBtn();
+  syncSuggestion();
   ratingFilterBody.appendChild(card);
 }
 

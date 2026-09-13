@@ -719,6 +719,7 @@ fn build_geoip_init(
         source: load_geoip_source(app_data),
         rating_filter_config: rf.clone(),
         rating_filter_zone: load_zone_from_disk(app_data, rf),
+        system_region: crate::install_region::detect_system_region(),
     }
 }
 

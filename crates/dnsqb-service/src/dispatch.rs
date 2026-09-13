@@ -469,6 +469,14 @@ pub struct GeoipInit {
     /// `data/topn/*.txt` files were already on disk at startup (empty on a
     /// fresh install, exactly like `database` before the first download).
     pub rating_filter_zone: ZoneLists,
+    /// T-227 — the machine's own system region
+    /// (`install_region::detect_system_region`), read once here rather than
+    /// inside `AppState::new` itself so the OS call stays in the impure shell
+    /// (`orchestrate::build_geoip_init`) and every test can inject a fixed
+    /// value instead of depending on the real registry. Feeds only
+    /// [`AppState::system_region`] → `rating_filter_status_view`'s
+    /// `suggested_list` hint.
+    pub system_region: Option<String>,
 }
 
 /// The two on-disk config files' paths, always resolved together from one
@@ -817,6 +825,14 @@ pub struct AppState<C: DohClient + Sync> {
     /// when `apply_admin_reset` reloads a hand-edited `[personal_zone]`
     /// table. Same one-permit `Notify` semantics as `rating_filter_refresh_wake`.
     personal_zone_refresh_wake: Arc<Notify>,
+    /// T-227 — the machine's own system region, as supplied at construction
+    /// via [`GeoipInit::system_region`] (the OS read itself lives in
+    /// `orchestrate::build_geoip_init`, not here — see that field's own doc).
+    /// The OS region doesn't change while the process runs, so this is a
+    /// plain `Option<String>`, not a `RwLock`-wrapped or per-request read
+    /// like the state above. Feeds only `rating_filter_status_view`'s
+    /// `suggested_list` hint — never written into `rating_filter_config`.
+    system_region: Option<String>,
     query_log: QueryLog,
     persist: PersistTarget,
     /// How many requests are currently between "decoded" and "answered"
@@ -981,6 +997,7 @@ impl<C: DohClient + Sync> AppState<C> {
             )),
             rating_filter_personal_zone: RwLock::new(Arc::new(ZoneLists::default())),
             personal_zone_refresh_wake: Arc::new(Notify::new()),
+            system_region: geoip.system_region,
             maxmind_health: RwLock::new(Arc::new(initial_health)),
             baseline: RwLock::new(Arc::new(BaselineSelector::new())),
             reachability: RwLock::new(NetworkReachability::default()),
@@ -1470,16 +1487,26 @@ fn rating_filter_status_view<C: DohClient + Sync>(state: &AppState<C>) -> Rating
             domains: source.len(),
         })
         .collect();
+    let available_lists: Vec<String> = AVAILABLE_TOPN_LISTS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    // T-227: only suggest while the picker is still unconfigured — once the
+    // user has picked anything, `lists` is their own choice and must never
+    // be second-guessed by a hint again.
+    let suggested_list = if config.lists.is_empty() {
+        crate::install_region::suggested_list(state.system_region.as_deref(), &available_lists)
+    } else {
+        None
+    };
     RatingFilterStatusView {
         enabled: config.enabled,
         active: rating_filter_is_active(&config, &zone),
         lists: config.lists.clone(),
-        available_lists: AVAILABLE_TOPN_LISTS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect(),
+        available_lists,
         loaded,
         personal_zone_enabled: state.personal_zone_config_snapshot().enabled,
+        suggested_list,
     }
 }
 
@@ -4245,6 +4272,7 @@ mod tests {
                 source: GeoipSource::DbIpLite,
                 rating_filter_config: RatingFilterConfig::default(),
                 rating_filter_zone: ZoneLists::default(),
+                system_region: None,
             },
             QueryLog::default(),
             persist,
@@ -4276,6 +4304,45 @@ mod tests {
                 source: GeoipSource::DbIpLite,
                 rating_filter_config: RatingFilterConfig::default(),
                 rating_filter_zone: ZoneLists::default(),
+                system_region: None,
+            },
+            QueryLog::default(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: None,
+            },
+        ))
+    }
+
+    /// Like [`state_with`], but with a caller-supplied `system_region` (T-227)
+    /// — `state_with`'s own `None` can only exercise the "no suggestion"
+    /// branch of `rating_filter_status_view`'s `suggested_list` gating.
+    fn state_with_system_region(
+        client: MockClient,
+        system_region: Option<String>,
+    ) -> Arc<AppState<MockClient>> {
+        Arc::new(AppState::new(
+            client,
+            OverridesState {
+                lists: OverrideLists::empty(),
+                invalid: Vec::new(),
+            },
+            RuntimeInit::default(),
+            CacheState {
+                cache: Cache::new(&CacheConfig::default()),
+                config: CacheConfig::default(),
+            },
+            GeoipInit {
+                database: GeoipState::default(),
+                blocked_countries: Vec::new(),
+                source: GeoipSource::DbIpLite,
+                rating_filter_config: RatingFilterConfig::default(),
+                rating_filter_zone: ZoneLists::default(),
+                system_region,
             },
             QueryLog::default(),
             PersistTarget {
@@ -5844,6 +5911,7 @@ mod tests {
                 source: GeoipSource::DbIpLite,
                 rating_filter_config: RatingFilterConfig::default(),
                 rating_filter_zone: ZoneLists::default(),
+                system_region: None,
             },
             QueryLog::default(),
             PersistTarget {
@@ -6124,6 +6192,7 @@ mod tests {
                 source: GeoipSource::DbIpLite,
                 rating_filter_config: RatingFilterConfig::default(),
                 rating_filter_zone: ZoneLists::default(),
+                system_region: None,
             },
             QueryLog::default(),
             PersistTarget {
@@ -7279,6 +7348,40 @@ mod tests {
             status.rating_filter.active,
             "the seeded downloaded `ua` list alone must still gate active"
         );
+    }
+
+    // T-227: an unconfigured picker (`lists` empty) with a system region
+    // that matches a real available list gets suggested.
+    #[test]
+    fn rating_filter_status_view_suggests_the_matching_system_region() {
+        let state = state_with_system_region(no_op_client(), Some("ua".to_string()));
+        let status = admin_status(&state, true);
+        assert_eq!(status.rating_filter.suggested_list, Some("ua".to_string()));
+    }
+
+    // T-227: once the user has picked anything, the hint must never
+    // second-guess their own choice again, even if the region still matches.
+    #[test]
+    fn rating_filter_status_view_stops_suggesting_once_lists_is_non_empty() {
+        let state = state_with_system_region(no_op_client(), Some("ua".to_string()));
+        let mut config = (*state.rating_filter_config_snapshot()).clone();
+        config.lists = vec!["de".to_string()];
+        state.update_rating_filter_config(config);
+        let status = admin_status(&state, true);
+        assert_eq!(status.rating_filter.suggested_list, None);
+    }
+
+    // T-227: a region with no matching curated list (or no region detected at
+    // all) suggests nothing rather than a list the user can't actually pick.
+    #[test]
+    fn rating_filter_status_view_suggests_nothing_for_an_uncurated_region() {
+        let state = state_with_system_region(no_op_client(), Some("fr".to_string()));
+        let status = admin_status(&state, true);
+        assert_eq!(status.rating_filter.suggested_list, None);
+
+        let state_no_region = state_with_system_region(no_op_client(), None);
+        let status_no_region = admin_status(&state_no_region, true);
+        assert_eq!(status_no_region.rating_filter.suggested_list, None);
     }
 
     // T-221 regression: before this fix, `restore_personal_zone` silently

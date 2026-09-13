@@ -53,7 +53,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 2;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 3;
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the
@@ -253,6 +253,14 @@ pub struct RatingFilterStatusView {
     /// service's response falls back to `false`.
     #[serde(default)]
     pub personal_zone_enabled: bool,
+    /// T-227 — a list code matching the machine's own system region
+    /// (`install_region::detect_system_region`), present only while `lists`
+    /// is still empty **and** the region is one of `available_lists`. A
+    /// hint for the zone-picker card to pre-select, never a value the server
+    /// writes into `lists` on its own — the user's own save action is still
+    /// required. `#[serde(default)]` (T-205): safe zero is "no suggestion".
+    #[serde(default)]
+    pub suggested_list: Option<String>,
 }
 
 /// One loaded availability-zone list in [`RatingFilterStatusView::loaded`].

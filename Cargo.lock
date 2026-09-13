@@ -864,6 +864,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "winreg",
  "x509-parser",
  "zeroize",
 ]

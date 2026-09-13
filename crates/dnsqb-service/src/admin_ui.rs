@@ -611,6 +611,29 @@ mod tests {
         );
     }
 
+    // T-227 — the region-matched suggestion is a hint the client only ever
+    // *renders*, never silently applies: it must gate on `picked.size` (not
+    // pre-check anything) and require the dedicated button click to add it,
+    // matching the same "an always-on warning ≡ no warning" cut both ways
+    // reasoning as the turn-on confirm step above.
+    #[test]
+    fn main_js_rating_filter_suggestion_is_a_hint_not_an_auto_pick() {
+        assert!(
+            MAIN_JS.contains("rf.suggested_list"),
+            "the suggestion must come from the server, not be guessed client-side"
+        );
+        assert!(
+            MAIN_JS.contains("picked.size > 0"),
+            "the hint must hide the moment the user has picked anything, \
+             never contradicting their own edit"
+        );
+        assert!(
+            MAIN_JS.contains("suggestionBtn.addEventListener(\"click\""),
+            "adding the suggested zone must require an explicit click, \
+             never a pre-checked/auto-applied state"
+        );
+    }
+
     // T-122 (Батч 4.2) — a gov-* zone is one blanket suffix, not a
     // popularity count; showing "1 дом." next to it would read as broken
     // (the T-66 "never a fake count" discipline). The picked-zone row must
