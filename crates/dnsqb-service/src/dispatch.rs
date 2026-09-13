@@ -590,6 +590,11 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // almost the whole internet from personal-zone entries alone (SPEC.md
     // §5.3 п.8). It only ever *widens* an already-active bubble.
     let rating_filter_personal_zone = state.rating_filter_personal_zone_snapshot();
+    // T-218 Фаза 7, Батч 7.4: same `Arc::clone` snapshot discipline as the
+    // rating-filter fields above — one snapshot each of the bundle and its
+    // config, never held across the `.await` below.
+    let blocklist_bundles_state = state.blocklist_bundles_snapshot();
+    let blocklist_bundles_config = state.blocklist_bundles_config_snapshot();
     let cache_context = CacheContext {
         cache: &cache_state.cache,
         config: &cache_state.config,
@@ -610,6 +615,13 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
             personal: &rating_filter_personal_zone,
             removed: &rating_filter_removed,
         });
+    // T-218 Фаза 7, Батч 7.4: `Some` only when `blocklist_bundles_is_active`
+    // (the bundle's own `enabled && !is_empty()` authority, mirroring
+    // `rating_filter_is_active` above) passes — same "one predicate, never
+    // duplicated at the call site" discipline.
+    let blocklist_bundles_view =
+        blocklist_bundles_is_active(&blocklist_bundles_config, &blocklist_bundles_state)
+            .then_some(&*blocklist_bundles_state);
     let upstream_context = UpstreamContext {
         timeout: &settings.timeout,
         baseline_url: baseline.current(),
@@ -617,6 +629,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         reachability: state.reachability_snapshot(),
         filtering_paused: state.filtering_paused_snapshot(),
         rating_filter: rating_filter_view,
+        blocklist_bundles: blocklist_bundles_view,
     };
     let response = match handle_query(
         &query,
@@ -1535,6 +1548,22 @@ fn read_watchdog_view(paths: Option<&PersistPaths>, now: SystemTime) -> Option<W
 /// — inert, with a startup `tracing::warn`).
 pub(crate) fn rating_filter_is_active(config: &RatingFilterConfig, zone: &ZoneLists) -> bool {
     config.enabled && !zone.is_empty()
+}
+
+/// The single authority for whether the public blocklist-bundle layer
+/// (T-218 Фаза 7, Батч 7.4) is live — mirrors [`rating_filter_is_active`]
+/// exactly, including its "the bundle can be stuck non-empty-but-stale
+/// after `enabled` or `sources` shrinks to nothing" compromise:
+/// `blocklist_updater::refresh_all_sources` (like `topn_updater::
+/// refresh_all_lists`) returns before touching the bundle while disabled or
+/// while every source is deselected, so a *previously* populated bundle
+/// isn't cleared on its own — same already-accepted class of staleness the
+/// rating filter has, not a new gap this batch introduces.
+pub(crate) fn blocklist_bundles_is_active(
+    config: &BlocklistBundlesConfig,
+    bundle: &BlocklistBundleState,
+) -> bool {
+    config.enabled && !bundle.is_empty()
 }
 
 /// Builds the always-present [`RatingFilterStatusView`] from `state`'s live
@@ -3699,12 +3728,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_status, content_type_is_dns_message, parse_log_query, rating_filter_is_active,
-        read_watchdog_view, resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState,
-        DohRequestError, GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState,
-        PersistPaths, PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
-        ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT,
-        DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        admin_status, blocklist_bundles_is_active, content_type_is_dns_message, parse_log_query,
+        rating_filter_is_active, read_watchdog_view, resolve_doh_request, serve,
+        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipSource,
+        GeoipState, LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeInit,
+        WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH,
+        ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT,
+        MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
@@ -3714,6 +3744,7 @@ mod tests {
         OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest, ProvidersResponse,
         WatchdogStatusView, ZoneListStatusView,
     };
+    use crate::blocklist_updater::BlocklistBundleState;
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::{
         BlocklistBundlesConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig,
@@ -7765,6 +7796,26 @@ mod tests {
         );
         assert!(rating_filter_is_active(&on, &full));
         assert!(!rating_filter_is_active(&off, &full), "disabled ⇒ inert");
+    }
+
+    #[test]
+    fn blocklist_bundles_is_active_matches_the_enabled_and_non_empty_rule() {
+        let on = BlocklistBundlesConfig {
+            enabled: true,
+            sources: None,
+        };
+        let off = BlocklistBundlesConfig::default();
+        let empty = BlocklistBundleState::default();
+        let full = BlocklistBundleState::from_domains(["example.com"]);
+        assert!(
+            !blocklist_bundles_is_active(&on, &empty),
+            "enabled but empty ⇒ inert"
+        );
+        assert!(blocklist_bundles_is_active(&on, &full));
+        assert!(
+            !blocklist_bundles_is_active(&off, &full),
+            "disabled ⇒ inert"
+        );
     }
 
     #[test]

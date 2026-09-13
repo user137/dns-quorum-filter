@@ -1512,6 +1512,7 @@ const DECISION_LABELS = {
 const DECISION_SOURCE_LABELS = {
   ALLOWLIST: "Allowlist",
   BLOCKLIST: "Blocklist",
+  BLOCKLIST_BUNDLE: "Блок-лист-бандл",
   CACHE: "Кеш",
   QUORUM: "Quorum",
   CCTLD_BLOCK: "ccTLD-блок",

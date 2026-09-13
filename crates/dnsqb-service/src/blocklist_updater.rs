@@ -131,11 +131,11 @@ pub(crate) struct BlocklistSourceStatus {
 /// to hashes and merged into one sorted, deduplicated set (module doc of
 /// `blocklist_download.rs` has the full memory/hash-stability rationale).
 /// `seed` is the exact [`RandomState`] instance that built `domains` — always
-/// travels with it through the same `Arc` swap, so [`contains_domain`] can
+/// travels with it through the same `Arc` swap, so [`matches_domain`] can
 /// never look a hash up against a seed that didn't build the set it's
 /// searching (structural version of 7.1's closing-review finding #1).
 ///
-/// [`contains_domain`]: BlocklistBundleState::contains_domain
+/// [`matches_domain`]: BlocklistBundleState::matches_domain
 #[derive(Default)]
 pub(crate) struct BlocklistBundleState {
     seed: RandomState,
@@ -144,22 +144,83 @@ pub(crate) struct BlocklistBundleState {
 }
 
 impl BlocklistBundleState {
-    /// Exact-match membership test — normalizes `domain` the same way every
-    /// hashed entry was normalized, then a binary search over the sorted
-    /// set. **Not** a suffix walk: whether a hit on `example.com` should also
-    /// cover `sub.example.com` depends on whether that source's own semantics
-    /// are wildcard (`wildcard/*-onlydomains.txt`, `||domain^`) or exact
-    /// (`domains/*.txt`) — 7.1's closing-review finding #2 left this open,
-    /// and this method deliberately doesn't prejudge it; the suffix-walk
-    /// pipeline wiring is Батч 7.4's job.
-    #[allow(dead_code)] // no caller until 7.4 wires pipeline step 2 to this
-    pub(crate) fn contains_domain(&self, domain: &str) -> bool {
-        let Ok(domain) = normalize_domain(domain) else {
+    /// Suffix-walk membership test (T-218 Батч 7.4 — resolves 7.1's
+    /// closing-review finding #2). Every currently published source is
+    /// subdomain-inclusive by intent even where the URL path alone doesn't
+    /// say so: `hagezi-multi-pro`/`tif`/`dyndns`/`hoster` fetch `HaGeZi`'s own
+    /// `wildcard/` variant (`HaGeZi` publishes both `wildcard/` and `domains/`
+    /// specifically to mark this); `hagezi-nrd`/`hagezi-dga` list whole fresh
+    /// registrations, where the point of NRD/DGA detection is the
+    /// registration itself, not one hostname under it; `1hosts-lite` is
+    /// already registrable-level by construction (hosts-style ad/tracker
+    /// blocking); and `adguard-dns-filter`'s `||domain^` is an adblock
+    /// anchor rule, which matches a domain **and every subdomain** by the
+    /// filter-syntax spec regardless of file naming (DECISIONS.md
+    /// 2026-09-13). SPEC.md §5 already states step 2 doesn't distinguish a
+    /// bundle entry's origin from a manual one — same wildcard-suffix
+    /// contract as the manual blocklist.
+    ///
+    /// Normalizes `domain` once (self-normalizing, not reliant on the
+    /// caller — same invariant the exact-match predecessor of this method
+    /// already had, still proven by this module's own `Example.COM.` test),
+    /// then walks each suffix candidate from the full normalized domain
+    /// down. **Deliberately stricter than [`crate::rating_filter::ZoneLists::zone_match`]**,
+    /// which does test the bare final label: the `while let Some(_) =
+    /// candidate.split_once('.')` loop condition below only ever tests a
+    /// candidate with at least one dot (≥2 labels) — a bare TLD can never
+    /// reach `binary_search`, provable from the loop condition itself, not
+    /// from remembering that Батч 7.1 already excluded `HaGeZi`'s "Most
+    /// Abused TLDs" source. The apex domain itself still matches (the first
+    /// iteration's candidate is the full normalized input).
+    pub(crate) fn matches_domain(&self, domain: &str) -> bool {
+        let Ok(normalized) = normalize_domain(domain) else {
             return false;
         };
-        self.domains
-            .binary_search(&self.seed.hash_one(domain))
-            .is_ok()
+        let mut candidate = normalized.as_str();
+        while let Some((_, rest)) = candidate.split_once('.') {
+            if self
+                .domains
+                .binary_search(&self.seed.hash_one(candidate))
+                .is_ok()
+            {
+                return true;
+            }
+            candidate = rest;
+        }
+        false
+    }
+
+    /// Whether the bundle currently holds any entry — the non-empty half of
+    /// `dispatch::blocklist_bundles_is_active`'s `enabled && !is_empty()`
+    /// gate, mirroring `rating_filter_is_active`'s own zone-emptiness check.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.domains.is_empty()
+    }
+
+    /// Builds a bundle straight from a list of domain strings — mints a
+    /// fresh [`RandomState`], normalizes and hashes each entry the same way
+    /// the real ingestion path does, and finalizes the set. `sources` is
+    /// left empty (no status metadata to fabricate). `#[cfg(test)]`, unlike
+    /// `rating_filter::ZoneLists::new` (which a real caller,
+    /// `topn_updater::refresh_all_lists`, also uses) — nothing outside
+    /// `pipeline`/`dispatch`'s own test modules needs this; the real bundle
+    /// only ever comes from [`refresh_all_sources`]/
+    /// [`load_blocklist_bundles_from_disk`].
+    #[cfg(test)]
+    pub(crate) fn from_domains<'a>(entries: impl IntoIterator<Item = &'a str>) -> Self {
+        let seed = RandomState::new();
+        let mut domains = Vec::new();
+        for entry in entries {
+            if let Ok(domain) = normalize_domain(entry) {
+                domains.push(seed.hash_one(domain));
+            }
+        }
+        finalize(&mut domains);
+        Self {
+            seed,
+            domains,
+            sources: Vec::new(),
+        }
     }
 }
 
@@ -422,8 +483,8 @@ mod tests {
     use std::collections::hash_map::RandomState;
 
     use super::{
-        hash_source_body, load_blocklist_bundles_from_disk, BlocklistRefreshError,
-        BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
+        hash_source_body, load_blocklist_bundles_from_disk, BlocklistBundleState,
+        BlocklistRefreshError, BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
     };
     use crate::blocklist_download::SourceFormat;
 
@@ -510,16 +571,16 @@ mod tests {
             bundle.sources[0].last_updated.is_some(),
             "a present file proves a past successful fetch"
         );
-        // Raw, un-normalized input -- `contains_domain` must normalize it
+        // Raw, un-normalized input -- `matches_domain` must normalize it
         // itself (the same case/trailing-dot folding `push_normalized`
         // already applied when this entry was hashed). Pre-normalizing in
-        // the test would pass even if `contains_domain` dropped its own
+        // the test would pass even if `matches_domain` dropped its own
         // `normalize_domain` call.
         assert!(
-            bundle.contains_domain("Example.COM."),
+            bundle.matches_domain("Example.COM."),
             "lookup normalization must match the normalization entries were hashed with"
         );
-        assert!(!bundle.contains_domain("not-in-any-list.example"));
+        assert!(!bundle.matches_domain("not-in-any-list.example"));
     }
 
     #[test]
@@ -547,13 +608,43 @@ mod tests {
             "each source reports its own pre-dedup count"
         );
         assert!(
-            bundle.contains_domain("shared.example"),
+            bundle.matches_domain("shared.example"),
             "the shared domain is still found post-dedup"
         );
         assert_eq!(
             bundle.domains.len(),
             1,
             "finalize() must collapse the two sources' identical hash into one entry"
+        );
+    }
+
+    #[test]
+    fn matches_domain_covers_a_subdomain_of_a_hashed_entry() {
+        let bundle = BlocklistBundleState::from_domains(["blocked.example"]);
+        assert!(
+            bundle.matches_domain("sub.blocked.example"),
+            "a subdomain of a hashed entry must match (wildcard/subdomain-inclusive \
+             semantics — module doc on matches_domain)"
+        );
+        assert!(
+            bundle.matches_domain("blocked.example"),
+            "the apex entry itself still matches"
+        );
+        assert!(!bundle.matches_domain("not-blocked.example"));
+    }
+
+    #[test]
+    fn matches_domain_never_tests_a_bare_tld() {
+        // Discriminating test (not just an empty-candidate check, which
+        // would pass under either walk): a bare TLD hashed into the set
+        // must never make an unrelated domain under it match. Proves the
+        // loop's `while let Some(_) = candidate.split_once('.')` condition
+        // really excludes the final single-label candidate, not just that
+        // the walk doesn't panic on one.
+        let bundle = BlocklistBundleState::from_domains(["com"]);
+        assert!(
+            !bundle.matches_domain("example.com"),
+            "a bare TLD in the hashed set must never suffix-match every domain under it"
         );
     }
 }

@@ -75,12 +75,20 @@ pub(crate) enum PDecision {
     Failed,
 }
 
-/// Mirror of [`DecisionSource`].
+/// Mirror of [`DecisionSource`]. **Adding a variant here is a one-way-safe
+/// change, not compatibility in both directions:** an older build reading a
+/// file with no `blocklist_bundle` rows is fine (nothing to fail on), but a
+/// newer build that persisted one and is then downgraded hits an unknown
+/// `serde` variant on the whole file — `log_persist::load_persisted_query_log`
+/// treats that the same as any other corrupt file (rename `.orphaned-<ts>`,
+/// start empty). Same already-accepted cost as when `RatingFilter`/
+/// `BaselineFallback` were added; not a new gap.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PDecisionSource {
     Allowlist,
     Blocklist,
+    BlocklistBundle,
     Cache,
     Quorum,
     RatingFilter,
@@ -138,6 +146,7 @@ impl From<DecisionSource> for PDecisionSource {
         match s {
             DecisionSource::Allowlist => PDecisionSource::Allowlist,
             DecisionSource::Blocklist => PDecisionSource::Blocklist,
+            DecisionSource::BlocklistBundle => PDecisionSource::BlocklistBundle,
             DecisionSource::Cache => PDecisionSource::Cache,
             DecisionSource::Quorum => PDecisionSource::Quorum,
             DecisionSource::RatingFilter => PDecisionSource::RatingFilter,
@@ -152,6 +161,7 @@ impl From<PDecisionSource> for DecisionSource {
         match s {
             PDecisionSource::Allowlist => DecisionSource::Allowlist,
             PDecisionSource::Blocklist => DecisionSource::Blocklist,
+            PDecisionSource::BlocklistBundle => DecisionSource::BlocklistBundle,
             PDecisionSource::Cache => DecisionSource::Cache,
             PDecisionSource::Quorum => DecisionSource::Quorum,
             PDecisionSource::RatingFilter => DecisionSource::RatingFilter,
@@ -349,6 +359,7 @@ mod tests {
         let sources = [
             DecisionSource::Allowlist,
             DecisionSource::Blocklist,
+            DecisionSource::BlocklistBundle,
             DecisionSource::Cache,
             DecisionSource::Quorum,
             DecisionSource::RatingFilter,

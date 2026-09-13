@@ -75,6 +75,14 @@ pub enum DecisionSource {
     Allowlist,
     /// Matched a blocklist entry.
     Blocklist,
+    /// Matched a public blocklist-bundle entry (T-218 Фаза 7, Батч 7.4,
+    /// SPEC.md §5 step 2). Composes with `Blocklist`'s own pipeline slot —
+    /// step 2 doesn't distinguish a manual entry from a bundle one, this
+    /// variant only exists so the log/admin surfaces can still tell them
+    /// apart. `voters` is always empty; never cached (the bundle can change
+    /// under the next `blocklist_updater::run_blocklist_updater` cycle,
+    /// same reasoning `RatingFilter` already has).
+    BlocklistBundle,
     /// Served from a cached quorum verdict.
     Cache,
     /// Decided by a fresh quorum resolution.

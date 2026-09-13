@@ -1162,24 +1162,35 @@ impl From<Decision> for DecisionView {
 
 /// SPEC.md §6/§8 `decision_source` column, DTO form (T-54) — all the
 /// values `UI-SPEC.md` §1's "carry every field from day one" principle
-/// requires, though only six (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/
-/// `GeoIp`/`BaselineFallback`, the last two added at T-76 / T-155) are
-/// producible before their own later-phase pipeline step exists (see
-/// [`DecisionSourceView::from`] below — a total match over the internal
-/// [`DecisionSource`], so `CcTldBlock` can never actually be constructed by
-/// this conversion, only declared for the wire format; `RatingFilter`
-/// became producible at T-124).
+/// requires, though only seven (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/
+/// `GeoIp`/`BaselineFallback`, the last two added at T-76 / T-155, plus
+/// `BlocklistBundle` at T-218 Батч 7.4) are producible before their own
+/// later-phase pipeline step exists (see [`DecisionSourceView::from`] below
+/// — a total match over the internal [`DecisionSource`], so `CcTldBlock`
+/// can never actually be constructed by this conversion, only declared for
+/// the wire format; `RatingFilter` became producible at T-124).
 ///
 /// `CcTldBlock`/`GeoIp` need an explicit `#[serde(rename)]` — automatic
 /// `SCREAMING_SNAKE_CASE` conversion would produce `CC_TLD_BLOCK`/`GEO_IP`,
 /// not SPEC.md's own `CCTLD_BLOCK`/`GEOIP` (verified by hand-tracing serde's
 /// case-boundary algorithm before relying on the blanket `rename_all` for
-/// these two, not assumed).
+/// these two, not assumed). `BlocklistBundle` needs none — the blanket
+/// `rename_all` already produces `BLOCKLIST_BUNDLE`.
+///
+/// **No `ADMIN_DTO_SCHEMA_VERSION` bump for `BlocklistBundle`** (verified,
+/// not assumed): this type lives only on `LogEntryView.decision_source`
+/// (`GET /admin/log`), and `AdminClient` has no method that reads the log —
+/// the sole consumer is the `include_str!`-embedded `/admin/ui` browser JS,
+/// always the same build as the service serving it. A new
+/// `DecisionSourceView` variant only needs the bump if some `AdminClient`
+/// method could deserialize it across a version boundary — check that
+/// before adding the next one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DecisionSourceView {
     Allowlist,
     Blocklist,
+    BlocklistBundle,
     #[serde(rename = "CCTLD_BLOCK")]
     CcTldBlock,
     Cache,
@@ -1195,6 +1206,7 @@ impl From<DecisionSource> for DecisionSourceView {
         match source {
             DecisionSource::Allowlist => Self::Allowlist,
             DecisionSource::Blocklist => Self::Blocklist,
+            DecisionSource::BlocklistBundle => Self::BlocklistBundle,
             DecisionSource::Cache => Self::Cache,
             DecisionSource::Quorum => Self::Quorum,
             DecisionSource::RatingFilter => Self::RatingFilter,
@@ -2160,6 +2172,13 @@ mod tests {
         assert_eq!(
             json_of(&DecisionSourceView::from(DecisionSource::RatingFilter)),
             "\"RATING_FILTER\""
+        );
+        // T-218 Батч 7.4: BlocklistBundle joined the producible side —
+        // asserted through the same From conversion, and its wire string
+        // needs no explicit #[serde(rename)] (unlike CcTldBlock/GeoIp).
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::BlocklistBundle)),
+            "\"BLOCKLIST_BUNDLE\""
         );
         // CcTldBlock is still not producible from the internal
         // DecisionSource (see DecisionSourceView::from's exhaustive match) —
