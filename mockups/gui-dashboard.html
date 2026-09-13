@@ -10,7 +10,7 @@
   попросив дизайн-рев'ю перед будь-яким кодом (TASKS.md), тож тут маркер
   дійсно гейтить реалізацію, не лише формальність. Переглянуто того ж дня за
   відгуком: картка перенесена з «Розширені» у базову секцію «Списки
-  виключень» (не нішева фіча — розширює саме Blocklist), список 8 джерел
+  виключень» (не нішева фіча — розширює саме Blocklist), список 7 джерел
   згортається у власний вкладений `<details>`. Локальний файл — відкривається
   будь-яким браузером, без збірки; має перемикач теми зверху.
   Ground-truth для UI-SPEC.md §2/§3 і diagrams/ui-navigation.md.
@@ -1059,7 +1059,10 @@
       <strong>Згортання списку джерел (та сама вимога відгуку) — власний вкладений
       <code>&lt;details class="bl-sources"&gt;</code>,</strong> той самий безJS-механізм, що
       зовнішнє «Розширені», лише легший. Master-перемикач і один рядок опису лишаються завжди
-      видимими; повний перелік 8 джерел — за кліком на «Джерела (8)», згорнутий за замовчуванням.
+      видимими; повний перелік 7 джерел — за кліком на «Джерела (7)», згорнутий за замовчуванням.
+      **Скориговано Батчем 7.1 (2026-09-13):** HaGeZi "Most Abused TLDs" вилучено з набору
+      (колізія з майбутнім ccTLD-блоком §5.2/Фаза 5, T-115/T-116) — «Безпека й загрози» тепер 4
+      джерела, не 5.
       Не всі підуть дивитись деталі — досить бачити, що фіча є й що вона робить.
     </p>
     <p class="rationale">
@@ -1117,9 +1120,9 @@
                 <span class="rf-title">Блокувати за публічними бандл-списками</span>
                 <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
               </div>
-              <p class="rf-desc">Активно, 8 джерел. Той самий пайплайн, лише крок 2 (Blocklist).</p>
+              <p class="rf-desc">Активно, 7 джерел. Той самий пайплайн, лише крок 2 (Blocklist).</p>
               <details class="bl-sources">
-                <summary>Джерела (8) <span class="chev">›</span></summary>
+                <summary>Джерела (7) <span class="chev">›</span></summary>
               </details>
             </div>
           </div>
@@ -1144,9 +1147,9 @@
                 <span class="rf-title">Блокувати за публічними бандл-списками</span>
                 <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
               </div>
-              <p class="rf-desc">Активно, 8 джерел. Той самий пайплайн, лише крок 2 (Blocklist).</p>
+              <p class="rf-desc">Активно, 7 джерел. Той самий пайплайн, лише крок 2 (Blocklist).</p>
               <details class="bl-sources" open>
-                <summary>Джерела (8) <span class="chev">›</span></summary>
+                <summary>Джерела (7) <span class="chev">›</span></summary>
                 <div class="rf-sub">Реклама й трекери</div>
                 <ul class="bl-list">
                   <li><input type="checkbox" checked aria-label="HaGeZi Multi PRO"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Multi PRO</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Реклама, трекери, шкідливе ПЗ — основний набір</p></div></li>
@@ -1159,7 +1162,6 @@
                   <li><input type="checkbox" checked aria-label="HaGeZi NRD/DGA"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi NRD / DGA</span><span class="meta stale">збій оновлення — попередня версія</span></div><p class="desc">Щойно зареєстровані й алгоритмічно згенеровані домени (malware C2)</p></div></li>
                   <li><input type="checkbox" checked aria-label="HaGeZi DynDNS"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Dynamic DNS</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Динамічні DNS-хостнейми, часто зловживані</p></div></li>
                   <li><input type="checkbox" checked aria-label="HaGeZi Badware Hoster"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Badware Hoster</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Хостери, відомі розповсюдженням шкідливого ПЗ</p></div></li>
-                  <li><input type="checkbox" checked aria-label="HaGeZi Most Abused TLDs"><div class="bl-row"><div class="bl-row-top"><span class="nm">HaGeZi Most Abused TLDs</span><span class="meta">оновлено 3 год тому</span></div><p class="desc">Домени в TLD із високим рівнем зловживань</p></div></li>
                 </ul>
                 <p class="bl-attrib">Джерела: <a href="#" onclick="return false">HaGeZi</a>, <a href="#" onclick="return false">AdGuard DNS filter</a> (GPL-3.0) · <a href="#" onclick="return false">1Hosts Lite</a> (MPL-2.0)</p>
               </details>
@@ -1185,7 +1187,7 @@
               </div>
               <div class="notice warn" style="margin:.5rem 0 0">Увімкнено, перше завантаження триває — попередня (порожня) версія лишається чинною, фільтрація діятиме, щойно перший атомарний своп завершиться. Це не помилка.</div>
               <details class="bl-sources" open>
-                <summary>Джерела (8) <span class="chev">›</span></summary>
+                <summary>Джерела (7) <span class="chev">›</span></summary>
                 <ul class="bl-list">
                   <li><input type="checkbox" checked disabled aria-label="HaGeZi Multi PRO"><span class="nm">HaGeZi Multi PRO</span><span class="meta stale">завантажується…</span></li>
                   <li><input type="checkbox" checked disabled aria-label="1Hosts Lite"><span class="nm">1Hosts Lite</span><span class="meta stale">завантажується…</span></li>

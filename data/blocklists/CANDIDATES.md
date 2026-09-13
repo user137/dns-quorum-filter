@@ -53,11 +53,11 @@ blocking, CSAM). Мета — яка частина реалізовна чер�
 | NextDNS-фіча | Публічний аналог | Формат/розташування |
 |---|---|---|
 | Threat Intelligence Feeds | HaGeZi TIF | `raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt` |
-| Newly Registered Domains | HaGeZi NRD | той самий репозиторій, plain domain list |
-| DGA Domains | HaGeZi NRD/DGA | plain domain list (офіційно підтверджено в FAQ репо) |
+| Newly Registered Domains | HaGeZi NRD | той самий репозиторій, plain domain list. **Уточнено 2026-09-13 (Батч 7.1):** насправді окремий репозиторій `hagezi/nrd` (теж GPL-3.0), не `hagezi/dns-blocklists` — `nrd7.txt`, ~49 MB |
+| DGA Domains | HaGeZi NRD/DGA | plain domain list (офіційно підтверджено в FAQ репо). Той самий `hagezi/nrd`, `dga7.txt`, ~13 MB |
 | Dynamic DNS Hostnames | HaGeZi DynDNS | той самий репозиторій |
 | Free Hosting Domains | HaGeZi Badware Hoster | найближчий аналог, не 1-в-1 (NextDNS блокує конкретні піддомени типу *.pages.dev/*.vercel.app, Badware Hoster — ширше по хостерах) |
-| Top-Level Domains (TLD) | HaGeZi Most Abused TLDs | або просто хардкодиш список TLD сам — зовнішні дані не обов'язкові |
+| Top-Level Domains (TLD) | HaGeZi Most Abused TLDs | або просто хардкодиш список TLD сам — зовнішні дані не обов'язкові. **Вилучено з Фази 7 набору (Батч 7.1, 2026-09-13)** — колізує з T-115/T-116's ccTLD-блоком (§5.2, Фаза 5); §3 нижче має повне обґрунтування |
 | Cryptojacking | CoinBlockerLists (Zerodot1/CoinBlockerLists) | + частково покрито HaGeZi TIF. **ВИЛУЧЕНО 2026-09-13** — офіційний сайт востаннє оновлювався жовтень 2023, GitHub-репозиторій позначений `[ARCHIVE] ... discontinued`; порушує власний критерій свіжості цього документа |
 | DNS Rebinding | HaGeZi DNS Rebind Protection | ⚠️ формат сумісний лише з AdGuard/AdGuard Home/AdGuard DNS — або конвертувати, або писати правило самому (перевірка приватних IP у відповіді — проста евристика, список не обов'язковий) |
 
@@ -80,21 +80,30 @@ blocking, CSAM). Мета — яка частина реалізовна чер�
 
 ## 3. Результуючий набір для проєкту
 
-**Переписано 2026-09-13 (kickoff-сесія, звірка з першоджерелами — DECISIONS.md).** Авторитетний
-набір — 8 джерел, кожне самостійно курироване або з єдиною декларованою ліцензією на весь
+**Переписано 2026-09-13 (kickoff-сесія, звірка з першоджерелами — DECISIONS.md); скориговано
+того ж дня (Батч 7.1, звірка URL/розмірів/форматів перед кодом — DECISIONS.md).** Авторитетний
+набір — **7 джерел**, кожне самостійно курироване або з єдиною декларованою ліцензією на весь
 артефакт (не агрегатор з per-ingredient ліцензійною плутаниною), усі вже покриваються дозволеним
 мережевим allowlist (`raw.githubusercontent.com`, `github.com`):
 
 1. HaGeZi Multi PRO (основний ads/trackers/malware набір) — GPL-3.0
 2. HaGeZi Threat Intelligence Feeds (TIF) — GPL-3.0
-3. HaGeZi Newly Registered Domains / DGA — GPL-3.0
+3. HaGeZi Newly Registered Domains / DGA — GPL-3.0 (окремий репозиторій `hagezi/nrd`, теж
+   GPL-3.0, два URL — `nrd7.txt`/`dga7.txt` — одне логічне джерело)
 4. HaGeZi Dynamic DNS (DynDNS) — GPL-3.0
 5. HaGeZi Badware Hoster — GPL-3.0
-6. HaGeZi Most Abused TLDs — GPL-3.0
-7. AdGuard DNS filter (ads/trackers, доповнює HaGeZi Multi PRO) — GPL-3.0
-8. 1Hosts Lite (ads/trackers, доповнює HaGeZi Multi PRO) — MPL-2.0
+6. AdGuard DNS filter (ads/trackers, доповнює HaGeZi Multi PRO) — GPL-3.0
+7. 1Hosts Lite (ads/trackers, доповнює HaGeZi Multi PRO) — MPL-2.0
 
-Жодне з восьми не публікує `.sha256`-сайдкар (звірено) — Фаза 7 (TASKS.md) потребує власного
+**HaGeZi Most Abused TLDs — вилучено з набору Батчем 7.1, 2026-09-13** (було пунктом 6 у
+редакції kickoff'у). Причина: записи цього джерела — голі TLD, не домени; через суфіксний
+матчинг, який Фаза 7 і так використовує, це 4.4-кілобайтне джерело заблокувало б більше
+інтернету, ніж решта шести разом, і дублює вже специфікований T-115/T-116 (TASKS.md, Фаза 5,
+§5.2, ccTLD-блок — "конфігурований список, порожній за замовчуванням") через інші двері й інший
+дефолт. Файл лишається кандидатним джерелом даних для T-115, коли той крок будується — не для
+цієї фічі.
+
+Жодне з семи не публікує `.sha256`-сайдкар (звірено) — Фаза 7 (TASKS.md) потребує власного
 контролю цілісності, не прямого переюзання `data/topn/`'s sha256-контракту.
 
 **Виключено (деталі — inline-нотатки §1-2 вище, дата 2026-09-13):** OISD (агрегатор без єдиної
