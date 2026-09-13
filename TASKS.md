@@ -1482,6 +1482,38 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   workspace. Не в обсязі: `run_blocklist_updater`-цикл, `tokio::spawn` у `orchestrate.rs`,
   `[blocklist_bundles]`-конфіг, admin-route, pipeline-wiring — усе це Батч 7.3.
 
+  **[x] Батч 7.3 (2026-09-13, plan-mode + advisor до і після реалізації) —
+  `[blocklist_bundles]`-конфіг і реальний спавн фонової задачі.** Обраний користувачем обсяг:
+  лише конфіг + фонова задача, без admin-route/DTO/UI/pipeline-споживання (7.4+). Advisor-рев'ю
+  **перед** реалізацією зупинило перший чернетковий дизайн: `sources: Vec<String>` з власним
+  `Default`, що заповнював усі id `BLOCKLIST_SOURCES` — виявилося б, що цей знімок
+  **заморожується** у `resolver_config.toml` при першому ж `save()` з будь-якого з 5 write-сайтів
+  (навіть якщо оператор ніколи не торкався блок-листів), і майбутнє перейменування/видалення
+  джерела (вже траплялося раз, HaGeZi's Most Abused TLDs) ламало б завантаження конфігу для
+  кожної інсталяції, що колись зберігала. Виправлено редизайном на `sources: Option<Vec<String>>`
+  — `None` = "усі поточні джерела, читаються наживо щоцикл, ніколи не заморожуються", `Some(ids)`
+  = явна валідована підмножина (більше не автотрекає нові джерела), `Some([])` = явно інертно з
+  лог-попередженням. Регресійний тест `save_then_load_of_an_untouched_blocklist_bundles_table_
+  stays_none` доводить незайманий конфіг ніколи не застигає в конкретний список. Закриваючий
+  advisor-рев'ю довиловив: (1) `spawn_public_http_tasks`'s doc-коментар лишався "the two
+  background tasks" — виправлено на "the background tasks" (тепер їх 4); (2) стейл-doc у
+  `blocklist_updater.rs` ("7.3's job"/"until 7.3 wires" на речах, що самé є Батчем 7.3) —
+  виправлено на "7.4"; (3) `refresh_all_sources`'s алокація спрощена. Усі 5
+  `ResolverConfig{...}`-літерал-сайтів у `dispatch.rs` отримали `blocklist_bundles: (*state.
+  blocklist_bundles_config_snapshot()).clone()` (T-217 live-snapshot pattern, підтверджено
+  компілятором — `E0063` вказав саме на ці 5 сайтів). `run_blocklist_updater` (`loop { refresh;
+  park }`, 24h, дзеркалить `run_topn_updater`) тепер реально спавниться з
+  `orchestrate::spawn_public_http_tasks`. `load_blocklist_bundles_from_disk` свідомо лишився без
+  викликача цим батчем — перший цикл `run_blocklist_updater` (до будь-якого park) заповнює набір
+  замість окремого синхронного диск-читання ~111 MB на старті. `cargo test`/`clippy
+  --all-targets -D warnings`/`fmt --check`/`doc -D warnings`/`--test conformance`/`--test
+  admin_client`/`--workspace --doc`/`--workspace --examples` — усі зелені, увесь workspace
+  (854 lib-тести). Doc-sync включно з новим розділом `CONFIGURATION.md`'s `[blocklist_bundles]`
+  (перший конфіг-стіл цього файлу, чий дефолт не порожній/вимкнений — три окремі стани
+  `sources` документовано явно). Не в обсязі: admin-route/DTO для живого per-source
+  перемикання, `/admin/status`-view, `/admin/ui`-рендер, pipeline-wiring кроку 2 до
+  `contains_domain` (7.1's відкрите питання про wildcard-vs-exact семантику лишається) — усе 7.4+.
+
 ## Поза фазами / бэклог
 
 - [ ] T-132 — **Уточнено 2026-08-29 (SPEC.md §2)**: NSS DB автоматизація для Firefox
@@ -1755,7 +1787,7 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 - [ ] T-230 — **Адмінка: у «Розширених» — список усіх фонових джобів (назва + періодичність),
   read-only спершу, редагованість інтервалу — по-джобно** (запит користувача 2026-09-13, мід-турн
   під час Батчу 7.2). Інвентар ширший за "апдейтери": `run_geoip_updater` (24h),
-  `run_topn_updater` (24h), майбутній `run_blocklist_updater` (24h, Батч 7.3),
+  `run_topn_updater` (24h), `run_blocklist_updater` (24h, Батч 7.3),
   `run_reachability_prober` (30s/3s адаптивно + `OFFLINE_CONFIRM_CYCLES`),
   `run_query_log_persister` (60s), `run_cache_persister` (60s), `run_zone_removal_persister`,
   `run_personal_zone_task` (60s), `cert_watch::run_cert_trust_watch` (60s),
