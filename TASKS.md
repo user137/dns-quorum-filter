@@ -1455,6 +1455,33 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   Не в обсязі: `blocklist_updater.rs` (мережа/оркестрація/своп) — наступний план+advisor цикл,
   Батч 7.2. Пайплайн-wiring кроку 2, конфіг, admin-route, реальний UI — 7.3+.
 
+  **[x] Батч 7.2 (2026-09-13, plan-mode + advisor до і після реалізації) — мережевий
+  fetch/parse/атомарний своп.** Явне рішення користувача: `[blocklist_bundles]`-конфіг і
+  admin-route ще нема (7.3+), тож цей батч **не спавнить** періодичну задачу в
+  `orchestrate.rs` — безумовний 24-годинний рефетч ~111 MB без жодного споживача порушив би
+  мережеву ввічливість. Advisor-рев'ю **перед** реалізацією виявило: `BLOCKLIST_FETCH_TIMEOUT`
+  180s суперечив би 128 MB-ліміту (потребував би ~5.7 Мбіт/с — на звичайному каналі й найбільші
+  джерела ловили б `Timeout` щоцикл і сиділи на last-known-good назавжди) → виправлено на 600s;
+  додано точний `contains_domain` на самій структурі (seed+set структурно нероздільні, не лише
+  коментарем); `BlocklistSourceStatus` — `#[allow(dead_code)]`, `last_error` лишається виставленим
+  навіть при успішному фолбеку. Закриваючий advisor-рев'ю **після** реалізації довиловив: (1) тест
+  `contains_domain` передавав уже нормалізований домен — не доводив, що метод сам нормалізує; (2)
+  диск-шлях (`load_blocklist_bundles_from_disk`) виставляв `last_updated: None` для щойно
+  прочитаного файлу — суперечило власному doc-коментарю поля; виправлено на реальний mtime файлу;
+  (3) не було тесту на крос-джерельний дедуп на диск-шляху; (4) doc-коментар посилався на
+  неіснуючий метод `BlocklistBundleState::len`. Усі чотири виправлено тим самим проходом. Новий
+  `crates/dnsqb-service/src/blocklist_updater.rs` (`BlocklistSourceStatus`, `BlocklistBundleState`
+  + `contains_domain`, `BlocklistRefreshError`, `hash_source_body`, `fetch_bounded`,
+  `refresh_one_source[_bounded]`, `load_blocklist_bundles_from_disk`, `refresh_all_sources`);
+  `AppState.blocklist_bundles: RwLock<Arc<BlocklistBundleState>>` + snapshot/update-акцесори
+  (без зміни сигнатури конструктора — `Default`, як `rating_filter_personal_zone`).
+  `blocklist_download.rs`'s `#![allow(dead_code)]` знято — реальний викликач тепер є. 7 юніт-тестів
+  (без мережевих моків — той самий прецедент, що `topn_updater`/`geoip_updater`, у проєкті нема
+  HTTP-мок-залежності). `cargo test`/`clippy --all-targets -D warnings`/`fmt --check`/`doc -D
+  warnings`/`--test conformance`/`--test admin_client`/`--workspace --doc` — усі зелені, увесь
+  workspace. Не в обсязі: `run_blocklist_updater`-цикл, `tokio::spawn` у `orchestrate.rs`,
+  `[blocklist_bundles]`-конфіг, admin-route, pipeline-wiring — усе це Батч 7.3.
+
 ## Поза фазами / бэклог
 
 - [ ] T-132 — **Уточнено 2026-08-29 (SPEC.md §2)**: NSS DB автоматизація для Firefox
