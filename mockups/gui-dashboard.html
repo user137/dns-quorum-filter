@@ -4,7 +4,11 @@
   перший запуск. Артборди A–D затверджено користувачем 2026-09-06.
   Артборд E (рейтинговий фільтр «бульбашка» — T-127/T-128, Батч 4.4) доданий
   2026-09-10, вибір зон перероблено на пошук + список за відгуком користувача;
-  чекає окремого затвердження. Локальний файл — відкривається
+  чекає окремого затвердження.
+  Артборд F (публічні блок-лист-бандли — T-218, Фаза 7) доданий 2026-09-13,
+  чекає окремого затвердження; на відміну від E, для T-218 користувач явно
+  попросив дизайн-рев'ю перед будь-яким кодом (TASKS.md), тож тут маркер
+  дійсно гейтить реалізацію, не лише формальність. Локальний файл — відкривається
   будь-яким браузером, без збірки; має перемикач теми зверху.
   Ground-truth для UI-SPEC.md §2/§3 і diagrams/ui-navigation.md.
   Попередній повнофункційний макет (вкладковий, до T-149) — в історії git.
@@ -302,6 +306,22 @@
   .rf-badge.on { background: var(--good-soft); color: var(--good); }
   .rf-badge.pending { background: var(--warn-soft); color: var(--warn); }
   .rf-badge .dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+
+  /* Артборд F: fixed source-list rows (checkbox + name + status), not a
+     free-text combobox — the source set is known and finite, unlike
+     rating-filter's growing zone catalogue. Mirrors .rf-picked li's layout,
+     swaps the remove-× for a checkbox since sources aren't user-added. */
+  .bl-list { list-style: none; margin: 0.45rem 0 0; padding: 0; }
+  .bl-list li {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft); font-size: 12px;
+  }
+  .bl-list li:last-child { border-bottom: none; }
+  .bl-list .nm { flex: 1 1 auto; font-weight: 600; }
+  .bl-list .meta { font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .bl-list .meta.stale { color: var(--warn); }
+  .bl-attrib { font-size: 10.5px; color: var(--text-muted); margin: 0.5rem 0 0; }
+  .bl-attrib a { color: inherit; }
 
   .stat-row { display: flex; flex-wrap: wrap; gap: 1.3rem; }
   .stat { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -1002,6 +1022,114 @@
     </div>
   </section>
 
+  <section class="board">
+    <h2>Артборд F</h2>
+    <p class="board-title">Публічні блок-лист-бандли — картка (T-218, Фаза 7, kickoff 2026-09-13)</p>
+    <p class="rationale">
+      Картка <code>#blocklist-bundles-body</code> живе всередині <code>&lt;details&gt;</code> «Розширені»,
+      одразу після <code>#rating-filter-body</code> (той самий "нішева опційна фіча" клас) і перед
+      <code>#danger-zone-body</code> (danger zone лишається візуально останньою). Перемикач — той самий
+      обрамлений блок зі своїм заголовком, що <code>.rf-card</code> вже використовує. <strong>На
+      відміну від рейтинг-фільтра, набір джерел тут фіксований і відомий заздалегідь</strong> (8
+      звірених джерел — CANDIDATES.md §3) — тому список джерел не пошук-комбобокс, а простий чекліст
+      із текстовим статусом на джерело (останнє оновлення / збій із фолбеком на попередню версію —
+      ілюструє атомарний своп без вікна недоступності, DECISIONS.md 2026-09-13). Дефолт —
+      <strong>вимкнено</strong>, як і рейтинг-фільтр.
+    </p>
+    <p class="rationale">
+      <strong>Не є остаточним DTO-контрактом.</strong> Статус-на-джерело в кадрі 2 малює дані, яких
+      сьогодні не несе жоден `AdminStatusResponse`-зріз — за прецедентом
+      <code>RatingFilterStatusView</code>/<code>ZoneListStatusView</code> це майбутня окрема задача
+      (TASKS.md §"Фаза 7"), не факт, який цей артборд уже узгодив.
+    </p>
+    <div class="frames">
+
+      <div class="device">
+        <div class="cap">Вимкнено (стан за замовчуванням)</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Публічні блок-лист-бандли</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <p class="rf-desc">Доповнює кворум статичними публічними списками (реклама/трекери/шкідливе/DGA/crypto). Опційно, дефолт вимкнено. Не замінює кворум — той самий пайплайн, лише крок 2.</p>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Увімкнено — 8 джерел зі статусом</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.4rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Публічні блок-лист-бандли</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <ul class="bl-list">
+                  <li><input type="checkbox" checked aria-label="HaGeZi Multi PRO"><span class="nm">HaGeZi Multi PRO</span><span class="meta">оновлено 3 год тому</span></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi TIF"><span class="nm">HaGeZi Threat Intelligence Feeds</span><span class="meta">оновлено 3 год тому</span></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi NRD/DGA"><span class="nm">HaGeZi NRD / DGA</span><span class="meta stale">збій оновлення — попередня версія</span></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi DynDNS"><span class="nm">HaGeZi Dynamic DNS</span><span class="meta">оновлено 3 год тому</span></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi Badware Hoster"><span class="nm">HaGeZi Badware Hoster</span><span class="meta">оновлено 3 год тому</span></li>
+                  <li><input type="checkbox" checked aria-label="HaGeZi Most Abused TLDs"><span class="nm">HaGeZi Most Abused TLDs</span><span class="meta">оновлено 3 год тому</span></li>
+                  <li><input type="checkbox" checked aria-label="AdGuard DNS filter"><span class="nm">AdGuard DNS filter</span><span class="meta">оновлено 1 год тому</span></li>
+                  <li><input type="checkbox" checked aria-label="1Hosts Lite"><span class="nm">1Hosts Lite</span><span class="meta">оновлено 8 днів тому</span></li>
+                </ul>
+                <p class="bl-attrib">Джерела: <a href="#" onclick="return false">HaGeZi</a>, <a href="#" onclick="return false">AdGuard DNS filter</a> (GPL-3.0) · <a href="#" onclick="return false">1Hosts Lite</a> (MPL-2.0)</p>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+      <div class="device">
+        <div class="cap">Щойно ввімкнено — перше завантаження не завершилось</div>
+        <div class="screen">
+          <h1 class="app">DNS Quorum Filter</h1>
+          <div class="hero ok" style="padding:.7rem .9rem;margin-bottom:.6rem">
+            <div class="headline"><span class="shield" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="state" style="font-size:1rem">Захищено</span></div>
+          </div>
+          <details class="advanced" open>
+            <summary>Розширені налаштування <span class="chip">для досвідчених</span><span class="chev">›</span></summary>
+            <div class="advanced-body">
+              <div class="subhead">Публічні блок-лист-бандли</div>
+              <div class="rf-card">
+                <div class="rf-head">
+                  <span class="rf-title">Блокувати за публічними бандл-списками</span>
+                  <label class="switch" style="width:32px;height:19px"><input type="checkbox" checked aria-label="Блок-лист-бандли"><span class="track"></span><span class="thumb"></span></label>
+                </div>
+                <div class="notice warn" style="margin:.5rem 0 0">Увімкнено, перше завантаження триває — попередня (порожня) версія лишається чинною, фільтрація діятиме, щойно перший атомарний своп завершиться. Це не помилка.</div>
+                <ul class="bl-list">
+                  <li><input type="checkbox" checked disabled aria-label="HaGeZi Multi PRO"><span class="nm">HaGeZi Multi PRO</span><span class="meta stale">завантажується…</span></li>
+                  <li><input type="checkbox" checked disabled aria-label="1Hosts Lite"><span class="nm">1Hosts Lite</span><span class="meta stale">завантажується…</span></li>
+                </ul>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
   <section class="board" style="margin-bottom:0">
     <h2>Відкриті питання до затвердження</h2>
     <ul style="max-width:70ch;color:var(--frame-muted);padding-left:1.1rem">
@@ -1013,6 +1141,14 @@
       <li>Артборд E: обрані зони — окремим стовпчиком під полем (як показано), чи чіпами-токенами всередині самого поля (як «Кому» в пошті)? Стовпчик обрано, бо кожна зона несе лічильник / стан «завантажується».</li>
       <li>Артборд E: підтвердження при ввімкненні — inline-крок (як показано), чи модальний діалог <code>rfd</code>, як у «Повністю видалити»?</li>
       <li>Артборд E: бейдж активності — просто «активний» (як показано) чи з числом доменів у зоні?</li>
+      <li>Артборд F: простий чекліст із текстовим статусом (як показано) чи щось ближче до
+        `/admin/providers`'s категорійних рядків? Немає бейджа активності під hero, як у E, —
+        потрібен, чи бандли менш критичні для щоденної видимості?</li>
+      <li>Артборд F: увімкнення — без кроку підтвердження (на відміну від E), бо це доповнення
+        кворуму, не "заблокує переважну більшість інтернету". Достатньо inline-опису, чи
+        потрібен той самий warn+confirm, що E?</li>
+      <li>Артборд F: чи додавати індивідуальні чекбокси per-джерело (як показано — можна вимкнути
+        одне джерело, лишивши інші), чи один master-перемикач без гранулярності?</li>
     </ul>
   </section>
 </div>

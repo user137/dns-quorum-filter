@@ -8,7 +8,10 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 решти проєкту).
 
 Мокап: [`mockups/gui-dashboard.html`](mockups/gui-dashboard.html) (локальний
-файл — відкривається будь-яким браузером, без збірки).
+файл — відкривається будь-яким браузером, без збірки). Артборд F (публічні
+блок-лист-бандли, T-218, Фаза 7) додано 2026-09-13, чекає окремого
+затвердження — на відміну від E, тут маркер явно гейтить код (запит
+користувача, TASKS.md).
 Діаграми: [`diagrams/ui-navigation.md`](diagrams/ui-navigation.md),
 [`diagrams/ui-dto-model.md`](diagrams/ui-dto-model.md),
 [`diagrams/ui-status-indicator.md`](diagrams/ui-status-indicator.md).
