@@ -45,8 +45,8 @@ use futures_util::StreamExt;
 use tokio::sync::Notify;
 
 use crate::blocklist_download::{
-    finalize, hash_adblock_domains, hash_plain_domains, validate_hashes, BlocklistSource,
-    SourceFormat, ValidationFailure, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
+    delta_verdict, finalize, hash_adblock_domains, hash_plain_domains, validate_hashes,
+    BlocklistSource, SourceFormat, ValidationFailure, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
 };
 use crate::dispatch::AppState;
 use crate::normalize_domain;
@@ -114,6 +114,12 @@ enum BlocklistRefreshError {
     /// guarantee as above.
     #[error("{count} known-legitimate canary domains present in the source")]
     CanaryDomainsPresent { count: usize },
+    /// T-233 part 2: entry count shifted far outside the previous
+    /// successful cycle's bounds — counts only, never domain names, so this
+    /// is safe in the `#[error(...)]` string (SECURITY.md's cleartext-log
+    /// leak class doesn't apply here).
+    #[error("entry count moved from {previous} to {current}, outside the delta bounds")]
+    SuspiciousCountDelta { previous: usize, current: usize },
 }
 
 impl From<ValidationFailure> for BlocklistRefreshError {
@@ -128,6 +134,9 @@ impl From<ValidationFailure> for BlocklistRefreshError {
             },
             ValidationFailure::CanaryDomainsPresent { count } => {
                 Self::CanaryDomainsPresent { count }
+            }
+            ValidationFailure::SuspiciousCountDelta { previous, current } => {
+                Self::SuspiciousCountDelta { previous, current }
             }
         }
     }
@@ -148,6 +157,7 @@ impl BlocklistRefreshError {
             Self::Join(_) => "join",
             Self::LowParseSuccessRatio { .. } => "low_parse_ratio",
             Self::CanaryDomainsPresent { .. } => "canary_hit",
+            Self::SuspiciousCountDelta { .. } => "suspicious_delta",
         }
     }
 }
@@ -304,13 +314,19 @@ fn hash_source_body(format: SourceFormat, body: &str, seed: &RandomState) -> (Ve
 ///
 /// **Order matters (T-233 advisor review): hash+validate happen entirely in
 /// memory over `body` before any disk write.** `write_atomic(path, ...)`
-/// only runs once [`validate_hashes`] returns `Ok` — a source that fails the
-/// gate never touches `<id>.txt`, so the existing last-known-good file
-/// [`read_and_hash_blocking`] falls back to on the *next* failure is never
-/// overwritten by this cycle's rejected content. Getting this order backward
-/// (write first, validate after — T-232's original shape) would let a single
-/// gate-failing cycle poison the very last-known-good fallback the gate
-/// exists to protect.
+/// only runs once [`validate_hashes`] and [`delta_verdict`] both return
+/// `Ok` — a source that fails either gate never touches `<id>.txt`, so the
+/// existing last-known-good file [`read_and_hash_blocking`] falls back to
+/// on the *next* failure is never overwritten by this cycle's rejected
+/// content. Getting this order backward (write first, validate after —
+/// T-232's original shape) would let a single gate-failing cycle poison the
+/// very last-known-good fallback the gate exists to protect.
+///
+/// **All of this runs on the `spawn_blocking` pool already (T-232) — the
+/// delta check's own file I/O (`<id>.count`) adds no new `.await` point on
+/// the async worker** (user requirement, T-233 part 2): it's plain
+/// synchronous `std::fs` inside this same function, same as every other
+/// call here.
 fn write_and_hash_blocking(
     path: &Path,
     body: &[u8],
@@ -325,8 +341,40 @@ fn write_and_hash_blocking(
     let text = String::from_utf8_lossy(body);
     let (hashes, candidates) = hash_source_body(format, &text, seed);
     validate_hashes(&hashes, candidates, seed)?;
+    let count_path = path.with_extension("count");
+    delta_verdict(hashes.len(), read_previous_count(&count_path))?;
     write_atomic(path, body).map_err(BlocklistRefreshError::Io)?;
+    write_new_count(&count_path, hashes.len());
     Ok(hashes)
+}
+
+/// Reads `<id>.count`'s previous entry count and how long ago it was
+/// written (the file's own mtime — no separate timestamp stored, same
+/// "mtime as last-success signal" convention [`load_blocklist_bundles_from_disk`]
+/// already uses). `None` on any failure to read/parse the file or to
+/// compute an elapsed duration — [`delta_verdict`]'s own doc explains why
+/// every one of those collapses to the same "no reliable baseline"
+/// conclusion, never a crash or a false reject.
+fn read_previous_count(count_path: &Path) -> Option<(usize, Duration)> {
+    let contents = std::fs::read_to_string(count_path).ok()?;
+    let previous_count: usize = contents.trim().parse().ok()?;
+    let modified = std::fs::metadata(count_path)
+        .and_then(|m| m.modified())
+        .ok()?;
+    let elapsed = SystemTime::now().duration_since(modified).ok()?;
+    Some((previous_count, elapsed))
+}
+
+/// Persists this cycle's accepted count as the next cycle's delta baseline.
+/// **Failure here is logged and ignored, not propagated** (advisor-decided,
+/// T-233 part 2): `<id>.txt` has already been written successfully at this
+/// point, so returning `Err` would mislabel a genuinely successful cycle as
+/// failed; the only real cost of losing this write is that the next cycle's
+/// delta measures two cycles' worth of change instead of one.
+fn write_new_count(count_path: &Path, count: usize) {
+    if let Err(err) = write_atomic(count_path, count.to_string().as_bytes()) {
+        tracing::warn!("failed to persist the blocklist delta-check baseline: {err}");
+    }
 }
 
 /// T-232: the synchronous read-then-hash tail of `refresh_all_sources`'s
@@ -845,6 +893,139 @@ mod tests {
             on_disk, good_body,
             "a rejected later cycle must not overwrite the earlier good file"
         );
+    }
+
+    /// `n` distinct, valid, non-canary domain lines — used to cross
+    /// `MIN_COUNT_BASELINE` (5000) so the delta gate actually engages rather
+    /// than skipping via the below-floor branch.
+    fn generated_domains_body(n: usize) -> String {
+        use std::fmt::Write as _;
+        (0..n).fold(String::new(), |mut body, i| {
+            let _ = writeln!(body, "d{i}.example");
+            body
+        })
+    }
+
+    #[test]
+    fn write_and_hash_blocking_writes_a_count_file_on_success() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let body = generated_domains_body(6000);
+        let Ok(hashes) =
+            write_and_hash_blocking(&path, body.as_bytes(), SourceFormat::PlainDomain, &seed)
+        else {
+            panic!("a healthy first cycle must succeed");
+        };
+        assert_eq!(hashes.len(), 6000);
+        let count_path = path.with_extension("count");
+        let Ok(recorded) = std::fs::read_to_string(&count_path) else {
+            panic!("the count file must have been written");
+        };
+        assert_eq!(recorded.trim(), "6000");
+    }
+
+    #[test]
+    fn write_and_hash_blocking_accepts_a_normal_second_cycle_and_updates_the_baseline() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let first = generated_domains_body(6000);
+        assert!(
+            write_and_hash_blocking(&path, first.as_bytes(), SourceFormat::PlainDomain, &seed)
+                .is_ok(),
+            "first cycle must succeed"
+        );
+        let second = generated_domains_body(6200);
+        assert!(
+            write_and_hash_blocking(&path, second.as_bytes(), SourceFormat::PlainDomain, &seed)
+                .is_ok(),
+            "an ordinary +3% change must pass the delta gate"
+        );
+        let count_path = path.with_extension("count");
+        let Ok(recorded) = std::fs::read_to_string(&count_path) else {
+            panic!("the count file must have been written");
+        };
+        assert_eq!(recorded.trim(), "6200", "the baseline must advance");
+    }
+
+    #[test]
+    fn write_and_hash_blocking_rejects_a_suspicious_growth_and_never_updates_either_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let first = generated_domains_body(6000);
+        assert!(
+            write_and_hash_blocking(&path, first.as_bytes(), SourceFormat::PlainDomain, &seed)
+                .is_ok(),
+            "first cycle must succeed"
+        );
+        let flooded = generated_domains_body(40_000); // > 6000 * 5
+        let Err(err) =
+            write_and_hash_blocking(&path, flooded.as_bytes(), SourceFormat::PlainDomain, &seed)
+        else {
+            panic!("a 6.6x jump must trip the delta gate")
+        };
+        assert!(matches!(
+            err,
+            BlocklistRefreshError::SuspiciousCountDelta {
+                previous: 6000,
+                current: 40_000
+            }
+        ));
+        let Ok(on_disk) = std::fs::read_to_string(&path) else {
+            panic!("the first cycle's file must still be on disk");
+        };
+        assert_eq!(
+            on_disk, first,
+            "a rejected cycle must not overwrite the txt file"
+        );
+        let count_path = path.with_extension("count");
+        let Ok(recorded) = std::fs::read_to_string(&count_path) else {
+            panic!("the count file must still be on disk");
+        };
+        assert_eq!(
+            recorded.trim(),
+            "6000",
+            "a rejected cycle must not advance the delta baseline"
+        );
+    }
+
+    #[test]
+    fn write_and_hash_blocking_rejects_a_suspicious_shrink() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let first = generated_domains_body(6000);
+        assert!(
+            write_and_hash_blocking(&path, first.as_bytes(), SourceFormat::PlainDomain, &seed)
+                .is_ok(),
+            "first cycle must succeed"
+        );
+        let truncated = generated_domains_body(500); // < 6000 / 5
+        let Err(err) = write_and_hash_blocking(
+            &path,
+            truncated.as_bytes(),
+            SourceFormat::PlainDomain,
+            &seed,
+        ) else {
+            panic!("an 8x drop must trip the delta gate")
+        };
+        assert!(matches!(
+            err,
+            BlocklistRefreshError::SuspiciousCountDelta {
+                previous: 6000,
+                current: 500
+            }
+        ));
     }
 
     #[test]

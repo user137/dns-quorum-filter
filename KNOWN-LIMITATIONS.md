@@ -170,24 +170,34 @@ TASKS-DONE.md, never here.
   to it either; the underlying staleness itself is still unfixed — the card explains the state, it
   doesn't clear it.
 - **Partial runtime integrity check on the 7 fetched blocklist sources** (T-218 Фаза 7, T-233,
-  narrowed 2026-09-17). `blocklist_download::validate_hashes` now gates each source on a
-  parse-success ratio (`MIN_PARSE_SUCCESS_RATIO` = 0.5) and an exact-match canary-domain check
-  (`BLOCKLIST_CANARY_DOMAINS`, ≥2 hits rejects) **before** the fetched body ever reaches disk — a
-  rejected cycle falls back to last-known-good exactly like a network failure, and never poisons
-  that fallback (T-233's own closing-review catch, fixed in the same commit: the write used to
-  happen before the hash/validate step). Still open:
-  - **The gate is per-source, not per-bundle** — a source with fewer than 2 injected canaries (or
-    a different injected domain per source) passes even though the combined multi-source bundle
-    could still accumulate several. Deliberate (per-source is what makes last-known-good
-    fallback work at all), but a real limit worth knowing before relying on the canary check as a
-    cross-source guarantee.
-  - **No delta-from-previous-cycle check** — `previous` lives only in `AppState` memory, so the
-    first refresh cycle after any restart (the moment a freshly-poisoned feed would most plausibly
-    first land) has no baseline to compare against; would need a new persistent per-source
-    sidecar. Any future version of this check must weight the threshold by **elapsed time since
-    the source's last successful refresh**, not raw magnitude alone — a source silently failing or
-    disabled for days/weeks before recovering can show a large, entirely legitimate delta once it
-    resumes (user note, 2026-09-17).
+  narrowed 2026-09-17, extended same day). `blocklist_download::validate_hashes` gates each
+  source on a parse-success ratio (`MIN_PARSE_SUCCESS_RATIO` = 0.5) and an exact-match
+  canary-domain check (`BLOCKLIST_CANARY_DOMAINS`, ≥2 hits rejects); `delta_verdict` additionally
+  gates on the entry count vs. the last successful cycle's count (persisted in a new
+  `<id>.count` file next to `<id>.txt`, `MAX_COUNT_GROWTH_MULTIPLIER` = 5× /
+  `MIN_COUNT_RETENTION_DIVISOR` = 5, skipped below `MIN_COUNT_BASELINE` = 5000 entries or past a
+  7-day `DELTA_CHECK_GRACE_PERIOD` since the last success). All three run **before** the fetched
+  body ever reaches disk — a rejected cycle falls back to last-known-good exactly like a network
+  failure, and never poisons that fallback or the delta baseline (T-233's own closing-review
+  catch, part 1: the write used to happen before the hash/validate step). Still open:
+  - **None of the three checks catches injecting a small number of legitimate domains into a
+    large list** — T-233's own stated primary threat model. Ratio is unaffected (the injected
+    lines are valid domains); canary only catches the 12 specific compiled-in domains; delta is
+    unaffected at any realistic injection volume (1,000 domains into `hagezi-nrd`'s measured
+    3,181,194 entries is a 0.03% shift, far inside any threshold wide enough to tolerate that
+    source's own day-to-day registration churn). This is a structural gap across all three gates,
+    not a bug in any one of them — closing it needs either a much larger, continuously
+    maintained canary set or the PSL filter below (which catches a different, narrower shape of
+    injection: a whole public suffix as one entry).
+  - **The canary gate is per-source, not per-bundle** — a source with fewer than 2 injected
+    canaries (or a different injected domain per source) passes even though the combined
+    multi-source bundle could still accumulate several. Deliberate (per-source is what makes
+    last-known-good fallback work at all), but a real limit worth knowing before relying on the
+    canary check as a cross-source guarantee.
+  - **The two smallest real sources get no delta protection** — `hagezi-hoster`/`hagezi-dyndns`
+    (1,251/1,547 entries measured 2026-09-17) sit below `MIN_COUNT_BASELINE`, so `delta_verdict`
+    skips them unconditionally; there is no per-source-calibrated threshold, only the one global
+    floor (no multi-day history exists yet to calibrate anything tighter).
   - **No PSL-based entry filter** — `matches_domain`'s suffix walk excludes a bare TLD candidate
     but not a multi-label public suffix (`co.uk`, `github.io`, …); one malicious/malformed entry
     of that shape still blocks an entire legitimate namespace. Deliberately deferred, not silently

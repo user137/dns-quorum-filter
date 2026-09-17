@@ -222,6 +222,15 @@ pub(crate) enum ValidationFailure {
     /// against the real 2026-09-17 download: zero exact-line hits across all
     /// eight sources for this same canary set).
     CanaryDomainsPresent { count: usize },
+    /// The entry count shifted far outside [`MAX_COUNT_GROWTH_MULTIPLIER`]/
+    /// [`MIN_COUNT_RETENTION_DIVISOR`] of the last successful cycle's count —
+    /// catches wholesale replacement or truncation of a source. **Does not**
+    /// catch injecting a small number of legitimate domains into a large
+    /// list (T-233's own primary threat model) — that stays
+    /// `CanaryDomainsPresent`'s job alone (a sibling variant, no intra-doc
+    /// link across enum variants); see [`delta_verdict`]'s own doc for the
+    /// numbers that prove this bound is too coarse for that class.
+    SuspiciousCountDelta { previous: usize, current: usize },
 }
 
 /// Compiled-in, category-diverse set of globally popular domains no
@@ -302,6 +311,95 @@ pub(crate) fn validate_hashes(
     Ok(())
 }
 
+/// Below this many entries in the *previous* successful cycle, the delta
+/// check is skipped entirely — a source this small has no statistically
+/// meaningful baseline (advisor review: the real measured sizes of the
+/// eight sources span ~2500× — 1,251 for `hagezi-hoster` to 3,181,194 for
+/// `hagezi-nrd`, 2026-09-17 — so one global relative threshold is honest
+/// only above a floor; `hagezi-hoster`/`hagezi-dyndns` sit below it today
+/// and simply never get delta protection, same as [`MIN_PARSE_SUCCESS_RATIO`]'s
+/// `candidates == 0` skip).
+pub(crate) const MIN_COUNT_BASELINE: usize = 5000;
+
+/// Reject if the current count is more than this many times the previous
+/// successful count — catches a source suddenly padded with a large volume
+/// of new entries. Deliberately wide (module doc on [`delta_verdict`]): no
+/// multi-day history exists to calibrate a tighter number against.
+pub(crate) const MAX_COUNT_GROWTH_MULTIPLIER: usize = 5;
+
+/// Reject if the current count drops below `previous / MIN_COUNT_RETENTION_DIVISOR`
+/// (i.e. more than an 80% drop) — catches a source replaced with a much
+/// smaller one. Expressed as a divisor, not a `f64` ratio, so the check is
+/// plain integer comparison (no `usize as f64` cast — part 1 already needed
+/// one `#[allow(clippy::cast_precision_loss)]`, this design avoids a second).
+pub(crate) const MIN_COUNT_RETENTION_DIVISOR: usize = 5;
+
+/// A previous successful count older than this is treated as no baseline at
+/// all — a source that silently failed or was disabled for longer than this
+/// and then recovers must not have its first fresh cycle read as
+/// compromise (user requirement, 2026-09-17: the check must weight by
+/// elapsed time since the last success, not raw magnitude alone).
+// `Duration::from_days` isn't const-stable yet (unlike `from_hours`,
+// already used elsewhere in this crate) — spelled out in hours instead.
+pub(crate) const DELTA_CHECK_GRACE_PERIOD: std::time::Duration =
+    std::time::Duration::from_hours(7 * 24);
+
+/// T-233 part 2: verdict for the entry-count delta gate. Owns every
+/// decision (floor, grace period, multiplier bounds) so it's testable with
+/// no filesystem and no real clock — the impure caller
+/// (`blocklist_updater::write_and_hash_blocking`) only reads `<id>.count`,
+/// parses it, computes `elapsed`, and hands over `previous` as `None` when
+/// any of that fails (missing file, unparseable content, or
+/// `SystemTime::duration_since` returning `Err` on a clock jump / restored
+/// snapshot — same "no reliable baseline" conclusion either way, the same
+/// fail-open spirit as `personal_zone_stats::DayIndex`'s saturating
+/// arithmetic).
+///
+/// **Scope, stated plainly:** this catches wholesale replacement or
+/// truncation of a source, not injecting a small number of legitimate
+/// domains into a large one — T-233's own primary threat model. Example:
+/// 1,000 injected domains into `hagezi-nrd`'s measured 3,181,194 entries is
+/// a 0.03% delta, far inside any threshold wide enough to tolerate this
+/// source's own day-to-day registration volume. That class stays
+/// [`ValidationFailure::CanaryDomainsPresent`]'s job alone (KNOWN-LIMITATIONS.md
+/// has the full accounting).
+///
+/// **A second, indirect consequence of the grace period (advisor review,
+/// not a separate escape hatch — the same one line of logic already
+/// covers it):** `<id>.count` only advances on a *successful* cycle
+/// (`blocklist_updater::write_new_count`), so a source under sustained
+/// rejection (every cycle fails the ratio/canary/delta gate) leaves its
+/// mtime frozen at the last real success. After [`DELTA_CHECK_GRACE_PERIOD`]
+/// of that, the delta gate self-disables for this source — the next cycle
+/// that clears ratio+canary is accepted unconditionally and becomes the new
+/// baseline, however different it is from before. This is the same
+/// time-weighting the user asked for, not a bug: a genuinely-recovering
+/// source and a persistently-failing one look identical from `<id>.count`'s
+/// mtime alone, and the design deliberately doesn't try to tell them apart.
+pub(crate) fn delta_verdict(
+    current: usize,
+    previous: Option<(usize, std::time::Duration)>,
+) -> Result<(), ValidationFailure> {
+    let Some((previous_count, elapsed)) = previous else {
+        return Ok(());
+    };
+    if previous_count < MIN_COUNT_BASELINE {
+        return Ok(());
+    }
+    if elapsed > DELTA_CHECK_GRACE_PERIOD {
+        return Ok(());
+    }
+    let grew_too_much = current > previous_count.saturating_mul(MAX_COUNT_GROWTH_MULTIPLIER);
+    let shrank_too_much = current.saturating_mul(MIN_COUNT_RETENTION_DIVISOR) < previous_count;
+    if grew_too_much || shrank_too_much {
+        return Err(ValidationFailure::SuspiciousCountDelta {
+            previous: previous_count,
+            current,
+        });
+    }
+    Ok(())
+}
+
 /// Sorts and deduplicates an accumulated hash buffer in place — the single
 /// pass Батч 7.2 runs once over the combined output of every source, not
 /// per-source (module doc: this is what makes cross-source domain overlap
@@ -318,11 +416,13 @@ mod tests {
     use std::hash::BuildHasher;
 
     use super::{
-        finalize, hash_adblock_domains, hash_plain_domains, validate_hashes, ValidationFailure,
-        BLOCKLIST_CANARY_DOMAINS, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
-        MIN_CANARY_HITS_TO_REJECT, MIN_PARSE_SUCCESS_RATIO,
+        delta_verdict, finalize, hash_adblock_domains, hash_plain_domains, validate_hashes,
+        ValidationFailure, BLOCKLIST_CANARY_DOMAINS, BLOCKLIST_SOURCES, DELTA_CHECK_GRACE_PERIOD,
+        MAX_BLOCKLIST_BYTES, MAX_COUNT_GROWTH_MULTIPLIER, MIN_CANARY_HITS_TO_REJECT,
+        MIN_COUNT_BASELINE, MIN_COUNT_RETENTION_DIVISOR, MIN_PARSE_SUCCESS_RATIO,
     };
     use crate::normalize_domain;
+    use std::time::Duration;
 
     #[test]
     fn blocklist_sources_have_unique_https_ids() {
@@ -589,5 +689,90 @@ mod tests {
             validate_hashes(&out, candidates, &seed),
             Err(ValidationFailure::CanaryDomainsPresent { count: 2 })
         ));
+    }
+
+    // --- delta_verdict (T-233 part 2) ---
+
+    #[test]
+    fn delta_verdict_accepts_a_normal_fluctuation() {
+        assert!(delta_verdict(105_000, Some((100_000, Duration::from_secs(60)))).is_ok());
+        assert!(delta_verdict(95_000, Some((100_000, Duration::from_secs(60)))).is_ok());
+    }
+
+    #[test]
+    fn delta_verdict_has_no_previous_cycle_to_compare_against() {
+        // First-ever successful fetch of a source — nothing to compare, must
+        // not reject.
+        assert!(delta_verdict(100_000, None).is_ok());
+    }
+
+    #[test]
+    fn delta_verdict_skips_sources_below_the_baseline_floor() {
+        // Real hagezi-hoster/hagezi-dyndns sizes (1,251/1,547, 2026-09-17)
+        // sit below MIN_COUNT_BASELINE — a 100x jump on a source this small
+        // must still pass, there is no meaningful baseline yet.
+        let previous = MIN_COUNT_BASELINE - 1;
+        assert!(delta_verdict(previous * 100, Some((previous, Duration::from_secs(60)))).is_ok());
+    }
+
+    #[test]
+    fn delta_verdict_rejects_just_past_the_growth_multiplier() {
+        let previous = MIN_COUNT_BASELINE * 2;
+        let current = previous * MAX_COUNT_GROWTH_MULTIPLIER + 1;
+        let Err(err) = delta_verdict(current, Some((previous, Duration::from_secs(60)))) else {
+            panic!("growth just past the multiplier must reject");
+        };
+        assert_eq!(
+            err,
+            ValidationFailure::SuspiciousCountDelta { previous, current }
+        );
+        // One entry short of the same bound must still pass.
+        assert!(delta_verdict(
+            previous * MAX_COUNT_GROWTH_MULTIPLIER,
+            Some((previous, Duration::from_secs(60)))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn delta_verdict_rejects_just_past_the_retention_divisor() {
+        let previous = MIN_COUNT_BASELINE * 10;
+        let current = previous / MIN_COUNT_RETENTION_DIVISOR - 1;
+        let Err(err) = delta_verdict(current, Some((previous, Duration::from_secs(60)))) else {
+            panic!("a drop just past the retention divisor must reject");
+        };
+        assert_eq!(
+            err,
+            ValidationFailure::SuspiciousCountDelta { previous, current }
+        );
+        // Exactly at the divisor must still pass.
+        assert!(delta_verdict(
+            previous / MIN_COUNT_RETENTION_DIVISOR,
+            Some((previous, Duration::from_secs(60)))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn delta_verdict_skips_the_check_past_the_grace_period() {
+        let previous = MIN_COUNT_BASELINE * 10;
+        // A 10x jump would normally reject, but a >7-day-old baseline means
+        // "no reliable comparison point" — the user's own time-weighting
+        // requirement.
+        let stale = DELTA_CHECK_GRACE_PERIOD + Duration::from_secs(1);
+        assert!(delta_verdict(previous * 10, Some((previous, stale))).is_ok());
+    }
+
+    #[test]
+    fn delta_verdict_still_applies_exactly_at_the_grace_period_boundary() {
+        let previous = MIN_COUNT_BASELINE * 10;
+        let current = previous * MAX_COUNT_GROWTH_MULTIPLIER + 1;
+        assert!(
+            matches!(
+                delta_verdict(current, Some((previous, DELTA_CHECK_GRACE_PERIOD))),
+                Err(ValidationFailure::SuspiciousCountDelta { .. })
+            ),
+            "exactly at the grace period, the check must still apply"
+        );
     }
 }
