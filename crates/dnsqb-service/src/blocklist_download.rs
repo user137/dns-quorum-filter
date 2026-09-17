@@ -206,11 +206,10 @@ fn push_normalized(
 /// compromised or corrupted upstream feed must never silently join the
 /// bundle (Три Б user-safety: over-blocking a legitimate namespace is worse
 /// than no filtering at all). Carries enough detail for
-/// [`BlocklistRefreshError`]'s matching variants
-/// (`crate::blocklist_updater`) and for a future status-view field, without
-/// this pure module knowing anything about that DTO.
-///
-/// [`BlocklistRefreshError`]: crate::blocklist_updater::BlocklistRefreshError
+/// `blocklist_updater::BlocklistRefreshError`'s matching variants (a private
+/// type in another module, hence no intra-doc link here) and for a future
+/// status-view field, without this pure module knowing anything about that
+/// DTO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ValidationFailure {
     /// Too few candidate lines actually normalized into a domain — most
