@@ -589,5 +589,29 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   so they're the most parallel-job-hungry step) — both green first try once capped. Plain `cargo
   build`/`cargo test --lib --bins` didn't show this even at default parallelism; it's specific to
   steps that link many crates concurrently (many example/test binaries, or one-binary-per-doctest).
-  Not a source bug — don't chase it in the diff; just cap `-j` and move on.
+  Not a source bug — don't chase it in the diff; just cap `-j` and move on. **A fourth shape, same
+  family (T-232, 2026-09-17):** `cargo doc --workspace --no-deps --document-private-items -j 2`
+  crashed rustdoc itself (`STATUS_STACK_BUFFER_OVERRUN` inside
+  `stringdex::internals::tree::encode_search_tree_ukkonen` while building the search index, an
+  OOM/stack issue in rustdoc's own search-index builder, not a doc lint on any crate) — green on
+  the first try at `-j 1`. Same fix, same "don't chase it" rule: `cargo doc` joins the list of
+  steps to run at `-j 1` on this box, alongside `--doc` tests.
+- **Measuring whether synchronous CPU/IO work inside an async task actually stalls request
+  handling needs a `worker_threads`-constrained runtime, not just a stopwatch on the work itself**
+  (T-232, 2026-09-17). A many-core dev box's default `tokio::main` runtime has enough worker
+  threads that a multi-second blocking call inside one `tokio::spawn`-ed task barely registers on
+  a concurrent probe's latency (work-stealing moves everything else to a free worker) — timing the
+  blocking call alone, or probing at default `worker_threads`, will say "no problem" even when the
+  code is genuinely unsafe for a 1-2-core target. Build a second, throwaway `tokio::runtime::
+  Builder::new_multi_thread().worker_threads(1)` runtime and re-run the same workload with a
+  concurrent prober inside it — **the prober must wake on a fixed *absolute* deadline
+  (`tokio::time::Instant` + `sleep_until`), not a relative `sleep(N).await` re-armed each
+  iteration**: a relative timer re-measures itself from whenever the task last happened to resume,
+  so a task frozen for seconds and then woken sees ~0 lag against its own clock — the exact
+  artifact that made this investigation's first two measurement rounds falsely report "no
+  contention even at worker_threads=1" before the bug was caught and the prober rewritten. Also:
+  the workload under test must be `tokio::spawn`-ed, not called directly inside the driving
+  `rt.block_on(async { ... })` root future — `block_on`'s root future runs on the *calling*
+  thread, which is not one of the runtime's `worker_threads` and so never contends with anything
+  spawned onto the pool (another false-negative the first round hit).
 

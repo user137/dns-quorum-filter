@@ -57,15 +57,24 @@ use crate::upstream::ReqwestDohClient;
 /// in — sibling of `topn_updater::TOPN_DIR`/`geoip_updater`'s own directory.
 const BLOCKLIST_DIR: &str = "blocklists";
 
-/// Upper bound on one source's whole fetch-write-hash attempt. Deliberately
-/// generous relative to `topn_updater::TOPN_FETCH_TIMEOUT` (60s, calibrated
-/// to a <64 KB curated file): [`MAX_BLOCKLIST_BYTES`] is 128 MB, and 180s
-/// (a first draft of this constant) would make that cap unreachable on an
-/// ordinary connection — 49 MB (the measured `nrd7.txt` size) in 180s alone
-/// needs ~2.2 Mbit/s sustained, and 128 MB in 180s needs ~5.7 Mbit/s. Sources
-/// that size would hit `Timeout` most cycles and sit on last-known-good
-/// forever — a silent *permanent* staleness bug, not the transient one this
-/// design is supposed to tolerate. 600s clears 128 MB even at ~1.7 Mbit/s.
+/// Upper bound on one source's fetch, and on *initiating* its write+hash —
+/// **not** a bound on write+hash actually finishing (T-232, 2026-09-17):
+/// write+hash now runs on `tokio::task::spawn_blocking`'s pool, which
+/// `tokio::time::timeout` cannot cancel. A timeout firing mid-hash returns
+/// [`BlocklistRefreshError::Timeout`] to the caller while the detached
+/// blocking thread keeps hashing to completion in the background, its
+/// result simply dropped — not a correctness bug (the fallback path already
+/// treats `Timeout` like any other failure), just a reason this constant no
+/// longer bounds the *whole* attempt's wall-clock cost the way its name
+/// suggests. Deliberately generous relative to `topn_updater::TOPN_FETCH_TIMEOUT`
+/// (60s, calibrated to a <64 KB curated file): [`MAX_BLOCKLIST_BYTES`] is
+/// 128 MB, and 180s (a first draft of this constant) would make that cap
+/// unreachable on an ordinary connection — 49 MB (the measured `nrd7.txt`
+/// size) in 180s alone needs ~2.2 Mbit/s sustained, and 128 MB in 180s needs
+/// ~5.7 Mbit/s. Sources that size would hit `Timeout` most cycles and sit on
+/// last-known-good forever — a silent *permanent* staleness bug, not the
+/// transient one this design is supposed to tolerate. 600s clears 128 MB
+/// even at ~1.7 Mbit/s.
 const BLOCKLIST_FETCH_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// How often to re-check the selected sources for a fresh revision. Several
@@ -87,6 +96,12 @@ enum BlocklistRefreshError {
     Io(#[source] std::io::Error),
     #[error("the fetch-write-hash attempt exceeded {BLOCKLIST_FETCH_TIMEOUT:?}")]
     Timeout,
+    /// T-232: the `spawn_blocking` write+hash task panicked, or (far more
+    /// rarely) the runtime shut down mid-task — **not** "cancelled": dropping
+    /// a `spawn_blocking` `JoinHandle` doesn't cancel it, so this variant is
+    /// only ever constructed from a real `Err(JoinError)`.
+    #[error("the blocking write+hash task panicked (or the runtime shut down)")]
+    Join(#[source] tokio::task::JoinError),
 }
 
 impl BlocklistRefreshError {
@@ -101,6 +116,7 @@ impl BlocklistRefreshError {
             Self::TooLarge => "too_large",
             Self::Io(_) => "io",
             Self::Timeout => "timeout",
+            Self::Join(_) => "join",
         }
     }
 }
@@ -128,10 +144,18 @@ pub(crate) struct BlocklistSourceStatus {
 /// The atomically-swapped bundle: every published source's domains, reduced
 /// to hashes and merged into one sorted, deduplicated set (module doc of
 /// `blocklist_download.rs` has the full memory/hash-stability rationale).
-/// `seed` is the exact [`RandomState`] instance that built `domains` — always
-/// travels with it through the same `Arc` swap, so [`matches_domain`] can
-/// never look a hash up against a seed that didn't build the set it's
-/// searching (structural version of 7.1's closing-review finding #1).
+/// `seed` travels with `domains` through the same `Arc` swap, so
+/// [`matches_domain`] never looks a hash up against a seed unrelated to the
+/// one that built the set it's searching (structural version of 7.1's
+/// closing-review finding #1). **Since T-232, this isn't always the exact
+/// same `RandomState` *instance*** — `refresh_one_source`/`refresh_all_sources`'s
+/// fallback arm each `.clone()` this seed to move it into a `spawn_blocking`
+/// closure and hash with the clone, while the original (unmoved) instance is
+/// what ends up in this struct. That's sound only because `RandomState::clone`
+/// copies its two internal keys rather than reseeding — a clone and its
+/// original `hash_one` identically for the same input, pinned by
+/// `blocklist_updater::tests::a_cloned_random_state_hashes_identically_to_its_original`
+/// below, not just known from `std`'s docs.
 ///
 /// [`matches_domain`]: BlocklistBundleState::matches_domain
 #[derive(Default)]
@@ -235,6 +259,39 @@ fn hash_source_body(format: SourceFormat, body: &str, seed: &RandomState) -> Vec
     out
 }
 
+/// T-232: the synchronous write-then-hash tail of [`refresh_one_source`],
+/// extracted so it's directly unit-testable (a tempfile, no tokio) and so
+/// the `spawn_blocking` call site around it stays a thin, untested-by-design
+/// shell — same split as `log_persist::persist_snapshot` vs
+/// `run_query_log_persister`. Called only from inside `spawn_blocking`.
+fn write_and_hash_blocking(
+    path: &Path,
+    body: &[u8],
+    format: SourceFormat,
+    seed: &RandomState,
+) -> Result<Vec<u64>, std::io::Error> {
+    write_atomic(path, body)?;
+    // A third-party feed is UTF-8 by construction (ASCII/punycode domains,
+    // `#`/`!` comments) — `from_utf8_lossy` keeps one stray byte from
+    // aborting the whole source; the per-line parsers drop any resulting
+    // non-conforming line, same tolerance `topn_updater::refresh_one_list`
+    // already applies to its own curated download.
+    let text = String::from_utf8_lossy(body);
+    Ok(hash_source_body(format, &text, seed))
+}
+
+/// T-232: the synchronous read-then-hash tail of `refresh_all_sources`'s
+/// last-known-good fallback, extracted for the same reason as
+/// [`write_and_hash_blocking`]. A missing/unreadable file yields an empty
+/// set — same "silently skip, never abort the cycle" tolerance the caller
+/// already had for this path before this extraction.
+fn read_and_hash_blocking(path: &Path, format: SourceFormat, seed: &RandomState) -> Vec<u64> {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    hash_source_body(format, &body, seed)
+}
+
 /// Builds the initial [`BlocklistBundleState`] from whatever
 /// `<app-data>/blocklists/<id>.txt` files are already present — mirrors
 /// `topn_updater::load_zone_from_disk`. Missing files contribute nothing; a
@@ -316,9 +373,13 @@ async fn fetch_bounded(
     Ok(body.freeze())
 }
 
-/// Fetches, atomically writes the raw text to `<dir>/<id>.txt`, then hashes
-/// it. Returns the hashes for this source alone (not yet merged into the
-/// combined set — the caller does that once over every source's output).
+/// Fetches (async), then writes+hashes the body entirely inside one
+/// `tokio::task::spawn_blocking` hop (T-232: [`write_and_hash_blocking`] —
+/// write, UTF-8 conversion and hash are all synchronous CPU/IO work, and
+/// bundling them in one blocking hop avoids an extra runtime round-trip
+/// versus splitting the write from the hash). Returns the hashes for this
+/// source alone (not yet merged into the combined set — the caller does
+/// that once over every source's output).
 async fn refresh_one_source(
     client: &reqwest::Client,
     source: &BlocklistSource,
@@ -326,15 +387,13 @@ async fn refresh_one_source(
     seed: &RandomState,
 ) -> Result<Vec<u64>, BlocklistRefreshError> {
     let body = fetch_bounded(client, source.url).await?;
-    write_atomic(&dir.join(format!("{}.txt", source.id)), &body)
-        .map_err(BlocklistRefreshError::Io)?;
-    // A third-party feed is UTF-8 by construction (ASCII/punycode domains,
-    // `#`/`!` comments) — `from_utf8_lossy` keeps one stray byte from
-    // aborting the whole source; the per-line parsers drop any resulting
-    // non-conforming line, same tolerance `topn_updater::refresh_one_list`
-    // already applies to its own curated download.
-    let text = String::from_utf8_lossy(&body);
-    Ok(hash_source_body(source.format, &text, seed))
+    let path = dir.join(format!("{}.txt", source.id));
+    let format = source.format;
+    let seed = seed.clone();
+    tokio::task::spawn_blocking(move || write_and_hash_blocking(&path, &body, format, &seed))
+        .await
+        .map_err(BlocklistRefreshError::Join)?
+        .map_err(BlocklistRefreshError::Io)
 }
 
 async fn refresh_one_source_bounded(
@@ -449,10 +508,22 @@ pub(crate) async fn refresh_all_sources(
                 );
                 let previous_status = previous.sources.iter().find(|s| s.id == source.id);
                 let last_updated = previous_status.and_then(|s| s.last_updated);
-                let body = std::fs::read_to_string(dir.join(format!("{}.txt", source.id))).ok();
-                let hashes = body
-                    .map(|body| hash_source_body(source.format, &body, &seed))
-                    .unwrap_or_default();
+                let path = dir.join(format!("{}.txt", source.id));
+                let format = source.format;
+                let seed_for_fallback = seed.clone();
+                // T-232: read+hash moved off the async worker via
+                // `spawn_blocking`, same as the primary path. A `JoinError`
+                // here collapses to the same empty `Vec` as a missing file
+                // (`read_and_hash_blocking`'s own `Ok`/`Err` already do that)
+                // — not new data loss: a first-ever failed fetch already has
+                // no file on disk, so "nothing to fall back to" is an
+                // already-reachable, already-handled outcome this just
+                // extends to one more cause of the same result.
+                let hashes = tokio::task::spawn_blocking(move || {
+                    read_and_hash_blocking(&path, format, &seed_for_fallback)
+                })
+                .await
+                .unwrap_or_default();
                 sources.push(BlocklistSourceStatus {
                     id: source.id,
                     group: source.group,
@@ -467,7 +538,30 @@ pub(crate) async fn refresh_all_sources(
             }
         }
     }
-    finalize(&mut domains);
+    // T-232: `finalize` (sort_unstable+dedup over the combined set) is its
+    // own synchronous CPU-bound step, separate from any one source's hash —
+    // moved off the async worker the same way. On a `JoinError` here (should
+    // never happen in practice: `finalize` is a pure sort/dedup over
+    // already-computed hashes, nothing user-controlled to panic on) this
+    // cycle's result is discarded entirely rather than ever swapping in an
+    // unsorted/undeduped `Vec` — `matches_domain`'s `binary_search`
+    // correctness depends on `finalize` having actually run, so the
+    // previous, still-valid bundle staying in place is strictly safer than
+    // applying a partial result.
+    let domains = match tokio::task::spawn_blocking(move || {
+        finalize(&mut domains);
+        domains
+    })
+    .await
+    {
+        Ok(domains) => domains,
+        Err(join_err) => {
+            tracing::error!(
+                "blocklist-bundle finalize task failed, keeping the previous bundle: {join_err}"
+            );
+            return;
+        }
+    };
     state.update_blocklist_bundles(BlocklistBundleState {
         seed,
         domains,
@@ -479,10 +573,12 @@ pub(crate) async fn refresh_all_sources(
 #[cfg(test)]
 mod tests {
     use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
 
     use super::{
-        hash_source_body, load_blocklist_bundles_from_disk, BlocklistBundleState,
-        BlocklistRefreshError, BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
+        hash_source_body, load_blocklist_bundles_from_disk, read_and_hash_blocking,
+        write_and_hash_blocking, BlocklistBundleState, BlocklistRefreshError,
+        BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
     };
     use crate::blocklist_download::SourceFormat;
 
@@ -513,6 +609,25 @@ mod tests {
     }
 
     #[test]
+    fn a_cloned_random_state_hashes_identically_to_its_original() {
+        // T-232: `refresh_one_source`/`refresh_all_sources`'s fallback arm
+        // each `.clone()` `BlocklistBundleState.seed` to move it into a
+        // `spawn_blocking` closure, then hash with the clone while the
+        // *original* instance is what lands back in the struct. This test
+        // pins the invariant that makes that sound (`BlocklistBundleState`'s
+        // own doc comment above references it by name) — if
+        // `RandomState::clone` ever stopped copying its keys and started
+        // reseeding instead, every `matches_domain` lookup would silently
+        // return `false` for the whole bundle: a total, unannounced filter
+        // bypass, not a panic or a test failure anywhere else.
+        let original = RandomState::new();
+        let clone = original.clone();
+        let built_with_clone = hash_source_body(SourceFormat::PlainDomain, "example.com\n", &clone);
+        let looked_up_with_original = original.hash_one("example.com");
+        assert_eq!(built_with_clone, vec![looked_up_with_original]);
+    }
+
+    #[test]
     fn blocklist_refresh_error_labels_are_stable() {
         // `Http` isn't constructible outside a real `reqwest` call (no public
         // constructor) — the other three cover the closed-set mapping itself.
@@ -520,6 +635,81 @@ mod tests {
         assert_eq!(BlocklistRefreshError::Timeout.label(), "timeout");
         let io_err = std::io::Error::other("disk full");
         assert_eq!(BlocklistRefreshError::Io(io_err).label(), "io");
+    }
+
+    #[tokio::test]
+    async fn blocklist_refresh_error_join_label_is_stable() {
+        // `JoinError` (like `Http`) has no public constructor either — the
+        // one way to build a real one is to let a spawned task actually
+        // panic and await its handle; tokio catches the panic inside the
+        // task, it doesn't propagate to this test's own thread.
+        let Err(join_err) = tokio::spawn(async { panic!("boom") }).await else {
+            panic!("the spawned task must have panicked");
+        };
+        assert_eq!(BlocklistRefreshError::Join(join_err).label(), "join");
+    }
+
+    #[test]
+    fn write_and_hash_blocking_writes_the_file_and_hashes_it() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let Ok(hashes) = write_and_hash_blocking(
+            &path,
+            b"example.com\n# comment\n",
+            SourceFormat::PlainDomain,
+            &seed,
+        ) else {
+            panic!("write_and_hash_blocking must succeed against a writable temp dir");
+        };
+        assert_eq!(hashes.len(), 1);
+        let Ok(written) = std::fs::read_to_string(&path) else {
+            panic!("the file must have been written");
+        };
+        assert_eq!(written, "example.com\n# comment\n");
+    }
+
+    #[test]
+    fn write_and_hash_blocking_tolerates_invalid_utf8_via_lossy_conversion() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let mut body = b"example.com\n".to_vec();
+        body.extend_from_slice(&[0xff, 0xfe]);
+        let Ok(hashes) = write_and_hash_blocking(&path, &body, SourceFormat::PlainDomain, &seed)
+        else {
+            panic!("invalid UTF-8 must not abort the whole source");
+        };
+        assert_eq!(
+            hashes.len(),
+            1,
+            "the one valid line before the bad tail still counts"
+        );
+    }
+
+    #[test]
+    fn read_and_hash_blocking_returns_empty_for_a_missing_file() {
+        let seed = RandomState::new();
+        let missing = std::path::Path::new("this/path/does/not/exist.txt");
+        assert!(read_and_hash_blocking(missing, SourceFormat::PlainDomain, &seed).is_empty());
+    }
+
+    #[test]
+    fn read_and_hash_blocking_reads_and_hashes_an_existing_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let Ok(()) = std::fs::write(&path, "example.com\nexample.org\n") else {
+            panic!("must be able to write the fixture file");
+        };
+        let seed = RandomState::new();
+        let hashes = read_and_hash_blocking(&path, SourceFormat::PlainDomain, &seed);
+        assert_eq!(hashes.len(), 2);
     }
 
     #[test]
