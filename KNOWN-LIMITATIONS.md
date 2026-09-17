@@ -169,17 +169,36 @@ TASKS-DONE.md, never here.
   instead of a silent Fork-B "loading" lie, so an operator reading `/admin/ui` is no longer blind
   to it either; the underlying staleness itself is still unfixed — the card explains the state, it
   doesn't clear it.
-- **No runtime integrity/sanity check on any of the 7 fetched blocklist sources** (T-218 Фаза 7;
-  gap identified and filed as **T-233**, 2026-09-17). `MAX_BLOCKLIST_BYTES` bounds only the raw
-  HTTP response size, not entry count/format/content; none of the 7 sources publish a `.sha256`
-  sidecar (`data/blocklists/CANDIDATES.md` §3 already flagged this at Фаза 7 kickoff — "needs its
-  own integrity control" — never built). A compromised or corrupted upstream feed can silently
-  over-block (inject legitimate high-traffic domains — worse than no filtering at all, the exact
-  failure class SPEC.md's Три Б user-safety leg exists to catch) with no detection: no
-  delta-from-previous-cycle check, no parse-success-ratio check, no cross-check against known-good
-  domains, and — separately — `matches_domain`'s suffix walk excludes a bare TLD candidate but
-  **not** a multi-label public suffix (`co.uk`, `github.io`, …), so one malicious/malformed entry
-  of that shape blocks an entire legitimate namespace; no PSL is consulted at runtime (one is
-  bundled but only for the offline `curate_topn` example). See T-233 in `TASKS.md` for the
-  full threat-model writeup and proposed mitigations — not yet planned or implemented.
+- **Partial runtime integrity check on the 7 fetched blocklist sources** (T-218 Фаза 7, T-233,
+  narrowed 2026-09-17). `blocklist_download::validate_hashes` now gates each source on a
+  parse-success ratio (`MIN_PARSE_SUCCESS_RATIO` = 0.5) and an exact-match canary-domain check
+  (`BLOCKLIST_CANARY_DOMAINS`, ≥2 hits rejects) **before** the fetched body ever reaches disk — a
+  rejected cycle falls back to last-known-good exactly like a network failure, and never poisons
+  that fallback (T-233's own closing-review catch, fixed in the same commit: the write used to
+  happen before the hash/validate step). Still open:
+  - **The gate is per-source, not per-bundle** — a source with fewer than 2 injected canaries (or
+    a different injected domain per source) passes even though the combined multi-source bundle
+    could still accumulate several. Deliberate (per-source is what makes last-known-good
+    fallback work at all), but a real limit worth knowing before relying on the canary check as a
+    cross-source guarantee.
+  - **No delta-from-previous-cycle check** — `previous` lives only in `AppState` memory, so the
+    first refresh cycle after any restart (the moment a freshly-poisoned feed would most plausibly
+    first land) has no baseline to compare against; would need a new persistent per-source
+    sidecar. Any future version of this check must weight the threshold by **elapsed time since
+    the source's last successful refresh**, not raw magnitude alone — a source silently failing or
+    disabled for days/weeks before recovering can show a large, entirely legitimate delta once it
+    resumes (user note, 2026-09-17).
+  - **No PSL-based entry filter** — `matches_domain`'s suffix walk excludes a bare TLD candidate
+    but not a multi-label public suffix (`co.uk`, `github.io`, …); one malicious/malformed entry
+    of that shape still blocks an entire legitimate namespace. Deliberately deferred, not silently
+    dropped — bundling the existing `examples/public_suffix_list.dat` into `dnsqb-service` would
+    reverse both this module's and `rating_filter`'s documented "no PSL" stance, a decision the
+    user chose to keep open rather than settle in passing.
+  - **A source frozen on a rejected/failed cycle ages silently** — same accepted posture as
+    `user-country` GeoIP's own bullet below: the only operator-visible signal is
+    `last_error`/an aging `last_updated` on the `#blocklist-bundles-body` card, no escalation after
+    N consecutive rejections.
+  - **Resource exhaustion (large `Vec<u64>` within `MAX_BLOCKLIST_BYTES`)** — mitigated by T-232's
+    `spawn_blocking` move (CPU cost hits the blocking pool, not the async worker), not eliminated.
+  See T-233 in `TASKS.md` for the full threat-model writeup and what's still open.
 

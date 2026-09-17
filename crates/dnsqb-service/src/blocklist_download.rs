@@ -23,6 +23,7 @@
 //! seed mismatched to the set it's searching.
 
 use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
 use std::hash::BuildHasher;
 
 use crate::normalize_domain;
@@ -126,14 +127,22 @@ pub(crate) const MAX_BLOCKLIST_BYTES: u64 = 128 * 1024 * 1024;
 /// goes through [`crate::normalize_domain`] (the same IDNA2008/
 /// hickory-proto path query parsing and override-list matching already use)
 /// before being hashed; a syntactically invalid line is skipped, never
-/// treated as an error for the whole source.
-pub(crate) fn hash_plain_domains(body: &str, seed: &RandomState, out: &mut Vec<u64>) {
+/// treated as an error for the whole source. `candidates` counts every line
+/// actually handed to `normalize_domain` (blank/`#`-comment lines don't
+/// count — they were never candidates) — the denominator
+/// [`validate_hashes`]'s parse-success-ratio check divides by (T-233).
+pub(crate) fn hash_plain_domains(
+    body: &str,
+    seed: &RandomState,
+    out: &mut Vec<u64>,
+    candidates: &mut usize,
+) {
     for line in body.lines() {
         let entry = line.trim();
         if entry.is_empty() || entry.starts_with('#') {
             continue;
         }
-        push_normalized(entry, seed, out);
+        push_normalized(entry, seed, out, candidates);
     }
 }
 
@@ -144,7 +153,15 @@ pub(crate) fn hash_plain_domains(body: &str, seed: &RandomState, out: &mut Vec<u
 /// of what this module accumulates), and any rule with a wildcard/path/
 /// alternation character inside the domain slot — is skipped. Streams
 /// straight to hashes for the same reason [`hash_plain_domains`] does.
-pub(crate) fn hash_adblock_domains(body: &str, seed: &RandomState, out: &mut Vec<u64>) {
+/// `candidates` — see [`hash_plain_domains`]'s own doc; here it counts only
+/// lines that reach the `||domain^` extraction (a comment/header/exception/
+/// cosmetic line was never a domain candidate to begin with).
+pub(crate) fn hash_adblock_domains(
+    body: &str,
+    seed: &RandomState,
+    out: &mut Vec<u64>,
+    candidates: &mut usize,
+) {
     for line in body.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('!') || line.starts_with('[') {
@@ -163,18 +180,127 @@ pub(crate) fn hash_adblock_domains(body: &str, seed: &RandomState, out: &mut Vec
         if candidate.is_empty() || candidate.contains(['/', '*', '|']) {
             continue; // path/wildcard/alternation rule, not a bare domain anchor
         }
-        push_normalized(candidate, seed, out);
+        push_normalized(candidate, seed, out, candidates);
     }
 }
 
 /// Shared tail of both streaming parsers: normalize, hash, push. Silently
 /// drops a candidate `normalize_domain` rejects — a malformed line in a
 /// third-party feed must never abort the whole source (Три Б: this is
-/// untrusted external input, SECURITY.md's lower-layer-safety leg).
-fn push_normalized(candidate: &str, seed: &RandomState, out: &mut Vec<u64>) {
+/// untrusted external input, SECURITY.md's lower-layer-safety leg). Always
+/// counts the attempt in `candidates`, whether or not `normalize_domain`
+/// accepted it.
+fn push_normalized(
+    candidate: &str,
+    seed: &RandomState,
+    out: &mut Vec<u64>,
+    candidates: &mut usize,
+) {
+    *candidates += 1;
     if let Ok(domain) = normalize_domain(candidate) {
         out.push(seed.hash_one(domain));
     }
+}
+
+/// One published source failed the runtime integrity gate (T-233) — a
+/// compromised or corrupted upstream feed must never silently join the
+/// bundle (Три Б user-safety: over-blocking a legitimate namespace is worse
+/// than no filtering at all). Carries enough detail for
+/// [`BlocklistRefreshError`]'s matching variants
+/// (`crate::blocklist_updater`) and for a future status-view field, without
+/// this pure module knowing anything about that DTO.
+///
+/// [`BlocklistRefreshError`]: crate::blocklist_updater::BlocklistRefreshError
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValidationFailure {
+    /// Too few candidate lines actually normalized into a domain — most
+    /// likely the source now serves something other than its published
+    /// format (an HTML error/rate-limit page, a moved/renamed file).
+    LowParseSuccessRatio { accepted: usize, candidates: usize },
+    /// At least [`MIN_CANARY_HITS_TO_REJECT`] of [`BLOCKLIST_CANARY_DOMAINS`]
+    /// appear as an **exact** entry in this source's freshly-hashed set —
+    /// real ad/malware/NRD/DGA lists structurally don't do this (calibrated
+    /// against the real 2026-09-17 download: zero exact-line hits across all
+    /// eight sources for this same canary set).
+    CanaryDomainsPresent { count: usize },
+}
+
+/// Compiled-in, category-diverse set of globally popular domains no
+/// legitimate ad/malware/tracker/NRD/DGA list should ever contain as an
+/// **exact** entry (a subdomain like `ads.doubleclick.net` is a different,
+/// unrelated domain under a different apex — this only ever tests the apex
+/// strings below). Deliberately **not** sourced from `data/topn/global.txt`
+/// — that file only exists on disk once `[rating_filter].enabled = true`
+/// (default OFF; verified absent on a real install with the bubble off,
+/// 2026-09-17), so a canary tied to it would be silently inert on a typical
+/// install. Verified against the real ~122 MB of downloaded source text
+/// (2026-09-17, `%LOCALAPPDATA%/dns-quorum-filter/blocklists/`): zero
+/// exact-line matches for any of these across all eight sources.
+pub(crate) const BLOCKLIST_CANARY_DOMAINS: &[&str] = &[
+    "google.com",
+    "cloudflare.com",
+    "amazonaws.com",
+    "microsoft.com",
+    "apple.com",
+    "github.com",
+    "wikipedia.org",
+    "facebook.com",
+    "youtube.com",
+    "letsencrypt.org",
+    "fastly.net",
+    "akamai.net",
+];
+
+/// At least this many [`BLOCKLIST_CANARY_DOMAINS`] must appear before a
+/// source is rejected — not `1`, so a single coincidental/legitimate overlap
+/// doesn't reject an otherwise-healthy source (advisor review: no canary in
+/// this set has ever hit any real source, so `1` would already be safe
+/// today, but `2` costs nothing and removes the single-point-of-failure).
+pub(crate) const MIN_CANARY_HITS_TO_REJECT: usize = 2;
+
+/// Below this fraction of candidate lines actually becoming a hashed domain,
+/// a source is rejected as format-confused (T-233). Deliberately far below
+/// the real measured floor — 0.5 leaves roughly 48 points of headroom under
+/// the worst real source measured 2026-09-17 (`adguard-dns-filter.txt`,
+/// adblock format, ~98.6%; every plain-domain source measured ~99.99%+) —
+/// this is a "the source is clearly not what it claims to be" trip wire, not
+/// a tight quality bar.
+pub(crate) const MIN_PARSE_SUCCESS_RATIO: f64 = 0.5;
+
+/// Runs both T-233 gates over one source's freshly-computed hash set.
+/// `candidates == 0` (an empty body) skips the ratio check — an empty
+/// source is inert, not evidence of tampering. Pure, no I/O — the caller
+/// (`blocklist_updater::write_and_hash_blocking`) decides what to do with a
+/// rejection (module's own doc: keep-last-known-good, never persist the
+/// rejected content).
+pub(crate) fn validate_hashes(
+    hashes: &[u64],
+    candidates: usize,
+    seed: &RandomState,
+) -> Result<(), ValidationFailure> {
+    if candidates > 0 {
+        // `candidates` is bounded by MAX_BLOCKLIST_BYTES / shortest possible
+        // line (~tens of millions at most) — nowhere near f64's 2^52 exact-
+        // integer ceiling, so this cast never loses precision in practice.
+        #[allow(clippy::cast_precision_loss)]
+        let ratio = hashes.len() as f64 / candidates as f64;
+        if ratio < MIN_PARSE_SUCCESS_RATIO {
+            return Err(ValidationFailure::LowParseSuccessRatio {
+                accepted: hashes.len(),
+                candidates,
+            });
+        }
+    }
+    let canary_hashes: HashSet<u64> = BLOCKLIST_CANARY_DOMAINS
+        .iter()
+        .filter_map(|d| normalize_domain(d).ok())
+        .map(|d| seed.hash_one(d))
+        .collect();
+    let hits = hashes.iter().filter(|h| canary_hashes.contains(h)).count();
+    if hits >= MIN_CANARY_HITS_TO_REJECT {
+        return Err(ValidationFailure::CanaryDomainsPresent { count: hits });
+    }
+    Ok(())
 }
 
 /// Sorts and deduplicates an accumulated hash buffer in place — the single
@@ -190,10 +316,14 @@ pub(crate) fn finalize(hashes: &mut Vec<u64>) {
 mod tests {
     use std::collections::hash_map::RandomState;
     use std::collections::HashSet;
+    use std::hash::BuildHasher;
 
     use super::{
-        finalize, hash_adblock_domains, hash_plain_domains, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
+        finalize, hash_adblock_domains, hash_plain_domains, validate_hashes, ValidationFailure,
+        BLOCKLIST_CANARY_DOMAINS, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
+        MIN_CANARY_HITS_TO_REJECT, MIN_PARSE_SUCCESS_RATIO,
     };
+    use crate::normalize_domain;
 
     #[test]
     fn blocklist_sources_have_unique_https_ids() {
@@ -225,16 +355,23 @@ mod tests {
                     ads.example.net\n";
         let seed = RandomState::new();
         let mut out = Vec::new();
-        hash_plain_domains(body, &seed, &mut out);
+        let mut candidates = 0;
+        hash_plain_domains(body, &seed, &mut out, &mut candidates);
         assert_eq!(out.len(), 2, "two real domain lines, two hashes");
+        assert_eq!(candidates, 2, "blank/#-comment lines are never candidates");
     }
 
     #[test]
     fn hash_plain_domains_rejects_a_syntactically_invalid_line() {
         let seed = RandomState::new();
         let mut out = Vec::new();
-        hash_plain_domains("not a domain\n", &seed, &mut out);
+        let mut candidates = 0;
+        hash_plain_domains("not a domain\n", &seed, &mut out, &mut candidates);
         assert!(out.is_empty());
+        assert_eq!(
+            candidates, 1,
+            "the line was a candidate even though it was rejected"
+        );
     }
 
     #[test]
@@ -242,8 +379,9 @@ mod tests {
         let seed = RandomState::new();
         let mut a = Vec::new();
         let mut b = Vec::new();
-        hash_plain_domains("Example.COM.\n", &seed, &mut a);
-        hash_plain_domains("example.com\n", &seed, &mut b);
+        let mut candidates = 0;
+        hash_plain_domains("Example.COM.\n", &seed, &mut a, &mut candidates);
+        hash_plain_domains("example.com\n", &seed, &mut b, &mut candidates);
         assert_eq!(a, b, "normalize_domain already folds case/trailing dot");
     }
 
@@ -251,7 +389,13 @@ mod tests {
     fn hash_plain_domains_distinct_domains_hash_differently() {
         let seed = RandomState::new();
         let mut out = Vec::new();
-        hash_plain_domains("example.com\nexample.net\n", &seed, &mut out);
+        let mut candidates = 0;
+        hash_plain_domains(
+            "example.com\nexample.net\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+        );
         assert_ne!(out[0], out[1]);
     }
 
@@ -273,11 +417,16 @@ mod tests {
                     example.com##.banner\n";
         let seed = RandomState::new();
         let mut out = Vec::new();
-        hash_adblock_domains(body, &seed, &mut out);
+        let mut candidates = 0;
+        hash_adblock_domains(body, &seed, &mut out, &mut candidates);
         assert_eq!(
             out.len(),
             3,
             "only the three ||domain^[$opt] lines are real block rules"
+        );
+        assert_eq!(
+            candidates, 3,
+            "comments/headers/exceptions/cosmetic lines were never candidates"
         );
     }
 
@@ -288,8 +437,9 @@ mod tests {
         // regardless of which source's syntax carried the domain.
         let seed = RandomState::new();
         let mut out = Vec::new();
-        hash_plain_domains("shared.example\n", &seed, &mut out);
-        hash_adblock_domains("||shared.example^\n", &seed, &mut out);
+        let mut candidates = 0;
+        hash_plain_domains("shared.example\n", &seed, &mut out, &mut candidates);
+        hash_adblock_domains("||shared.example^\n", &seed, &mut out, &mut candidates);
         assert_eq!(out[0], out[1]);
         finalize(&mut out);
         assert_eq!(out.len(), 1);
@@ -307,5 +457,138 @@ mod tests {
         let mut hashes: Vec<u64> = Vec::new();
         finalize(&mut hashes);
         assert!(hashes.is_empty());
+    }
+
+    // --- validate_hashes (T-233) ---
+
+    fn hash_all<'a>(entries: impl IntoIterator<Item = &'a str>, seed: &RandomState) -> Vec<u64> {
+        entries
+            .into_iter()
+            .filter_map(|d| normalize_domain(d).ok())
+            .map(|d| seed.hash_one(d))
+            .collect()
+    }
+
+    #[test]
+    fn validate_hashes_happy_path_accepts_a_normal_source() {
+        // Real-shaped fragment: comments/blanks already excluded from
+        // `candidates` upstream, every candidate here is a real domain.
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains(
+            "# HaGeZi's Multi PRO\nexample.com\nads.example.net\ntracker.example.org\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+        );
+        assert!(validate_hashes(&out, candidates, &seed).is_ok());
+    }
+
+    #[test]
+    fn validate_hashes_rejects_below_the_ratio_floor() {
+        let seed = RandomState::new();
+        // 1 accepted out of 3 candidates = 1/3, below MIN_PARSE_SUCCESS_RATIO.
+        let hashes = hash_all(["example.com"], &seed);
+        let Err(err) = validate_hashes(&hashes, 3, &seed) else {
+            panic!("1/3 candidates parsing must reject");
+        };
+        assert_eq!(
+            err,
+            ValidationFailure::LowParseSuccessRatio {
+                accepted: 1,
+                candidates: 3
+            }
+        );
+    }
+
+    #[test]
+    fn validate_hashes_accepts_exactly_at_the_ratio_floor() {
+        let seed = RandomState::new();
+        // 1 accepted out of 2 candidates = 0.5 == MIN_PARSE_SUCCESS_RATIO —
+        // the boundary itself must not reject (`<`, not `<=`, in the gate).
+        assert!((MIN_PARSE_SUCCESS_RATIO - 0.5).abs() < f64::EPSILON);
+        let hashes = hash_all(["example.com"], &seed);
+        assert!(validate_hashes(&hashes, 2, &seed).is_ok());
+    }
+
+    #[test]
+    fn validate_hashes_skips_the_ratio_check_on_zero_candidates() {
+        // An empty source is inert, not evidence of tampering — must not
+        // divide by zero or reject.
+        let seed = RandomState::new();
+        assert!(validate_hashes(&[], 0, &seed).is_ok());
+    }
+
+    #[test]
+    fn validate_hashes_html_error_page_trips_the_ratio_gate() {
+        // Synthetic "the feed now serves an HTML error/rate-limit page"
+        // body — none of these lines are valid domains.
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains(
+            "<html>\n<body>429 Too Many Requests</body>\n</html>\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+        );
+        assert!(matches!(
+            validate_hashes(&out, candidates, &seed),
+            Err(ValidationFailure::LowParseSuccessRatio { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_hashes_accepts_one_canary_below_the_reject_threshold() {
+        assert_eq!(MIN_CANARY_HITS_TO_REJECT, 2);
+        let seed = RandomState::new();
+        let mut hashes = hash_all(["real-malware-domain.example"], &seed);
+        hashes.extend(hash_all([BLOCKLIST_CANARY_DOMAINS[0]], &seed));
+        assert!(
+            validate_hashes(&hashes, hashes.len(), &seed).is_ok(),
+            "a single coincidental canary hit must not reject the source"
+        );
+    }
+
+    #[test]
+    fn validate_hashes_rejects_at_exactly_the_canary_threshold() {
+        let seed = RandomState::new();
+        let mut hashes = hash_all(["real-malware-domain.example"], &seed);
+        hashes.extend(hash_all(
+            BLOCKLIST_CANARY_DOMAINS[..MIN_CANARY_HITS_TO_REJECT]
+                .iter()
+                .copied(),
+            &seed,
+        ));
+        let Err(err) = validate_hashes(&hashes, hashes.len(), &seed) else {
+            panic!("MIN_CANARY_HITS_TO_REJECT canaries must reject");
+        };
+        assert_eq!(
+            err,
+            ValidationFailure::CanaryDomainsPresent {
+                count: MIN_CANARY_HITS_TO_REJECT
+            }
+        );
+    }
+
+    #[test]
+    fn validate_hashes_a_legitimate_padded_list_with_two_canaries_is_rejected() {
+        // Misuse/fool: a mostly-real list with a small injected legitimate-
+        // domain payload — must not slip past on volume alone.
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains(
+            "real-ads-1.example\nreal-ads-2.example\nreal-ads-3.example\n\
+             google.com\ncloudflare.com\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+        );
+        assert!(matches!(
+            validate_hashes(&out, candidates, &seed),
+            Err(ValidationFailure::CanaryDomainsPresent { count: 2 })
+        ));
     }
 }

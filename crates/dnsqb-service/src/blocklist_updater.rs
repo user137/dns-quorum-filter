@@ -45,8 +45,8 @@ use futures_util::StreamExt;
 use tokio::sync::Notify;
 
 use crate::blocklist_download::{
-    finalize, hash_adblock_domains, hash_plain_domains, BlocklistSource, SourceFormat,
-    BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
+    finalize, hash_adblock_domains, hash_plain_domains, validate_hashes, BlocklistSource,
+    SourceFormat, ValidationFailure, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
 };
 use crate::dispatch::AppState;
 use crate::normalize_domain;
@@ -102,6 +102,35 @@ enum BlocklistRefreshError {
     /// only ever constructed from a real `Err(JoinError)`.
     #[error("the blocking write+hash task panicked (or the runtime shut down)")]
     Join(#[source] tokio::task::JoinError),
+    /// T-233: too few candidate lines normalized into a real domain — the
+    /// source most likely no longer serves its published format. The bad
+    /// body is **never** written to disk (`write_and_hash_blocking` gates
+    /// before `write_atomic`), so the existing last-known-good fallback
+    /// below stays genuinely last-*good*.
+    #[error("only {accepted}/{candidates} candidate lines parsed as a domain")]
+    LowParseSuccessRatio { accepted: usize, candidates: usize },
+    /// T-233: at least `MIN_CANARY_HITS_TO_REJECT` well-known legitimate
+    /// domains appear as an exact entry — same never-written-to-disk
+    /// guarantee as above.
+    #[error("{count} known-legitimate canary domains present in the source")]
+    CanaryDomainsPresent { count: usize },
+}
+
+impl From<ValidationFailure> for BlocklistRefreshError {
+    fn from(failure: ValidationFailure) -> Self {
+        match failure {
+            ValidationFailure::LowParseSuccessRatio {
+                accepted,
+                candidates,
+            } => Self::LowParseSuccessRatio {
+                accepted,
+                candidates,
+            },
+            ValidationFailure::CanaryDomainsPresent { count } => {
+                Self::CanaryDomainsPresent { count }
+            }
+        }
+    }
 }
 
 impl BlocklistRefreshError {
@@ -117,6 +146,8 @@ impl BlocklistRefreshError {
             Self::Io(_) => "io",
             Self::Timeout => "timeout",
             Self::Join(_) => "join",
+            Self::LowParseSuccessRatio { .. } => "low_parse_ratio",
+            Self::CanaryDomainsPresent { .. } => "canary_hit",
         }
     }
 }
@@ -249,47 +280,70 @@ impl BlocklistBundleState {
 /// Streams `body` into hashes via the parser matching `format` — shared tail
 /// of both the network path ([`refresh_one_source`]) and the disk path
 /// ([`load_blocklist_bundles_from_disk`]), so the format dispatch isn't
-/// duplicated between them. Pure (no I/O) — unit-tested directly.
-fn hash_source_body(format: SourceFormat, body: &str, seed: &RandomState) -> Vec<u64> {
+/// duplicated between them. Pure (no I/O) — unit-tested directly. Returns
+/// the candidate-line count alongside the hashes (T-233 — the denominator
+/// `blocklist_download::validate_hashes`'s parse-success-ratio check needs).
+fn hash_source_body(format: SourceFormat, body: &str, seed: &RandomState) -> (Vec<u64>, usize) {
     let mut out = Vec::new();
+    let mut candidates = 0;
     match format {
-        SourceFormat::PlainDomain => hash_plain_domains(body, seed, &mut out),
-        SourceFormat::AdblockNetRules => hash_adblock_domains(body, seed, &mut out),
+        SourceFormat::PlainDomain => hash_plain_domains(body, seed, &mut out, &mut candidates),
+        SourceFormat::AdblockNetRules => {
+            hash_adblock_domains(body, seed, &mut out, &mut candidates);
+        }
     }
-    out
+    (out, candidates)
 }
 
-/// T-232: the synchronous write-then-hash tail of [`refresh_one_source`],
-/// extracted so it's directly unit-testable (a tempfile, no tokio) and so
-/// the `spawn_blocking` call site around it stays a thin, untested-by-design
-/// shell — same split as `log_persist::persist_snapshot` vs
-/// `run_query_log_persister`. Called only from inside `spawn_blocking`.
+/// T-232/T-233: the synchronous hash-validate-then-write tail of
+/// [`refresh_one_source`], extracted so it's directly unit-testable (a
+/// tempfile, no tokio) and so the `spawn_blocking` call site around it stays
+/// a thin, untested-by-design shell — same split as
+/// `log_persist::persist_snapshot` vs `run_query_log_persister`. Called only
+/// from inside `spawn_blocking`.
+///
+/// **Order matters (T-233 advisor review): hash+validate happen entirely in
+/// memory over `body` before any disk write.** `write_atomic(path, ...)`
+/// only runs once [`validate_hashes`] returns `Ok` — a source that fails the
+/// gate never touches `<id>.txt`, so the existing last-known-good file
+/// [`read_and_hash_blocking`] falls back to on the *next* failure is never
+/// overwritten by this cycle's rejected content. Getting this order backward
+/// (write first, validate after — T-232's original shape) would let a single
+/// gate-failing cycle poison the very last-known-good fallback the gate
+/// exists to protect.
 fn write_and_hash_blocking(
     path: &Path,
     body: &[u8],
     format: SourceFormat,
     seed: &RandomState,
-) -> Result<Vec<u64>, std::io::Error> {
-    write_atomic(path, body)?;
+) -> Result<Vec<u64>, BlocklistRefreshError> {
     // A third-party feed is UTF-8 by construction (ASCII/punycode domains,
     // `#`/`!` comments) — `from_utf8_lossy` keeps one stray byte from
     // aborting the whole source; the per-line parsers drop any resulting
     // non-conforming line, same tolerance `topn_updater::refresh_one_list`
     // already applies to its own curated download.
     let text = String::from_utf8_lossy(body);
-    Ok(hash_source_body(format, &text, seed))
+    let (hashes, candidates) = hash_source_body(format, &text, seed);
+    validate_hashes(&hashes, candidates, seed)?;
+    write_atomic(path, body).map_err(BlocklistRefreshError::Io)?;
+    Ok(hashes)
 }
 
 /// T-232: the synchronous read-then-hash tail of `refresh_all_sources`'s
 /// last-known-good fallback, extracted for the same reason as
 /// [`write_and_hash_blocking`]. A missing/unreadable file yields an empty
 /// set — same "silently skip, never abort the cycle" tolerance the caller
-/// already had for this path before this extraction.
+/// already had for this path before this extraction. No gate here — any file
+/// written **since T-233** already passed [`validate_hashes`] the cycle it
+/// was written (module doc on [`write_and_hash_blocking`]); the eight files
+/// already on disk from before this gate existed are grandfathered in
+/// unvalidated on the first post-upgrade read, same as any other
+/// last-known-good content this module trusts without re-checking.
 fn read_and_hash_blocking(path: &Path, format: SourceFormat, seed: &RandomState) -> Vec<u64> {
     let Ok(body) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    hash_source_body(format, &body, seed)
+    hash_source_body(format, &body, seed).0
 }
 
 /// Builds the initial [`BlocklistBundleState`] from whatever
@@ -328,7 +382,7 @@ pub(crate) fn load_blocklist_bundles_from_disk(app_data: Option<&Path>) -> Block
         // `None`; `BlocklistSourceStatus::last_updated`'s own doc says `None`
         // means "never fetched successfully", which a present file disproves.
         let last_updated = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-        let hashes = hash_source_body(source.format, &body, &seed);
+        let (hashes, _candidates) = hash_source_body(source.format, &body, &seed);
         sources.push(BlocklistSourceStatus {
             id: source.id,
             group: source.group,
@@ -393,7 +447,6 @@ async fn refresh_one_source(
     tokio::task::spawn_blocking(move || write_and_hash_blocking(&path, &body, format, &seed))
         .await
         .map_err(BlocklistRefreshError::Join)?
-        .map_err(BlocklistRefreshError::Io)
 }
 
 async fn refresh_one_source_bounded(
@@ -580,7 +633,7 @@ mod tests {
         write_and_hash_blocking, BlocklistBundleState, BlocklistRefreshError,
         BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
     };
-    use crate::blocklist_download::SourceFormat;
+    use crate::blocklist_download::{SourceFormat, BLOCKLIST_CANARY_DOMAINS};
 
     #[test]
     fn check_interval_is_a_day() {
@@ -593,19 +646,22 @@ mod tests {
     #[test]
     fn hash_source_body_dispatches_plain_domain_format() {
         let seed = RandomState::new();
-        let out = hash_source_body(SourceFormat::PlainDomain, "example.com\n# comment\n", &seed);
+        let (out, candidates) =
+            hash_source_body(SourceFormat::PlainDomain, "example.com\n# comment\n", &seed);
         assert_eq!(out.len(), 1);
+        assert_eq!(candidates, 1);
     }
 
     #[test]
     fn hash_source_body_dispatches_adblock_net_rules_format() {
         let seed = RandomState::new();
-        let out = hash_source_body(
+        let (out, candidates) = hash_source_body(
             SourceFormat::AdblockNetRules,
             "! comment\n||example.com^\n@@||allowed.example^\n",
             &seed,
         );
         assert_eq!(out.len(), 1, "only the one real ||domain^ rule counts");
+        assert_eq!(candidates, 1);
     }
 
     #[test]
@@ -622,7 +678,8 @@ mod tests {
         // bypass, not a panic or a test failure anywhere else.
         let original = RandomState::new();
         let clone = original.clone();
-        let built_with_clone = hash_source_body(SourceFormat::PlainDomain, "example.com\n", &clone);
+        let (built_with_clone, _candidates) =
+            hash_source_body(SourceFormat::PlainDomain, "example.com\n", &clone);
         let looked_up_with_original = original.hash_one("example.com");
         assert_eq!(built_with_clone, vec![looked_up_with_original]);
     }
@@ -635,6 +692,18 @@ mod tests {
         assert_eq!(BlocklistRefreshError::Timeout.label(), "timeout");
         let io_err = std::io::Error::other("disk full");
         assert_eq!(BlocklistRefreshError::Io(io_err).label(), "io");
+        assert_eq!(
+            BlocklistRefreshError::LowParseSuccessRatio {
+                accepted: 1,
+                candidates: 10
+            }
+            .label(),
+            "low_parse_ratio"
+        );
+        assert_eq!(
+            BlocklistRefreshError::CanaryDomainsPresent { count: 2 }.label(),
+            "canary_hit"
+        );
     }
 
     #[tokio::test]
@@ -678,7 +747,13 @@ mod tests {
         };
         let path = dir.path().join("source.txt");
         let seed = RandomState::new();
-        let mut body = b"example.com\n".to_vec();
+        // Two valid lines plus the invalid tail keeps the ratio (2/3) well
+        // clear of MIN_PARSE_SUCCESS_RATIO (0.5) — this test is about UTF-8
+        // tolerance, not the ratio boundary (that's
+        // `validate_hashes_accepts_exactly_at_the_ratio_floor`'s job; a
+        // single-valid-line fixture here would pass at exactly the
+        // threshold and silently start asserting the wrong thing).
+        let mut body = b"example.com\nexample.net\n".to_vec();
         body.extend_from_slice(&[0xff, 0xfe]);
         let Ok(hashes) = write_and_hash_blocking(&path, &body, SourceFormat::PlainDomain, &seed)
         else {
@@ -686,8 +761,89 @@ mod tests {
         };
         assert_eq!(
             hashes.len(),
-            1,
-            "the one valid line before the bad tail still counts"
+            2,
+            "the two valid lines before the bad tail still count"
+        );
+    }
+
+    #[test]
+    fn write_and_hash_blocking_rejects_a_low_parse_ratio_and_never_writes_the_file() {
+        // T-233 discriminating test: a source that trips the gate must never
+        // touch disk — a regression back to "write, then validate" (T-232's
+        // original order) would leave the bad body on disk despite the
+        // caller-visible `Err`.
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let body = b"<html>\n<body>429 Too Many Requests</body>\n</html>\n";
+        let Err(err) = write_and_hash_blocking(&path, body, SourceFormat::PlainDomain, &seed)
+        else {
+            panic!("an HTML error page must trip the parse-ratio gate");
+        };
+        assert!(matches!(
+            err,
+            BlocklistRefreshError::LowParseSuccessRatio { .. }
+        ));
+        assert!(
+            !path.exists(),
+            "a gate-rejected body must never be written to disk"
+        );
+    }
+
+    #[test]
+    fn write_and_hash_blocking_rejects_canary_domains_and_never_writes_the_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let body = format!(
+            "real-ads-1.example\nreal-ads-2.example\n{}\n{}\n",
+            BLOCKLIST_CANARY_DOMAINS[0], BLOCKLIST_CANARY_DOMAINS[1]
+        );
+        let Err(err) =
+            write_and_hash_blocking(&path, body.as_bytes(), SourceFormat::PlainDomain, &seed)
+        else {
+            panic!("two canary domains must trip the gate");
+        };
+        assert!(matches!(
+            err,
+            BlocklistRefreshError::CanaryDomainsPresent { count: 2 }
+        ));
+        assert!(
+            !path.exists(),
+            "a gate-rejected body must never be written to disk"
+        );
+    }
+
+    #[test]
+    fn write_and_hash_blocking_does_not_poison_an_existing_last_known_good_file() {
+        // The scenario the reordering fix protects: a healthy cycle writes a
+        // good file, then a later gate-rejected cycle must leave it exactly
+        // as it was, so `read_and_hash_blocking`'s fallback still reads the
+        // real last-known-good, not the rejected content.
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("source.txt");
+        let seed = RandomState::new();
+        let good_body = b"real-ads-1.example\nreal-ads-2.example\n";
+        assert!(
+            write_and_hash_blocking(&path, good_body, SourceFormat::PlainDomain, &seed).is_ok(),
+            "a healthy first cycle must succeed"
+        );
+        let bad_body = b"<html>\n<body>429 Too Many Requests</body>\n</html>\n";
+        assert!(
+            write_and_hash_blocking(&path, bad_body, SourceFormat::PlainDomain, &seed).is_err()
+        );
+        let Ok(on_disk) = std::fs::read(&path) else {
+            panic!("the good file must still be on disk");
+        };
+        assert_eq!(
+            on_disk, good_body,
+            "a rejected later cycle must not overwrite the earlier good file"
         );
     }
 
