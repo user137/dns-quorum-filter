@@ -169,4 +169,17 @@ TASKS-DONE.md, never here.
   instead of a silent Fork-B "loading" lie, so an operator reading `/admin/ui` is no longer blind
   to it either; the underlying staleness itself is still unfixed — the card explains the state, it
   doesn't clear it.
+- **No runtime integrity/sanity check on any of the 7 fetched blocklist sources** (T-218 Фаза 7;
+  gap identified and filed as **T-233**, 2026-09-17). `MAX_BLOCKLIST_BYTES` bounds only the raw
+  HTTP response size, not entry count/format/content; none of the 7 sources publish a `.sha256`
+  sidecar (`data/blocklists/CANDIDATES.md` §3 already flagged this at Фаза 7 kickoff — "needs its
+  own integrity control" — never built). A compromised or corrupted upstream feed can silently
+  over-block (inject legitimate high-traffic domains — worse than no filtering at all, the exact
+  failure class SPEC.md's Три Б user-safety leg exists to catch) with no detection: no
+  delta-from-previous-cycle check, no parse-success-ratio check, no cross-check against known-good
+  domains, and — separately — `matches_domain`'s suffix walk excludes a bare TLD candidate but
+  **not** a multi-label public suffix (`co.uk`, `github.io`, …), so one malicious/malformed entry
+  of that shape blocks an entire legitimate namespace; no PSL is consulted at runtime (one is
+  bundled but only for the offline `curate_topn` example). See T-233 in `TASKS.md` for the
+  full threat-model writeup and proposed mitigations — not yet planned or implemented.
 
