@@ -23,18 +23,20 @@
 
 use crate::admin::{
     category_filter_views, compute_hero_state, compute_stats, master_switch_targets, unix_millis,
-    AdminConfigUpdate, AdminStats, AdminStatusResponse, BaselineEndpointView, CacheConfigUpdate,
-    CacheConfigView, CertStatusResponse, CertTrustView, DatabaseSource, EncryptedPersistenceView,
-    GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip, HealthResponse, InstallCertResponse,
-    LogEntryView, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
-    MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest, OverrideDomainView,
-    OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView, RatingFilterConfigUpdate,
-    RatingFilterStatusView, UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
-    ADMIN_DTO_SCHEMA_VERSION,
+    AdminConfigUpdate, AdminStats, AdminStatusResponse, BaselineEndpointView,
+    BlocklistBundlesConfigUpdate, BlocklistBundlesStatusView, BlocklistSourceStatusView,
+    CacheConfigUpdate, CacheConfigView, CertStatusResponse, CertTrustView, DatabaseSource,
+    EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
+    HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
+    MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
+    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
+    RatingFilterConfigUpdate, RatingFilterStatusView, UninstallLocalStateResponse,
+    WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
 use crate::baseline_selector::BaselineSelector;
+use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
@@ -118,6 +120,7 @@ const ADMIN_GEOIP_REMOVE_PATH: &str = "/admin/geoip/remove";
 const ADMIN_GEOIP_MAXMIND_PATH: &str = "/admin/geoip/maxmind";
 const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
 const ADMIN_RATING_FILTER_PATH: &str = "/admin/rating-filter";
+const ADMIN_BLOCKLIST_BUNDLES_PATH: &str = "/admin/blocklist-bundles";
 const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
 const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
 const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
@@ -159,6 +162,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_GEOIP_MAXMIND_PATH, &[Method::GET, Method::POST]),
     (ADMIN_GEOIP_MAXMIND_CLEAR_PATH, &[Method::POST]),
     (ADMIN_RATING_FILTER_PATH, &[Method::POST]),
+    (ADMIN_BLOCKLIST_BUNDLES_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_PATH, &[Method::GET]),
     (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_REMOVE_PATH, &[Method::POST]),
@@ -1610,6 +1614,38 @@ fn rating_filter_status_view<C: DohClient + Sync>(state: &AppState<C>) -> Rating
     }
 }
 
+/// Builds the always-present [`BlocklistBundlesStatusView`] from `state`'s
+/// live `[blocklist_bundles]` config and loaded bundle — mirrors
+/// [`rating_filter_status_view`]. `sources` is carried through **unresolved**
+/// (see [`BlocklistBundlesStatusView::sources`]'s own doc) — this function
+/// must never turn `None` into a concrete id list.
+fn blocklist_bundles_status_view<C: DohClient + Sync>(
+    state: &AppState<C>,
+) -> BlocklistBundlesStatusView {
+    let config = state.blocklist_bundles_config_snapshot();
+    let bundle = state.blocklist_bundles_snapshot();
+    let loaded = bundle
+        .sources
+        .iter()
+        .map(|source| BlocklistSourceStatusView {
+            id: source.id.to_string(),
+            group: source.group.to_string(),
+            entry_count: source.entry_count,
+            last_updated: source.last_updated.map(unix_millis),
+            last_error: source.last_error.map(str::to_string),
+        })
+        .collect();
+    let available_sources: Vec<String> =
+        BLOCKLIST_SOURCES.iter().map(|s| s.id.to_string()).collect();
+    BlocklistBundlesStatusView {
+        enabled: config.enabled,
+        active: blocklist_bundles_is_active(&config, &bundle),
+        sources: config.sources.clone(),
+        available_sources,
+        loaded,
+    }
+}
+
 /// Builds the current [`AdminStatusResponse`] from `state` — shared by
 /// `GET /admin/status` and the response [`apply_admin_config`] echoes back
 /// after a `POST /admin/config`. `persisted` is the caller's to state
@@ -1648,6 +1684,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
             cache: state.persist.persist_cache,
         },
         rating_filter: rating_filter_status_view(state),
+        blocklist_bundles: blocklist_bundles_status_view(state),
     }
 }
 
@@ -1785,6 +1822,7 @@ fn apply_admin_config<C: DohClient + Sync>(
             cache: state.persist.persist_cache,
         },
         rating_filter: rating_filter_status_view(state),
+        blocklist_bundles: blocklist_bundles_status_view(state),
     }
 }
 
@@ -2688,6 +2726,111 @@ where
         return status_response(StatusCode::BAD_REQUEST);
     };
     match apply_rating_filter_change(state, &update) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Applies a validated `POST /admin/blocklist-bundles` update — mirrors
+/// [`apply_rating_filter_change`], **without** a cache-rebuild branch. Not
+/// because bundle verdicts aren't cached (that alone wouldn't rule out a
+/// stale cached `ALLOW` for a domain a newly-enabled bundle would now
+/// block) — it's the pipeline's step *order*: the blocklist bundle is
+/// consulted inside `pipeline::overrides_step` (steps 1-2), which runs
+/// *before* the step-4 cache read, while the rating filter's own step 5
+/// runs *after* it (`pipeline::rating_filter_step`'s own doc: "below the
+/// cache read"). A query can therefore never have been cached in a way that
+/// bypassed the bundle check, enabled or not, so there is nothing stale to
+/// invalidate here.
+///
+/// `update.sources` is validated only when `Some` — [`crate::config::
+/// BlocklistBundlesConfig`]'s own doc: `None` means "track every published
+/// source" and is never subject to the known-id check.
+fn apply_blocklist_bundles_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: &BlocklistBundlesConfigUpdate,
+) -> Result<AdminStatusResponse, ConfigError> {
+    let sources = match &update.sources {
+        Some(raw) => Some(crate::config::validate_blocklist_bundle_sources(raw)?),
+        None => None,
+    };
+    let new_config = BlocklistBundlesConfig {
+        enabled: update.enabled,
+        sources,
+    };
+
+    let persisted = {
+        let _persist_guard = state.persist_lock.lock();
+        state.update_blocklist_bundles_config(new_config.clone());
+        state.wake_blocklist_bundles_refresh();
+        let runtime = *state.runtime.read();
+        let cache_config = state.cache.read().config;
+        let providers = state.providers_snapshot();
+        let blocked_countries = state.geoip_countries.read().as_ref().clone();
+        match state.persist.paths.as_ref() {
+            Some(paths) => {
+                let config = ResolverConfig {
+                    port: state.persist.port,
+                    timeout_mode: runtime.timeout.mode,
+                    timeout_ms: timeout_ms(runtime.timeout.duration),
+                    serve_baseline_when_filters_unreachable: runtime
+                        .serve_baseline_when_filters_unreachable,
+                    persist_query_log: state.persist.persist_query_log,
+                    persist_cache: state.persist.persist_cache,
+                    // Live read (T-217 pattern) — this route never touches it.
+                    rating_filter: (*state.rating_filter_config_snapshot()).clone(),
+                    personal_zone: *state.personal_zone_config_snapshot(),
+                    blocklist_bundles: new_config,
+                    limits: state.persist.limits,
+                    providers,
+                    cache: cache_config,
+                    geoip: GeoipConfig { blocked_countries },
+                };
+                match config.save(&paths.config) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        tracing::warn!(
+                            "failed to persist an admin blocklist-bundles change to disk: {err}"
+                        );
+                        false
+                    }
+                }
+            }
+            None => false,
+        }
+    };
+    Ok(admin_status(state, persisted))
+}
+
+/// `POST /admin/blocklist-bundles` (T-218 Фаза 7, Батч 7.4 частина 2) —
+/// method allowlisting happens centrally in [`serve`]'s `ROUTES` check. Same
+/// CSRF gate and body-size cap as [`serve_admin_rating_filter`]; an unknown
+/// source id is `400` ([`crate::config::validate_blocklist_bundle_sources`]).
+async fn serve_admin_blocklist_bundles<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(update) = serde_json::from_slice::<BlocklistBundlesConfigUpdate>(&collected.to_bytes())
+    else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_blocklist_bundles_change(state, &update) {
         Ok(response) => json_response(&response),
         Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
@@ -3702,6 +3845,7 @@ where
         ADMIN_GEOIP_MAXMIND_PATH => serve_admin_geoip_maxmind(req, &state).await,
         ADMIN_GEOIP_MAXMIND_CLEAR_PATH => serve_admin_geoip_maxmind_clear(req, &state).await,
         ADMIN_RATING_FILTER_PATH => serve_admin_rating_filter(req, &state).await,
+        ADMIN_BLOCKLIST_BUNDLES_PATH => serve_admin_blocklist_bundles(req, &state).await,
         ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
         ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
         ADMIN_PROVIDERS_REMOVE_PATH => serve_admin_providers_remove(req, &state).await,
@@ -3728,23 +3872,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        admin_status, blocklist_bundles_is_active, content_type_is_dns_message, parse_log_query,
-        rating_filter_is_active, read_watchdog_view, resolve_doh_request, serve,
-        wire_bytes_from_get, AppState, CacheState, DohRequestError, GeoipInit, GeoipSource,
-        GeoipState, LogQueryError, OverridesState, PersistPaths, PersistTarget, RuntimeInit,
-        WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH,
-        ADMIN_UNINSTALL_LOCAL_STATE_PATH, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT,
-        MAX_MESSAGE_SIZE, ROUTES,
+        admin_status, blocklist_bundles_is_active, blocklist_bundles_status_view,
+        content_type_is_dns_message, parse_log_query, rating_filter_is_active, read_watchdog_view,
+        resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
+        GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
+        PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
+        ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, BLOCKLIST_SOURCES,
+        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
-        AdminConfigUpdate, AdminStatusResponse, CacheConfigUpdate, CacheConfigView,
-        CategoryToggleState, CertStatusResponse, CertTrustView, DecisionView,
+        AdminConfigUpdate, AdminStatusResponse, BlocklistSourceStatusView, CacheConfigUpdate,
+        CacheConfigView, CategoryToggleState, CertStatusResponse, CertTrustView, DecisionView,
         GeoipCountriesResponse, GeoipCountryRequest, HeroStateView, LogQueryResponse,
         MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
         OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest, ProvidersResponse,
         WatchdogStatusView, ZoneListStatusView,
     };
-    use crate::blocklist_updater::BlocklistBundleState;
+    use crate::blocklist_updater::{BlocklistBundleState, BlocklistSourceStatus};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
     use crate::config::{
         BlocklistBundlesConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig,
@@ -7798,6 +7942,223 @@ mod tests {
         assert!(!rating_filter_is_active(&off, &full), "disabled ⇒ inert");
     }
 
+    // ---- T-218 Фаза 7, Батч 7.4 частина 2: POST /admin/blocklist-bundles ----
+
+    /// Builds a non-empty bundle with one source's status attached — the
+    /// `BlocklistBundleState::from_domains` `#[cfg(test)]` constructor leaves
+    /// `sources` empty (module doc), so a status-view test that wants a
+    /// populated `loaded` list pushes one by hand.
+    fn seeded_bundle(domain: &'static str) -> BlocklistBundleState {
+        let mut bundle = BlocklistBundleState::from_domains([domain]);
+        bundle.sources.push(BlocklistSourceStatus {
+            id: "hagezi-multi-pro",
+            group: "hagezi-multi-pro",
+            entry_count: 1,
+            last_updated: Some(SystemTime::now()),
+            last_error: None,
+        });
+        bundle
+    }
+
+    async fn blocklist_bundles_post(
+        state: Arc<AppState<MockClient>>,
+        enabled: bool,
+        sources: Option<&[&str]>,
+    ) -> AdminStatusResponse {
+        let body = serde_json::json!({
+            "enabled": enabled,
+            "sources": sources,
+        });
+        let response = match serve(admin_post_json("/admin/blocklist-bundles", &body), state).await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a valid POST must be 200"
+        );
+        let bytes = body_bytes(response).await;
+        match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+            Ok(status) => status,
+            Err(err) => panic!("response must decode as AdminStatusResponse: {err}"),
+        }
+    }
+
+    // Happy path: `blocklist_bundles_status_view` reflects both the live
+    // config and the loaded bundle's per-source metadata, with `entry_count`
+    // — not `domains` — carrying the pre-dedup caveat (advisor-catch, see
+    // `BlocklistSourceStatusView::entry_count`'s own doc).
+    #[test]
+    fn blocklist_bundles_status_view_reflects_config_and_bundle_state() {
+        let state = state_with(no_op_client());
+        state.update_blocklist_bundles(seeded_bundle("ads.example"));
+        state.update_blocklist_bundles_config(BlocklistBundlesConfig {
+            enabled: true,
+            sources: Some(vec!["hagezi-multi-pro".to_string()]),
+        });
+
+        let view = blocklist_bundles_status_view(&state);
+        assert!(view.enabled);
+        assert!(view.active, "seeded non-empty bundle + enabled ⇒ active");
+        assert_eq!(view.sources, Some(vec!["hagezi-multi-pro".to_string()]));
+        assert!(
+            view.available_sources.contains(&"1hosts-lite".to_string()),
+            "the card renders its checkboxes from available_sources"
+        );
+        assert_eq!(
+            view.available_sources.len(),
+            BLOCKLIST_SOURCES.len(),
+            "must enumerate the whole table, not a stale hardcoded count"
+        );
+        assert_eq!(
+            view.loaded,
+            vec![BlocklistSourceStatusView {
+                id: "hagezi-multi-pro".to_string(),
+                group: "hagezi-multi-pro".to_string(),
+                entry_count: 1,
+                last_updated: view.loaded[0].last_updated,
+                last_error: None,
+            }]
+        );
+    }
+
+    // Happy path via the real HTTP route: an explicit `sources` subset
+    // round-trips through the status response.
+    #[tokio::test]
+    async fn serve_admin_blocklist_bundles_enables_with_explicit_sources_and_status_reflects_it() {
+        let state = state_with(no_op_client());
+        let status =
+            blocklist_bundles_post(Arc::clone(&state), true, Some(&["hagezi-multi-pro"])).await;
+        assert!(status.blocklist_bundles.enabled);
+        assert_eq!(
+            status.blocklist_bundles.sources,
+            Some(vec!["hagezi-multi-pro".to_string()])
+        );
+    }
+
+    // Misuse & fool: an unknown source id is a loud 400, not a silently
+    // ignored entry — mirrors `serve_admin_rating_filter_rejects_a_code_with_no_dataset`.
+    #[tokio::test]
+    async fn serve_admin_blocklist_bundles_rejects_an_unknown_source_id() {
+        let state = state_with(no_op_client());
+        let body = serde_json::json!({ "enabled": true, "sources": ["not-a-real-source"] });
+        let response = match serve(admin_post_json("/admin/blocklist-bundles", &body), state).await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Security & boundary: the JSON content-type gate is the CSRF defense —
+    // a request without it never reaches the handler.
+    #[tokio::test]
+    async fn serve_admin_blocklist_bundles_rejects_a_missing_content_type() {
+        let Ok(json) = serde_json::to_vec(&serde_json::json!({ "enabled": true, "sources": [] }))
+        else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/blocklist-bundles")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    // Error path: the change live-applies and persists to disk when a config
+    // path is set, and reloads with the same `[blocklist_bundles]` table.
+    #[tokio::test]
+    async fn serve_admin_blocklist_bundles_persists_a_change_to_disk_when_a_config_path_is_set() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let status =
+            blocklist_bundles_post(state, true, Some(&["hagezi-multi-pro", "1hosts-lite"])).await;
+        assert!(
+            status.persisted,
+            "a config path is set, so the write must land"
+        );
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert!(loaded.blocklist_bundles.enabled);
+        assert_eq!(
+            loaded.blocklist_bundles.sources,
+            Some(vec![
+                "hagezi-multi-pro".to_string(),
+                "1hosts-lite".to_string()
+            ])
+        );
+    }
+
+    // Critical regression test (advisor-flagged invariant): `sources: null`
+    // must round-trip as `None`, never get resolved into today's concrete id
+    // list. `crate::config::BlocklistBundlesConfig`'s own doc spells out the
+    // footgun this guards against — a client that GETs status, changes
+    // something unrelated, and POSTs the echoed `sources` back must not
+    // accidentally freeze the "track everything" selection.
+    #[tokio::test]
+    async fn serve_admin_blocklist_bundles_none_sources_round_trips_without_freezing() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let status = blocklist_bundles_post(state, true, None).await;
+        assert_eq!(
+            status.blocklist_bundles.sources, None,
+            "the echoed response must not resolve None into a concrete id list"
+        );
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(
+            loaded.blocklist_bundles.sources, None,
+            "the persisted file must keep tracking every future source, not freeze today's set"
+        );
+    }
+
     #[test]
     fn blocklist_bundles_is_active_matches_the_enabled_and_non_empty_rule() {
         let on = BlocklistBundlesConfig {
@@ -8778,6 +9139,7 @@ mod tests {
         ("/admin/geoip/maxmind", &[Method::GET, Method::POST]),
         ("/admin/geoip/maxmind/clear", &[Method::POST]),
         ("/admin/rating-filter", &[Method::POST]),
+        ("/admin/blocklist-bundles", &[Method::POST]),
         ("/admin/providers", &[Method::GET]),
         ("/admin/providers/add", &[Method::POST]),
         ("/admin/providers/remove", &[Method::POST]),

@@ -53,7 +53,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 3;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 4;
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the
@@ -188,6 +188,12 @@ pub struct AdminStatusResponse {
     /// `#[serde(default)]` (T-205): safe zero is "bubble off, no lists".
     #[serde(default)]
     pub rating_filter: RatingFilterStatusView,
+    /// T-218 Фаза 7, Батч 7.4 частина 2 — the public blocklist-bundle layer
+    /// status, always present (same "no second fetch" reasoning as
+    /// `rating_filter` above). `#[serde(default)]` (T-205): safe zero is
+    /// "bundles off, nothing loaded".
+    #[serde(default)]
+    pub blocklist_bundles: BlocklistBundlesStatusView,
     /// T-204 (finding 3-B) — the `/admin/ui` protection-hero state, computed
     /// server-side by [`compute_hero_state`] so its priority ladder is
     /// Rust-tested. `main.js` renders it; it does not re-derive the ordering.
@@ -270,6 +276,66 @@ pub struct ZoneListStatusView {
     pub list: String,
     /// How many registrable domains this list currently contributes.
     pub domains: usize,
+}
+
+/// T-218 Фаза 7, Батч 7.4 частина 2 — the always-present public
+/// blocklist-bundle status (SPEC.md §5 step 2), mirroring
+/// [`RatingFilterStatusView`]'s shape and reasoning. `active` is the single
+/// authoritative "is step 2 actually blocking on the bundle right now?"
+/// answer — [`crate::dispatch::blocklist_bundles_is_active`], the same
+/// function `overrides_step` uses, so this badge can never disagree with the
+/// pipeline. `enabled` without `active` is the same Fork-B shape as the
+/// rating filter (on, but nothing downloaded yet, or the whole selection
+/// deselected — inert).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BlocklistBundlesStatusView {
+    /// `[blocklist_bundles].enabled` — the toggle's live position.
+    pub enabled: bool,
+    /// `enabled` **and** the loaded bundle is non-empty.
+    pub active: bool,
+    /// The live `[blocklist_bundles].sources` value, carried through
+    /// **exactly as configured** — `None` (never resolved to a concrete id
+    /// list here) means "track every currently published source", `Some(ids)`
+    /// an explicit subset. `crate::config::BlocklistBundlesConfig`'s own doc
+    /// spells out why resolving `None` into a snapshot here would be a bug:
+    /// a client that echoes this field back on an unrelated
+    /// `POST /admin/blocklist-bundles` would freeze the selection into
+    /// today's id set, defeating the whole point of `None`.
+    pub sources: Option<Vec<String>>,
+    /// Every source id a client may select — the `BLOCKLIST_SOURCES` table
+    /// (`crate::blocklist_download`). **8 entries, not 7** — `hagezi-nrd`/
+    /// `hagezi-dga` are two ids sharing one `group` (`loaded`'s own `group`
+    /// field is what a UI folds them by; this list is intentionally
+    /// ungrouped).
+    pub available_sources: Vec<String>,
+    /// Per-source status for every currently-tracked source — populated once
+    /// the background updater's first cycle completes, empty before that.
+    pub loaded: Vec<BlocklistSourceStatusView>,
+}
+
+/// One tracked source in [`BlocklistBundlesStatusView::loaded`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlocklistSourceStatusView {
+    /// The source id (`"hagezi-multi-pro"` … `"1hosts-lite"`).
+    pub id: String,
+    /// The logical group this id belongs to — `hagezi-nrd`/`hagezi-dga` share
+    /// `"hagezi-nrd-dga"`, every other id is its own singleton group.
+    pub group: String,
+    /// How many domains this source contributed to the bundle, **counted
+    /// before the cross-source dedup pass** — summing this field across every
+    /// entry in `loaded` does not equal the bundle's actual deduplicated
+    /// size (mirrors `BlocklistSourceStatus::entry_count`'s own doc; kept as
+    /// its own field, not named `domains` like [`ZoneListStatusView`]'s
+    /// field, precisely because that name already promises an exact
+    /// per-source count elsewhere in this file and this value isn't one).
+    pub entry_count: usize,
+    /// Milliseconds since the Unix epoch this source last refreshed
+    /// successfully (via [`unix_millis`]). `None` — never fetched
+    /// successfully since this bundle was built.
+    pub last_updated: Option<u64>,
+    /// Set when this cycle's fetch failed, even if a last-known-good
+    /// fallback kept the source's previous data in the bundle.
+    pub last_error: Option<String>,
 }
 
 /// The `/admin/ui` protection-hero state, computed **on the server** (T-204,
@@ -768,6 +834,25 @@ pub struct RatingFilterConfigUpdate {
     /// The availability-zone list codes to load (two-letter country codes or
     /// `"global"`), in preference order.
     pub lists: Vec<String>,
+}
+
+/// `POST /admin/blocklist-bundles`'s body (T-218 Фаза 7, Батч 7.4 частина 2)
+/// — a full replace of the `[blocklist_bundles]` table, same
+/// full-replace-not-patch convention as [`RatingFilterConfigUpdate`].
+/// `sources` carries [`crate::config::BlocklistBundlesConfig::sources`]'s
+/// exact `Option<Vec<String>>` shape through unchanged: `null`/absent means
+/// "track every currently published source", never resolved to a concrete
+/// id list here (see [`BlocklistBundlesStatusView::sources`]'s own doc for
+/// why that distinction must survive a round trip). A `Some` list is
+/// validated server-side by [`crate::config::validate_blocklist_bundle_sources`];
+/// an unknown id is a `400`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlocklistBundlesConfigUpdate {
+    /// Desired position of the blocklist-bundle toggle.
+    pub enabled: bool,
+    /// `None` = track every currently published source; `Some(ids)` = an
+    /// explicit, validated subset.
+    pub sources: Option<Vec<String>>,
 }
 
 /// One override-list entry as shown to a client (T-47) — a projection of
@@ -1814,6 +1899,35 @@ impl AdminClient {
             .map_err(AdminClientError::Request)?;
         response.json().await.map_err(AdminClientError::Request)
     }
+
+    /// Sets the `[blocklist_bundles]` toggle and its source selection in one
+    /// `resolver_config.toml` write (T-218 Фаза 7, Батч 7.4 частина 2).
+    /// `sources: None` means "track every currently published source" — pass
+    /// it through unchanged, never resolve it to today's concrete id list
+    /// before calling ([`BlocklistBundlesConfigUpdate`]'s own doc explains
+    /// why). Returns the resulting [`AdminStatusResponse`] —
+    /// `blocklist_bundles.active` reflects whether the selected sources are
+    /// already loaded.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, a
+    /// source id is unknown (`400`), or the response doesn't decode.
+    pub async fn set_blocklist_bundles(
+        &self,
+        enabled: bool,
+        sources: Option<Vec<String>>,
+    ) -> Result<AdminStatusResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/blocklist-bundles", self.base_url))
+            .json(&BlocklistBundlesConfigUpdate { enabled, sources })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
 }
 
 /// Wire form of [`crate::local_state::ArtifactOutcome`] — the `Failed`
@@ -2713,8 +2827,9 @@ mod hero_and_category_tests {
 #[cfg(test)]
 mod dto_versioning_tests {
     use super::{
-        AdminStatusResponse, BaselineEndpointView, EncryptedPersistenceView, HeroStateView,
-        NetworkStatusView, ProvidersResponse, RatingFilterStatusView,
+        AdminStatusResponse, BaselineEndpointView, BlocklistBundlesStatusView,
+        EncryptedPersistenceView, HeroStateView, NetworkStatusView, ProvidersResponse,
+        RatingFilterStatusView,
     };
 
     /// The fields the contract has carried since Ф1 (T-52) — no `#[serde(default)]`,
@@ -2751,6 +2866,10 @@ mod dto_versioning_tests {
             EncryptedPersistenceView::default()
         );
         assert_eq!(parsed.rating_filter, RatingFilterStatusView::default());
+        assert_eq!(
+            parsed.blocklist_bundles,
+            BlocklistBundlesStatusView::default()
+        );
     }
 
     #[test]

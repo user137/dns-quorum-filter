@@ -2095,3 +2095,92 @@ candidate.split_once('.')` гарантує щонайменше одну кра
 `PERFORMANCE.md` (новий hot-path-факт), `CLAUDE.md`/`TASKS.md` (синхронізовано). Не в обсязі:
 admin-route/DTO для live per-source toggling, `/admin/status`-view, `/admin/ui`-рендер (Артборд F
 вже затверджений, чекає DTO) — Батч 7.4, частина 2+.
+
+## 2026-09-17 — T-218 Батч 7.4 (частина 2): admin-route/DTO для блок-лист-бандлів, без `/admin/ui`-рендеру
+
+**Рішення:** реалізувати лише backend-половину залишку Батчу 7.4 — `POST
+/admin/blocklist-bundles` + `AdminStatusResponse.blocklist_bundles` (per-source status-view,
+`ADMIN_DTO_SCHEMA_VERSION` 3→4) — і свідомо **не** рендерити `/admin/ui`-картку цим самим
+батчем, хоча Артборд F уже затверджений ("Тоді затверджено і вперед", 2026-09-13).
+
+**Чому розбито:** сам мокап (`mockups/gui-dashboard.html`, розділ "Відкриті питання до
+затвердження") досі містить нерозв'язані питання конкретно про Артборд F — per-джерело чекбокси
+проти одного master-перемикача, групування "Реклама й трекери"/"Безпека й загрози" проти
+quorum-категорій (SECURITY/ADS_TRACKERS/ADULT_CONTENT), чи потрібен confirm-крок при увімкненні
+(на відміну від Артборда E), чи потрібен бейдж активності під hero. Користувач затвердив факт
+початку кодування, не ці конкретні UI-рішення — вони лишаються для Батчу 7.4 частина 3.
+Backend-DTO не залежить від жодного з них: `BlocklistBundlesConfig.sources: Option<Vec<String>>`
+(Батч 7.3) уже підтримує довільний per-id вибір, тож per-source гранулярність — наявна
+можливість backend'а, не рішення, яке ще треба ухвалити.
+
+**Критичний інваріант, підтверджений тестом:** `BlocklistBundlesStatusView.sources` і
+`BlocklistBundlesConfigUpdate.sources` обидва несуть `Option<Vec<String>>` **один-в-один**, без
+резолву `None` у конкретний список id — `BlocklistBundlesConfig`'s власний дизайн (Батч 7.3)
+уже двічі через advisor-рев'ю уникав саме цього "заморожування" (footgun: клієнт, який
+GET-статус → POST той самий `sources` назад, інакше застиг би на сьогоднішньому знімку id).
+Регресійний тест `serve_admin_blocklist_bundles_none_sources_round_trips_without_freezing`
+підтверджує і echo-відповідь, і збережений `resolver_config.toml`.
+
+**Advisor-рев'ю плану (до реалізації) довиловило:**
+- Поле статусу зветься `entry_count`, не `domains` — `ZoneListStatusView.domains`
+  задокументовано як "точний рахунок, ніколи не крос-джерельна сума", а
+  `BlocklistSourceStatus.entry_count` — навпаки, рахунок ДО крос-джерельного дедупу; однакова
+  назва імпортувала б обіцянку, якої значення не тримає (клас правки T-66's "cold/warm"→
+  "miss/hit").
+- `apply_blocklist_bundles_change` не має кеш-rebuild-гілки (на відміну від
+  `apply_rating_filter_change`) — не тому, що "бандли не кешуються" самé по собі (це не виключає
+  застарілий кешований ALLOW), а через порядок конвеєра: бандл перевіряється в `overrides_step`
+  (кроки 1-2), **до** кроку 4 (кеш), тоді як `rating_filter_step` — крок 5, **після** кешу.
+  Жоден кешований ALLOW не міг обійти бандл-перевірку, тож немає що інвалідувати.
+- `BlocklistSourceStatus`'s `#[allow(dead_code)]` знято (Батч 7.2 лишила його саме до появи
+  цього view) — точка перевірки повноти DTO.
+- Два продакшн-сайти будують `AdminStatusResponse` напряму (`admin_status()` і
+  `apply_admin_config`), не один спільний білдер — обидва мали отримати виклик
+  `blocklist_bundles_status_view`.
+
+**Advisor-рев'ю після реалізації (перед комітом) довиловило ще п'ять пунктів, усі виправлено тим
+самим проходом:**
+- `UI-SPEC.md` — задокументований власник DTO адмін-каналу (CLAUDE.md's Documentation map) — не
+  був у початковому doc-sync списку. Додано рядок `set_blocklist_bundles` у §5's
+  маршрут-довідник (за прецедентом `set_rating_filter`) + виправлено застарілий рахунок
+  `DecisionSource` (7→8 значень, `BLOCKLIST_BUNDLE` бракувало з самого Батчу 7.4 частина 1 —
+  той doc-sync теж пропустив UI-SPEC.md).
+- Звірка діаграм (обов'язковий ритуал, `diagrams/README.md`) не була прогнана. Зачеплена одна
+  діаграма — `ui-dto-model.md` (class diagram DTO-каналу) — оновлено: нові класи
+  `BlocklistBundlesStatusView`/`BlocklistSourceStatusView`/`BlocklistBundlesConfigUpdate`, нове
+  поле на `AdminStatusResponse`, дві нові стрілки, SOURCES-блок. Індекс (`README.md`) без змін —
+  опис рядка лишається чинним. GAP: 0.
+- Тест `blocklist_bundles_status_view_reflects_config_and_bundle_state` мав хардкод
+  `available_sources.len() == 8` — той самий клас крихкості, що CLAUDE.md вже застерігає для
+  conformance-тестів (число вже мінялося раз, Батч 7.1 прибрав "Most Abused TLDs"). Замінено на
+  `BLOCKLIST_SOURCES.len()`.
+- Новий, empіrично підтверджений gotcha цього dev-боксу (windows-gnu host) — `--all-targets`/
+  `--doc` без обмеження `-j` дають нестабільні провали (ICE, "paging file too small", "rlib
+  format not found") — записано в `RUST-GOTCHAS.md` (не в `CLAUDE.md` — той самий maintenance
+  rule), щоб наступна сесія не переоткривала це заново чотирма невдалими прогонами.
+- Перевірено, що новий `schema_version` (3→4) не захардкожений деінде поза `src/` (`ui/`,
+  UI-SPEC.md, CONFIGURATION.md, README.md) — чисто, нічого не інвалідовано.
+
+**Наслідки в коді:** `admin.rs` — нові `BlocklistSourceStatusView`/`BlocklistBundlesStatusView`/
+`BlocklistBundlesConfigUpdate`, `AdminStatusResponse.blocklist_bundles` (`#[serde(default)]`),
+`ADMIN_DTO_SCHEMA_VERSION` 3→4, `AdminClient::set_blocklist_bundles`. `dispatch.rs` —
+`ADMIN_BLOCKLIST_BUNDLES_PATH` у `ROUTES`, `blocklist_bundles_status_view`,
+`apply_blocklist_bundles_change`, `serve_admin_blocklist_bundles`; обидва
+`AdminStatusResponse`-літерал-сайти отримали новий виклик. `blocklist_updater.rs` —
+`BlocklistSourceStatus`'s `#[allow(dead_code)]` знято. `lib.rs` — нові типи реекспортовано.
+`dnsqb-tray/src/status.rs` — тестова фікстура отримала дефолтне значення нового поля. 7 нових
+тестів (Три Б: happy/misuse/error/critical-invariant). `cargo test --workspace --lib --bins`
+(867 тестів) / `clippy --workspace --all-targets -- -D warnings` / `fmt --all -- --check` /
+`doc --no-deps --document-private-items` (`RUSTDOCFLAGS=-D warnings`) / `--test conformance` /
+`--test admin_client` / `--workspace --doc` / `--workspace --examples` — усі зелені, увесь
+workspace.
+
+**Наслідки в доках:** `CLAUDE.md` (Project state, `config`/`dispatch`-рядки, Admin channel —
+правка на місці з парним видаленням застарілого тексту), `CONFIGURATION.md`
+(`[blocklist_bundles]`'s адмін-маршрут), `KNOWN-LIMITATIONS.md` (нотатка про
+Батч-7.4-частина-2-view переформульована — видимість тепер є, стейл-проблема лишається),
+`UI-SPEC.md` (§4 `DecisionSource` 7→8, §5 маршрут-довідник — новий рядок), `diagrams/ui-dto-model.md`
+(нові класи/поле/стрілки, SOURCES), `RUST-GOTCHAS.md` (новий gotcha — dev-box parallelism),
+`TASKS.md` (закрито частину 2, лишено частину 3 — `/admin/ui`-рендер). Не в обсязі: сам
+`/admin/ui`-рендер — Батч 7.4, частина 3, після відповіді користувача на відкриті питання
+мокапу.

@@ -8,10 +8,13 @@ DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08, 2026-09-10 (пор�
 T-127 — `validate_rating_filter_lists` звужено, `lists ⊆ available_lists`; 2026-09-11 — T-138,
 Батч 4.5, `RatingFilterStatusView.personal_zone_enabled`, `ADMIN_DTO_SCHEMA_VERSION` 1→2;
 2026-09-13 — T-227, Батч 4.7.B, `RatingFilterStatusView.suggested_list`,
-`ADMIN_DTO_SCHEMA_VERSION` 2→3).
+`ADMIN_DTO_SCHEMA_VERSION` 2→3; 2026-09-17 — T-218 Батч 7.4 частина 2,
+`AdminStatusResponse.blocklist_bundles: BlocklistBundlesStatusView`,
+`BlocklistBundlesConfigUpdate` — тіло `POST /admin/blocklist-bundles`,
+`ADMIN_DTO_SCHEMA_VERSION` 3→4).
 TASKS.md T-188, T-193, T-111/T-127/T-128 (`AdminStatusResponse.rating_filter:
 RatingFilterStatusView`, `RatingFilterConfigUpdate` — тіло `POST /admin/rating-filter`), T-138,
-T-227.
+T-227, T-218.
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -170,7 +173,7 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 / T-128 реалізовано>>
+        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 / T-128 / T-218 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
@@ -184,6 +187,7 @@ classDiagram
         +bool persisted
         +EncryptedPersistenceView encrypted_persistence
         +RatingFilterStatusView rating_filter
+        +BlocklistBundlesStatusView blocklist_bundles
     }
     class EncryptedPersistenceView {
         <<T-146 / T-97, реалізовано — пасивні /admin/ui індикатори>>
@@ -314,6 +318,27 @@ classDiagram
         +String list
         +usize domains
     }
+    class BlocklistBundlesConfigUpdate {
+        <<admin, T-218 Батч 7.4 частина 2 реалізовано — тіло POST /admin/blocklist-bundles, повна заміна>>
+        +bool enabled
+        +Option~List~String~~ sources
+    }
+    class BlocklistBundlesStatusView {
+        <<admin, T-218 Батч 7.4 частина 2 реалізовано — поле AdminStatusResponse>>
+        +bool enabled
+        +bool active
+        +Option~List~String~~ sources
+        +List~String~ available_sources
+        +BlocklistSourceStatusView[] loaded
+    }
+    class BlocklistSourceStatusView {
+        <<admin, T-218 Батч 7.4 частина 2 реалізовано — entry_count рахується ДО крос-джерельного дедупу, не еквівалент ZoneListStatusView.domains>>
+        +String id
+        +String group
+        +usize entry_count
+        +Option~u64~ last_updated
+        +Option~String~ last_error
+    }
 
     LogEntry "1" --> "many" VoterResult : voters
     VoterResult --> VoterStatus
@@ -335,6 +360,8 @@ classDiagram
     AdminStatusResponse --> EncryptedPersistenceView
     AdminStatusResponse --> RatingFilterStatusView
     RatingFilterStatusView --> ZoneListStatusView : loaded
+    AdminStatusResponse --> BlocklistBundlesStatusView
+    BlocklistBundlesStatusView --> BlocklistSourceStatusView : loaded
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck

@@ -1542,6 +1542,40 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   перемикання, `/admin/status`-view, `/admin/ui`-рендер (Артборд F вже затверджений, чекає
   DTO) — Батч 7.4, частина 2+.
 
+  **[x] Батч 7.4, частина 2 (2026-09-17, plan-mode + advisor до і після реалізації) —
+  admin-route/DTO + `/admin/status` per-source view, без `/admin/ui`-рендеру.** Свідомо
+  обмежений обсяг (advisor-схвалено): мокап (`mockups/gui-dashboard.html`'s "Відкриті питання до
+  затвердження") досі несе нерозв'язані питання саме про Артборд F (per-джерело чекбокси проти
+  master-перемикача, групування категорій, confirm-крок, бейдж) — користувач затвердив лише
+  старт кодування, не ці UI-рішення; backend-DTO від них не залежить, бо
+  `BlocklistBundlesConfig.sources: Option<Vec<String>>` (Батч 7.3) вже підтримує довільний
+  per-id вибір. Новий `POST /admin/blocklist-bundles` (`BlocklistBundlesConfigUpdate { enabled,
+  sources }`, дзеркалить `/admin/rating-filter`, **без** кеш-rebuild-гілки — бандл-перевірка
+  в `overrides_step` йде до кроку 4 (кеш), а не після, як рейтинг-фільтр, тож жоден кешований
+  ALLOW не міг обійти її); `AdminStatusResponse.blocklist_bundles: BlocklistBundlesStatusView`
+  (`#[serde(default)]`, `ADMIN_DTO_SCHEMA_VERSION` 3→4) з `BlocklistSourceStatusView.entry_count`
+  (не `domains` — той самий клас правки, що T-66, бо значення рахується ДО крос-джерельного
+  дедупу, на відміну від `ZoneListStatusView.domains`). **Критичний інваріант, підтверджений
+  тестом:** `sources: Option<Vec<String>>` на DTO несеться один-в-один, `None` ніколи не
+  резолвиться в конкретний список — інакше GET-статус→POST-echo заморозив би "трекати все"-стан,
+  той самий footgun, який `BlocklistBundlesConfig`'s дизайн (Батч 7.3) уже уникав двічі;
+  `serve_admin_blocklist_bundles_none_sources_round_trips_without_freezing` — регресійний тест
+  саме на це. `BlocklistSourceStatus`'s `#[allow(dead_code)]` (Батч 7.2) знято — цей батч і є
+  тим читачем, якого чекала. 7 нових тестів (Три Б + критичний інваріант). `cargo test
+  --workspace --lib --bins` (867 тестів) / `clippy --workspace --all-targets -D warnings` /
+  `fmt --all -- --check` / `doc --no-deps --document-private-items` / `--test conformance` /
+  `--test admin_client` / `--workspace --doc` / `--workspace --examples` — усі зелені, увесь
+  workspace. Закриваючий advisor-рев'ю (перед комітом) довиловив п'ять пунктів: `UI-SPEC.md`
+  (задокументований власник DTO адмін-каналу) пропущений з початкового doc-sync — додано, і
+  виправлено застарілий `DecisionSource` 7→8 (гап ще з Батчу 7.4 частина 1); звірка діаграм не
+  прогнана — `diagrams/ui-dto-model.md` оновлено (нові класи/поле/стрілки, SOURCES); тест мав
+  хардкод `available_sources.len() == 8` замість `BLOCKLIST_SOURCES.len()`; новий
+  windows-gnu-специфічний `-j`-gotcha (ICE/paging-file/rlib-format на `--all-targets`/`--doc`
+  без обмеженого паралелізму) записано в `RUST-GOTCHAS.md`; перевірено відсутність
+  захардкодженого `schema_version` поза `src/`. Усі п'ять виправлено тим самим проходом.
+  DECISIONS.md 2026-09-17 ("Батч 7.4 (частина 2)"). Не в обсязі: `/admin/ui`-рендер —
+  Батч 7.4, частина 3, після відповіді користувача на відкриті питання мокапу.
+
 ## Поза фазами / бэклог
 
 - [ ] T-132 — **Уточнено 2026-08-29 (SPEC.md §2)**: NSS DB автоматизація для Firefox

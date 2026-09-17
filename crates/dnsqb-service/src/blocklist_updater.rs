@@ -105,11 +105,9 @@ impl BlocklistRefreshError {
     }
 }
 
-/// Per-source metadata for the eventual admin status view (Батч 7.4+, not
-/// built this batch — hence the struct-level `#[allow(dead_code)]` below:
-/// `entry_count`/`last_error` are written this batch but have no reader
-/// until that view exists).
-#[allow(dead_code)]
+/// Per-source metadata for the admin status view (T-218 Батч 7.4 частина 2 —
+/// [`crate::admin::BlocklistSourceStatusView`] is the read side, built by
+/// `crate::dispatch::blocklist_bundles_status_view`).
 pub(crate) struct BlocklistSourceStatus {
     pub(crate) id: &'static str,
     pub(crate) group: &'static str,

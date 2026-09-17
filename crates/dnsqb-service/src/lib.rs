@@ -169,8 +169,9 @@ mod zone_removal_persist;
 
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
-    BaselineEndpointView, EncryptedPersistenceView, HeroStateView, NetworkStatusView,
-    ProviderStatusView, RatingFilterStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    BaselineEndpointView, BlocklistBundlesStatusView, BlocklistSourceStatusView,
+    EncryptedPersistenceView, HeroStateView, NetworkStatusView, ProviderStatusView,
+    RatingFilterStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 pub use admission::ConnectionGate;
 pub use baseline_selector::BASELINE_CHAIN;

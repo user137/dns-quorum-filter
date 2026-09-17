@@ -370,6 +370,9 @@ mod tests {
                 personal_zone_enabled: false,
                 suggested_list: None,
             },
+            // T-218 Батч 7.4 частина 2: the tray doesn't render this field
+            // (that's `/admin/ui`, part 3) — a default fixture is enough.
+            blocklist_bundles: dnsqb_service::BlocklistBundlesStatusView::default(),
         }
     }
 

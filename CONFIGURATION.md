@@ -303,6 +303,14 @@ enabled = false
 з `AppState`, не з дефолту — T-217 pattern, той самий, що вже несуть `rating_filter`/
 `personal_zone`).
 
+**Адмін-маршрут (Батч 7.4 частина 2):** `POST /admin/blocklist-bundles` з тілом
+`{"enabled": bool, "sources": [String]|null}` — повна заміна таблиці, `sources: null` =
+`None` (той самий "трекати все наживо" стан, ніколи не резолвиться в конкретний список на цьому
+маршруті — саме це й лишає інваріант вище чинним при POST'і теж, не лише при ручному редагуванні
+файлу). Невідомий id → `400`. `GET /admin/status` повертає те саме `sources` наживо плюс
+`available_sources` (усі id `BLOCKLIST_SOURCES`) і `loaded` (per-джерело `entry_count`/
+`last_updated`/`last_error`) — рендеру в `/admin/ui` ще нема (Батч 7.4 частина 3).
+
 **Дефолт — вимкнено, обов'язково** (той самий принцип, що `[rating_filter]`/`[personal_zone]`).
 Фонова задача (`run_blocklist_updater`, 24-год цикл, той самий шаблон, що `run_topn_updater`)
 **завжди спавниться** (доки є тека app-data) і no-op-ить, поки вимкнено чи `sources` явно

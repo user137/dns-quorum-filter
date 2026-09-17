@@ -574,4 +574,20 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   plausible real address. T-175 flipped 3 `quorum::resolve` tests Allow→Block because their
   `94.140.14.14` fixture (AdGuard's real resolver IP, picked as "an AdGuard-ish answer") matched a
   new `94.140.14.0/24` sinkhole prefix — the "test passes for the wrong reason" family.
+- **This dev box's default cargo parallelism (windows-gnu host) is unreliable for
+  `--all-targets`/`--doc` builds — cap jobs explicitly, don't retry blind.** Seen three distinct
+  failure shapes in one session (T-218 Батч 7.4 частина 2, 2026-09-17), all cleared without any
+  source change: `cargo clippy --workspace --all-targets` first run hit an internal compiler error
+  (`STATUS_STACK_BUFFER_OVERRUN` in `clippy-driver.exe` on `examples/curate_topn.rs`); the retry
+  produced cascading `E0786 invalid metadata`/`E0463 can't find crate` across unrelated targets
+  with `The paging file is too small for this operation to complete. (os error 1455)` in the
+  diagnostics; `cargo test --workspace --doc` failed several doctests each run with a *different*
+  random crate "required to be available in rlib format, but was not found in this form" (rmeta
+  written by one parallel job read mid-write by another). **Fix: `cargo clippy --workspace
+  --all-targets -j 2 -- -D warnings`** for the lint gate, and **`cargo test --workspace --doc -j 1
+  -- --test-threads=1`** for doctests specifically (doctests compile a fresh binary per example,
+  so they're the most parallel-job-hungry step) — both green first try once capped. Plain `cargo
+  build`/`cargo test --lib --bins` didn't show this even at default parallelism; it's specific to
+  steps that link many crates concurrently (many example/test binaries, or one-binary-per-doctest).
+  Not a source bug — don't chase it in the diff; just cap `-j` and move on.
 

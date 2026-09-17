@@ -298,9 +298,11 @@ Timeout-режим, Кеш, Списки виключень, Лог-фільтр
    `quorum::VoterRecord::allow_ip_count`/`error_message` (той самий T-54,
    `error_message` — лише грубий `error_kind()`-лейбл, ніколи сирий текст
    `UpstreamError::Http`, який ніс би URL-адресу запиту).
-3. `DecisionSource` enum — 7 значень: `ALLOWLIST, BLOCKLIST, CCTLD_BLOCK,
-   CACHE, RATING_FILTER, QUORUM, GEOIP` (§6). За часом появи: `RATING_FILTER` —
-   Ф4, `CCTLD_BLOCK` — Ф5; обидва присутні в enum з Ф1 (принцип §1 цього файлу).
+3. `DecisionSource` enum — 8 значень: `ALLOWLIST, BLOCKLIST, BLOCKLIST_BUNDLE,
+   CCTLD_BLOCK, CACHE, RATING_FILTER, QUORUM, GEOIP` (§6). За часом появи:
+   `RATING_FILTER` — Ф4, `BLOCKLIST_BUNDLE` — Ф7 (T-218 Батч 7.4 частина 1,
+   2026-09-13), `CCTLD_BLOCK` — Ф5; усі присутні в enum з Ф1 (принцип §1
+   цього файлу).
 4. `OverrideEntry { domain, is_wildcard, list: ListKind }` — §5.
 5. `TimeoutMode` enum, `ProviderConfig { name, doh_url, category, built_in,
    enabled }` — §3.3, §3.4.
@@ -370,6 +372,7 @@ Timeout-режим, Кеш, Списки виключень, Лог-фільтр
 | `get_geoip_config()` / `set_blocked_countries(list)` | `GeoIPConfig` | GeoIP | Ф2 |
 | `get_geoip_db_status()` | дата оновлення | GeoIP | Ф2 |
 | `set_rating_filter(config)` → `POST /admin/rating-filter` | ⚠️ реалізовано Батч 4.4 — `RatingFilterConfigUpdate { enabled: bool, lists: Vec<String> }` (повна заміна, як `AdminConfigUpdate`); повертає свіжий `AdminStatusResponse` із полем `rating_filter: RatingFilterStatusView { enabled, active, lists, available_lists, loaded, personal_zone_enabled, suggested_list }`. Валідація списків спільна з завантаженням конфігу (`validate_rating_filter_lists` — форма + членство в `AVAILABLE_TOPN_LISTS`); невалідний код → `400`. **T-227:** `suggested_list: Option<String>` — код списку, що збігається з регіоном ОС (`install_region::detect_system_region`, реєстр, не локаль), рахується лише поки `lists` порожній; клієнт лише рендерить підказку + кнопку «Додати» (ніколи не пречекнутий чекбокс, ніколи не пише в `lists` сам) | Розширені | Ф4 |
+| `set_blocklist_bundles(config)` → `POST /admin/blocklist-bundles` | ⚠️ бекенд реалізовано T-218 Батч 7.4 частина 2 (2026-09-17), **екрана ще нема** — `BlocklistBundlesConfigUpdate { enabled: bool, sources: Option<Vec<String>> }` (повна заміна, як `RatingFilterConfigUpdate`; `sources: null` = «трекати всі поточні джерела наживо», ніколи не резолвиться сервером у конкретний список — той самий інваріант, що й на диску); повертає свіжий `AdminStatusResponse` із полем `blocklist_bundles: BlocklistBundlesStatusView { enabled, active, sources, available_sources, loaded }`, де `loaded[].entry_count` — рахунок ДО крос-джерельного дедупу (не `domains`, як у `ZoneListStatusView` — навмисно інша назва). Невідомий id джерела → `400`. Картка на `/admin/ui` (Артборд F, `mockups/gui-dashboard.html`) — Батч 7.4 частина 3, чекає відповіді користувача на власні відкриті питання мокапу (per-джерело чекбокси, групування, confirm-крок, бейдж) | Списки виключень (`#overrides-body`, не «Розширені» — Артборд F) | Ф7 |
 | `set_cctld_blocklist(list)` | `CctldBlockConfig` | Розширені | Ф5 |
 | `get_about_info()` | версія + атрибуції | Про застосунок | Ф1/Ф2 |
 
