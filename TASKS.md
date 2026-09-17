@@ -1401,180 +1401,10 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 
 ## Фаза 7 — Публічні блок-лист-бандли
 
-**Kickoff закрито 2026-09-13** (Батч 4.7.C → власна фаза, plan-mode + advisor; повний
-розгорнутий аналіз, що привів до цього — під `<details>` у Батчі 4.7.C вище). SPEC.md
-§"Фазований план" несе скоуп/рамку; DECISIONS.md 2026-09-13 — усі рішення з обґрунтуванням.
-
-- [ ] T-218 — Опційний, default-OFF шар публічних блок-лист-бандлів поряд із кворумом (мета —
-  знизити залежність від живого DNS-кворуму на клас загроз, де готовий список ефективніший;
-  доповнення, не заміна — T-174/T-175's +6.3 в.п. приріст кворуму лишається чинним). Розширення
-  §5.3-конвеєра кроку 2 (Blocklist), не новий крок.
-  **7 звірених джерел** (скориговано Батчем 7.1, 2026-09-13 — було 8 у kickoff-редакції,
-  `data/blocklists/CANDIDATES.md` §3): HaGeZi Multi PRO/TIF/NRD-DGA/DynDNS/Badware Hoster
-  (GPL-3.0) + AdGuard DNS filter (GPL-3.0) + 1Hosts Lite (MPL-2.0) — усі рантайм-фетч без
-  редистрибуції курованого артефакту (окрема рамка за T-106's CC BY-NC-блокер). OISD/Steven
-  Black hosts/CoinBlockerLists/OpenPhish виключені (ліцензія/склад/свіжість/ToS); URLhaus
-  виключено як нез'ясоване, не остаточно відхилене. **HaGeZi Most Abused TLDs вилучено з
-  набору Батчем 7.1** — голі TLD-записи через суфіксний матчинг заблокували б більше, ніж решта
-  шести разом, і дублюють уже специфікований T-115/T-116 ccTLD-блок (§5.2, Фаза 5, "порожній за
-  замовчуванням") іншими дверима; лишається кандидатним джерелом даних для T-115, не для цієї
-  задачі. Жодне джерело не публікує `.sha256`-сайдкар — власний контроль цілісності.
-  24-годинний опитувальний цикл (мережева ввічливість; сукупний рефетч ≈111 MB/цикл — HaGeZi
-  TIF/NRD/DGA самі по собі 39-47 MB кожен, виміряно HTTP HEAD). **Атомарний своп без вікна
-  недоступності** — `RwLock<Arc<T>>`-патерн, той самий що `CacheState`/`OverridesState`/
-  `GeoipState`/`rating_filter_zone`, не double-buffering з нуля.
-  **Перший дизайн-артборд готовий:** `mockups/gui-dashboard.html`, Артборд F (2026-09-13,
-  розміщення переглянуто того ж дня за відгуком) — `#blocklist-bundles-body` живе в **базовій**
-  секції «Списки виключень» (`#overrides-body`), **не** в `<details>` «Розширені»: механізм
-  розширює саме Blocklist (§5, крок 2), а «Розширені» — найнижчий пріоритет видимості
-  (UI-SPEC.md §2), тож ховати перемикач там суперечило б меті фічі. Master-перемикач + опис
-  завжди видимі; чекліст джерел (згруповано «Реклама й трекери» / «Безпека й загрози», з
-  підписом-поясненням під кожним джерелом) згортається у власний вкладений `<details
-  class="bl-sources">`, той самий безJS-механізм що зовнішнє «Розширені», за замовчуванням
-  закритий. Credits-атрибуція GPL-3.0/MPL-2.0. Малює per-джерело статус, якого сьогодні не несе
-  жоден DTO — має на увазі майбутній `AdminStatusResponse`-зріз (аналог `RatingFilterStatusView`,
-  `#[serde(default)]` + `ADMIN_DTO_SCHEMA_VERSION`-бамп), не вирішений цим kickoff'ом.
-  **Артборд F затверджено користувачем 2026-09-13** ("Тоді затверджено і вперед") — гейт
-  пройдено, код почато.
-
-  **[x] Батч 7.1 (2026-09-13, plan-mode + advisor, звірка URL/розмірів/форматів перед кодом) —
-  чистий, тестований download/parse/hash core.** Виявлено й виправлено advisor-рев'ю: (1)
-  потоковий parse-і-хеш замість матеріалізації `Vec<String>`+`HashSet<String>` (топ-n-патерн
-  не масштабується на 41-49 MB/джерело TIF/NRD); (2) відсортований дедуплікований `Vec<u64>`,
-  не `HashSet<u128>` — ~44 MB проти ~136 MB на ~5.5M записів, O(log n) двійковий пошук на
-  суфікс; (3) хешування **є** на hot path (кожен суфікс кожного запиту) → хеші не персистяться,
-  `std::collections::hash_map::RandomState` замість SHA-256 (жодної нової залежності,
-  стабільність хеша між версіями Rust не має значення, бо нічого не серіалізується); (4)
-  Most Abused TLDs вилучено (вище). Новий `crates/dnsqb-service/src/blocklist_download.rs`
-  (`pub(crate)`, тимчасовий `#![allow(dead_code)]` до Батчу 7.2): `SourceFormat`,
-  `BlocklistSource`, `BLOCKLIST_SOURCES` (8 URL / 7 логічних джерел), `MAX_BLOCKLIST_BYTES`
-  (128 MB), `hash_plain_domains`/`hash_adblock_domains` (потокові), `finalize` (sort+dedup).
-  10 юніт-тестів (fixture-рядки з реальних зразків, властивості замість буквальних хеш-констант
-  — seed рандомізований у проді). `cargo test`/`clippy --all-targets -D warnings`/`fmt --check`
-  — усі зелені, увесь workspace (не лише новий модуль). DECISIONS.md 2026-09-13 ("Батч 7.1").
-  Не в обсязі: `blocklist_updater.rs` (мережа/оркестрація/своп) — наступний план+advisor цикл,
-  Батч 7.2. Пайплайн-wiring кроку 2, конфіг, admin-route, реальний UI — 7.3+.
-
-  **[x] Батч 7.2 (2026-09-13, plan-mode + advisor до і після реалізації) — мережевий
-  fetch/parse/атомарний своп.** Явне рішення користувача: `[blocklist_bundles]`-конфіг і
-  admin-route ще нема (7.3+), тож цей батч **не спавнить** періодичну задачу в
-  `orchestrate.rs` — безумовний 24-годинний рефетч ~111 MB без жодного споживача порушив би
-  мережеву ввічливість. Advisor-рев'ю **перед** реалізацією виявило: `BLOCKLIST_FETCH_TIMEOUT`
-  180s суперечив би 128 MB-ліміту (потребував би ~5.7 Мбіт/с — на звичайному каналі й найбільші
-  джерела ловили б `Timeout` щоцикл і сиділи на last-known-good назавжди) → виправлено на 600s;
-  додано точний `contains_domain` на самій структурі (seed+set структурно нероздільні, не лише
-  коментарем); `BlocklistSourceStatus` — `#[allow(dead_code)]`, `last_error` лишається виставленим
-  навіть при успішному фолбеку. Закриваючий advisor-рев'ю **після** реалізації довиловив: (1) тест
-  `contains_domain` передавав уже нормалізований домен — не доводив, що метод сам нормалізує; (2)
-  диск-шлях (`load_blocklist_bundles_from_disk`) виставляв `last_updated: None` для щойно
-  прочитаного файлу — суперечило власному doc-коментарю поля; виправлено на реальний mtime файлу;
-  (3) не було тесту на крос-джерельний дедуп на диск-шляху; (4) doc-коментар посилався на
-  неіснуючий метод `BlocklistBundleState::len`. Усі чотири виправлено тим самим проходом. Новий
-  `crates/dnsqb-service/src/blocklist_updater.rs` (`BlocklistSourceStatus`, `BlocklistBundleState`
-  + `contains_domain`, `BlocklistRefreshError`, `hash_source_body`, `fetch_bounded`,
-  `refresh_one_source[_bounded]`, `load_blocklist_bundles_from_disk`, `refresh_all_sources`);
-  `AppState.blocklist_bundles: RwLock<Arc<BlocklistBundleState>>` + snapshot/update-акцесори
-  (без зміни сигнатури конструктора — `Default`, як `rating_filter_personal_zone`).
-  `blocklist_download.rs`'s `#![allow(dead_code)]` знято — реальний викликач тепер є. 7 юніт-тестів
-  (без мережевих моків — той самий прецедент, що `topn_updater`/`geoip_updater`, у проєкті нема
-  HTTP-мок-залежності). `cargo test`/`clippy --all-targets -D warnings`/`fmt --check`/`doc -D
-  warnings`/`--test conformance`/`--test admin_client`/`--workspace --doc` — усі зелені, увесь
-  workspace. Не в обсязі: `run_blocklist_updater`-цикл, `tokio::spawn` у `orchestrate.rs`,
-  `[blocklist_bundles]`-конфіг, admin-route, pipeline-wiring — усе це Батч 7.3.
-
-  **[x] Батч 7.3 (2026-09-13, plan-mode + advisor до і після реалізації) —
-  `[blocklist_bundles]`-конфіг і реальний спавн фонової задачі.** Обраний користувачем обсяг:
-  лише конфіг + фонова задача, без admin-route/DTO/UI/pipeline-споживання (7.4+). Advisor-рев'ю
-  **перед** реалізацією зупинило перший чернетковий дизайн: `sources: Vec<String>` з власним
-  `Default`, що заповнював усі id `BLOCKLIST_SOURCES` — виявилося б, що цей знімок
-  **заморожується** у `resolver_config.toml` при першому ж `save()` з будь-якого з 5 write-сайтів
-  (навіть якщо оператор ніколи не торкався блок-листів), і майбутнє перейменування/видалення
-  джерела (вже траплялося раз, HaGeZi's Most Abused TLDs) ламало б завантаження конфігу для
-  кожної інсталяції, що колись зберігала. Виправлено редизайном на `sources: Option<Vec<String>>`
-  — `None` = "усі поточні джерела, читаються наживо щоцикл, ніколи не заморожуються", `Some(ids)`
-  = явна валідована підмножина (більше не автотрекає нові джерела), `Some([])` = явно інертно з
-  лог-попередженням. Регресійний тест `save_then_load_of_an_untouched_blocklist_bundles_table_
-  stays_none` доводить незайманий конфіг ніколи не застигає в конкретний список. Закриваючий
-  advisor-рев'ю довиловив: (1) `spawn_public_http_tasks`'s doc-коментар лишався "the two
-  background tasks" — виправлено на "the background tasks" (тепер їх 4); (2) стейл-doc у
-  `blocklist_updater.rs` ("7.3's job"/"until 7.3 wires" на речах, що самé є Батчем 7.3) —
-  виправлено на "7.4"; (3) `refresh_all_sources`'s алокація спрощена. Усі 5
-  `ResolverConfig{...}`-літерал-сайтів у `dispatch.rs` отримали `blocklist_bundles: (*state.
-  blocklist_bundles_config_snapshot()).clone()` (T-217 live-snapshot pattern, підтверджено
-  компілятором — `E0063` вказав саме на ці 5 сайтів). `run_blocklist_updater` (`loop { refresh;
-  park }`, 24h, дзеркалить `run_topn_updater`) тепер реально спавниться з
-  `orchestrate::spawn_public_http_tasks`. `load_blocklist_bundles_from_disk` свідомо лишився без
-  викликача цим батчем — перший цикл `run_blocklist_updater` (до будь-якого park) заповнює набір
-  замість окремого синхронного диск-читання ~111 MB на старті. `cargo test`/`clippy
-  --all-targets -D warnings`/`fmt --check`/`doc -D warnings`/`--test conformance`/`--test
-  admin_client`/`--workspace --doc`/`--workspace --examples` — усі зелені, увесь workspace
-  (854 lib-тести). Doc-sync включно з новим розділом `CONFIGURATION.md`'s `[blocklist_bundles]`
-  (перший конфіг-стіл цього файлу, чий дефолт не порожній/вимкнений — три окремі стани
-  `sources` документовано явно). Не в обсязі: admin-route/DTO для живого per-source
-  перемикання, `/admin/status`-view, `/admin/ui`-рендер, pipeline-wiring кроку 2 до
-  `contains_domain` (7.1's відкрите питання про wildcard-vs-exact семантику лишається) — усе 7.4+.
-
-  **[x] Батч 7.4, частина 1 (2026-09-13, plan-mode + advisor до і після реалізації) —
-  pipeline-wiring кроку 2, розв'язано 7.1's відкрите питання.** Обраний користувачем шматок
-  Батчу 7.4+ (не admin-route/DTO, не status-view, не UI). Розв'язання: **суфіксний (wildcard)
-  збіг** для всіх 7 джерел, обґрунтування за змістом записів (HaGeZi's `wildcard/`-шлях там, де
-  він є; NRD/DGA/1Hosts — суфіксна семантика правильна за змістом навіть без `wildcard/`-шляху;
-  AdGuard's `||domain^` — anchor-правило за специфікацією), не за назвою URL-шляху (перший
-  чорновик плану рахував "6 із 7 wildcard/-шлях" — advisor-корекція). Обхід структурно ніколи не
-  тестує голий TLD-кандидат (`while let Some(_) = candidate.split_once('.')`), свідомо суворіше
-  за `rating_filter::ZoneLists::zone_match`. `contains_domain` → `matches_domain`. Новий
-  `DecisionSource::BlocklistBundle` (+ дзеркала в `DecisionSourceView`/`PDecisionSource`, обидва
-  напрями `From`; жодного бампу `ADMIN_DTO_SCHEMA_VERSION` — цей DTO ходить лише через
-  `GET /admin/log`, не через жоден версійований `AdminClient`-метод). `UpstreamContext` +=
-  `blocklist_bundles: Option<&BlocklistBundleState>`, гейт — новий `blocklist_bundles_is_active`
-  (дзеркало `rating_filter_is_active`). `handle_query`'s крок-1/2-пролог винесено в окрему
-  `overrides_step` (повертає `ControlFlow`) — вимушено `clippy::too_many_lines` після нового
-  кроку, не заплановано заздалегідь; поведінка ідентична. Закриваючий advisor-рев'ю довиловив:
-  (1) `DECISION_SOURCE_LABELS` у `main.js` без рядка для нового варіанта (мав graceful fallback,
-  але додано `BLOCKLIST_BUNDLE: "Блок-лист-бандл"` за прецедентом T-124's `RATING_FILTER`); (2)
-  `overrides_step`-екстракцію треба задокументувати як мід-імплементаційний форк, не мовчки; (3)
-  `CONFIGURATION.md`/`KNOWN-LIMITATIONS.md` пропущені з doc-sync списку. Усі три виправлено тим
-  самим проходом. 9 нових юніт/інтеграційних тестів (Три Б: happy path/boundary/misuse/error).
-  `cargo test --workspace --lib --bins` (861 тестів) / `clippy --workspace --all-targets -D
-  warnings` / `fmt --all -- --check` / `doc --no-deps --document-private-items` / `--test
-  conformance` / `--test admin_client` / `--workspace --doc` — усі зелені, увесь workspace.
-  DECISIONS.md 2026-09-13 ("Батч 7.4"). Не в обсязі: admin-route/DTO для живого per-source
-  перемикання, `/admin/status`-view, `/admin/ui`-рендер (Артборд F вже затверджений, чекає
-  DTO) — Батч 7.4, частина 2+.
-
-  **[x] Батч 7.4, частина 2 (2026-09-17, plan-mode + advisor до і після реалізації) —
-  admin-route/DTO + `/admin/status` per-source view, без `/admin/ui`-рендеру.** Свідомо
-  обмежений обсяг (advisor-схвалено): мокап (`mockups/gui-dashboard.html`'s "Відкриті питання до
-  затвердження") досі несе нерозв'язані питання саме про Артборд F (per-джерело чекбокси проти
-  master-перемикача, групування категорій, confirm-крок, бейдж) — користувач затвердив лише
-  старт кодування, не ці UI-рішення; backend-DTO від них не залежить, бо
-  `BlocklistBundlesConfig.sources: Option<Vec<String>>` (Батч 7.3) вже підтримує довільний
-  per-id вибір. Новий `POST /admin/blocklist-bundles` (`BlocklistBundlesConfigUpdate { enabled,
-  sources }`, дзеркалить `/admin/rating-filter`, **без** кеш-rebuild-гілки — бандл-перевірка
-  в `overrides_step` йде до кроку 4 (кеш), а не після, як рейтинг-фільтр, тож жоден кешований
-  ALLOW не міг обійти її); `AdminStatusResponse.blocklist_bundles: BlocklistBundlesStatusView`
-  (`#[serde(default)]`, `ADMIN_DTO_SCHEMA_VERSION` 3→4) з `BlocklistSourceStatusView.entry_count`
-  (не `domains` — той самий клас правки, що T-66, бо значення рахується ДО крос-джерельного
-  дедупу, на відміну від `ZoneListStatusView.domains`). **Критичний інваріант, підтверджений
-  тестом:** `sources: Option<Vec<String>>` на DTO несеться один-в-один, `None` ніколи не
-  резолвиться в конкретний список — інакше GET-статус→POST-echo заморозив би "трекати все"-стан,
-  той самий footgun, який `BlocklistBundlesConfig`'s дизайн (Батч 7.3) уже уникав двічі;
-  `serve_admin_blocklist_bundles_none_sources_round_trips_without_freezing` — регресійний тест
-  саме на це. `BlocklistSourceStatus`'s `#[allow(dead_code)]` (Батч 7.2) знято — цей батч і є
-  тим читачем, якого чекала. 7 нових тестів (Три Б + критичний інваріант). `cargo test
-  --workspace --lib --bins` (867 тестів) / `clippy --workspace --all-targets -D warnings` /
-  `fmt --all -- --check` / `doc --no-deps --document-private-items` / `--test conformance` /
-  `--test admin_client` / `--workspace --doc` / `--workspace --examples` — усі зелені, увесь
-  workspace. Закриваючий advisor-рев'ю (перед комітом) довиловив п'ять пунктів: `UI-SPEC.md`
-  (задокументований власник DTO адмін-каналу) пропущений з початкового doc-sync — додано, і
-  виправлено застарілий `DecisionSource` 7→8 (гап ще з Батчу 7.4 частина 1); звірка діаграм не
-  прогнана — `diagrams/ui-dto-model.md` оновлено (нові класи/поле/стрілки, SOURCES); тест мав
-  хардкод `available_sources.len() == 8` замість `BLOCKLIST_SOURCES.len()`; новий
-  windows-gnu-специфічний `-j`-gotcha (ICE/paging-file/rlib-format на `--all-targets`/`--doc`
-  без обмеженого паралелізму) записано в `RUST-GOTCHAS.md`; перевірено відсутність
-  захардкодженого `schema_version` поза `src/`. Усі п'ять виправлено тим самим проходом.
-  DECISIONS.md 2026-09-17 ("Батч 7.4 (частина 2)"). Не в обсязі: `/admin/ui`-рендер —
-  Батч 7.4, частина 3, після відповіді користувача на відкриті питання мокапу.
+**Формально закрита 2026-09-17.** T-218 (єдина задача фази) — усі 7 батчів (7.1 download/
+parse/hash core, 7.2 мережевий fetch/atomic swap, 7.3 конфіг+спавн, 7.4 частина 1
+pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 `/admin/ui`-рендер) готові й
+закомічені. Дет. — TASKS-DONE.md.
 
 ## Поза фазами / бэклог
 
@@ -1883,6 +1713,21 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   "disproportionate fan-out", проти якого правило існує; проби мусять бути один запит на джерело,
   не суцільний sweep. Дрібна, self-contained — не архітектурна зміна, plan-mode за розсудом
   (design-питання про стан дебаунсу варте окремого рішення перед кодом, не мовчазного вибору).
+- [ ] T-232 — **Дослідити: `blocklist_updater::hash_source_body` (стрімінговий парсинг+хеш
+  десятків МБ тексту на джерело, `refresh_all_sources`, T-218 Батч 7.2) виконується синхронно
+  всередині async-таска, не через `tokio::task::spawn_blocking`** — виникло 2026-09-17 під час
+  ручної browser-перевірки Батчу 7.4 частина 3: сервер під час живого фонового рефешу 6 джерел
+  (~100+ MB) на кілька секунд відповідав повільніше (одинична пряма `curl`-перевірка — 11.5s
+  замість <30ms). `run_blocklist_updater` сам по собі вже окремий `tokio::spawn`-таск (не блокує
+  accept loop структурно, той самий патерн, що `topn_updater`/`geoip_updater`), і мережевий fetch
+  (`fetch_bounded`) уже async — під питанням лише сам хешинг-крок. На 12-ядерній dev-машині це,
+  найімовірніше, не домінуюча причина спостереженого сповільнення (більш ймовірна причина —
+  реальний мережевий трафік ~111 MB плюс накопичені паралельні TLS-реконекти від браузера в тій
+  самій смоук-сесії) — не підтверджений бенчмарком, лише спостереження одного разу. Якщо
+  береться в роботу: виміряти реальний внесок хешингу окремо від мережі перед тим, як обгортати
+  в `spawn_blocking` (передчасна зміна без вимірювання — саме той клас "рішення без явної
+  потреби", який CLAUDE.md's development practices відмовляється робити). Некритична, не блокує
+  жодну іншу задачу.
 
 ## Батч RV — ремедіація внутрішнього код-ревʼю (2026-09-10)
 

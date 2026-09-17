@@ -117,6 +117,22 @@
     <p>Завантаження…</p>
   </div>
 
+  <!-- T-218 Фаза 7, Батч 7.4 частина 3 — публічні блок-лист-бандли
+       (mockups/gui-dashboard.html, Артборд F). Its own fetch/render cycle
+       off GET /admin/status (once on load, re-rendered after every action's
+       POST /admin/blocklist-bundles response) - deliberately NOT on the 2s
+       status poll: a just-clicked per-source checkbox must not visually
+       revert under the unrelated poll before its own POST resolves, same
+       reasoning as #providers-body's category checkboxes (T-176) and
+       #rating-filter-body above. Sits in the basic view, next to
+       #overrides-body rather than inside #advanced-settings - the mockup's
+       own placement rationale: this extends Blocklist (SPEC.md §5 step 2)
+       itself, not a niche add-on. -->
+  <div id="blocklist-bundles-body" class="card">
+    <h3>Блок-лист-бандли</h3>
+    <p>Завантаження…</p>
+  </div>
+
   <!-- T-46/T-54: same reasoning as #overrides-body above - a search box the
        user is actively typing into must not lose its value to the unrelated
        2s status poll. Unlike that one, this section also doesn't auto-refresh

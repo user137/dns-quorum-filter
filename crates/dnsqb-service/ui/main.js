@@ -20,6 +20,8 @@ const timeoutConfigBody = document.getElementById("timeout-config-body");
 // T-127/T-128: the rating-filter «bubble» card + its always-visible badge.
 const ratingFilterBody = document.getElementById("rating-filter-body");
 const ratingFilterBadge = document.getElementById("rating-filter-badge");
+// T-218 Фаза 7, Батч 7.4 частина 3: the public blocklist-bundles card.
+const blocklistBundlesBody = document.getElementById("blocklist-bundles-body");
 
 // T-159: short per-card help text, one entry per "?" toggle below. Text is
 // authored in UI-SPEC.md §3.8 (the docs-map owner of field descriptions,
@@ -3293,4 +3295,427 @@ async function refreshRatingFilter() {
   }
 }
 
+// T-218 Фаза 7, Батч 7.4 частина 3: the public blocklist-bundles card
+// (#blocklist-bundles-body). Its data is a field on AdminStatusResponse
+// (status.blocklist_bundles: BlocklistBundlesStatusView, added Батч 7.4
+// частина 2), not its own GET route - same shape as #rating-filter-body
+// above: fetch /admin/status once on load, re-render from the
+// POST /admin/blocklist-bundles response after every action. Own
+// fetch/render cycle, deliberately off the 2s poll - see the doc comment
+// over #blocklist-bundles-body in index.html.
+
+// Static client-side catalogue for the 8 BLOCKLIST_SOURCES ids
+// (crates/dnsqb-service/src/blocklist_download.rs) - the server has no
+// basis to localise/describe these (same "distribution contract" reasoning
+// as RATING_FILTER_ZONE_LABELS above). Keyed by id, not group: hagezi-nrd/
+// hagezi-dga are two independently-toggleable ids that share one display
+// group and are folded into a single checkbox row below.
+const BLOCKLIST_SOURCE_META = {
+  "hagezi-multi-pro": {
+    group: "hagezi-multi-pro",
+    cluster: "ads",
+    name: "HaGeZi Multi PRO",
+    desc: "Реклама, трекери, шкідливе ПЗ — основний набір",
+  },
+  "adguard-dns-filter": {
+    group: "adguard-dns-filter",
+    cluster: "ads",
+    name: "AdGuard DNS filter",
+    desc: "Той самий клас, окреме джерело — ширше покриття",
+  },
+  "1hosts-lite": {
+    group: "1hosts-lite",
+    cluster: "ads",
+    name: "1Hosts Lite",
+    desc: "Те саме, легший список — менше хибних блокувань",
+  },
+  "hagezi-tif": {
+    group: "hagezi-tif",
+    cluster: "security",
+    name: "HaGeZi Threat Intelligence Feeds",
+    desc: "Індикатори компрометації, фішинг",
+  },
+  "hagezi-nrd": {
+    group: "hagezi-nrd-dga",
+    cluster: "security",
+    name: "HaGeZi NRD / DGA",
+    desc: "Щойно зареєстровані й алгоритмічно згенеровані домени (malware C2)",
+  },
+  "hagezi-dga": {
+    group: "hagezi-nrd-dga",
+    cluster: "security",
+    name: "HaGeZi NRD / DGA",
+    desc: "Щойно зареєстровані й алгоритмічно згенеровані домени (malware C2)",
+  },
+  "hagezi-dyndns": {
+    group: "hagezi-dyndns",
+    cluster: "security",
+    name: "HaGeZi Dynamic DNS",
+    desc: "Динамічні DNS-хостнейми, часто зловживані",
+  },
+  "hagezi-hoster": {
+    group: "hagezi-hoster",
+    cluster: "security",
+    name: "HaGeZi Badware Hoster",
+    desc: "Хостери, відомі розповсюдженням шкідливого ПЗ",
+  },
+};
+
+const BLOCKLIST_CLUSTER_LABELS = {
+  ads: "Реклама й трекери",
+  security: "Безпека й загрози",
+};
+const BLOCKLIST_CLUSTER_ORDER = ["ads", "security"];
+
+async function setBlocklistBundles(enabled, sources) {
+  const response = await fetch("/admin/blocklist-bundles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled, sources }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+// "N год/дн тому" - a first-pass relative-time label, same precision level
+// the mockup itself shows ("оновлено 3 год тому"), not a claim of
+// second-accuracy.
+function blocklistRelativeTime(unixMillis) {
+  const deltaMs = Date.now() - unixMillis;
+  const hours = Math.floor(deltaMs / 3600000);
+  if (hours < 1) {
+    return "оновлено щойно";
+  }
+  if (hours < 24) {
+    return `оновлено ${hours} год тому`;
+  }
+  return `оновлено ${Math.floor(hours / 24)} дн тому`;
+}
+
+function renderBlocklistBundles(status) {
+  const bb = status.blocklist_bundles;
+  blocklistBundlesBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Блок-лист-бандли";
+  blocklistBundlesBody.appendChild(heading);
+
+  if (status.persisted === false) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    blocklistBundlesBody.appendChild(notPersisted);
+  }
+
+  const card = document.createElement("div");
+  card.className = "rf-card";
+
+  const head = document.createElement("div");
+  head.className = "rf-head";
+  const title = document.createElement("span");
+  title.className = "rf-title";
+  title.textContent = "Блокувати за публічними бандл-списками";
+  head.appendChild(title);
+
+  const switchLabel = document.createElement("label");
+  switchLabel.className = "switch";
+  const switchInput = document.createElement("input");
+  switchInput.type = "checkbox";
+  switchInput.checked = bb.enabled;
+  switchInput.setAttribute("aria-label", "Блок-лист-бандли");
+  const track = document.createElement("span");
+  track.className = "track";
+  const thumb = document.createElement("span");
+  thumb.className = "thumb";
+  switchLabel.appendChild(switchInput);
+  switchLabel.appendChild(track);
+  switchLabel.appendChild(thumb);
+  head.appendChild(switchLabel);
+  card.appendChild(head);
+
+  // `sources === null` ⇒ "track every currently published source" - shown
+  // as every id checked, never resolved into a concrete list here (the same
+  // invariant BlocklistBundlesStatusView.sources's own doc states: a client
+  // must never echo `None` back as a snapshot). Only an explicit checkbox
+  // click below turns this into a concrete Set.
+  const trackedSet = new Set(bb.sources === null ? bb.available_sources : bb.sources);
+
+  // Rows come from the union of three id sources, not the bare
+  // available_sources list - an id already in `sources`/`loaded` that has
+  // dropped out of BLOCKLIST_SOURCE_META (a shipped source removed from a
+  // future build) must still show as a removable row, never silently
+  // vanish (same reasoning as renderRatingFilter's displayCodes() above).
+  const knownIds = new Set(Object.keys(BLOCKLIST_SOURCE_META));
+  const orphanIds = new Set();
+  (bb.sources || []).forEach((id) => {
+    if (!knownIds.has(id)) {
+      orphanIds.add(id);
+    }
+  });
+  bb.loaded.forEach((entry) => {
+    if (!knownIds.has(entry.id)) {
+      orphanIds.add(entry.id);
+    }
+  });
+
+  const loadedById = new Map(bb.loaded.map((entry) => [entry.id, entry]));
+
+  function rowStatus(ids) {
+    const tracked = ids.some((id) => trackedSet.has(id));
+    const loaded = ids.map((id) => loadedById.get(id)).filter(Boolean);
+    if (!tracked) {
+      // A fully-empty selection never gets a "cleared on the next cycle"
+      // promise - refresh_all_sources returns before touching the bundle
+      // when `sources` is an explicit empty list, so no next cycle ever
+      // comes (KNOWN-LIMITATIONS.md). That case is covered by the
+      // card-level notice below instead; a per-row promise here would
+      // contradict it.
+      if (trackedSet.size === 0) {
+        return { text: "не відстежується", cls: "" };
+      }
+      return loaded.length > 0
+        ? { text: "знято — лишається чинним до наступного оновлення", cls: "stale" }
+        : { text: "не відстежується", cls: "" };
+    }
+    if (loaded.length === 0) {
+      return { text: "завантажується…", cls: "loading" };
+    }
+    const failed = loaded.find((entry) => entry.last_error);
+    if (failed) {
+      return { text: "збій оновлення — попередня версія", cls: "stale" };
+    }
+    // last_updated is None only alongside last_error (refresh_all_sources'
+    // Ok branch always sets Some(now); its Err branch always sets
+    // last_error) - `failed` above already catches that case, so Infinity
+    // never reaches the ?? below in practice. The guard stays because
+    // that's another module's invariant, not something provable from this
+    // line alone.
+    const oldest = Math.min(...loaded.map((entry) => entry.last_updated ?? Infinity));
+    return Number.isFinite(oldest)
+      ? { text: blocklistRelativeTime(oldest), cls: "" }
+      : { text: "—", cls: "" };
+  }
+
+  async function toggleIds(ids) {
+    const newSet = new Set(trackedSet);
+    const allTracked = ids.every((id) => newSet.has(id));
+    ids.forEach((id) => {
+      if (allTracked) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+    });
+    // Re-checking every row yields Some([...8 ids]), not None - a
+    // deliberately explicit subset, not an automatic return to "track
+    // every future source" (that would silently resurrect the exact
+    // freeze-on-echo footgun `sources: Option<Vec<String>>` exists to
+    // avoid). There is no UI affordance in this batch to go back to `null`.
+    return setBlocklistBundles(bb.enabled, [...newSet]);
+  }
+
+  const trackedEmpty = trackedSet.size === 0;
+  const desc = document.createElement("p");
+  desc.className = "rf-desc";
+  // Catalogue size (total rows this card can show) - used for the
+  // <summary> count below, which counts what EXISTS, not what's selected.
+  const knownRowCount =
+    new Set(
+      [...knownIds].map((id) => BLOCKLIST_SOURCE_META[id].group),
+    ).size + orphanIds.size;
+  // What's actually selected right now (advisor-catch: "Активно, N джерел"
+  // must move when a source is unchecked, or it's the same fake-count class
+  // zoneMeta() already refused for gov-* zones, T-66) - count of *rows*
+  // (grouped ids + orphans) with at least one tracked id, not the raw
+  // trackedSet.size (which would double-count the merged nrd/dga row).
+  const groupedKnownIds = new Map();
+  Object.keys(BLOCKLIST_SOURCE_META).forEach((id) => {
+    const group = BLOCKLIST_SOURCE_META[id].group;
+    if (!groupedKnownIds.has(group)) {
+      groupedKnownIds.set(group, []);
+    }
+    groupedKnownIds.get(group).push(id);
+  });
+  const trackedRowCount =
+    [...groupedKnownIds.values()].filter((ids) => ids.some((id) => trackedSet.has(id))).length +
+    [...orphanIds].filter((id) => trackedSet.has(id)).length;
+
+  if (!bb.enabled) {
+    desc.textContent =
+      "Доповнює кворум статичними публічними списками (реклама/трекери/шкідливе/DGA). " +
+      "Опційно, дефолт вимкнено. Той самий пайплайн, лише крок 2 (Blocklist).";
+    card.appendChild(desc);
+  } else if (trackedEmpty) {
+    desc.textContent = "Той самий пайплайн, лише крок 2 (Blocklist).";
+    card.appendChild(desc);
+    const emptyNotice = document.createElement("div");
+    emptyNotice.className = "notice warn";
+    emptyNotice.textContent = bb.active
+      ? "Увімкнено, але жодного джерела не обрано — блокування й далі діє на раніше " +
+        "завантаженому наборі (він не очищується автоматично, поки не оберете джерело)."
+      : "Увімкнено, але жодного джерела не обрано — фільтрація не діє. Позначте " +
+        "принаймні одне джерело нижче.";
+    card.appendChild(emptyNotice);
+  } else if (bb.active) {
+    desc.textContent = `Активно, ${trackedRowCount} джерел. Той самий пайплайн, лише крок 2 (Blocklist).`;
+    card.appendChild(desc);
+  } else {
+    desc.textContent = "Той самий пайплайн, лише крок 2 (Blocklist).";
+    card.appendChild(desc);
+    const forkB = document.createElement("div");
+    forkB.className = "notice warn";
+    forkB.textContent =
+      "Увімкнено, перше завантаження триває у фоні — попередня (порожня) версія лишається " +
+      "чинною. Оновіть сторінку, щоб побачити результат, коли воно завершиться.";
+    card.appendChild(forkB);
+  }
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+  card.appendChild(errorLine);
+
+  const sourcesDetails = document.createElement("details");
+  sourcesDetails.className = "bl-sources";
+  const summary = document.createElement("summary");
+  const summaryLabel = document.createElement("span");
+  summaryLabel.textContent = `Джерела (${knownRowCount})`;
+  const chev = document.createElement("span");
+  chev.className = "chev";
+  chev.textContent = "›";
+  summary.appendChild(summaryLabel);
+  summary.appendChild(chev);
+  sourcesDetails.appendChild(summary);
+
+  function buildCheckboxRow(ids, name, rowDesc) {
+    const li = document.createElement("li");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = ids.some((id) => trackedSet.has(id));
+    checkbox.setAttribute("aria-label", name);
+    checkbox.addEventListener("change", async () => {
+      errorLine.textContent = "";
+      // Disabled for the round trip (advisor-catch: a slow/failed POST left
+      // the row showing a selection the server hadn't confirmed, with no
+      // in-flight signal - same reasoning as the master switch below) and
+      // reverted on failure, mirroring switchInput's own revert (a rejected
+      // POST - e.g. an orphan id still in `sources` - must not leave the
+      // checkbox showing a selection the server never accepted).
+      checkbox.disabled = true;
+      try {
+        renderBlocklistBundles(await toggleIds(ids));
+      } catch (err) {
+        checkbox.checked = !checkbox.checked;
+        checkbox.disabled = false;
+        errorLine.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+      }
+    });
+    li.appendChild(checkbox);
+    const row = document.createElement("div");
+    row.className = "bl-row";
+    const top = document.createElement("div");
+    top.className = "bl-row-top";
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = name;
+    top.appendChild(nm);
+    const status = rowStatus(ids);
+    const meta = document.createElement("span");
+    meta.className = status.cls ? `meta ${status.cls}` : "meta";
+    meta.textContent = status.text;
+    top.appendChild(meta);
+    row.appendChild(top);
+    const descLine = document.createElement("p");
+    descLine.className = "desc";
+    descLine.textContent = rowDesc;
+    row.appendChild(descLine);
+    li.appendChild(row);
+    return li;
+  }
+
+  BLOCKLIST_CLUSTER_ORDER.forEach((cluster) => {
+    const groupsInCluster = new Map();
+    Object.keys(BLOCKLIST_SOURCE_META).forEach((id) => {
+      const meta = BLOCKLIST_SOURCE_META[id];
+      if (meta.cluster !== cluster) {
+        return;
+      }
+      if (!groupsInCluster.has(meta.group)) {
+        groupsInCluster.set(meta.group, []);
+      }
+      groupsInCluster.get(meta.group).push(id);
+    });
+    if (groupsInCluster.size === 0) {
+      return;
+    }
+    const sub = document.createElement("div");
+    sub.className = "rf-sub";
+    sub.textContent = BLOCKLIST_CLUSTER_LABELS[cluster];
+    sourcesDetails.appendChild(sub);
+    const list = document.createElement("ul");
+    list.className = "bl-list";
+    groupsInCluster.forEach((ids) => {
+      const meta = BLOCKLIST_SOURCE_META[ids[0]];
+      const rowDesc = ids.length > 1 ? `${meta.desc} — 2 джерела` : meta.desc;
+      list.appendChild(buildCheckboxRow(ids, meta.name, rowDesc));
+    });
+    sourcesDetails.appendChild(list);
+  });
+
+  if (orphanIds.size > 0) {
+    const sub = document.createElement("div");
+    sub.className = "rf-sub";
+    sub.textContent = "Інше";
+    sourcesDetails.appendChild(sub);
+    const list = document.createElement("ul");
+    list.className = "bl-list";
+    orphanIds.forEach((id) => {
+      list.appendChild(
+        buildCheckboxRow(
+          [id],
+          id,
+          "невідоме джерело (більше не публікується) — зніміть позначку, щоб зберегти інші зміни",
+        ),
+      );
+    });
+    sourcesDetails.appendChild(list);
+  }
+
+  card.appendChild(sourcesDetails);
+
+  switchInput.addEventListener("change", async () => {
+    errorLine.textContent = "";
+    try {
+      renderBlocklistBundles(await setBlocklistBundles(switchInput.checked, bb.sources));
+    } catch (err) {
+      switchInput.checked = !switchInput.checked;
+      errorLine.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+    }
+  });
+
+  blocklistBundlesBody.appendChild(card);
+}
+
+function renderBlocklistBundlesError(err) {
+  blocklistBundlesBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Блок-лист-бандли";
+  blocklistBundlesBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  blocklistBundlesBody.appendChild(panel);
+}
+
+async function refreshBlocklistBundles() {
+  try {
+    renderBlocklistBundles(await getStatus());
+  } catch (err) {
+    renderBlocklistBundlesError(err);
+  }
+}
+
 refreshRatingFilter();
+refreshBlocklistBundles();

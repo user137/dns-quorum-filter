@@ -164,8 +164,9 @@ TASKS-DONE.md, never here.
   indefinitely. Same already-accepted class of staleness as `[rating_filter]`/
   `topn_updater::refresh_all_lists` (an emptied `lists` doesn't clear the zone either), but a
   larger blast radius here (up to ~5.5M hashed entries, not a curated top-N list). **The
-  `/admin/status` per-source view now exists (Батч 7.4 частина 2)** — `GET /admin/status`'s
-  `blocklist_bundles.loaded`/`sources` surfaces this state to a client that reads it, so an
-  operator is no longer blind to it in principle; the gap is that nothing renders that view yet
-  (`/admin/ui`, Батч 7.4 частина 3) and the underlying staleness itself is still unfixed.
+  `#blocklist-bundles-body` card now renders this state (Батч 7.4 частина 3, 2026-09-17)** — an
+  all-unchecked selection shows an explicit "лишається чинним, не очищується автоматично" notice
+  instead of a silent Fork-B "loading" lie, so an operator reading `/admin/ui` is no longer blind
+  to it either; the underlying staleness itself is still unfixed — the card explains the state, it
+  doesn't clear it.
 

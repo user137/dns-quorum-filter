@@ -539,3 +539,39 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .rf-badge .rf-dot {
   width: 7px; height: 7px; border-radius: 999px; background: currentColor;
 }
+
+/* T-218 Фаза 7, Батч 7.4 частина 3: the blocklist-bundles source checklist
+   (#blocklist-bundles-body, mockups/gui-dashboard.html Артборд F, lines
+   313-344) - fixed source-list rows (checkbox + name + status), not a
+   free-text combobox like .rf-picked above - the source set is known and
+   finite. Mirrors .rf-picked li's layout, swaps the remove-× for a
+   checkbox since sources aren't user-added. */
+.bl-list { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+.bl-list li {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft); font-size: 12px;
+}
+.bl-list li:last-child { border-bottom: none; }
+.bl-list input[type="checkbox"] { margin-top: 0.15rem; }
+.bl-row { flex: 1 1 auto; min-width: 0; }
+.bl-row-top { display: flex; align-items: baseline; gap: 0.5rem; justify-content: space-between; }
+.bl-list .nm { font-weight: 600; }
+.bl-list .meta {
+  font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bl-list .meta.stale, .bl-list .meta.loading { color: var(--warn); }
+.bl-list .desc { font-size: 10.5px; color: var(--text-muted); margin: 0.1rem 0 0; }
+
+/* Source list collapses behind its own native <details> (no JS, same
+   mechanic as details.advanced but lighter-weight - nested one level in,
+   so no card border of its own). Default collapsed; the master switch +
+   one-line description stay visible either way. */
+details.bl-sources { margin-top: 0.6rem; }
+details.bl-sources > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;
+  font-size: 11px; font-weight: 600; color: var(--text-muted); padding: 0.15rem 0;
+}
+details.bl-sources > summary::-webkit-details-marker { display: none; }
+details.bl-sources > summary .chev { margin-left: auto; transition: transform .12s; }
+details.bl-sources[open] > summary .chev { transform: rotate(90deg); }

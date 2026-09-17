@@ -9,10 +9,11 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 
 Мокап: [`mockups/gui-dashboard.html`](mockups/gui-dashboard.html) (локальний
 файл — відкривається будь-яким браузером, без збірки). Артборд F (публічні
-блок-лист-бандли, T-218, Фаза 7) додано 2026-09-13, чекає окремого
-затвердження — на відміну від E, тут маркер явно гейтить код (запит
-користувача, TASKS.md). Розміщення переглянуто того ж дня: картка живе в
-базовій секції «Списки виключень» (§2 нижче), не в «Розширені» — джерела
+блок-лист-бандли, T-218, Фаза 7) додано 2026-09-13, реалізовано Батчем 7.4
+частина 3 (2026-09-17) — мокап узятий за затверджений дизайн для кожного з
+власних «Відкритих питань» (DECISIONS.md 2026-09-17 «Батч 7.4 (частина 3)»).
+Розміщення переглянуто того ж дня, що й додано: картка живе в базовій секції
+«Списки виключень» (§2 нижче, §3.3 нижче), не в «Розширені» — джерела
 згортаються власним вкладеним `<details>`.
 Діаграми: [`diagrams/ui-navigation.md`](diagrams/ui-navigation.md),
 [`diagrams/ui-dto-model.md`](diagrams/ui-dto-model.md),
@@ -133,6 +134,16 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | Blocklist — список записів | `Vec<OverrideEntry>` (§4.4) | §5 | редагований список/таблиця | те саме |
 | Поле додавання домену | `String` | §5 | текстове поле + кнопка | нормалізація перед збереженням: lowercase, IDNA2008→punycode, обрізана кінцева крапка (§5) |
 | Підсвітка конфлікту | — | §5, §8 | візуальний маркер на записі, присутньому в обох списках | allowlist виграє за пріоритетом (§5) — текст пояснення поруч |
+
+**T-218 (Фаза 7, Батч 7.4 частина 3):** картка `#blocklist-bundles-body` — окремий сиблінг
+`#overrides-body`, той самий базовий рівень видимості, **не** в `<details>` «Розширені»
+(§3.6) — Артборд F, `mockups/gui-dashboard.html`.
+
+| Поле | Тип | Джерело | Контрол UI | Що приймає / валідація | Фаза |
+|---|---|---|---|---|---|
+| Блок-лист-бандли — master-перемикач | `bool` (`BlocklistBundlesStatusView.enabled`) | §5, T-218 | switch у картці `#blocklist-bundles-body`, **без** кроку підтвердження (доповнення кворуму, не «заблокує переважну більшість інтернету», на відміну від рейтинг-фільтра §3.6) | `POST /admin/blocklist-bundles {enabled, sources}` — `sources` завжди йде без змін від того, що вже було (критичний інваріант: `null` ніколи не резолвиться в конкретний список) | Ф7 ✅ |
+| Джерела — per-джерело чекбокси | `Option<Vec<String>>` (`BlocklistBundlesStatusView.sources`/`available_sources`/`loaded`) | §5, T-218 | згорнутий `<details class="bl-sources">`, згруповано «Реклама й трекери»/«Безпека й загрози» (клієнтський статичний каталог, не кворум-категорії); `hagezi-nrd`/`hagezi-dga` — один рядок, один чекбокс, перемикає обидва id разом | клік → `POST` з явним `sources`-масивом (перетворює `null` на `Some(ids)`); невідомий id (поза статичним каталогом) → власний рядок «невідоме джерело», не зникає мовчки | Ф7 ✅ |
+| Стан «нічого не обрано» | — | KNOWN-LIMITATIONS.md | `notice warn`, текст залежить від `active` (застарілий набір і далі блокує **або** фільтрація не діє) | лише читання — три взаємовиключні гілки опису, не дві (Fork B rating-filter'а сюди буквально не копіюється) | Ф7 ✅ |
 
 ### 3.4 Провайдери (Ф1 база / Ф2 розширення)
 
@@ -372,7 +383,7 @@ Timeout-режим, Кеш, Списки виключень, Лог-фільтр
 | `get_geoip_config()` / `set_blocked_countries(list)` | `GeoIPConfig` | GeoIP | Ф2 |
 | `get_geoip_db_status()` | дата оновлення | GeoIP | Ф2 |
 | `set_rating_filter(config)` → `POST /admin/rating-filter` | ⚠️ реалізовано Батч 4.4 — `RatingFilterConfigUpdate { enabled: bool, lists: Vec<String> }` (повна заміна, як `AdminConfigUpdate`); повертає свіжий `AdminStatusResponse` із полем `rating_filter: RatingFilterStatusView { enabled, active, lists, available_lists, loaded, personal_zone_enabled, suggested_list }`. Валідація списків спільна з завантаженням конфігу (`validate_rating_filter_lists` — форма + членство в `AVAILABLE_TOPN_LISTS`); невалідний код → `400`. **T-227:** `suggested_list: Option<String>` — код списку, що збігається з регіоном ОС (`install_region::detect_system_region`, реєстр, не локаль), рахується лише поки `lists` порожній; клієнт лише рендерить підказку + кнопку «Додати» (ніколи не пречекнутий чекбокс, ніколи не пише в `lists` сам) | Розширені | Ф4 |
-| `set_blocklist_bundles(config)` → `POST /admin/blocklist-bundles` | ⚠️ бекенд реалізовано T-218 Батч 7.4 частина 2 (2026-09-17), **екрана ще нема** — `BlocklistBundlesConfigUpdate { enabled: bool, sources: Option<Vec<String>> }` (повна заміна, як `RatingFilterConfigUpdate`; `sources: null` = «трекати всі поточні джерела наживо», ніколи не резолвиться сервером у конкретний список — той самий інваріант, що й на диску); повертає свіжий `AdminStatusResponse` із полем `blocklist_bundles: BlocklistBundlesStatusView { enabled, active, sources, available_sources, loaded }`, де `loaded[].entry_count` — рахунок ДО крос-джерельного дедупу (не `domains`, як у `ZoneListStatusView` — навмисно інша назва). Невідомий id джерела → `400`. Картка на `/admin/ui` (Артборд F, `mockups/gui-dashboard.html`) — Батч 7.4 частина 3, чекає відповіді користувача на власні відкриті питання мокапу (per-джерело чекбокси, групування, confirm-крок, бейдж) | Списки виключень (`#overrides-body`, не «Розширені» — Артборд F) | Ф7 |
+| `set_blocklist_bundles(config)` → `POST /admin/blocklist-bundles` | Реалізовано T-218 Батч 7.4 частина 2 (2026-09-17, бекенд) + частина 3 (2026-09-17, рендер) — `BlocklistBundlesConfigUpdate { enabled: bool, sources: Option<Vec<String>> }` (повна заміна, як `RatingFilterConfigUpdate`; `sources: null` = «трекати всі поточні джерела наживо», ніколи не резолвиться сервером **або клієнтом** у конкретний список — той самий інваріант, що й на диску, `main.js`'s master-перемикач шле `bb.sources` без змін); повертає свіжий `AdminStatusResponse` із полем `blocklist_bundles: BlocklistBundlesStatusView { enabled, active, sources, available_sources, loaded }`, де `loaded[].entry_count` — рахунок ДО крос-джерельного дедупу (не `domains`, як у `ZoneListStatusView` — навмисно інша назва, і навмисно не рендериться на картці — `main.js`'s `entry_count`-виключення). Невідомий id джерела → `400`. **Картка `#blocklist-bundles-body` на `/admin/ui`** (Артборд F, `mockups/gui-dashboard.html`, мокап узятий за затверджений дизайн для кожного з власних відкритих питань — DECISIONS.md 2026-09-17 «Батч 7.4 (частина 3)»): per-джерело чекбокси, групування «Реклама й трекери»/«Безпека й загрози» (клієнтський статичний каталог `BLOCKLIST_SOURCE_META`, не кворум-категорії), без confirm-кроку, без окремого бейджа під hero, список джерел — власний `<details class="bl-sources">`, закритий за замовчуванням | Списки виключень (`#overrides-body`, не «Розширені» — Артборд F) | Ф7 |
 | `set_cctld_blocklist(list)` | `CctldBlockConfig` | Розширені | Ф5 |
 | `get_about_info()` | версія + атрибуції | Про застосунок | Ф1/Ф2 |
 

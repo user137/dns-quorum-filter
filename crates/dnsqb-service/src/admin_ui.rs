@@ -670,4 +670,81 @@ mod tests {
             "the badge must be gated on rating_filter.enabled - empty div when off"
         );
     }
+
+    // T-218 Фаза 7, Батч 7.4 частина 3 — the public blocklist-bundles card.
+    // Backend (BlocklistBundlesStatusView, POST /admin/blocklist-bundles) is
+    // fully covered by dispatch.rs's own tests (Батч 7.4 частина 2); this
+    // batch only adds ui/* markup, so a presence smoke test is the right
+    // surface here, same precedent as the other main_js_* tests above.
+    #[test]
+    fn blocklist_bundles_card_exists_in_the_basic_view_next_to_overrides() {
+        assert!(
+            INDEX_HTML.contains("id=\"blocklist-bundles-body\""),
+            "the card needs its slot"
+        );
+        let Some(overrides_at) = INDEX_HTML.find("id=\"overrides-body\"") else {
+            panic!("overrides card must exist");
+        };
+        let Some(advanced_at) = INDEX_HTML.find("<details id=\"advanced-settings\">") else {
+            panic!("advanced disclosure must exist");
+        };
+        let Some(bundles_at) = INDEX_HTML.find("id=\"blocklist-bundles-body\"") else {
+            panic!("checked above");
+        };
+        assert!(
+            overrides_at < bundles_at && bundles_at < advanced_at,
+            "the card must sit in the basic view, after #overrides-body and \
+             before <details id=\"advanced-settings\"> - never hidden inside it"
+        );
+    }
+
+    #[test]
+    fn blocklist_bundles_card_has_its_own_fetch_render_cycle_off_the_2s_poll() {
+        assert!(
+            MAIN_JS.contains("function renderBlocklistBundles(status)"),
+            "render function must exist"
+        );
+        assert!(
+            MAIN_JS.contains("async function refreshBlocklistBundles()"),
+            "must have its own refresh cycle, not ride the shared 2s poll \
+             (a mid-click checkbox must never revert under an unrelated re-render)"
+        );
+        assert!(
+            MAIN_JS.contains("refreshBlocklistBundles();"),
+            "must actually be called once on load"
+        );
+    }
+
+    #[test]
+    fn blocklist_bundles_posts_to_the_documented_route() {
+        assert!(
+            MAIN_JS.contains("fetch(\"/admin/blocklist-bundles\""),
+            "must POST to the route dispatch.rs registers"
+        );
+    }
+
+    // The critical invariant carried over from Батч 7.4 частина 2: the
+    // master-switch POST must echo `bb.sources` unchanged, never resolve a
+    // `null` selection into a concrete id list on the client's own initiative.
+    #[test]
+    fn blocklist_bundles_master_switch_never_resolves_a_null_selection() {
+        assert!(
+            MAIN_JS.contains("setBlocklistBundles(switchInput.checked, bb.sources)"),
+            "the master switch must forward bb.sources as-is - resolving None \
+             into a concrete list here would freeze the \"track everything\" \
+             selection the very next time someone flips the switch"
+        );
+    }
+
+    // Orphan ids (a source id present in a config/loaded bundle but no
+    // longer in BLOCKLIST_SOURCE_META) must still render as a removable row,
+    // never silently vanish - same reasoning as renderRatingFilter's
+    // displayCodes() (see its own test above).
+    #[test]
+    fn blocklist_bundles_never_silently_hides_an_unknown_source_id() {
+        assert!(
+            MAIN_JS.contains("orphanIds"),
+            "an id outside the static catalogue must still get a row"
+        );
+    }
 }

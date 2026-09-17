@@ -309,7 +309,8 @@ enabled = false
 маршруті — саме це й лишає інваріант вище чинним при POST'і теж, не лише при ручному редагуванні
 файлу). Невідомий id → `400`. `GET /admin/status` повертає те саме `sources` наживо плюс
 `available_sources` (усі id `BLOCKLIST_SOURCES`) і `loaded` (per-джерело `entry_count`/
-`last_updated`/`last_error`) — рендеру в `/admin/ui` ще нема (Батч 7.4 частина 3).
+`last_updated`/`last_error`) — рендериться карткою `#blocklist-bundles-body` на `/admin/ui`
+(Батч 7.4 частина 3, 2026-09-17): master-перемикач + per-джерело чекбокси, без confirm-кроку.
 
 **Дефолт — вимкнено, обов'язково** (той самий принцип, що `[rating_filter]`/`[personal_zone]`).
 Фонова задача (`run_blocklist_updater`, 24-год цикл, той самий шаблон, що `run_topn_updater`)
