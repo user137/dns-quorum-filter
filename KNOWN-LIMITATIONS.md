@@ -170,8 +170,8 @@ TASKS-DONE.md, never here.
   to it either; the underlying staleness itself is still unfixed — the card explains the state, it
   doesn't clear it.
 - **Partial runtime integrity check on the 7 fetched blocklist sources** (T-218 Фаза 7, T-233,
-  narrowed 2026-09-17, extended same day). `blocklist_download::validate_hashes` gates each
-  source on a parse-success ratio (`MIN_PARSE_SUCCESS_RATIO` = 0.5) and an exact-match
+  narrowed 2026-09-17, extended same day, PSL filter added 2026-09-18). `blocklist_download::validate_hashes`
+  gates each source on a parse-success ratio (`MIN_PARSE_SUCCESS_RATIO` = 0.5) and an exact-match
   canary-domain check (`BLOCKLIST_CANARY_DOMAINS`, ≥2 hits rejects); `delta_verdict` additionally
   gates on the entry count vs. the last successful cycle's count (persisted in a new
   `<id>.count` file next to `<id>.txt`, `MAX_COUNT_GROWTH_MULTIPLIER` = 5× /
@@ -179,16 +179,23 @@ TASKS-DONE.md, never here.
   7-day `DELTA_CHECK_GRACE_PERIOD` since the last success). All three run **before** the fetched
   body ever reaches disk — a rejected cycle falls back to last-known-good exactly like a network
   failure, and never poisons that fallback or the delta baseline (T-233's own closing-review
-  catch, part 1: the write used to happen before the hash/validate step). Still open:
-  - **None of the three checks catches injecting a small number of legitimate domains into a
+  catch, part 1: the write used to happen before the hash/validate step). **Ingestion also drops
+  any candidate that is itself, in its entirety, an ICANN-section public suffix** (`co.uk`,
+  `pl.ua`, …) via `public_suffix::Psl::is_public_suffix`, so a single such line no longer blocks
+  the whole legitimate namespace under it — measured against the real ~4.1M lines across all
+  eight sources (2026-09-17): 4 ICANN-section hits total, none in `hagezi-hoster`/`hagezi-dyndns`
+  (whose 468/8 bare PRIVATE-section entries are their intended purpose and are deliberately left
+  unfiltered — DECISIONS.md has the full measurement). Still open:
+  - **None of the checks catches injecting a small number of legitimate domains into a
     large list** — T-233's own stated primary threat model. Ratio is unaffected (the injected
     lines are valid domains); canary only catches the 12 specific compiled-in domains; delta is
     unaffected at any realistic injection volume (1,000 domains into `hagezi-nrd`'s measured
     3,181,194 entries is a 0.03% shift, far inside any threshold wide enough to tolerate that
-    source's own day-to-day registration churn). This is a structural gap across all three gates,
-    not a bug in any one of them — closing it needs either a much larger, continuously
-    maintained canary set or the PSL filter below (which catches a different, narrower shape of
-    injection: a whole public suffix as one entry).
+    source's own day-to-day registration churn); the PSL filter only catches a *single whole
+    public suffix as one entry*, not a handful of ordinary-looking registrable domains. This is a
+    structural gap across all four gates, not a bug in any one of them — closing it needs a much
+    larger, continuously maintained canary set (or an equivalent reputation signal), nothing
+    already planned.
   - **The canary gate is per-source, not per-bundle** — a source with fewer than 2 injected
     canaries (or a different injected domain per source) passes even though the combined
     multi-source bundle could still accumulate several. Deliberate (per-source is what makes
@@ -198,12 +205,12 @@ TASKS-DONE.md, never here.
     (1,251/1,547 entries measured 2026-09-17) sit below `MIN_COUNT_BASELINE`, so `delta_verdict`
     skips them unconditionally; there is no per-source-calibrated threshold, only the one global
     floor (no multi-day history exists yet to calibrate anything tighter).
-  - **No PSL-based entry filter** — `matches_domain`'s suffix walk excludes a bare TLD candidate
-    but not a multi-label public suffix (`co.uk`, `github.io`, …); one malicious/malformed entry
-    of that shape still blocks an entire legitimate namespace. Deliberately deferred, not silently
-    dropped — bundling the existing `examples/public_suffix_list.dat` into `dnsqb-service` would
-    reverse both this module's and `rating_filter`'s documented "no PSL" stance, a decision the
-    user chose to keep open rather than settle in passing.
+  - **The PSL filter doesn't consult PSL exception rules** (e.g. `!city.kawasaki.jp`) —
+    `is_public_suffix` can treat a string as a public suffix when an exception rule would actually
+    make it registrable. The failure direction is under-filtering (one fewer real block-target
+    line kept), never over-blocking, so this is accepted rather than reproducing
+    `Psl::registrable`'s full exception walk on the ingestion hot path (`public_suffix.rs`'s own
+    doc on `is_public_suffix` has the detail).
   - **A source frozen on a rejected/failed cycle ages silently** — same accepted posture as
     `user-country` GeoIP's own bullet below: the only operator-visible signal is
     `last_error`/an aging `last_updated` on the `#blocklist-bundles-body` card, no escalation after

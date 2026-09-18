@@ -27,6 +27,7 @@ use std::collections::HashSet;
 use std::hash::BuildHasher;
 
 use crate::normalize_domain;
+use crate::public_suffix::Psl;
 
 /// Text-body format a source publishes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,18 +132,20 @@ pub(crate) const MAX_BLOCKLIST_BYTES: u64 = 128 * 1024 * 1024;
 /// actually handed to `normalize_domain` (blank/`#`-comment lines don't
 /// count — they were never candidates) — the denominator
 /// [`validate_hashes`]'s parse-success-ratio check divides by (T-233).
+/// `psl` — see [`push_normalized`]'s own doc (T-233 part 3).
 pub(crate) fn hash_plain_domains(
     body: &str,
     seed: &RandomState,
     out: &mut Vec<u64>,
     candidates: &mut usize,
+    psl: &Psl,
 ) {
     for line in body.lines() {
         let entry = line.trim();
         if entry.is_empty() || entry.starts_with('#') {
             continue;
         }
-        push_normalized(entry, seed, out, candidates);
+        push_normalized(entry, seed, out, candidates, psl);
     }
 }
 
@@ -161,6 +164,7 @@ pub(crate) fn hash_adblock_domains(
     seed: &RandomState,
     out: &mut Vec<u64>,
     candidates: &mut usize,
+    psl: &Psl,
 ) {
     for line in body.lines() {
         let line = line.trim();
@@ -180,24 +184,41 @@ pub(crate) fn hash_adblock_domains(
         if candidate.is_empty() || candidate.contains(['/', '*', '|']) {
             continue; // path/wildcard/alternation rule, not a bare domain anchor
         }
-        push_normalized(candidate, seed, out, candidates);
+        push_normalized(candidate, seed, out, candidates, psl);
     }
 }
 
-/// Shared tail of both streaming parsers: normalize, hash, push. Silently
-/// drops a candidate `normalize_domain` rejects — a malformed line in a
-/// third-party feed must never abort the whole source (Три Б: this is
+/// Shared tail of both streaming parsers: normalize, filter, hash, push.
+/// Silently drops a candidate `normalize_domain` rejects — a malformed line
+/// in a third-party feed must never abort the whole source (Три Б: this is
 /// untrusted external input, SECURITY.md's lower-layer-safety leg). Always
 /// counts the attempt in `candidates`, whether or not `normalize_domain`
 /// accepted it.
+///
+/// **T-233 part 3:** a normalized domain that is itself, in its entirety, an
+/// ICANN-section public suffix (`co.uk`, `pl.ua`, ...) is dropped here —
+/// never hashed, so it can never make [`crate::blocklist_updater::BlocklistBundleState::matches_domain`]'s
+/// suffix walk block the whole legitimate namespace under it. It still
+/// counts toward `candidates` (the increment above runs unconditionally,
+/// same as for a genuinely malformed line) — it does nudge
+/// [`validate_hashes`]'s parse-success ratio down, by policy rather than a
+/// format failure, but the measured real-world rate (4 hits across ~4.1M
+/// lines total, 2026-09-17, DECISIONS.md) is immaterial next to
+/// [`MIN_PARSE_SUCCESS_RATIO`]'s 0.5 floor — not worth a second counter to
+/// keep the two reasons for rejection separate. See [`Psl::is_public_suffix`]
+/// for why only the ICANN section is checked.
 fn push_normalized(
     candidate: &str,
     seed: &RandomState,
     out: &mut Vec<u64>,
     candidates: &mut usize,
+    psl: &Psl,
 ) {
     *candidates += 1;
     if let Ok(domain) = normalize_domain(candidate) {
+        if psl.is_public_suffix(&domain) {
+            return;
+        }
         out.push(seed.hash_one(domain));
     }
 }
@@ -422,6 +443,7 @@ mod tests {
         MIN_COUNT_BASELINE, MIN_COUNT_RETENTION_DIVISOR, MIN_PARSE_SUCCESS_RATIO,
     };
     use crate::normalize_domain;
+    use crate::public_suffix::test_psl;
     use std::time::Duration;
 
     #[test]
@@ -455,7 +477,7 @@ mod tests {
         let seed = RandomState::new();
         let mut out = Vec::new();
         let mut candidates = 0;
-        hash_plain_domains(body, &seed, &mut out, &mut candidates);
+        hash_plain_domains(body, &seed, &mut out, &mut candidates, &test_psl());
         assert_eq!(out.len(), 2, "two real domain lines, two hashes");
         assert_eq!(candidates, 2, "blank/#-comment lines are never candidates");
     }
@@ -465,7 +487,13 @@ mod tests {
         let seed = RandomState::new();
         let mut out = Vec::new();
         let mut candidates = 0;
-        hash_plain_domains("not a domain\n", &seed, &mut out, &mut candidates);
+        hash_plain_domains(
+            "not a domain\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+            &test_psl(),
+        );
         assert!(out.is_empty());
         assert_eq!(
             candidates, 1,
@@ -479,8 +507,9 @@ mod tests {
         let mut a = Vec::new();
         let mut b = Vec::new();
         let mut candidates = 0;
-        hash_plain_domains("Example.COM.\n", &seed, &mut a, &mut candidates);
-        hash_plain_domains("example.com\n", &seed, &mut b, &mut candidates);
+        let psl = test_psl();
+        hash_plain_domains("Example.COM.\n", &seed, &mut a, &mut candidates, &psl);
+        hash_plain_domains("example.com\n", &seed, &mut b, &mut candidates, &psl);
         assert_eq!(a, b, "normalize_domain already folds case/trailing dot");
     }
 
@@ -494,6 +523,7 @@ mod tests {
             &seed,
             &mut out,
             &mut candidates,
+            &test_psl(),
         );
         assert_ne!(out[0], out[1]);
     }
@@ -517,7 +547,7 @@ mod tests {
         let seed = RandomState::new();
         let mut out = Vec::new();
         let mut candidates = 0;
-        hash_adblock_domains(body, &seed, &mut out, &mut candidates);
+        hash_adblock_domains(body, &seed, &mut out, &mut candidates, &test_psl());
         assert_eq!(
             out.len(),
             3,
@@ -537,8 +567,15 @@ mod tests {
         let seed = RandomState::new();
         let mut out = Vec::new();
         let mut candidates = 0;
-        hash_plain_domains("shared.example\n", &seed, &mut out, &mut candidates);
-        hash_adblock_domains("||shared.example^\n", &seed, &mut out, &mut candidates);
+        let psl = test_psl();
+        hash_plain_domains("shared.example\n", &seed, &mut out, &mut candidates, &psl);
+        hash_adblock_domains(
+            "||shared.example^\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+            &psl,
+        );
         assert_eq!(out[0], out[1]);
         finalize(&mut out);
         assert_eq!(out.len(), 1);
@@ -580,6 +617,7 @@ mod tests {
             &seed,
             &mut out,
             &mut candidates,
+            &test_psl(),
         );
         assert!(validate_hashes(&out, candidates, &seed).is_ok());
     }
@@ -631,6 +669,7 @@ mod tests {
             &seed,
             &mut out,
             &mut candidates,
+            &test_psl(),
         );
         assert!(matches!(
             validate_hashes(&out, candidates, &seed),
@@ -684,11 +723,85 @@ mod tests {
             &seed,
             &mut out,
             &mut candidates,
+            &test_psl(),
         );
         assert!(matches!(
             validate_hashes(&out, candidates, &seed),
             Err(ValidationFailure::CanaryDomainsPresent { count: 2 })
         ));
+    }
+
+    // --- PSL filter (T-233 part 3) ---
+
+    #[test]
+    fn push_normalized_passes_an_ordinary_domain_through_unchanged() {
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains(
+            "real-ads.example\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+            &test_psl(),
+        );
+        assert_eq!(out.len(), 1, "an ordinary domain is hashed as usual");
+        assert_eq!(candidates, 1);
+    }
+
+    #[test]
+    fn push_normalized_drops_a_bare_icann_public_suffix() {
+        // co.uk is a real ICANN-section entry in the bundled PSL — a bare
+        // occurrence as a source line must never be hashed (T-233's own
+        // motivating scenario: it would block the whole *.co.uk namespace).
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains("co.uk\n", &seed, &mut out, &mut candidates, &test_psl());
+        assert!(out.is_empty(), "a bare public suffix must not be hashed");
+        assert_eq!(
+            candidates, 1,
+            "the line was still a normalize_domain candidate, just PSL-dropped"
+        );
+    }
+
+    #[test]
+    fn push_normalized_keeps_a_subdomain_of_a_public_suffix() {
+        // Misuse/fool: evil.co.uk is a normal registrable domain under the
+        // co.uk suffix, not the suffix itself — the filter must only catch
+        // an exact whole-string match, never a suffix match.
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains(
+            "evil.co.uk\n",
+            &seed,
+            &mut out,
+            &mut candidates,
+            &test_psl(),
+        );
+        assert_eq!(
+            out.len(),
+            1,
+            "a subdomain of a public suffix is a normal domain, must be hashed"
+        );
+    }
+
+    #[test]
+    fn push_normalized_keeps_a_bare_private_section_suffix() {
+        // github.io is a real PRIVATE-section entry — hagezi-hoster/
+        // hagezi-dyndns intentionally list bare delegating-namespace hosts
+        // like this as their entire reason to exist; the filter must leave
+        // the PRIVATE section untouched (DECISIONS.md).
+        let seed = RandomState::new();
+        let mut out = Vec::new();
+        let mut candidates = 0;
+        hash_plain_domains("github.io\n", &seed, &mut out, &mut candidates, &test_psl());
+        assert_eq!(
+            out.len(),
+            1,
+            "a bare PRIVATE-section suffix must still be hashed unchanged"
+        );
     }
 
     // --- delta_verdict (T-233 part 2) ---

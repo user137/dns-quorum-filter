@@ -38,11 +38,13 @@
 //! **`origin` → registrable.** CrUX keys by origin (`https://www.a.co.uk`);
 //! the zone matches by registrable (`a.co.uk`). Naive "last two labels"
 //! fails `*.co.uk`, `*.com.ua`, `*.com.br`, so this uses a real Public
-//! Suffix List: `public_suffix_list.dat` is committed next to this file,
-//! pinned to `publicsuffix/list` commit
-//! `3955e3ec29b94c3cca7bd4509c5f14a7c0959e26` (2026-09-08), MPL-2.0. The
-//! matcher below implements the publicsuffix.org algorithm (exception rules,
-//! `*` wildcards, implicit `*`); no crate is pulled in for it — the curated
+//! Suffix List via [`dnsqb_service::Psl`] — `public_suffix_list.dat` lives
+//! in the crate's own `src/` (T-233 part 3 moved it there so
+//! `blocklist_download` could reuse the same parser for an unrelated
+//! ingestion-time filter), pinned to `publicsuffix/list` commit
+//! `3955e3ec29b94c3cca7bd4509c5f14a7c0959e26` (2026-09-08), MPL-2.0. `Psl`
+//! implements the publicsuffix.org algorithm (exception rules, `*`
+//! wildcards, implicit `*`); no crate is pulled in for it — the curated
 //! output is a human-reviewed diff, so a wrong extraction is visible in
 //! review.
 //!
@@ -53,7 +55,7 @@
 //! month. Writes `<out>/<list>.txt` + `<out>/<list>.txt.sha256`. Fast — one
 //! HTTP GET per list, no DNS.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
@@ -63,13 +65,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
-/// Pinned Public Suffix List — committed next to this file, never fetched at
-/// run time. Refreshing it is a one-line change to `PSL_PINNED_COMMIT` plus a
-/// re-download from the same path.
-const PSL_DAT: &str = include_str!("public_suffix_list.dat");
-/// `publicsuffix/list` commit the bundled `public_suffix_list.dat` was taken
-/// from (2026-09-08). Recorded in every curated file's header.
-const PSL_PINNED_COMMIT: &str = "3955e3ec29b94c3cca7bd4509c5f14a7c0959e26";
+use dnsqb_service::{Psl, PSL_DAT, PSL_PINNED_COMMIT};
 
 /// CrUX per-country mirror. `origin,rank` CSV, gzip-compressed, one file per
 /// `<cc>/<yyyymm>`.
@@ -419,153 +415,15 @@ fn write_sha256_sidecar(path: &std::path::Path) -> std::io::Result<()> {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Public Suffix List matcher (publicsuffix.org algorithm)
-// ---------------------------------------------------------------------------
-
-/// Parsed Public Suffix List. `rules` holds normal and `*` wildcard rules
-/// verbatim (`"com"`, `"*.ck"`); `exceptions` holds `!` rules with the `!`
-/// stripped (`"www.ck"`). Only the ASCII/`xn--` form of a host is looked up,
-/// which is what `reqwest::Url::host_str` yields — the bundled list's Unicode
-/// IDN entries are therefore not matched, and such hosts fall to the
-/// implicit `*` rule (rare in a top-1000 bucket; visible in the review diff).
-struct Psl {
-    rules: HashSet<String>,
-    exceptions: HashSet<String>,
-}
-
-impl Psl {
-    fn parse(dat: &str) -> Self {
-        let mut rules = HashSet::new();
-        let mut exceptions = HashSet::new();
-        for raw in dat.lines() {
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with("//") {
-                continue;
-            }
-            let Some(rule) = line.split_whitespace().next() else {
-                continue;
-            };
-            let rule = rule.to_ascii_lowercase();
-            if let Some(exc) = rule.strip_prefix('!') {
-                exceptions.insert(exc.to_string());
-            } else {
-                rules.insert(rule);
-            }
-        }
-        Self { rules, exceptions }
-    }
-
-    /// The registrable ("registered") domain for `host` — the public suffix
-    /// plus one more label — or `None` if `host` is itself a public suffix,
-    /// is empty, or has an empty label.
-    fn registrable(&self, host: &str) -> Option<String> {
-        let host = host.trim_matches('.').to_ascii_lowercase();
-        if host.is_empty() {
-            return None;
-        }
-        let labels: Vec<&str> = host.split('.').collect();
-        if labels.iter().any(|l| l.is_empty()) {
-            return None;
-        }
-
-        // Exception rules win outright; the longest-matching one gives a
-        // public suffix of the rule minus its leftmost label.
-        for start in 0..labels.len() {
-            if self.exceptions.contains(&labels[start..].join(".")) {
-                let ps_len = labels.len() - (start + 1);
-                return registrable_from_ps_len(&labels, ps_len);
-            }
-        }
-
-        // Otherwise: longest normal / wildcard rule match. `*` matches
-        // exactly one label, so a wildcard rule for suffix `labels[start..]`
-        // is `"*." + labels[start+1..]`.
-        let mut best_ps_len: Option<usize> = None;
-        for start in 0..labels.len() {
-            let span = labels.len() - start;
-            let exact_match = self.rules.contains(&labels[start..].join("."));
-            let wild_match = start + 1 < labels.len()
-                && self
-                    .rules
-                    .contains(&format!("*.{}", labels[(start + 1)..].join(".")));
-            if exact_match || wild_match {
-                best_ps_len = Some(best_ps_len.map_or(span, |b| b.max(span)));
-            }
-        }
-
-        // Implicit `*` rule: with no match, the public suffix is the single
-        // rightmost label.
-        registrable_from_ps_len(&labels, best_ps_len.unwrap_or(1))
-    }
-}
-
-/// Public-suffix length (label count) → registrable domain: the public
-/// suffix plus one label to its left. `None` when `host` has no label beyond
-/// the public suffix.
-fn registrable_from_ps_len(labels: &[&str], ps_len: usize) -> Option<String> {
-    if labels.len() <= ps_len {
-        return None;
-    }
-    Some(labels[(labels.len() - ps_len - 1)..].join("."))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // `Psl::registrable`'s own tests moved to `public_suffix.rs` with the
+    // type itself (T-233 part 3) — only this file's own logic (`build_list`,
+    // `list_url`, arg parsing) is tested below.
     fn psl() -> Psl {
         Psl::parse(PSL_DAT)
-    }
-
-    #[test]
-    fn registrable_handles_multi_label_suffixes() {
-        let p = psl();
-        assert_eq!(
-            p.registrable("www.example.co.uk").as_deref(),
-            Some("example.co.uk")
-        );
-        assert_eq!(
-            p.registrable("shop.foo.com.ua").as_deref(),
-            Some("foo.com.ua")
-        );
-        assert_eq!(
-            p.registrable("a.b.example.com.br").as_deref(),
-            Some("example.com.br")
-        );
-        assert_eq!(
-            p.registrable("a.b.c.example.com").as_deref(),
-            Some("example.com")
-        );
-        assert_eq!(p.registrable("gov.pl").as_deref(), None); // gov.pl is a public suffix
-    }
-
-    #[test]
-    fn registrable_applies_wildcard_and_exception_rules() {
-        let p = psl();
-        // *.ck ⇒ foo.ck is a public suffix, so a.foo.ck is registrable a.foo.ck
-        assert_eq!(p.registrable("a.foo.ck").as_deref(), Some("a.foo.ck"));
-        // !www.ck exception ⇒ ck is the public suffix, www.ck is registrable
-        assert_eq!(p.registrable("www.ck").as_deref(), Some("www.ck"));
-    }
-
-    #[test]
-    fn registrable_is_none_for_a_bare_public_suffix_or_empty_input() {
-        let p = psl();
-        assert_eq!(p.registrable("co.uk"), None);
-        assert_eq!(p.registrable("com"), None);
-        assert_eq!(p.registrable(""), None);
-        assert_eq!(p.registrable("."), None);
-        assert_eq!(p.registrable("a..b"), None);
-    }
-
-    #[test]
-    fn registrable_uses_the_implicit_star_rule_for_an_unknown_tld() {
-        let p = psl();
-        assert_eq!(
-            p.registrable("host.example.invalidtldxyz").as_deref(),
-            Some("example.invalidtldxyz")
-        );
     }
 
     #[test]

@@ -51,6 +51,7 @@ use crate::blocklist_download::{
 use crate::dispatch::AppState;
 use crate::normalize_domain;
 use crate::paths::write_atomic;
+use crate::public_suffix::{Psl, PSL_DAT};
 use crate::upstream::ReqwestDohClient;
 
 /// Subdirectory of the app-data directory the raw per-source text files live
@@ -293,13 +294,22 @@ impl BlocklistBundleState {
 /// duplicated between them. Pure (no I/O) — unit-tested directly. Returns
 /// the candidate-line count alongside the hashes (T-233 — the denominator
 /// `blocklist_download::validate_hashes`'s parse-success-ratio check needs).
-fn hash_source_body(format: SourceFormat, body: &str, seed: &RandomState) -> (Vec<u64>, usize) {
+/// `psl` is threaded straight through to `blocklist_download`'s streaming
+/// parsers (T-233 part 3, ingestion-time bare-public-suffix filter).
+fn hash_source_body(
+    format: SourceFormat,
+    body: &str,
+    seed: &RandomState,
+    psl: &Psl,
+) -> (Vec<u64>, usize) {
     let mut out = Vec::new();
     let mut candidates = 0;
     match format {
-        SourceFormat::PlainDomain => hash_plain_domains(body, seed, &mut out, &mut candidates),
+        SourceFormat::PlainDomain => {
+            hash_plain_domains(body, seed, &mut out, &mut candidates, psl);
+        }
         SourceFormat::AdblockNetRules => {
-            hash_adblock_domains(body, seed, &mut out, &mut candidates);
+            hash_adblock_domains(body, seed, &mut out, &mut candidates, psl);
         }
     }
     (out, candidates)
@@ -339,7 +349,11 @@ fn write_and_hash_blocking(
     // non-conforming line, same tolerance `topn_updater::refresh_one_list`
     // already applies to its own curated download.
     let text = String::from_utf8_lossy(body);
-    let (hashes, candidates) = hash_source_body(format, &text, seed);
+    // Parsed fresh per call, not memoized (T-233 part 3): ~16.5K lines is
+    // microseconds against this function's own ratio/canary/delta work, and
+    // this crate has no `OnceLock`-style shared-parse pattern to extend.
+    let psl = Psl::parse(PSL_DAT);
+    let (hashes, candidates) = hash_source_body(format, &text, seed, &psl);
     validate_hashes(&hashes, candidates, seed)?;
     let count_path = path.with_extension("count");
     delta_verdict(hashes.len(), read_previous_count(&count_path))?;
@@ -381,17 +395,29 @@ fn write_new_count(count_path: &Path, count: usize) {
 /// last-known-good fallback, extracted for the same reason as
 /// [`write_and_hash_blocking`]. A missing/unreadable file yields an empty
 /// set — same "silently skip, never abort the cycle" tolerance the caller
-/// already had for this path before this extraction. No gate here — any file
-/// written **since T-233** already passed [`validate_hashes`] the cycle it
-/// was written (module doc on [`write_and_hash_blocking`]); the eight files
-/// already on disk from before this gate existed are grandfathered in
-/// unvalidated on the first post-upgrade read, same as any other
-/// last-known-good content this module trusts without re-checking.
+/// already had for this path before this extraction. **No ratio/canary/delta
+/// gate here** — any file written **since T-233 parts 1-2** already passed
+/// [`validate_hashes`]/[`delta_verdict`] the cycle it was written (module doc
+/// on [`write_and_hash_blocking`]); the eight files already on disk from
+/// before those gates existed are grandfathered in unvalidated on the first
+/// post-upgrade read, same as any other last-known-good content this module
+/// trusts without re-checking. **The PSL filter (part 3) is the one
+/// exception** — it runs unconditionally inside [`hash_source_body`], so a
+/// pre-part-3 on-disk file gets its bare ICANN-suffix lines dropped starting
+/// on the very next read, not grandfathered. That shrinks `hashes.len()` by
+/// at most the 4-entries-across-4.1M-lines measured 2026-09-17 (DECISIONS.md)
+/// relative to whatever `<id>.count` baseline a pre-part-3 cycle wrote —
+/// nowhere near `blocklist_download`'s `MAX_COUNT_GROWTH_MULTIPLIER` (5×) /
+/// `MIN_COUNT_RETENTION_DIVISOR` (÷5) bounds for the two affected sources
+/// (`adguard-dns-filter`, `hagezi-tif`; both comfortably above
+/// `MIN_COUNT_BASELINE`), so this one-time discontinuity cannot itself trip
+/// [`delta_verdict`].
 fn read_and_hash_blocking(path: &Path, format: SourceFormat, seed: &RandomState) -> Vec<u64> {
     let Ok(body) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    hash_source_body(format, &body, seed).0
+    let psl = Psl::parse(PSL_DAT);
+    hash_source_body(format, &body, seed, &psl).0
 }
 
 /// Builds the initial [`BlocklistBundleState`] from whatever
@@ -418,6 +444,7 @@ pub(crate) fn load_blocklist_bundles_from_disk(app_data: Option<&Path>) -> Block
     };
     let blocklist_dir = dir.join(BLOCKLIST_DIR);
     let seed = RandomState::new();
+    let psl = Psl::parse(PSL_DAT);
     let mut domains = Vec::new();
     let mut sources = Vec::with_capacity(BLOCKLIST_SOURCES.len());
     for source in BLOCKLIST_SOURCES {
@@ -430,7 +457,7 @@ pub(crate) fn load_blocklist_bundles_from_disk(app_data: Option<&Path>) -> Block
         // `None`; `BlocklistSourceStatus::last_updated`'s own doc says `None`
         // means "never fetched successfully", which a present file disproves.
         let last_updated = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-        let (hashes, _candidates) = hash_source_body(source.format, &body, &seed);
+        let (hashes, _candidates) = hash_source_body(source.format, &body, &seed, &psl);
         sources.push(BlocklistSourceStatus {
             id: source.id,
             group: source.group,
@@ -682,6 +709,7 @@ mod tests {
         BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
     };
     use crate::blocklist_download::{SourceFormat, BLOCKLIST_CANARY_DOMAINS};
+    use crate::public_suffix::test_psl;
 
     #[test]
     fn check_interval_is_a_day() {
@@ -694,8 +722,12 @@ mod tests {
     #[test]
     fn hash_source_body_dispatches_plain_domain_format() {
         let seed = RandomState::new();
-        let (out, candidates) =
-            hash_source_body(SourceFormat::PlainDomain, "example.com\n# comment\n", &seed);
+        let (out, candidates) = hash_source_body(
+            SourceFormat::PlainDomain,
+            "example.com\n# comment\n",
+            &seed,
+            &test_psl(),
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(candidates, 1);
     }
@@ -707,6 +739,7 @@ mod tests {
             SourceFormat::AdblockNetRules,
             "! comment\n||example.com^\n@@||allowed.example^\n",
             &seed,
+            &test_psl(),
         );
         assert_eq!(out.len(), 1, "only the one real ||domain^ rule counts");
         assert_eq!(candidates, 1);
@@ -726,8 +759,12 @@ mod tests {
         // bypass, not a panic or a test failure anywhere else.
         let original = RandomState::new();
         let clone = original.clone();
-        let (built_with_clone, _candidates) =
-            hash_source_body(SourceFormat::PlainDomain, "example.com\n", &clone);
+        let (built_with_clone, _candidates) = hash_source_body(
+            SourceFormat::PlainDomain,
+            "example.com\n",
+            &clone,
+            &test_psl(),
+        );
         let looked_up_with_original = original.hash_one("example.com");
         assert_eq!(built_with_clone, vec![looked_up_with_original]);
     }

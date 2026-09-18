@@ -90,7 +90,7 @@ quorum blocks it the client removes it from its local zone set. Each file's
 `#` header records the counts.
 
 The `origin → registrable` step uses the **Public Suffix List**
-(`crates/dnsqb-service/examples/public_suffix_list.dat`, from
+(`crates/dnsqb-service/src/public_suffix_list.dat`, from
 [`publicsuffix/list`](https://github.com/publicsuffix/list),
 **[MPL-2.0](https://mozilla.org/MPL/2.0/)**, pinned commit in the tool's
 source).

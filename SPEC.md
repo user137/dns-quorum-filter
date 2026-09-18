@@ -1275,7 +1275,9 @@ ccTLD-блоку (5.2) і Cache — тобто останньою нагодою
    зі `zakird/crux-top-lists` («весь звичний інтернет світу», опційний). `rank`
    — бакет магнітуди (`1000`/`10000`/…), не ординал; беремо бакет `1000`,
    host-only, dedup до registrable через Public Suffix List
-   (`examples/public_suffix_list.dat`, пінований, MPL-2.0). Курація —
+   (`src/public_suffix_list.dat`, пінований, MPL-2.0 — перенесено з `examples/` у `src/`
+   T-233 частина 3, 2026-09-18, коли `blocklist_updater` теж почав використовувати той самий
+   парсер). Курація —
    проєктний інструмент `examples/curate_topn.rs` + `.github/workflows/
    topn-curate.yml` (T-107). Канал
    розповсюдження — **стабільні шляхи** `data/topn/<list>.txt` +
