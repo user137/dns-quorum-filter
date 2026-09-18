@@ -217,5 +217,7 @@ TASKS-DONE.md, never here.
     N consecutive rejections.
   - **Resource exhaustion (large `Vec<u64>` within `MAX_BLOCKLIST_BYTES`)** — mitigated by T-232's
     `spawn_blocking` move (CPU cost hits the blocking pool, not the async worker), not eliminated.
-  See T-233 in `TASKS.md` for the full threat-model writeup and what's still open.
+  See T-233 in `TASKS-DONE.md` (closed 2026-09-18, all three planned parts shipped) for the full
+  threat-model writeup; the one remaining structural gap (small-domain injection) is tracked as
+  T-234 in `TASKS.md`'s backlog.
 
