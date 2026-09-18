@@ -25,13 +25,14 @@ use crate::admin::{
     category_filter_views, compute_hero_state, compute_stats, master_switch_targets, unix_millis,
     AdminConfigUpdate, AdminStats, AdminStatusResponse, BaselineEndpointView,
     BlocklistBundlesConfigUpdate, BlocklistBundlesStatusView, BlocklistSourceStatusView,
-    CacheConfigUpdate, CacheConfigView, CertStatusResponse, CertTrustView, DatabaseSource,
-    EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
-    HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
-    MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
-    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
-    RatingFilterConfigUpdate, RatingFilterStatusView, UninstallLocalStateResponse,
-    WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    CacheConfigUpdate, CacheConfigView, CctldBlockConfigUpdate, CctldBlockStatusView,
+    CertStatusResponse, CertTrustView, DatabaseSource, EncryptedPersistenceView,
+    GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip, HealthResponse, InstallCertResponse,
+    LogEntryView, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
+    MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest, OverrideDomainView,
+    OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView, RatingFilterConfigUpdate,
+    RatingFilterStatusView, UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
+    ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -40,8 +41,8 @@ use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::config::{
-    validate_country_code, BlocklistBundlesConfig, ConfigError, GeoipConfig, LimitsConfig,
-    PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
+    validate_cctld_codes, validate_country_code, BlocklistBundlesConfig, CctldBlockConfig,
+    ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
 };
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{self, CredentialsError};
@@ -121,6 +122,7 @@ const ADMIN_GEOIP_MAXMIND_PATH: &str = "/admin/geoip/maxmind";
 const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
 const ADMIN_RATING_FILTER_PATH: &str = "/admin/rating-filter";
 const ADMIN_BLOCKLIST_BUNDLES_PATH: &str = "/admin/blocklist-bundles";
+const ADMIN_CCTLD_BLOCK_PATH: &str = "/admin/cctld-block";
 const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
 const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
 const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
@@ -163,6 +165,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_GEOIP_MAXMIND_CLEAR_PATH, &[Method::POST]),
     (ADMIN_RATING_FILTER_PATH, &[Method::POST]),
     (ADMIN_BLOCKLIST_BUNDLES_PATH, &[Method::POST]),
+    (ADMIN_CCTLD_BLOCK_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_PATH, &[Method::GET]),
     (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_REMOVE_PATH, &[Method::POST]),
@@ -599,6 +602,9 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // config, never held across the `.await` below.
     let blocklist_bundles_state = state.blocklist_bundles_snapshot();
     let blocklist_bundles_config = state.blocklist_bundles_config_snapshot();
+    // Фаза 5, T-115: same `Arc::clone` snapshot discipline, one per query,
+    // never held across the `.await` below.
+    let cctld_block = state.cctld_block_snapshot();
     let cache_context = CacheContext {
         cache: &cache_state.cache,
         config: &cache_state.config,
@@ -634,6 +640,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         filtering_paused: state.filtering_paused_snapshot(),
         rating_filter: rating_filter_view,
         blocklist_bundles: blocklist_bundles_view,
+        cctld_block: &cctld_block,
     };
     let response = match handle_query(
         &query,
@@ -732,6 +739,17 @@ pub struct AppState<C: DohClient + Sync> {
     /// above. Same `RwLock<Arc<_>>` snapshot-read shape as every other
     /// per-query state here.
     geoip_countries: RwLock<Arc<Vec<String>>>,
+    /// Фаза 5, T-115 — the `[cctld_block]` blocked-code list (SPEC.md §5.2),
+    /// swapped by config load / `/admin/reset` / `POST /admin/cctld-block`.
+    /// `AppState::new` always constructs the empty `Default` — the real
+    /// `resolver_config.toml` value is observed by an explicit
+    /// `update_cctld_block` call in `orchestrate::run`, same deferred-init
+    /// shape as `blocklist_bundles_config` (not passed in as a constructor
+    /// parameter like `geoip_countries` is, to avoid touching `AppState::new`'s
+    /// signature for a field with no other constructor-time dependency).
+    /// Same `RwLock<Arc<_>>` snapshot-read shape as every other per-query
+    /// state here — a query must never hold this lock across an `.await`.
+    cctld_block: RwLock<Arc<Vec<String>>>,
     /// T-163 — which upstream `geoip_updater::run_geoip_updater` pulls from
     /// (DB-IP Lite or `MaxMind`). Swapped by `apply_admin_reset` and the
     /// `/admin/geoip/maxmind[/clear]` routes; the updater reads a fresh
@@ -1018,6 +1036,7 @@ impl<C: DohClient + Sync> AppState<C> {
             cache: RwLock::new(Arc::new(cache)),
             geoip: RwLock::new(Arc::new(geoip.database)),
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
+            cctld_block: RwLock::new(Arc::new(Vec::new())),
             geoip_source: RwLock::new(Arc::new(geoip.source)),
             geoip_refresh_wake: Arc::new(Notify::new()),
             rating_filter_config: RwLock::new(Arc::new(geoip.rating_filter_config)),
@@ -1081,6 +1100,23 @@ impl<C: DohClient + Sync> AppState<C> {
     /// (the loaded database) — see that field's own doc comment.
     pub(crate) fn update_geoip_countries(&self, blocked_countries: Vec<String>) {
         *self.geoip_countries.write() = Arc::new(blocked_countries);
+    }
+
+    /// One `Arc::clone` snapshot of the live `[cctld_block]` blocked-code
+    /// list (Фаза 5, T-115) — read once per query by
+    /// `pipeline::UpstreamContext::cctld_block`, never held across `.await`.
+    pub(crate) fn cctld_block_snapshot(&self) -> Arc<Vec<String>> {
+        Arc::clone(&self.cctld_block.read())
+    }
+
+    /// Swaps in a new `[cctld_block]` blocked-code list — called by
+    /// `orchestrate::run` (initial load), `apply_admin_reset` (after a
+    /// successful `resolver_config.toml` reload), and `apply_cctld_block_change`
+    /// (after a live `POST /admin/cctld-block`) — the single writer this
+    /// field's three call sites share, rather than any of them writing the
+    /// `RwLock` directly.
+    pub(crate) fn update_cctld_block(&self, blocked_codes: Vec<String>) {
+        *self.cctld_block.write() = Arc::new(blocked_codes);
     }
 
     /// A snapshot of the current `GeoIP` database source (T-163) —
@@ -1646,6 +1682,18 @@ fn blocklist_bundles_status_view<C: DohClient + Sync>(
     }
 }
 
+/// Builds the always-present [`CctldBlockStatusView`] from `state`'s live
+/// `[cctld_block]` config — mirrors [`blocklist_bundles_status_view`], but
+/// with no `active`/`loaded` fields (no separate `enabled` toggle, no
+/// background fetch — `blocked_codes` non-empty already means "active", and
+/// the list itself *is* the loaded state, `config::CctldBlockConfig`'s own
+/// doc).
+fn cctld_block_status_view<C: DohClient + Sync>(state: &AppState<C>) -> CctldBlockStatusView {
+    CctldBlockStatusView {
+        blocked_codes: (*state.cctld_block_snapshot()).clone(),
+    }
+}
+
 /// Builds the current [`AdminStatusResponse`] from `state` — shared by
 /// `GET /admin/status` and the response [`apply_admin_config`] echoes back
 /// after a `POST /admin/config`. `persisted` is the caller's to state
@@ -1685,6 +1733,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         },
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
+        cctld_block: cctld_block_status_view(state),
     }
 }
 
@@ -1780,6 +1829,9 @@ fn apply_admin_config<C: DohClient + Sync>(
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
+                cctld_block: CctldBlockConfig {
+                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
+                },
                 limits: state.persist.limits,
             };
             match config.save(&paths.config) {
@@ -1823,6 +1875,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         },
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
+        cctld_block: cctld_block_status_view(state),
     }
 }
 
@@ -2090,6 +2143,11 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // on its own next woken cycle) — same split as `rating_filter_zone`.
     state.update_blocklist_bundles_config(config.blocklist_bundles);
     state.wake_blocklist_bundles_refresh();
+    // Фаза 5, T-115: reload `[cctld_block]` too, the same completeness gap
+    // the reloads above close. No wake call — this list has no background
+    // updater, `pipeline::overrides_step` reads `cctld_block_snapshot()`
+    // fresh on every query.
+    state.update_cctld_block(config.cctld_block.blocked_codes);
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -2350,6 +2408,9 @@ fn apply_cache_config<C: DohClient + Sync>(
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
+                cctld_block: CctldBlockConfig {
+                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
+                },
                 limits: state.persist.limits,
                 providers,
                 cache: new_config,
@@ -2507,6 +2568,9 @@ fn apply_geoip_change<C: DohClient + Sync>(
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
+                cctld_block: CctldBlockConfig {
+                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
+                },
                 limits: state.persist.limits,
                 providers,
                 cache: cache_config,
@@ -2676,6 +2740,9 @@ fn apply_rating_filter_change<C: DohClient + Sync>(
                     // ResolverConfig-literal sites in this file.
                     personal_zone: *state.personal_zone_config_snapshot(),
                     blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
+                    cctld_block: CctldBlockConfig {
+                        blocked_codes: (*state.cctld_block_snapshot()).clone(),
+                    },
                     limits: state.persist.limits,
                     providers,
                     cache: cache_config,
@@ -2781,6 +2848,10 @@ fn apply_blocklist_bundles_change<C: DohClient + Sync>(
                     rating_filter: (*state.rating_filter_config_snapshot()).clone(),
                     personal_zone: *state.personal_zone_config_snapshot(),
                     blocklist_bundles: new_config,
+                    // Live read (T-217 pattern) — this route never touches it.
+                    cctld_block: CctldBlockConfig {
+                        blocked_codes: (*state.cctld_block_snapshot()).clone(),
+                    },
                     limits: state.persist.limits,
                     providers,
                     cache: cache_config,
@@ -2831,6 +2902,94 @@ where
         return status_response(StatusCode::BAD_REQUEST);
     };
     match apply_blocklist_bundles_change(state, &update) {
+        Ok(response) => json_response(&response),
+        Err(_) => status_response(StatusCode::BAD_REQUEST),
+    }
+}
+
+/// Applies a full-replace `[cctld_block]` update (Фаза 5, T-118) — same
+/// skeleton as [`apply_blocklist_bundles_change`]/[`apply_geoip_change`]:
+/// holds `persist_lock` across validate→swap→persist, reads every other
+/// live field before writing `ResolverConfig{...}`. No wake call, unlike
+/// the blocklist-bundles/rating-filter siblings — this list has no
+/// background updater to notify.
+fn apply_cctld_block_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: &CctldBlockConfigUpdate,
+) -> Result<AdminStatusResponse, ConfigError> {
+    let blocked_codes = validate_cctld_codes(&update.blocked_codes)?;
+
+    let persisted = {
+        let _persist_guard = state.persist_lock.lock();
+        state.update_cctld_block(blocked_codes.clone());
+        let runtime = *state.runtime.read();
+        let cache_config = state.cache.read().config;
+        let providers = state.providers_snapshot();
+        let blocked_countries = state.geoip_countries.read().as_ref().clone();
+        match state.persist.paths.as_ref() {
+            Some(paths) => {
+                let config = ResolverConfig {
+                    port: state.persist.port,
+                    timeout_mode: runtime.timeout.mode,
+                    timeout_ms: timeout_ms(runtime.timeout.duration),
+                    serve_baseline_when_filters_unreachable: runtime
+                        .serve_baseline_when_filters_unreachable,
+                    persist_query_log: state.persist.persist_query_log,
+                    persist_cache: state.persist.persist_cache,
+                    // Live read (T-217 pattern) — this route never touches it.
+                    rating_filter: (*state.rating_filter_config_snapshot()).clone(),
+                    personal_zone: *state.personal_zone_config_snapshot(),
+                    blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
+                    cctld_block: CctldBlockConfig { blocked_codes },
+                    limits: state.persist.limits,
+                    providers,
+                    cache: cache_config,
+                    geoip: GeoipConfig { blocked_countries },
+                };
+                match config.save(&paths.config) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        tracing::warn!(
+                            "failed to persist an admin cctld-block change to disk: {err}"
+                        );
+                        false
+                    }
+                }
+            }
+            None => false,
+        }
+    };
+    Ok(admin_status(state, persisted))
+}
+
+/// `POST /admin/cctld-block` (Фаза 5, T-118) — method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check. Same CSRF gate and body-size cap
+/// as [`serve_admin_blocklist_bundles`]; a malformed code is `400`
+/// ([`crate::config::validate_cctld_codes`]).
+async fn serve_admin_cctld_block<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    let Ok(update) = serde_json::from_slice::<CctldBlockConfigUpdate>(&collected.to_bytes()) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    match apply_cctld_block_change(state, &update) {
         Ok(response) => json_response(&response),
         Err(_) => status_response(StatusCode::BAD_REQUEST),
     }
@@ -3124,6 +3283,9 @@ where
                 // against, so there was no reason to introduce that gap here.
                 personal_zone: *state.personal_zone_config_snapshot(),
                 blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
+                cctld_block: CctldBlockConfig {
+                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
+                },
                 limits: state.persist.limits,
                 providers: after.clone(),
                 cache: cache_config,
@@ -3846,6 +4008,7 @@ where
         ADMIN_GEOIP_MAXMIND_CLEAR_PATH => serve_admin_geoip_maxmind_clear(req, &state).await,
         ADMIN_RATING_FILTER_PATH => serve_admin_rating_filter(req, &state).await,
         ADMIN_BLOCKLIST_BUNDLES_PATH => serve_admin_blocklist_bundles(req, &state).await,
+        ADMIN_CCTLD_BLOCK_PATH => serve_admin_cctld_block(req, &state).await,
         ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
         ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
         ADMIN_PROVIDERS_REMOVE_PATH => serve_admin_providers_remove(req, &state).await,
@@ -8159,6 +8322,111 @@ mod tests {
         );
     }
 
+    async fn cctld_block_post(
+        state: Arc<AppState<MockClient>>,
+        blocked_codes: &[&str],
+    ) -> AdminStatusResponse {
+        let body = serde_json::json!({ "blocked_codes": blocked_codes });
+        let response = match serve(admin_post_json("/admin/cctld-block", &body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a valid POST must be 200"
+        );
+        let bytes = body_bytes(response).await;
+        match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+            Ok(status) => status,
+            Err(err) => panic!("response must decode as AdminStatusResponse: {err}"),
+        }
+    }
+
+    // Happy path via the real HTTP route: a full-replace list round-trips
+    // through the status response, normalized to lowercase.
+    #[tokio::test]
+    async fn serve_admin_cctld_block_replaces_the_list_and_status_reflects_it() {
+        let state = state_with(no_op_client());
+        let status = cctld_block_post(Arc::clone(&state), &["RU", "cn"]).await;
+        assert_eq!(
+            status.cctld_block.blocked_codes,
+            vec!["ru".to_string(), "cn".to_string()]
+        );
+    }
+
+    // Misuse & fool: a malformed code is a loud 400, not a silently ignored
+    // entry — mirrors `serve_admin_blocklist_bundles_rejects_an_unknown_source_id`.
+    #[tokio::test]
+    async fn serve_admin_cctld_block_rejects_a_malformed_code() {
+        let state = state_with(no_op_client());
+        let body = serde_json::json!({ "blocked_codes": ["rus"] });
+        let response = match serve(admin_post_json("/admin/cctld-block", &body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Security & boundary: the JSON content-type gate is the CSRF defense —
+    // a request without it never reaches the handler.
+    #[tokio::test]
+    async fn serve_admin_cctld_block_rejects_a_missing_content_type() {
+        let Ok(json) = serde_json::to_vec(&serde_json::json!({ "blocked_codes": [] })) else {
+            panic!("fixture body must serialize");
+        };
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/cctld-block")
+            .body(Full::new(Bytes::from(json)))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, state_with(no_op_client())).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    // Error path: the change live-applies and persists to disk when a config
+    // path is set, and reloads with the same `[cctld_block]` table.
+    #[tokio::test]
+    async fn serve_admin_cctld_block_persists_a_change_to_disk_when_a_config_path_is_set() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let status = cctld_block_post(state, &["ru", "cn"]).await;
+        assert!(
+            status.persisted,
+            "a config path is set, so the write must land"
+        );
+
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(
+            loaded.cctld_block.blocked_codes,
+            vec!["ru".to_string(), "cn".to_string()]
+        );
+    }
+
     #[test]
     fn blocklist_bundles_is_active_matches_the_enabled_and_non_empty_rule() {
         let on = BlocklistBundlesConfig {
@@ -9140,6 +9408,7 @@ mod tests {
         ("/admin/geoip/maxmind/clear", &[Method::POST]),
         ("/admin/rating-filter", &[Method::POST]),
         ("/admin/blocklist-bundles", &[Method::POST]),
+        ("/admin/cctld-block", &[Method::POST]),
         ("/admin/providers", &[Method::GET]),
         ("/admin/providers/add", &[Method::POST]),
         ("/admin/providers/remove", &[Method::POST]),

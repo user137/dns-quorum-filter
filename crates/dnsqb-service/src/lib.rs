@@ -128,6 +128,7 @@ mod blocklist_updater;
 mod cache;
 mod cache_persist;
 mod cache_persist_dto;
+mod cctld_block;
 mod cert;
 mod cert_rotation;
 mod cert_watch;
@@ -171,8 +172,8 @@ mod zone_removal_persist;
 pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
     BaselineEndpointView, BlocklistBundlesStatusView, BlocklistSourceStatusView,
-    EncryptedPersistenceView, HeroStateView, NetworkStatusView, ProviderStatusView,
-    RatingFilterStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    CctldBlockStatusView, EncryptedPersistenceView, HeroStateView, NetworkStatusView,
+    ProviderStatusView, RatingFilterStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 pub use admission::ConnectionGate;
 pub use baseline_selector::BASELINE_CHAIN;

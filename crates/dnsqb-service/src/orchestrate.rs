@@ -259,6 +259,11 @@ pub async fn run() {
     // own doc for why that stays deferred) — `run_blocklist_updater`'s first
     // cycle, spawned below, fills `AppState.blocklist_bundles` instead.
     state.update_blocklist_bundles_config(resolver_config.blocklist_bundles.clone());
+    // Фаза 5, T-115: seed the live `[cctld_block]` list the same way —
+    // `AppState::new` always constructs the empty placeholder (see that
+    // field's own doc), so this call is what actually observes a
+    // hand-edited `resolver_config.toml` value until an `/admin/reset`.
+    state.update_cctld_block(resolver_config.cctld_block.blocked_codes.clone());
     spawn_query_log_persister(&state, query_log_flusher);
     spawn_cache_persister(&state, cache_flusher);
     spawn_zone_removal_persister(&state, zone_removals_flusher);

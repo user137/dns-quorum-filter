@@ -53,7 +53,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 4;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 5;
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the
@@ -194,6 +194,12 @@ pub struct AdminStatusResponse {
     /// "bundles off, nothing loaded".
     #[serde(default)]
     pub blocklist_bundles: BlocklistBundlesStatusView,
+    /// Фаза 5, T-115/T-118 — the ccTLD-block status, always present (same
+    /// "no second fetch" reasoning as `rating_filter`/`blocklist_bundles`
+    /// above). `#[serde(default)]` (T-205 convention): safe zero is "no
+    /// blocked codes".
+    #[serde(default)]
+    pub cctld_block: CctldBlockStatusView,
     /// T-204 (finding 3-B) — the `/admin/ui` protection-hero state, computed
     /// server-side by [`compute_hero_state`] so its priority ladder is
     /// Rust-tested. `main.js` renders it; it does not re-derive the ordering.
@@ -336,6 +342,20 @@ pub struct BlocklistSourceStatusView {
     /// Set when this cycle's fetch failed, even if a last-known-good
     /// fallback kept the source's previous data in the bundle.
     pub last_error: Option<String>,
+}
+
+/// Фаза 5, T-115/T-118 — the always-present ccTLD-block status (SPEC.md
+/// §5.2), mirroring [`BlocklistBundlesStatusView`]'s shape. No `enabled`
+/// field, unlike `rating_filter`/`blocklist_bundles` — `[cctld_block]` has
+/// no separate toggle (`config::CctldBlockConfig`'s own doc), so
+/// `blocked_codes` being non-empty already **is** "active"; a dedicated
+/// `active` field would just duplicate `!blocked_codes.is_empty()`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CctldBlockStatusView {
+    /// The live `[cctld_block].blocked_codes` value, normalized (lowercase,
+    /// deduplicated) exactly as `crate::config::validate_cctld_codes` returns
+    /// them.
+    pub blocked_codes: Vec<String>,
 }
 
 /// The `/admin/ui` protection-hero state, computed **on the server** (T-204,
@@ -855,6 +875,19 @@ pub struct BlocklistBundlesConfigUpdate {
     pub sources: Option<Vec<String>>,
 }
 
+/// `POST /admin/cctld-block`'s body (Фаза 5, T-118) — a full replace of the
+/// `[cctld_block]` table, same full-replace-not-patch convention as
+/// [`RatingFilterConfigUpdate`]/[`BlocklistBundlesConfigUpdate`]. No
+/// `enabled` field — `config::CctldBlockConfig`'s own doc explains why an
+/// empty `blocked_codes` already means "inert". Validated server-side by
+/// [`crate::config::validate_cctld_codes`]; a malformed code is a `400`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CctldBlockConfigUpdate {
+    /// The ccTLD codes to block, in caller-supplied order (deduplicated
+    /// server-side, first-seen order preserved).
+    pub blocked_codes: Vec<String>,
+}
+
 /// One override-list entry as shown to a client (T-47) — a projection of
 /// [`crate::overrides::OverrideEntry`], not a reuse of it directly: once an
 /// entry is already split into `OverrideListsResponse::allowlist`/
@@ -1247,13 +1280,11 @@ impl From<Decision> for DecisionView {
 
 /// SPEC.md §6/§8 `decision_source` column, DTO form (T-54) — all the
 /// values `UI-SPEC.md` §1's "carry every field from day one" principle
-/// requires, though only seven (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/
-/// `GeoIp`/`BaselineFallback`, the last two added at T-76 / T-155, plus
-/// `BlocklistBundle` at T-218 Батч 7.4) are producible before their own
-/// later-phase pipeline step exists (see [`DecisionSourceView::from`] below
-/// — a total match over the internal [`DecisionSource`], so `CcTldBlock`
-/// can never actually be constructed by this conversion, only declared for
-/// the wire format; `RatingFilter` became producible at T-124).
+/// requires. All eight (`Allowlist`/`Blocklist`/`Cache`/`Quorum`/`GeoIp`/
+/// `BaselineFallback`, the last two added at T-76 / T-155;
+/// `BlocklistBundle` at T-218 Батч 7.4; `RatingFilter` at T-124; `CcTldBlock`
+/// at Фаза 5/T-116) are now producible — see [`DecisionSourceView::from`]
+/// below, a total match over the internal [`DecisionSource`].
 ///
 /// `CcTldBlock`/`GeoIp` need an explicit `#[serde(rename)]` — automatic
 /// `SCREAMING_SNAKE_CASE` conversion would produce `CC_TLD_BLOCK`/`GEO_IP`,
@@ -1292,6 +1323,7 @@ impl From<DecisionSource> for DecisionSourceView {
             DecisionSource::Allowlist => Self::Allowlist,
             DecisionSource::Blocklist => Self::Blocklist,
             DecisionSource::BlocklistBundle => Self::BlocklistBundle,
+            DecisionSource::CctldBlock => Self::CcTldBlock,
             DecisionSource::Cache => Self::Cache,
             DecisionSource::Quorum => Self::Quorum,
             DecisionSource::RatingFilter => Self::RatingFilter,
@@ -1928,6 +1960,28 @@ impl AdminClient {
             .map_err(AdminClientError::Request)?;
         response.json().await.map_err(AdminClientError::Request)
     }
+
+    /// `POST /admin/cctld-block` (Фаза 5, T-118) — full replace, same shape
+    /// as [`Self::set_blocklist_bundles`].
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, a code
+    /// is malformed (`400`), or the response doesn't decode.
+    pub async fn set_cctld_block(
+        &self,
+        blocked_codes: Vec<String>,
+    ) -> Result<AdminStatusResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/cctld-block", self.base_url))
+            .json(&CctldBlockConfigUpdate { blocked_codes })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
 }
 
 /// Wire form of [`crate::local_state::ArtifactOutcome`] — the `Failed`
@@ -2294,11 +2348,13 @@ mod tests {
             json_of(&DecisionSourceView::from(DecisionSource::BlocklistBundle)),
             "\"BLOCKLIST_BUNDLE\""
         );
-        // CcTldBlock is still not producible from the internal
-        // DecisionSource (see DecisionSourceView::from's exhaustive match) —
-        // constructed directly here purely to pin its wire string, which the
-        // explicit #[serde(rename)] override exists for.
-        assert_eq!(json_of(&DecisionSourceView::CcTldBlock), "\"CCTLD_BLOCK\"");
+        // Фаза 5/T-116: CctldBlock joined the producible side — asserted
+        // through the same From conversion; its wire string still needs the
+        // explicit #[serde(rename)] override (unlike BlocklistBundle).
+        assert_eq!(
+            json_of(&DecisionSourceView::from(DecisionSource::CctldBlock)),
+            "\"CCTLD_BLOCK\""
+        );
     }
 
     #[test]

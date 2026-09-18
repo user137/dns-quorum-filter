@@ -192,6 +192,13 @@ pub enum ConfigError {
     /// same class as [`ConfigError::UnknownRatingFilterList`].
     #[error("[blocklist_bundles] source {0:?} is not a published bundle source")]
     UnknownBlocklistBundleSource(String),
+    /// A `[cctld_block] blocked_codes` entry isn't exactly two ASCII letters
+    /// (T-115, SPEC.md §5.2) — same "hand-edited file, loud error not a
+    /// silent no-op" discipline as [`ConfigError::InvalidCountryCode`], the
+    /// closest sibling field. The code itself, not a domain name — safe to
+    /// echo.
+    #[error("[cctld_block] code {0:?} is not a valid two-letter TLD code")]
+    InvalidCctldCode(String),
     /// A `[personal_zone]` `*_window_days` field was `0` or exceeded
     /// [`MAX_PERSONAL_ZONE_WINDOW_DAYS`] (T-138, Батч 4.5) — `0` would make
     /// every inclusion check vacuously empty, and an unbounded value would
@@ -467,6 +474,48 @@ pub(crate) fn validate_blocklist_bundle_sources(
     Ok(out)
 }
 
+/// The `[cctld_block]` table (T-115, SPEC.md §5.2) — pipeline step 3, block
+/// by the query domain's own ccTLD suffix. No `enabled` flag, unlike
+/// [`RatingFilterConfig`]/[`BlocklistBundlesConfig`] — an empty
+/// `blocked_codes` already means "inert", same convention as
+/// [`GeoipConfig::blocked_countries`] (see `pipeline::UpstreamContext::cctld_block`'s
+/// own doc comment for why this field is a plain slice, not an
+/// `Option<&T>`-gated one, unlike those two).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CctldBlockConfig {
+    /// Already-validated, lowercased two-letter TLD codes (see
+    /// [`ConfigError::InvalidCctldCode`]) — empty by default, an opt-in list
+    /// like [`GeoipConfig::blocked_countries`], not a default policy.
+    pub blocked_codes: Vec<String>,
+}
+
+/// Validates and lowercases one `[cctld_block] blocked_codes` entry — same
+/// shape as [`validate_country_code`], but lowercased rather than uppercased:
+/// this code is compared against a domain label (always lowercase after
+/// [`crate::normalize_domain`]), not shown as a display code the way `GeoIP`'s
+/// is.
+pub(crate) fn validate_cctld_code(raw: &str) -> Result<String, ConfigError> {
+    if raw.len() == 2 && raw.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+        Ok(raw.to_ascii_lowercase())
+    } else {
+        Err(ConfigError::InvalidCctldCode(raw.to_string()))
+    }
+}
+
+/// Validates a whole `[cctld_block] blocked_codes` list (T-115) — each entry
+/// via [`validate_cctld_code`], deduplicated with first-seen order preserved
+/// (same two-tier shape as [`validate_blocklist_bundle_sources`]).
+pub(crate) fn validate_cctld_codes(raw: &[String]) -> Result<Vec<String>, ConfigError> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for entry in raw {
+        let code = validate_cctld_code(entry)?;
+        if !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    Ok(out)
+}
+
 /// Resolver config, loaded once at startup (T-144). No longer `Copy` as of
 /// T-76 — `geoip.blocked_countries` is a `Vec<String>`, so this type is
 /// `Clone` only now (every other field stays individually `Copy`, so a
@@ -553,6 +602,13 @@ pub struct ResolverConfig {
     /// T-217 live-read fix `rating_filter`/`personal_zone` already apply —
     /// never added to `PersistTarget`).
     pub blocklist_bundles: BlocklistBundlesConfig,
+    /// Фаза 5, T-115 — the `[cctld_block]` pipeline step 3 (SPEC.md §5.2).
+    /// Default off (empty list). Has an admin route from day one (T-118
+    /// consumes it) — every `ResolverConfig`-literal write site in
+    /// `dispatch.rs` reads a **live** `cctld_block_snapshot()`, the same
+    /// T-217 live-read discipline `rating_filter`/`blocklist_bundles` apply,
+    /// never a stale `PersistTarget` echo.
+    pub cctld_block: CctldBlockConfig,
 }
 
 impl Default for ResolverConfig {
@@ -572,6 +628,7 @@ impl Default for ResolverConfig {
             rating_filter: RatingFilterConfig::default(),
             personal_zone: PersonalZoneConfig::default(),
             blocklist_bundles: BlocklistBundlesConfig::default(),
+            cctld_block: CctldBlockConfig::default(),
         }
     }
 }
@@ -666,6 +723,7 @@ impl ResolverConfig {
         for raw in &file.geoip.blocked_countries {
             blocked_countries.push(validate_country_code(raw)?);
         }
+        let cctld_block_codes = validate_cctld_codes(&file.cctld_block.blocked_codes)?;
         let rating_filter_lists = validate_rating_filter_lists(&file.rating_filter.lists)?;
         let personal_zone = validate_personal_zone(&file.personal_zone)?;
         // `None` (no `sources` key) skips validation entirely — it means
@@ -715,6 +773,9 @@ impl ResolverConfig {
             blocklist_bundles: BlocklistBundlesConfig {
                 enabled: file.blocklist_bundles.enabled,
                 sources: blocklist_bundle_sources,
+            },
+            cctld_block: CctldBlockConfig {
+                blocked_codes: cctld_block_codes,
             },
         })
     }
@@ -771,6 +832,9 @@ impl ResolverConfig {
             blocklist_bundles: BlocklistBundlesConfigFile {
                 enabled: self.blocklist_bundles.enabled,
                 sources: self.blocklist_bundles.sources.clone(),
+            },
+            cctld_block: CctldBlockConfigFile {
+                blocked_codes: self.cctld_block.blocked_codes.clone(),
             },
             limits: LimitsConfigFile {
                 max_concurrent_connections: self.limits.max_concurrent_connections,
@@ -921,6 +985,8 @@ struct ResolverConfigFile {
     personal_zone: PersonalZoneConfigFile,
     /// T-218 Фаза 7, Батч 7.3 — see [`ResolverConfig::blocklist_bundles`].
     blocklist_bundles: BlocklistBundlesConfigFile,
+    /// Фаза 5, T-115 — see [`ResolverConfig::cctld_block`].
+    cctld_block: CctldBlockConfigFile,
     /// T-169 — see [`ResolverConfig::limits`].
     limits: LimitsConfigFile,
 }
@@ -1014,6 +1080,9 @@ impl Default for ResolverConfigFile {
                 regularity_min_days: defaults.personal_zone.regularity_min_days,
             },
             blocklist_bundles: BlocklistBundlesConfigFile::default(),
+            cctld_block: CctldBlockConfigFile {
+                blocked_codes: defaults.cctld_block.blocked_codes,
+            },
             limits: LimitsConfigFile::default(),
         }
     }
@@ -1085,6 +1154,16 @@ struct BlocklistBundlesConfigFile {
     sources: Option<Vec<String>>,
 }
 
+/// TOML-facing shape for [`CctldBlockConfig`] (T-115) — same "graceful
+/// partial, loud typo" split every other nested table here uses. Code
+/// validation itself happens in [`ResolverConfig::load`] via
+/// [`validate_cctld_codes`], not here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct CctldBlockConfigFile {
+    blocked_codes: Vec<String>,
+}
+
 /// TOML-facing shape for [`PersonalZoneConfig`] (T-138, Батч 4.5) — a plain,
 /// hand-editable `[personal_zone]` table, same "graceful partial, loud typo"
 /// split every other nested table here uses. Range validation happens in
@@ -1143,8 +1222,8 @@ impl Default for CacheConfigFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        BlocklistBundlesConfig, CacheConfig, ConfigError, GeoipConfig, LimitsConfig,
-        PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
+        BlocklistBundlesConfig, CacheConfig, CctldBlockConfig, ConfigError, GeoipConfig,
+        LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
     };
     use crate::timeout::TimeoutMode;
     use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
@@ -1209,6 +1288,7 @@ mod tests {
                 rating_filter: RatingFilterConfig::default(),
                 personal_zone: PersonalZoneConfig::default(),
                 blocklist_bundles: BlocklistBundlesConfig::default(),
+                cctld_block: CctldBlockConfig::default(),
             }
         );
     }
@@ -1465,6 +1545,9 @@ mod tests {
             },
             personal_zone: PersonalZoneConfig::default(),
             blocklist_bundles: BlocklistBundlesConfig::default(),
+            cctld_block: CctldBlockConfig {
+                blocked_codes: vec!["ru".to_string(), "cn".to_string()],
+            },
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");
@@ -2011,6 +2094,114 @@ mod tests {
             loaded.blocklist_bundles.sources, None,
             "an unrelated save must never freeze today's BLOCKLIST_SOURCES into the file"
         );
+    }
+
+    // Фаза 5, T-115: [cctld_block] - default empty (same "opt-in list, not a
+    // default policy" convention as [geoip]), entries normalized to
+    // lowercase (not uppercase, unlike [geoip] - a domain-label comparison,
+    // not a display code), a malformed code is a loud load-time error, not
+    // silently stored to match nothing.
+
+    #[test]
+    fn load_of_a_missing_cctld_block_table_defaults_to_an_empty_blocked_list() {
+        let (_dir, path) = temp_config_path();
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a missing file must still load: {err}"),
+        };
+        assert_eq!(config.cctld_block, CctldBlockConfig::default());
+        assert!(config.cctld_block.blocked_codes.is_empty());
+    }
+
+    #[test]
+    fn load_of_a_cctld_block_table_normalizes_codes_to_lowercase() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[cctld_block]\nblocked_codes = [\"RU\", \"Cn\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a valid [cctld_block] table must load: {err}"),
+        };
+        assert_eq!(
+            config.cctld_block.blocked_codes,
+            vec!["ru".to_string(), "cn".to_string()]
+        );
+    }
+
+    #[test]
+    fn load_of_a_cctld_block_table_dedups_its_codes() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(
+            &path,
+            "[cctld_block]\nblocked_codes = [\"ru\", \"cn\", \"ru\"]\n",
+        ) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let config = match ResolverConfig::load(&path) {
+            Ok(config) => config,
+            Err(err) => panic!("a valid [cctld_block] table must load: {err}"),
+        };
+        assert_eq!(
+            config.cctld_block.blocked_codes,
+            vec!["ru".to_string(), "cn".to_string()],
+            "order preserved, duplicate dropped"
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_three_letter_cctld_code() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[cctld_block]\nblocked_codes = [\"RUS\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidCctldCode(code)) if code == "RUS"
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_non_alphabetic_cctld_code() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[cctld_block]\nblocked_codes = [\"1u\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::InvalidCctldCode(_))
+        ));
+    }
+
+    #[test]
+    fn load_rejects_a_misspelled_key_inside_the_cctld_block_table() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "[cctld_block]\nblcoked_codes = [\"ru\"]\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(matches!(
+            ResolverConfig::load(&path),
+            Err(ConfigError::Toml(_))
+        ));
+    }
+
+    #[test]
+    fn save_then_load_round_trips_a_cctld_block_table() {
+        let (_dir, path) = temp_config_path();
+        let config = ResolverConfig {
+            cctld_block: CctldBlockConfig {
+                blocked_codes: vec!["ru".to_string(), "cn".to_string()],
+            },
+            ..ResolverConfig::default()
+        };
+        if let Err(err) = config.save(&path) {
+            panic!("must be able to save: {err}");
+        }
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("must be able to reload what was just saved: {err}"),
+        };
+        assert_eq!(loaded.cctld_block, config.cctld_block);
     }
 
     // T-76: [geoip] - default empty (SPEC.md §3.5's own stated default: an

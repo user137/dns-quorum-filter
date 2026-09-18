@@ -42,6 +42,7 @@ use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{
     chain_cache_ttl, clamp_ttl, is_cacheable, Cache, CacheConfig, CacheEntry, CacheKey, Verdict,
 };
+use crate::cctld_block;
 use crate::geoip::{self, GeoipReader};
 use crate::negative_cache_ttl;
 use crate::overrides::{self, ListKind, OverrideLists};
@@ -123,6 +124,15 @@ pub struct UpstreamContext<'a> {
     /// `BlocklistBundleState::matches_domain`) is `BLOCK`ed here, in the same
     /// pipeline slot as the manual blocklist, never cached.
     pub blocklist_bundles: Option<&'a BlocklistBundleState>,
+    /// Фаза 5, T-115 — the `[cctld_block]` blocked-code list (SPEC.md §5.2,
+    /// pipeline step 3). **Not** `Option<&T>`-gated like `blocklist_bundles`/
+    /// `rating_filter` above — those two have their own `enabled` flag
+    /// separate from the list itself (`Option` there encodes "disabled OR
+    /// empty" as two different reasons); `[cctld_block]` has no separate
+    /// `enabled` field at all, so an empty slice already means "inert" on
+    /// its own — the same convention [`GeoipFilter::blocked_countries`]
+    /// already uses.
+    pub cctld_block: &'a [String],
 }
 
 /// The rating-filter «bubble» inputs for one query (T-124) — the zone list
@@ -385,6 +395,35 @@ fn blocklist_bundle_response_with_meta(
     )
 }
 
+/// A ccTLD-block match's response + metadata (Фаза 5, T-115/T-116, SPEC.md
+/// §5.2) — same shape as [`blocklist_bundle_response_with_meta`]: synthesized
+/// `0.0.0.0`/`::`, `cache_config.block_verdict_ttl`, **not cached** (a local,
+/// dependency-free check — the list can change under the next `/admin/
+/// cctld-block` write, and re-checking it is cheap enough not to bother
+/// caching the verdict).
+fn cctld_block_response_with_meta(
+    query: &Message,
+    cache_config: &CacheConfig,
+    domain: String,
+    qtype: RecordType,
+) -> (PipelineOutcome, Option<QueryLogMeta>) {
+    let ttl = duration_to_ttl_secs(cache_config.block_verdict_ttl);
+    let meta = QueryLogMeta {
+        domain,
+        qtype,
+        decision: Decision::Blocked,
+        decision_source: DecisionSource::CctldBlock,
+        voters: Vec::new(),
+        geoip_country: None,
+        resolved_ip_country: None,
+        zone_removal: None,
+    };
+    (
+        PipelineOutcome::Response(build_block_response(query, ttl)),
+        Some(meta),
+    )
+}
+
 /// Pipeline step 5's verdict (T-124, SPEC.md §5.3) — a small `Copy` enum so
 /// `handle_query` decides in one `match` without a large `Result` on the
 /// return.
@@ -605,6 +644,17 @@ async fn overrides_step<C: DohClient + Sync>(
     // T-218 Батч 7.4 — same pipeline slot as the manual blocklist above.
     if blocklist_bundle_hit(upstream.blocklist_bundles, &log_domain) {
         return ControlFlow::Break(blocklist_bundle_response_with_meta(
+            query,
+            cache.config,
+            log_domain,
+            qtype,
+        ));
+    }
+
+    // Фаза 5, T-115/T-116 — SPEC.md §5.3 step 3, right after Blocklist
+    // (manual + bundle) and before Cache.
+    if cctld_block::is_blocked(&log_domain, upstream.cctld_block) {
+        return ControlFlow::Break(cctld_block_response_with_meta(
             query,
             cache.config,
             log_domain,
@@ -1494,6 +1544,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1550,6 +1601,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1590,6 +1642,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1635,6 +1688,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: Some(&bundle),
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1689,6 +1743,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: Some(&bundle),
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1740,6 +1795,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1792,6 +1848,168 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: Some(&bundle),
+                cctld_block: &[],
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
+                rating_filter: None,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.answers, allow_message_with_ip(baseline_ip).answers);
+    }
+
+    #[tokio::test]
+    async fn cctld_block_match_blocks_without_consulting_quorum() {
+        // Фаза 5, T-115/T-116/T-119: a ccTLD match must short-circuit before
+        // quorum (`MockClient::all_panic()` would panic on any real call),
+        // same pipeline slot as the manual blocklist/bundle above. Both the
+        // bare-suffix domain and a subdomain of it must match — this
+        // module's own `cctld_block::is_blocked` doc explains why a bare
+        // TLD matches itself here (deliberately unlike
+        // `BlocklistBundleState::matches_domain`).
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let client = MockClient::all_panic();
+        let blocked = vec!["ru".to_string()];
+
+        for domain in ["example.ru.", "sub.example.ru."] {
+            let (outcome, meta) = handle_query(
+                &query_for(domain, RecordType::A),
+                &client,
+                &overrides,
+                &default_voters(),
+                &CacheContext {
+                    cache: &cache,
+                    config: &cache_config(),
+                },
+                &UpstreamContext {
+                    blocklist_bundles: None,
+                    cctld_block: &blocked,
+                    timeout: &timeout_config(),
+                    baseline_url: BASELINE_URL,
+                    serve_baseline_fallback: false,
+                    reachability: crate::reachability::NetworkReachability::Online,
+                    filtering_paused: false,
+                    rating_filter: None,
+                },
+                &GeoipFilter {
+                    reader: None,
+                    blocked_countries: &[],
+                },
+            )
+            .await;
+            let PipelineOutcome::Response(response) = outcome else {
+                panic!("expected a Response for {domain}");
+            };
+            let Some(answer) = response.answers.first() else {
+                panic!("expected a NULL-blocked A answer for {domain}");
+            };
+            assert!(matches!(answer.data, RData::A(a) if a.0 == Ipv4Addr::UNSPECIFIED));
+            let Some(meta) = meta else {
+                panic!("expected Some(meta) for {domain}");
+            };
+            assert_eq!(meta.decision, Decision::Blocked);
+            assert_eq!(meta.decision_source, DecisionSource::CctldBlock);
+            assert!(meta.voters.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn cctld_block_miss_falls_through_to_quorum() {
+        // A domain whose TLD only shares a prefix with a blocked code
+        // (`ruble` vs `ru`) must not match — falls through to quorum
+        // normally, the end-to-end counterpart of
+        // `cctld_block::is_blocked_rejects_a_tld_that_only_shares_a_prefix`.
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let allowed_ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockClient {
+            quad9: MockResponse::Instant(allow_message_with_ip(allowed_ip)),
+            adguard: MockResponse::Instant(allow_message_with_ip(allowed_ip)),
+            baseline: MockResponse::Instant(allow_message_with_ip(allowed_ip)),
+            calls: AtomicU32::new(0),
+        };
+        let blocked = vec!["ru".to_string()];
+
+        let (outcome, meta) = handle_query(
+            &query_for("example.ruble.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                blocklist_bundles: None,
+                cctld_block: &blocked,
+                timeout: &timeout_config(),
+                baseline_url: BASELINE_URL,
+                serve_baseline_fallback: false,
+                reachability: crate::reachability::NetworkReachability::Online,
+                filtering_paused: false,
+                rating_filter: None,
+            },
+            &GeoipFilter {
+                reader: None,
+                blocked_countries: &[],
+            },
+        )
+        .await;
+        let PipelineOutcome::Response(response) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(response.answers, allow_message_with_ip(allowed_ip).answers);
+        let Some(meta) = meta else {
+            panic!("expected Some(meta)");
+        };
+        assert_eq!(meta.decision, Decision::Allowed);
+        assert_eq!(meta.decision_source, DecisionSource::Quorum);
+    }
+
+    #[tokio::test]
+    async fn allowlist_wins_over_a_cctld_block_match() {
+        // SPEC.md §5: allowlist priority over step 3 already holds
+        // structurally from the pipeline's fixed step order (step 1 before
+        // step 3), same as `allowlist_wins_over_a_blocklist_bundle_match`
+        // above — this test makes that explicit for the ccTLD step too.
+        let overrides = overrides_with(vec![OverrideEntry {
+            domain: "example.ru".to_string(),
+            is_wildcard: false,
+            list: ListKind::Allowlist,
+        }]);
+        let cache = Cache::new(&cache_config());
+        let baseline_ip = Ipv4Addr::new(93, 184, 216, 34);
+        let client = MockClient {
+            quad9: MockResponse::Panic,
+            adguard: MockResponse::Panic,
+            baseline: MockResponse::Instant(allow_message_with_ip(baseline_ip)),
+            calls: AtomicU32::new(0),
+        };
+        let blocked = vec!["ru".to_string()];
+
+        let (outcome, _meta) = handle_query(
+            &query_for("example.ru.", RecordType::A),
+            &client,
+            &overrides,
+            &default_voters(),
+            &CacheContext {
+                cache: &cache,
+                config: &cache_config(),
+            },
+            &UpstreamContext {
+                blocklist_bundles: None,
+                cctld_block: &blocked,
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1845,6 +2063,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1881,6 +2100,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1926,6 +2146,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -1985,6 +2206,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2036,6 +2258,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2070,6 +2293,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2117,6 +2341,7 @@ mod tests {
         };
         let upstream_ctx = UpstreamContext {
             blocklist_bundles: None,
+            cctld_block: &[],
             timeout: &timeout_cfg,
             baseline_url: BASELINE_URL,
             serve_baseline_fallback: false,
@@ -2205,6 +2430,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2244,6 +2470,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2288,6 +2515,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2323,6 +2551,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2369,6 +2598,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2410,6 +2640,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &config,
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2460,6 +2691,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2649,6 +2881,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2690,6 +2923,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2737,6 +2971,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2789,6 +3024,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &config,
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2880,6 +3116,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2930,6 +3167,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -2981,6 +3219,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3035,6 +3274,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3089,6 +3329,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3136,6 +3377,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3175,6 +3417,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3223,6 +3466,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3271,6 +3515,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3316,6 +3561,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3375,6 +3621,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3405,6 +3652,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3447,6 +3695,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3495,6 +3744,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3542,6 +3792,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3590,6 +3841,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3638,6 +3890,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3671,6 +3924,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3718,6 +3972,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3778,6 +4033,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -3846,6 +4102,7 @@ mod tests {
         let timeout_cfg = timeout_config();
         let upstream_ctx = UpstreamContext {
             blocklist_bundles: None,
+            cctld_block: &[],
             timeout: &timeout_cfg,
             baseline_url: BASELINE_URL,
             serve_baseline_fallback: false,
@@ -3966,6 +4223,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -4031,6 +4289,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -4092,6 +4351,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -4148,6 +4408,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &TimeoutConfig {
                     mode,
                     duration: timeout_config().duration,
@@ -4241,6 +4502,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: true,
@@ -4284,6 +4546,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: true,
@@ -4312,6 +4575,7 @@ mod tests {
     fn upstream_ctx_offline(timeout: &TimeoutConfig) -> UpstreamContext<'_> {
         UpstreamContext {
             blocklist_bundles: None,
+            cctld_block: &[],
             timeout,
             baseline_url: BASELINE_URL,
             serve_baseline_fallback: false,
@@ -4463,6 +4727,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -4557,6 +4822,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,
@@ -4602,6 +4868,7 @@ mod tests {
             },
             &UpstreamContext {
                 blocklist_bundles: None,
+                cctld_block: &[],
                 timeout: &timeout_config(),
                 baseline_url: BASELINE_URL,
                 serve_baseline_fallback: false,

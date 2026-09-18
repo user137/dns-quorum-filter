@@ -373,6 +373,9 @@ mod tests {
             // T-218 Батч 7.4 частина 2: the tray doesn't render this field
             // (that's `/admin/ui`, part 3) — a default fixture is enough.
             blocklist_bundles: dnsqb_service::BlocklistBundlesStatusView::default(),
+            // Фаза 5, T-115/T-118: same reasoning — the tray doesn't render
+            // this field either.
+            cctld_block: dnsqb_service::CctldBlockStatusView::default(),
         }
     }
 

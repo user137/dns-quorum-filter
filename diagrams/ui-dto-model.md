@@ -11,10 +11,14 @@ T-127 — `validate_rating_filter_lists` звужено, `lists ⊆ available_li
 `ADMIN_DTO_SCHEMA_VERSION` 2→3; 2026-09-17 — T-218 Батч 7.4 частина 2,
 `AdminStatusResponse.blocklist_bundles: BlocklistBundlesStatusView`,
 `BlocklistBundlesConfigUpdate` — тіло `POST /admin/blocklist-bundles`,
-`ADMIN_DTO_SCHEMA_VERSION` 3→4).
+`ADMIN_DTO_SCHEMA_VERSION` 3→4; 2026-09-19 — Фаза 5 Батч 5.1 (backend, T-118 UI ще не
+зроблено), `AdminStatusResponse.cctld_block: CctldBlockStatusView`, `CctldBlockConfigUpdate` —
+тіло `POST /admin/cctld-block`, `ADMIN_DTO_SCHEMA_VERSION` 4→5; заразом виправлено пре-
+існуючий GAP — `DecisionSource`-enum тут не мав `BLOCKLIST_BUNDLE`/`BASELINE_FALLBACK`, хоча
+обидва вже реалізовані (T-218/T-155), додано в тому ж проході).
 TASKS.md T-188, T-193, T-111/T-127/T-128 (`AdminStatusResponse.rating_filter:
 RatingFilterStatusView`, `RatingFilterConfigUpdate` — тіло `POST /admin/rating-filter`), T-138,
-T-227, T-218.
+T-227, T-218, T-115/T-116/T-117/T-119 (Фаза 5 Батч 5.1).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -50,14 +54,17 @@ classDiagram
         FAILED
     }
     class DecisionSource {
-        <<enum, T-54 реалізовано як admin::DecisionSourceView>>
+        <<enum, T-54 реалізовано як admin::DecisionSourceView; T-155/T-218/Фаза 5 додали три
+        останні варіанти>>
         ALLOWLIST
         BLOCKLIST
+        BLOCKLIST_BUNDLE
         CCTLD_BLOCK
         CACHE
         RATING_FILTER
         QUORUM
         GEOIP
+        BASELINE_FALLBACK
     }
     class VoterResult {
         <<T-54, реалізовано як admin::VoterResultView>>
@@ -173,7 +180,7 @@ classDiagram
         +u16 doh_port
     }
     class AdminStatusResponse {
-        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 / T-128 / T-218 реалізовано>>
+        <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 / T-128 / T-218 / Фаза 5 реалізовано>>
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
@@ -188,6 +195,7 @@ classDiagram
         +EncryptedPersistenceView encrypted_persistence
         +RatingFilterStatusView rating_filter
         +BlocklistBundlesStatusView blocklist_bundles
+        +CctldBlockStatusView cctld_block
     }
     class EncryptedPersistenceView {
         <<T-146 / T-97, реалізовано — пасивні /admin/ui індикатори>>
@@ -291,7 +299,19 @@ classDiagram
         +List~String~ countries_enabled
     }
     class CctldBlockConfig {
-        +List~String~ blocked_tlds
+        <<config::CctldBlockConfig, Фаза 5, Батч 5.1, T-115 реалізовано>>
+        +List~String~ blocked_codes
+    }
+    class CctldBlockConfigUpdate {
+        <<admin, Фаза 5, Батч 5.1 реалізовано (маршрут існує до T-118, "backend before UI") —
+        тіло POST /admin/cctld-block, повна заміна>>
+        +List~String~ blocked_codes
+    }
+    class CctldBlockStatusView {
+        <<admin, Фаза 5, Батч 5.1 реалізовано — поле AdminStatusResponse; немає enabled/active,
+        порожній blocked_codes сам по собі й означає "вимкнено". T-118 (ще не зроблено) додасть
+        картку /admin/ui, що це рендерить>>
+        +List~String~ blocked_codes
     }
     class RatingFilterConfig {
         <<config::RatingFilterConfig, T-124/T-126>>
@@ -362,6 +382,7 @@ classDiagram
     RatingFilterStatusView --> ZoneListStatusView : loaded
     AdminStatusResponse --> BlocklistBundlesStatusView
     BlocklistBundlesStatusView --> BlocklistSourceStatusView : loaded
+    AdminStatusResponse --> CctldBlockStatusView
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck

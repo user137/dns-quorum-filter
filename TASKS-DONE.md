@@ -6464,3 +6464,105 @@ bullet), `CONFIGURATION.md` (§`[rating_filter]`, новий абзац про �
     оскільки жодного плану закриття ще нема; ресурсне виснаження (клас 3) лишається
     пом'якшеним T-232, не усуненим — обидва задокументовані в KNOWN-LIMITATIONS.md, не
     приховані.
+
+## Фаза 5 — ccTLD-блок + i18n + CLI --help (завершені)
+
+**Батч 5.1 — ccTLD-блок, бекенд (T-115, T-116, T-117, T-119), 2026-09-19, plan-mode + advisor
+(advisor-catch на закритті: 3 дрібних, деталі нижче).** Перший з 7 узгоджених батчів Фази 5
+(`TASKS.md`'s "Батч-план узгоджено з користувачем 2026-09-18" — порядок сувора умова: i18n-
+інфраструктура (5.2) мусить бути перед ccTLD UI (5.3), бо тому UI потрібне поняття "поточна
+локаль"). SPEC.md §5.2 вже повністю описувало дизайн — цей батч його реалізує без жодної зміни
+специфікації.
+
+- [x] T-115 — `cctld_block.rs` — новий чистий, no-network модуль. `pub(crate) fn
+  is_blocked(normalized_domain: &str, blocked: &[String]) -> bool` — порівнює останній label
+  нормалізованого домену (`rsplit('.').next()`) проти `[cctld_block].blocked_codes`,
+  case-insensitive. **Свідома розбіжність із `blocklist_updater::BlocklistBundleState::
+  matches_domain`:** та функція структурно ніколи не тестує голий TLD (T-218 Батч 7.4 — захист
+  від скомпрометованого стороннього фіда), тут навпаки — голий TLD блокує сам себе
+  (`is_blocked("ru", &["ru"]) == true`), бо список — кілька рядків, які сам оператор вписав в
+  адмінці, не сторонній фід. Дискримінуючий тест саме на цю розбіжність +
+  happy/misuse(substring-не-суфікс)/error(порожній список)/case-insensitivity — 6 тестів.
+- [x] T-116 — Позиція в конвеєрі: `pipeline::overrides_step` — новий крок 3 одразу після
+  наявних Blocklist/blocklist-bundle перевірок (крок 2), перед `ControlFlow::Continue` (тобто
+  перед Cache) — точна відповідність SPEC.md §5.3. `UpstreamContext` отримало нове поле
+  `pub cctld_block: &'a [String]` — **не** `Option<&T>`+gate, як `blocklist_bundles`/
+  `rating_filter` (ті мають власний `enabled`-прапорець окремо від списку) — тут порожній
+  список сам по собі й означає "вимкнено", той самий принцип, що `GeoipFilter::
+  blocked_countries`. Нова `cctld_block_response_with_meta` — буквальна копія форми
+  `blocklist_bundle_response_with_meta` (синтезований `0.0.0.0`/`::`, `block_verdict_ttl`,
+  **не кешується**).
+- [x] T-117 — Внутрішній `DecisionSource` (query_log.rs) отримав variant `CctldBlock` — DTO-шар
+  (`admin::DecisionSourceView::CcTldBlock`, `#[serde(rename = "CCTLD_BLOCK")]`) уже існував
+  заздалегідь (задокументований як "ще не producible" — цей батч саме й зробив його
+  producible, один рядок у `DecisionSourceView::from`'s match). `persist_dto::PDecisionSource`
+  (query-log.enc серде-дзеркало) теж отримав новий variant — одностороннє-безпечне розширення
+  формату, той самий клас, що вже документовано для `RatingFilter`/`BaselineFallback`.
+- [x] T-119 — Юніт-тест "блок без мережевого виклику" — `pipeline.rs`, `MockClient::all_panic()`
+  (той самий паттерн, що вже є для manual-blocklist/blocklist-bundle hit): голий-TLD і
+  subdomain-збіг блокуються без жодного мокованого мережевого виклику; TLD-як-підрядок-не-
+  суфікс falls through to quorum нормально; allowlist перемагає ccTLD-збіг (той самий
+  структурний доказ порядку кроків, що вже є для blocklist-bundle).
+
+**Бекенд-конфіг + admin-route, не названі власним T-номером, але частина того самого батчу
+(«backend before UI», CLAUDE.md "Recurring patterns" — T-118, UI, чекає на Батч 5.3):**
+`config.rs` — новий `[cctld_block]` (`CctldBlockConfig { blocked_codes: Vec<String> }`,
+`validate_cctld_code`/`validate_cctld_codes` — буквальна копія форми `validate_country_code`,
+**але лишає код у нижньому регістрі**, не uppercase, як GeoIP — доменний label, не display-код).
+`dispatch.rs` — `AppState.cctld_block: RwLock<Arc<Vec<String>>>` (та сама форма, що
+`geoip_countries`, ініціалізація — деферована, як `blocklist_bundles_config`, через явний виклик
+`orchestrate::run`, не через параметр конструктора). **Full-replace `POST /admin/cctld-block`,
+свідомо не incremental add/remove, як `/admin/geoip/add`/`remove`** — рішення випливає наперед із
+Батчу 5.3: UI за зразком «бульбашки» батчує вибір локально й зберігає одним кліком, той самий
+shape, що `/admin/rating-filter`/`/admin/blocklist-bundles`. Новий `AdminStatusResponse.cctld_block:
+CctldBlockStatusView` — **`ADMIN_DTO_SCHEMA_VERSION` 4→5** (звірено, не апріорі: на відміну від
+`DecisionSourceView`, `AdminStatusResponse` читається `AdminClient::status`, трей поллить, тож
+бамп обов'язковий тут, хоча `BlocklistBundle`'s DTO-варіант його свого часу не потребував).
+
+**Advisor-catch'і (два раунди — перед кодом і на закритті):**
+- **Перед кодом (дизайн):** підтверджено емпірично, що `Intl.DisplayNames`-питання (яке код→назва
+  для ccTLD, не 1:1 з ISO) належить Батчу 5.3, не цьому; цей батч свідомо без жодного UI-коду.
+- **На закритті:**
+  1. **Мертва гілка в `is_blocked`** — `rsplit('.').next()` на `&str` ніколи не повертає `None`
+     (навіть `""` дає `Some("")`), тож початковий `let Some(tld) = ... else { return false }`
+     обробляв недосяжний випадок (CLAUDE.md: "не обробляти сценарії, які не можуть трапитись").
+     Виправлено на `.is_some_and(...)`, без розгалуження на `None` взагалі.
+  2. **Слабкий assert у тесті** — `cctld_block_miss_falls_through_to_quorum` завершувався
+     `assert_ne!(meta.decision_source, DecisionSource::CctldBlock)` — проходить для БУДЬ-ЯКОГО
+     іншого варіанту, не саме того, що тест стверджує назвою. Виправлено на
+     `assert_eq!(meta.decision_source, DecisionSource::Quorum)`.
+  3. **Документація не оновлена в тому самому комміті** (CLAUDE.md/CONFIGURATION.md/TASKS.md
+     тригери спрацювали, але пропущені в першому проході) — CLAUDE.md досі стверджував "ccTLD
+     block still unbuilt" і "Фаза 5 not started", `query_log`'s рядок казав "8 producible" замість
+     9, не було рядка модульної таблиці для `cctld_block`, не було рядка адмін-маршруту, і
+     CONFIGURATION.md не мало секції `[cctld_block]` взагалі — усі виправлено в тому самому
+     комміті, не окремим наступним.
+  4. **Взаємодія з паузою фільтрації, варта одного рядка доку, не окремого рішення:**
+     `overrides_step` виконується вище за `filtering_paused`-fast-path (той самий порядок, що
+     manual blocklist і T-218 бандл) — «Призупинити фільтрацію» тому НЕ звільняє від ccTLD-збігу.
+     Узгоджено з сусідніми кроками, задокументовано явно в `cctld_block.rs`'s module doc, не
+     мовчазний побічний ефект порядку кроків.
+
+**Diagram ground-truth ritual прогнано** (CLAUDE.md/`diagrams/README.md`'s тригер-список) — три
+тригери спрацювали (нове DTO-поле, новий маршрут, новий `DecisionSource`-variant). Перевірено всі
+чотири діаграми, чиї SOURCES-блоки торкаються §5.2/§5.3/§6: `ui-dto-model.md` **дійсно мала
+розбіжність** — `CctldBlockConfig` там уже існував як чернетка з часів kickoff'у, але з хибним
+іменем поля (`blocked_tlds` замість реального `blocked_codes`), і без `CctldBlockConfigUpdate`/
+`CctldBlockStatusView` узагалі; заразом там-таки виявлено й виправлено пре-існуючий, не пов'язаний
+із цим батчем GAP — `DecisionSource`-enum на діаграмі не мав `BLOCKLIST_BUNDLE`/
+`BASELINE_FALLBACK`, хоч обидва вже реалізовані задовго до цього батчу (T-218/T-155) — усе
+виправлено в цьому ж коміті, SOURCES-changelog оновлено. `rating-filter.md` уже коректно показує
+ccTLD суфіксним "сусіднім кроком 3" у правильній позиції конвеєра — без змін. `ui-navigation.md`'s
+вузол "ccTLD-блок — усе ще вимоги SPEC.md, не існують" лишається чинним по суті (T-118, сама
+UI-картка, ще не зроблено цим батчем) — без змін цим батчем; попутно помічено (не виправлено —
+поза межами цього батчу, окрема пре-існуюча розбіжність) що той самий вузол хибно каже те саме
+про вже збудований рейтинг-фільтр, суперечачи власному рядку 37 того ж файлу. `ui-status-
+indicator.md` не посилається на цей крок конвеєра взагалі — без змін.
+
+Повне верифікаційне зведення: `cargo build --workspace --locked`, `cargo test --workspace --lib
+--bins --locked` (933, було 919), `cargo clippy --workspace --all-targets -j 2 -- -D warnings`,
+`cargo fmt --all -- --check`, `cargo doc --workspace --no-deps --document-private-items --locked
+-j 1` (спіймав і виправив одне зламане intra-doc посилання локально до пушу — третя сесія
+поспіль, коли ця дисципліна ловить реальний CI-фейл до CI), `cargo test --test conformance -p
+dnsqb-service` (18/18, конвеєр-крок не зламав жодного RFC-тесту), `cargo test --test admin_client
+-p dnsqb-service` (7/7), `cargo test --workspace --doc --locked -j 1` (9/9) — усі зелені.

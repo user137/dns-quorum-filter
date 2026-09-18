@@ -1365,10 +1365,10 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 **Батч-план узгоджено з користувачем 2026-09-18 (plan-mode + advisor, один раунд advisor-catch
 перед затвердженням) — виконання СУВОРО в цьому порядку, кожен батч зі своїм коммітом:**
 
-1. **Батч 5.1** — ccTLD-блок, бекенд (T-115, T-116, T-117, T-119) — `cctld_block.rs`
-   (pure core + `[cctld_block]` config + `POST /admin/cctld-block`, той самий shape, що
-   `[blocklist_bundles]`), крок 3 конвеєра, `decision_source = CCTLD_BLOCK`. Без UI —
-   "backend before UI" (CLAUDE.md "Recurring patterns"). Власний план+advisor-цикл.
+1. **Батч 5.1 — зроблено 2026-09-19** — ccTLD-блок, бекенд (T-115, T-116, T-117, T-119) —
+   `cctld_block.rs` (pure core + `[cctld_block]` config + `POST /admin/cctld-block`, той самий
+   shape, що `[blocklist_bundles]`), крок 3 конвеєра, `decision_source = CCTLD_BLOCK`. Без UI —
+   "backend before UI" (CLAUDE.md "Recurring patterns"). Деталі й advisor-catch'і — TASKS-DONE.md.
 2. **Батч 5.2** — i18n-інфраструктура сайту, **перед** ccTLD UI, не після (advisor-catch: писати
    UI до появи поняття "поточна локаль" означало б хардкодити 'uk' і переписувати згодом).
    Плаский JSON-словник на локаль, **два типи значення** — звичайний рядок і плюралізований
@@ -1402,9 +1402,6 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
 `plans/`-файлі цієї розмови; після виконання кожного батчу відповідний нарис переноситься сюди й
 у DECISIONS.md, як завжди.
 
-- [ ] T-115 — ccTLD-блок (5.2): чиста функція перевірки суфікса домену, конфігурований список, порожній за замовчуванням (5.2)
-- [ ] T-116 — Позиція ccTLD-блоку в конвеєрі — одразу після Blocklist, до Cache (5.2, 5.3 конвеєр)
-- [ ] T-117 — Лог: `decision_source = CCTLD_BLOCK` (5.2, 6)
 - [ ] T-118 — UI додавання/видалення ccTLD-кодів — **за зразком UX рейтинг-фільтра «бульбашки»**
   (`#rating-filter-body`'s ручний `role="combobox"`/`listbox` у `main.js`, не GeoIP-картки простіший
   `<datalist>`): пошук фільтрує одразу за кодом і за назвою країни, кожен рядок меню й кожен
@@ -1416,7 +1413,6 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   завжди ISO 3166-1 alpha-2 country code (`.uk` не ISO, `.su`/`.tp` — застарілі/неіснуючі країни,
   `.eu` — не країна) — мапа код→назва для ccTLD НЕ може бути прямим передруком GeoIP's
   `COUNTRY_NAMES` без звірки різниці, окреме дослідження перед кодом.
-- [ ] T-119 — Юніт-тест ccTLD-блоку: домен блокується без жодного мережевого виклику, навіть без Cache/Quorum-моків (5.2, Наскрізні вимоги)
 - [ ] T-151 — Інтернаціоналізація UI: рядки веб-UI (`/admin/ui`) та `dnsqb-tray` (меню/tooltip) винесені у файли перекладу замість хардкоду в `admin_ui.rs`/`main.js`/Rust-рядках трея, підтримка щонайменше української й англійської, вибір мови — автовизначення з ОС + ручний перемикач в UI; SPEC.md/UI-SPEC.md наразі не називають жодної мовної вимоги — новий, не раніше зафіксований скоуп
 - [ ] T-235 — **CLI `--help` для трьох бінарників, заведено 2026-09-18 (запит користувача,
   приєднано до Фази 5 разом з i18n).** Підтверджено grep'ом по всіх трьох `main.rs` +

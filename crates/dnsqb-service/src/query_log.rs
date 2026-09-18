@@ -64,11 +64,10 @@ pub enum Decision {
     Failed,
 }
 
-/// SPEC.md §6 `decision_source` column — seven of the eight values the DTO
-/// (`admin::DecisionSourceView`) declares are producible so far
-/// (`CCTLD_BLOCK` is still a later-phase pipeline step that doesn't exist
-/// yet). `Geoip` joined at T-76, `BaselineFallback` at T-155,
-/// `RatingFilter` at T-124 — see this module's doc comment.
+/// SPEC.md §6 `decision_source` column — all eight values the DTO
+/// (`admin::DecisionSourceView`) declares are now producible. `Geoip` joined
+/// at T-76, `BaselineFallback` at T-155, `RatingFilter` at T-124,
+/// `CctldBlock` at Фаза 5/T-116 — see this module's doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecisionSource {
     /// Matched an allowlist entry.
@@ -83,6 +82,11 @@ pub enum DecisionSource {
     /// under the next `blocklist_updater::run_blocklist_updater` cycle,
     /// same reasoning `RatingFilter` already has).
     BlocklistBundle,
+    /// Blocked by the ccTLD-suffix step (Фаза 5, T-115/T-116, SPEC.md §5.2)
+    /// — pipeline step 3, right after `Blocklist`/`BlocklistBundle` and
+    /// before `Cache`. `voters` is always empty; never cached (a local,
+    /// dependency-free check, same reasoning as `BlocklistBundle`).
+    CctldBlock,
     /// Served from a cached quorum verdict.
     Cache,
     /// Decided by a fresh quorum resolution.
