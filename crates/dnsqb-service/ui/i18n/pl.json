@@ -1,0 +1,33 @@
+{
+  "localeSwitcher.label": "Język",
+  "fieldHelp.providers": "Każdy włączony dostawca sprawdza domenę niezależnie; jeśli choć jeden powie „zablokuj”, kworum blokuje (logika OR). Więcej dostawców oznacza szersze pokrycie, ale też więcej stron trzecich widzi Twoje zapytania.",
+  "fieldHelp.timeoutMode": "Jak traktować dostawcę, który nie odpowiedział na czas. „fail_open” (domyślnie) — przepuścić, traktując jako bezpieczne; „fail_closed” — zablokować; „degraded” — jak fail_open, ale w dzienniku decyzja jest wyraźnie oznaczona jako niepełna.",
+  "fieldHelp.cache": "Min./maks. czas życia wpisu w pamięci podręcznej (ogranicza TTL dostawcy), jak długo przechowywać werdykt „zablokowano” i ile wpisów pamięć podręczna przechowuje jednocześnie, zanim zacznie usuwać najstarsze.",
+  "fieldHelp.overrides": "Własne wyjątki ponad kworum: lista dozwolonych zawsze zezwala, lista zablokowanych zawsze blokuje, niezależnie od odpowiedzi dostawców. W razie konfliktu między listami wygrywa lista dozwolonych.",
+  "fieldHelp.logFilters": "Wyszukiwanie i filtry działają tylko w obrębie bieżącego okna dziennika — ostatnich ~1000 zapytań lub 24 godzin; starsze wpisy nie są już przechowywane.",
+  "hero.SERVICE_UNREACHABLE.state": "Brak ochrony",
+  "hero.SERVICE_UNREACHABLE.detail": "Usługa filtrowania nie odpowiada. Sprawdź, czy jest uruchomiona.",
+  "hero.WATCHDOG_GAVE_UP.state": "Usługa zatrzymana",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatyczny restart nie powiódł się. Uruchom aplikację ponownie ręcznie.",
+  "hero.WATCHDOG_RESTARTING.state": "Przywracanie…",
+  "hero.WATCHDOG_RESTARTING.detail": "Usługa filtrowania jest ponownie uruchamiana. Poczekaj chwilę.",
+  "hero.OFFLINE.state": "Brak połączenia z internetem",
+  "hero.OFFLINE.detail": "Rozwiązywanie nazw jest wstrzymane do czasu przywrócenia połączenia.",
+  "hero.PAUSED.state": "Filtrowanie wstrzymane",
+  "hero.PAUSED.detail": "DNS działa, ale bez filtra: kworum i GeoIP są wyłączone. Twoje własne listy blokowania/dozwolonych nadal obowiązują. Wznów z menu ikony w zasobniku systemowym.",
+  "hero.NO_PROVIDERS.state": "Brak ochrony",
+  "hero.NO_PROVIDERS.detail": "Filtrowanie jest wyłączone — żaden dostawca nie jest aktywny.",
+  "hero.CERT_NOT_TRUSTED.state": "Certyfikat niezainstalowany",
+  "hero.CERT_NOT_TRUSTED.detail": "Lokalny certyfikat nie został dodany do zaufanych certyfikatów głównych. Bez niego przeglądarka nie zaufa stronie ustawień.",
+  "hero.CERT_UNKNOWN.state": "Certyfikat niesprawdzony",
+  "hero.CERT_UNKNOWN.detail": "Nie udało się zweryfikować stanu lokalnego certyfikatu.",
+  "hero.PROTECTED.state": "Chronione",
+  "hero.PROTECTED.detail": "Filtrowanie jest aktywne.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrowanie jest aktywne. Zablokowano {blocked} w bieżącym dzienniku.",
+  "zoneDomainCount": {
+    "one": "{n} domena",
+    "few": "{n} domeny",
+    "many": "{n} domen",
+    "other": "{n} domeny"
+  }
+}

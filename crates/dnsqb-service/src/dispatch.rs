@@ -136,10 +136,6 @@ const ADMIN_INSTALL_CERT_PATH: &str = "/admin/install-cert";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
-// T-151 Батч 5.2 — two literal routes, not a parameterized one: `ROUTES`/`serve()`
-// only ever exact-match a path, and this pass ships exactly two dictionaries.
-const ADMIN_UI_I18N_UK_PATH: &str = "/admin/ui/i18n/uk.json";
-const ADMIN_UI_I18N_EN_PATH: &str = "/admin/ui/i18n/en.json";
 
 /// T-53/T-59: the single source of truth for which paths [`serve`] routes at
 /// all and which method(s) each one accepts — `serve` checks a request
@@ -183,9 +179,28 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
-    (ADMIN_UI_I18N_UK_PATH, &[Method::GET]),
-    (ADMIN_UI_I18N_EN_PATH, &[Method::GET]),
 ];
+
+/// T-236 — the i18n locale routes live in their own table, not spliced into
+/// [`ROUTES`] itself: `ROUTES` is one hand-written literal array, and Rust
+/// macro expansion can't splice N generated elements into an *existing*
+/// array literal (only ever produce one complete node at its own call site),
+/// so this is a second, self-contained `&[(&str, &[Method])]` built by one
+/// `macro_rules!` invocation over the locale-code list — deliberately
+/// re-typed once more here rather than shared with `admin_ui::I18N_DICTS`'s
+/// own macro invocation, so the two sides stay independently reviewable.
+/// Every consumer that needs "all admin routes" chains this onto `ROUTES`
+/// (`serve`'s membership check, `fuzzable_routes`,
+/// `every_json_post_route_rejects_a_missing_or_wrong_content_type`) rather
+/// than the two tables ever being merged into one.
+macro_rules! i18n_routes {
+    ($($code:literal),+ $(,)?) => {
+        const I18N_ROUTES: &[(&str, &[Method])] = &[
+            $((concat!("/admin/ui/i18n/", $code, ".json"), &[Method::GET] as &[Method])),+
+        ];
+    };
+}
+i18n_routes!("de", "en", "pl", "uk");
 
 /// `POST /admin/config`'s body is two bools and a short enum — this bound
 /// exists for the same reason `MAX_MESSAGE_SIZE` does (SPEC.md §8.1: "ліміт
@@ -3988,7 +4003,10 @@ where
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
     let path = req.uri().path();
-    let Some(&(_, allowed_methods)) = ROUTES.iter().find(|(route_path, _)| *route_path == path)
+    let Some(&(_, allowed_methods)) = ROUTES
+        .iter()
+        .chain(I18N_ROUTES.iter())
+        .find(|(route_path, _)| *route_path == path)
     else {
         return Ok(status_response(StatusCode::NOT_FOUND));
     };
@@ -4030,10 +4048,35 @@ where
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
-        ADMIN_UI_I18N_UK_PATH => admin_ui::serve_i18n_uk(req.method()),
-        ADMIN_UI_I18N_EN_PATH => admin_ui::serve_i18n_en(req.method()),
-        // Unreachable: `path` already matched a `ROUTES` entry above, and
-        // every `ROUTES` path has a corresponding arm here - kept as an
+        // T-236 — one guard arm for all of I18N_ROUTES, not 37 literal arms:
+        // the guard is a membership check against the same compile-time
+        // table `I18N_ROUTES` itself is built from (still exact-string
+        // matching under the hood, never a prefix/suffix parse of `path`),
+        // and the nested match it delegates to is itself built by one
+        // `macro_rules!` invocation over literal patterns - so this stays
+        // "exact string, no path parameters", just organized as two match
+        // levels instead of one flat one. Keep the locale-code list here in
+        // sync with `i18n_routes!`'s own invocation above (both macro calls
+        // must list the same codes) - drift is caught by
+        // `every_i18n_json_file_is_registered_and_vice_versa` below.
+        p if I18N_ROUTES.iter().any(|(route_path, _)| *route_path == p) => {
+            macro_rules! i18n_dispatch {
+                ($($code:literal),+ $(,)?) => {
+                    match p {
+                        $(concat!("/admin/ui/i18n/", $code, ".json") => {
+                            admin_ui::serve_i18n(req.method(), $code)
+                        })+
+                        // Unreachable: the guard above already proved `p` is
+                        // in I18N_ROUTES, and this macro is invoked with the
+                        // exact same locale list I18N_ROUTES was built from.
+                        _ => status_response(StatusCode::NOT_FOUND),
+                    }
+                };
+            }
+            i18n_dispatch!("de", "en", "pl", "uk")
+        }
+        // Unreachable: `path` already matched a `ROUTES`/`I18N_ROUTES` entry
+        // above, and every entry has a corresponding arm here - kept as an
         // explicit, safe (404) fallback because the match itself has no way
         // to prove that correspondence to the compiler.
         _ => status_response(StatusCode::NOT_FOUND),
@@ -4049,7 +4092,7 @@ mod tests {
         GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
         PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
         ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, BLOCKLIST_SOURCES,
-        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, BlocklistSourceStatusView, CacheConfigUpdate,
@@ -4285,6 +4328,7 @@ mod tests {
     fn fuzzable_routes() -> impl Iterator<Item = &'static (&'static str, &'static [Method])> {
         ROUTES
             .iter()
+            .chain(I18N_ROUTES.iter())
             .filter(|(path, _)| !FUZZ_EXCLUDED_ROUTES.contains(path))
     }
 
@@ -9430,13 +9474,85 @@ mod tests {
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),
-        ("/admin/ui/i18n/uk.json", &[Method::GET]),
-        ("/admin/ui/i18n/en.json", &[Method::GET]),
     ];
 
     #[test]
     fn serve_matches_the_documented_admin_route_allowlist() {
         assert_eq!(super::ROUTES, EXPECTED_ADMIN_ROUTES);
+    }
+
+    /// T-236 — `I18N_ROUTES`' own independent hand-written mirror, same
+    /// reasoning as `EXPECTED_ADMIN_ROUTES` immediately above (and
+    /// deliberately *not* generated from the same `i18n_routes!` macro call
+    /// that builds `I18N_ROUTES` itself — that would make this assertion
+    /// tautological by construction, catching nothing). Kept as its own
+    /// table, not folded into `EXPECTED_ADMIN_ROUTES`, because `I18N_ROUTES`
+    /// is itself a separate table (see `I18N_ROUTES`'s own doc comment for
+    /// why it isn't spliced into `ROUTES`).
+    const EXPECTED_I18N_ROUTES: &[(&str, &[Method])] = &[
+        ("/admin/ui/i18n/de.json", &[Method::GET]),
+        ("/admin/ui/i18n/en.json", &[Method::GET]),
+        ("/admin/ui/i18n/pl.json", &[Method::GET]),
+        ("/admin/ui/i18n/uk.json", &[Method::GET]),
+    ];
+
+    #[test]
+    fn i18n_routes_matches_the_documented_locale_allowlist() {
+        assert_eq!(super::I18N_ROUTES, EXPECTED_I18N_ROUTES);
+    }
+
+    /// T-236 — a *third*, genuinely independent oracle for the same fact
+    /// `EXPECTED_I18N_ROUTES` and `admin_ui::I18N_DICTS` both encode by hand:
+    /// what's actually on disk. `admin_ui::I18N_DICTS`/`I18N_ROUTES` are each
+    /// built by their own `macro_rules!` invocation over a hand-typed locale
+    /// list — a code left off *both* invocations (the file exists, nothing
+    /// ever registers it) is exactly the case neither of them can catch,
+    /// since both are driven by the same kind of human-typed list. Reading
+    /// the real `ui/i18n/` directory is the only check here that doesn't
+    /// share that blind spot.
+    #[test]
+    fn every_i18n_json_file_is_registered_and_vice_versa() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/i18n");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            panic!("ui/i18n/ must exist and be readable: {dir:?}");
+        };
+        let mut on_disk: Vec<String> = Vec::new();
+        for entry in entries {
+            let Ok(entry) = entry else {
+                panic!("ui/i18n/ directory entry must be readable");
+            };
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                panic!("ui/i18n/ file name must be valid UTF-8: {file_name:?}");
+            };
+            let Some(code) = name.strip_suffix(".json") else {
+                continue; // GLOSSARY.md and any other non-.json file lives here too.
+            };
+            on_disk.push(code.to_string());
+        }
+        on_disk.sort_unstable();
+        let mut registered: Vec<&str> = super::admin_ui::I18N_DICTS
+            .iter()
+            .map(|&(code, _)| code)
+            .collect();
+        registered.sort_unstable();
+        assert_eq!(
+            on_disk, registered,
+            "every ui/i18n/*.json file must be registered in admin_ui::I18N_DICTS, and vice versa"
+        );
+        let mut route_codes: Vec<String> = super::I18N_ROUTES
+            .iter()
+            .filter_map(|&(path, _)| {
+                path.strip_prefix("/admin/ui/i18n/")
+                    .and_then(|rest| rest.strip_suffix(".json"))
+                    .map(str::to_string)
+            })
+            .collect();
+        route_codes.sort_unstable();
+        assert_eq!(
+            on_disk, route_codes,
+            "every ui/i18n/*.json file must have a matching I18N_ROUTES entry, and vice versa"
+        );
     }
 
     /// `HEAD` is deliberately left out of this sweep: RFC 7231 §4.3.2
@@ -9454,14 +9570,15 @@ mod tests {
         Method::TRACE,
     ];
 
-    /// Complements `serve_matches_the_documented_admin_route_allowlist`:
-    /// that test proves `ROUTES` matches this same expected list; this one
-    /// proves `ROUTES` is actually *enforced*, not just declared — every
-    /// listed (path, method) pair reaches a handler instead of being
-    /// rejected, and every method not listed for a given path gets 405.
+    /// Complements `serve_matches_the_documented_admin_route_allowlist` +
+    /// `i18n_routes_matches_the_documented_locale_allowlist`: those prove
+    /// `ROUTES`/`I18N_ROUTES` match their expected lists; this one proves
+    /// both are actually *enforced*, not just declared — every listed
+    /// (path, method) pair reaches a handler instead of being rejected, and
+    /// every method not listed for a given path gets 405.
     #[tokio::test]
     async fn serve_enforces_the_route_table_it_matched_above() {
-        for &(path, allowed) in EXPECTED_ADMIN_ROUTES {
+        for &(path, allowed) in EXPECTED_ADMIN_ROUTES.iter().chain(EXPECTED_I18N_ROUTES) {
             for method in ALL_HTTP_METHODS {
                 let Ok(req) = Request::builder()
                     .method(method.clone())
@@ -9968,7 +10085,7 @@ mod tests {
     /// `serve_returns_400_for_a_post_with_the_wrong_content_type`.
     #[tokio::test]
     async fn every_json_post_route_rejects_a_missing_or_wrong_content_type() {
-        for &(path, methods) in ROUTES {
+        for &(path, methods) in ROUTES.iter().chain(I18N_ROUTES) {
             if !methods.contains(&Method::POST) || path == DNS_QUERY_PATH {
                 continue;
             }

@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Sprache",
+  "fieldHelp.providers": "Jeder aktivierte Anbieter prüft die Domain unabhängig; sagt auch nur einer „block“, blockiert das Quorum (ODER-Logik). Mehr Anbieter bedeuten breitere Abdeckung, aber auch mehr Drittparteien sehen Ihre Anfragen.",
+  "fieldHelp.timeoutMode": "Wie ein Anbieter behandelt wird, der nicht rechtzeitig geantwortet hat. „fail_open“ (Standard) – durchlassen, als sicher behandeln; „fail_closed“ – blockieren; „degraded“ – wie fail_open, markiert die Entscheidung im Log aber ausdrücklich als unvollständig.",
+  "fieldHelp.cache": "Min./Max. Lebensdauer eines Cache-Eintrags (begrenzt die TTL des Anbieters), wie lange ein „blockiert“-Urteil aufbewahrt wird, und wie viele Einträge der Cache gleichzeitig hält, bevor die ältesten verdrängt werden.",
+  "fieldHelp.overrides": "Eigene Ausnahmen zusätzlich zum Quorum: die Allowlist erlaubt immer, die Blocklist blockiert immer, unabhängig von den Anbietern. Bei einem Konflikt zwischen beiden Listen gewinnt die Allowlist.",
+  "fieldHelp.logFilters": "Suche und Filter wirken nur innerhalb des aktuellen Protokollfensters – der letzten ~1000 Anfragen oder 24 Stunden; ältere Einträge werden nicht mehr aufbewahrt.",
+  "hero.SERVICE_UNREACHABLE.state": "Nicht geschützt",
+  "hero.SERVICE_UNREACHABLE.detail": "Der Filterdienst antwortet nicht. Prüfen Sie, ob er läuft.",
+  "hero.WATCHDOG_GAVE_UP.state": "Dienst gestoppt",
+  "hero.WATCHDOG_GAVE_UP.detail": "Der automatische Neustart ist fehlgeschlagen. Starten Sie die Anwendung manuell neu.",
+  "hero.WATCHDOG_RESTARTING.state": "Wird wiederhergestellt…",
+  "hero.WATCHDOG_RESTARTING.detail": "Der Filterdienst wird neu gestartet. Bitte warten Sie einen Moment.",
+  "hero.OFFLINE.state": "Keine Internetverbindung",
+  "hero.OFFLINE.detail": "Die Namensauflösung ist pausiert, bis die Verbindung wiederhergestellt ist.",
+  "hero.PAUSED.state": "Filterung pausiert",
+  "hero.PAUSED.detail": "DNS funktioniert, aber ohne Filter: Quorum und GeoIP sind deaktiviert. Ihre eigenen Sperr-/Erlaubenslisten gelten weiterhin. Fortsetzen über das Tray-Symbol-Menü.",
+  "hero.NO_PROVIDERS.state": "Nicht geschützt",
+  "hero.NO_PROVIDERS.detail": "Filterung ist deaktiviert – kein Anbieter ist aktiv.",
+  "hero.CERT_NOT_TRUSTED.state": "Zertifikat nicht installiert",
+  "hero.CERT_NOT_TRUSTED.detail": "Das lokale Zertifikat wurde nicht zu den vertrauenswürdigen Stammzertifikaten hinzugefügt. Ohne es vertraut der Browser der Einstellungsseite nicht.",
+  "hero.CERT_UNKNOWN.state": "Zertifikat nicht geprüft",
+  "hero.CERT_UNKNOWN.detail": "Der Status des lokalen Zertifikats konnte nicht überprüft werden.",
+  "hero.PROTECTED.state": "Geschützt",
+  "hero.PROTECTED.detail": "Die Filterung ist aktiv.",
+  "hero.PROTECTED.detailWithBlocked": "Die Filterung ist aktiv. {blocked} im aktuellen Protokoll blockiert.",
+  "zoneDomainCount": {
+    "one": "{n} Domain",
+    "other": "{n} Domains"
+  }
+}

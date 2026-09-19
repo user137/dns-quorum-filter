@@ -33,8 +33,35 @@ const STYLE_CSS: &str = include_str!("../ui/style.css");
 /// T-151 Батч 5.2 — flat locale dictionaries (`fieldHelp.*`/`hero.*.{state,detail}`/
 /// `zoneDomainCount`), served alongside `main.js` for the same reason: `main.js`
 /// fetches its own translated text at runtime rather than shipping it inline.
-const UK_I18N: &str = include_str!("../ui/i18n/uk.json");
-const EN_I18N: &str = include_str!("../ui/i18n/en.json");
+///
+/// T-236 — one `macro_rules!` invocation (not 37 hand-written `include_str!`
+/// consts) builds the whole table from a single literal locale-code list.
+/// This is purely compile-time codegen — every `include_str!` path is still a
+/// literal the compiler resolves at build time, so `dispatch.rs`'s "exact
+/// string, no path parameters" route-matching invariant is untouched; the
+/// list is deliberately re-typed once more in `dispatch.rs`'s own macro
+/// invocation rather than shared, so the two sides stay independently
+/// reviewable (drift between them is caught by
+/// `dispatch::tests::every_i18n_json_file_is_registered_and_vice_versa`).
+macro_rules! i18n_dicts {
+    ($($code:literal),+ $(,)?) => {
+        pub(crate) const I18N_DICTS: &[(&str, &str)] = &[
+            $(($code, include_str!(concat!("../ui/i18n/", $code, ".json")))),+
+        ];
+    };
+}
+i18n_dicts!("de", "en", "pl", "uk");
+
+/// Looks up one locale's dictionary by code — the single place both
+/// [`serve_i18n`] and this module's own tests read [`I18N_DICTS`] through, so
+/// a locale-specific assertion (e.g. `hero.PAUSED.state` in Ukrainian) keeps
+/// working after the table grows.
+pub(crate) fn i18n_dict(locale: &str) -> Option<&'static str> {
+    I18N_DICTS
+        .iter()
+        .find(|(code, _)| *code == locale)
+        .map(|&(_, json)| json)
+}
 
 /// `GET /admin/ui` — the config page itself, the only one of the three that
 /// carries the strict CSP (the response a browser actually navigates to).
@@ -52,16 +79,19 @@ pub(crate) fn serve_css(method: &Method) -> Response<Full<Bytes>> {
     respond(method, STYLE_CSS, "text/css; charset=utf-8", false)
 }
 
-/// `GET /admin/ui/i18n/uk.json`. `"application/json"` with no `charset` —
-/// matches the convention every other JSON response in `dispatch.rs` already
-/// uses, unlike the HTML/JS/CSS responses above.
-pub(crate) fn serve_i18n_uk(method: &Method) -> Response<Full<Bytes>> {
-    respond(method, UK_I18N, "application/json", false)
-}
-
-/// `GET /admin/ui/i18n/en.json`.
-pub(crate) fn serve_i18n_en(method: &Method) -> Response<Full<Bytes>> {
-    respond(method, EN_I18N, "application/json", false)
+/// `GET /admin/ui/i18n/<locale>.json` for any `locale` in [`I18N_DICTS`].
+/// `"application/json"` with no `charset` — matches the convention every
+/// other JSON response in `dispatch.rs` already uses, unlike the HTML/JS/CSS
+/// responses above. `dispatch.rs` only ever calls this with a `locale` its
+/// own `I18N_ROUTES` table already proved is registered, but the `None`
+/// branch is a real, safe fallback (not a dead one the compiler can prove
+/// unreachable) — same "can't prove it to the compiler" shape as `serve()`'s
+/// own catch-all 404 arm.
+pub(crate) fn serve_i18n(method: &Method, locale: &str) -> Response<Full<Bytes>> {
+    match i18n_dict(locale) {
+        Some(json) => respond(method, json, "application/json", false),
+        None => status_response(StatusCode::NOT_FOUND),
+    }
 }
 
 /// Any other method on one of these three paths is 405 — same convention as
@@ -109,8 +139,7 @@ fn respond(
 #[cfg(test)]
 mod tests {
     use super::{
-        serve_css, serve_html, serve_i18n_en, serve_i18n_uk, serve_js, EN_I18N, INDEX_HTML,
-        MAIN_JS, UK_I18N,
+        i18n_dict, serve_css, serve_html, serve_i18n, serve_js, I18N_DICTS, INDEX_HTML, MAIN_JS,
     };
     use http::{HeaderValue, Method, StatusCode};
 
@@ -289,105 +318,127 @@ mod tests {
         );
     }
 
-    // T-151 Батч 5.2 — i18n dictionaries.
+    // T-151 Батч 5.2 / T-236 — i18n dictionaries. Table-driven over
+    // `I18N_DICTS` since T-236 (37 locales, not 2) — see
+    // `ui/i18n/GLOSSARY.md` for the translation/plural-category rules these
+    // tests check the *shape* of, not the prose itself (no automated test can
+    // judge translation quality).
 
     #[test]
-    fn serve_i18n_uk_json_has_expected_content_type_and_no_csp() {
-        let response = serve_i18n_uk(&Method::GET);
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get("content-type"),
-            Some(&HeaderValue::from_static("application/json"))
-        );
-        assert!(response.headers().get("content-security-policy").is_none());
-        assert!(response.headers().get("x-content-type-options").is_some());
+    fn serve_i18n_json_has_expected_content_type_and_no_csp_for_every_locale() {
+        for &(code, _) in I18N_DICTS {
+            let response = serve_i18n(&Method::GET, code);
+            assert_eq!(response.status(), StatusCode::OK, "{code} must serve 200");
+            assert_eq!(
+                response.headers().get("content-type"),
+                Some(&HeaderValue::from_static("application/json")),
+                "{code} must serve application/json"
+            );
+            assert!(
+                response.headers().get("content-security-policy").is_none(),
+                "{code} must not carry a CSP - only /admin/ui itself does"
+            );
+            assert!(response.headers().get("x-content-type-options").is_some());
+        }
     }
 
     #[test]
-    fn serve_i18n_en_json_has_expected_content_type_and_no_csp() {
-        let response = serve_i18n_en(&Method::GET);
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get("content-type"),
-            Some(&HeaderValue::from_static("application/json"))
-        );
-        assert!(response.headers().get("content-security-policy").is_none());
-        assert!(response.headers().get("x-content-type-options").is_some());
+    fn serve_i18n_rejects_non_get_for_every_locale() {
+        for &(code, _) in I18N_DICTS {
+            assert_eq!(
+                serve_i18n(&Method::POST, code).status(),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "{code} must reject POST"
+            );
+        }
     }
 
     #[test]
-    fn serve_i18n_uk_rejects_non_get() {
+    fn serve_i18n_404s_on_an_unregistered_locale() {
         assert_eq!(
-            serve_i18n_uk(&Method::POST).status(),
-            StatusCode::METHOD_NOT_ALLOWED
-        );
-    }
-
-    #[test]
-    fn serve_i18n_en_rejects_non_get() {
-        assert_eq!(
-            serve_i18n_en(&Method::POST).status(),
-            StatusCode::METHOD_NOT_ALLOWED
+            serve_i18n(&Method::GET, "xx").status(),
+            StatusCode::NOT_FOUND,
+            "a locale not in I18N_DICTS must 404, not panic or fall back silently"
         );
     }
 
     #[test]
-    fn uk_i18n_and_en_i18n_are_valid_json() {
-        for dict in [UK_I18N, EN_I18N] {
-            let Ok(_) = serde_json::from_str::<serde_json::Value>(dict) else {
-                panic!("i18n dictionary must be valid JSON: {dict}");
+    fn every_locale_dictionary_is_valid_json() {
+        for &(code, json) in I18N_DICTS {
+            let Ok(_) = serde_json::from_str::<serde_json::Value>(json) else {
+                panic!("{code}.json must be valid JSON");
             };
         }
     }
 
-    // Only the top-level key SET must match - the plural object *shape* is
-    // deliberately different per locale (uk: one/few/many/other, en: one/other,
-    // per Intl.PluralRules), so a recursive comparison would fail by design.
+    // Only the top-level key SET must match across locales - the plural
+    // object *shape* is deliberately different per locale (uk:
+    // one/few/many/other, en: one/other, per Intl.PluralRules), so a
+    // recursive comparison would fail by design. `en` is the reference set
+    // (it's the one every other locale is translated from).
     #[test]
-    fn uk_i18n_and_en_i18n_have_matching_top_level_key_sets() {
-        let Ok(serde_json::Value::Object(uk)) = serde_json::from_str::<serde_json::Value>(UK_I18N)
-        else {
-            panic!("uk.json must be a JSON object");
+    fn every_locale_has_the_same_top_level_key_set_as_en() {
+        let Some(en_json) = i18n_dict("en") else {
+            panic!("en.json must be registered - it's the reference key set");
         };
-        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(EN_I18N)
+        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(en_json)
         else {
             panic!("en.json must be a JSON object");
         };
-        let mut uk_keys: Vec<&String> = uk.keys().collect();
         let mut en_keys: Vec<&String> = en.keys().collect();
-        uk_keys.sort_unstable();
         en_keys.sort_unstable();
-        assert_eq!(
-            uk_keys, en_keys,
-            "uk.json and en.json must translate exactly the same key set"
-        );
-    }
-
-    #[test]
-    fn uk_i18n_zone_domain_count_has_one_few_many_other() {
-        let Ok(dict) = serde_json::from_str::<serde_json::Value>(UK_I18N) else {
-            panic!("uk.json must be valid JSON");
-        };
-        for category in ["one", "few", "many", "other"] {
-            assert!(
-                dict["zoneDomainCount"][category].is_string(),
-                "uk zoneDomainCount must have a {category} form (Ukrainian has 3 \
-                 cardinal plural categories + other for fractions)"
+        for &(code, json) in I18N_DICTS {
+            let Ok(serde_json::Value::Object(dict)) =
+                serde_json::from_str::<serde_json::Value>(json)
+            else {
+                panic!("{code}.json must be a JSON object");
+            };
+            let mut keys: Vec<&String> = dict.keys().collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys, en_keys,
+                "{code}.json must translate exactly the same key set as en.json"
             );
         }
     }
 
+    /// T-236 — measured via a real Chrome's
+    /// `Intl.PluralRules(<code>).resolvedOptions().pluralCategories`, not
+    /// recalled from memory (see `ui/i18n/GLOSSARY.md`'s own note on this) -
+    /// that's the actual ground truth `tPlural()` resolves against at
+    /// runtime, so it's what `zoneDomainCount`'s shape must match per locale.
+    const EXPECTED_PLURAL_CATEGORIES: &[(&str, &[&str])] = &[
+        ("de", &["one", "other"]),
+        ("en", &["one", "other"]),
+        ("pl", &["one", "few", "many", "other"]),
+        ("uk", &["one", "few", "many", "other"]),
+    ];
+
     #[test]
-    fn en_i18n_zone_domain_count_has_one_and_other() {
-        let Ok(dict) = serde_json::from_str::<serde_json::Value>(EN_I18N) else {
-            panic!("en.json must be valid JSON");
-        };
-        for category in ["one", "other"] {
+    fn every_locale_zone_domain_count_has_its_measured_plural_categories() {
+        assert_eq!(
+            EXPECTED_PLURAL_CATEGORIES.len(),
+            I18N_DICTS.len(),
+            "EXPECTED_PLURAL_CATEGORIES must cover exactly the locales I18N_DICTS registers - \
+             add a row here in the same commit that adds a new locale's JSON file"
+        );
+        for &(code, categories) in EXPECTED_PLURAL_CATEGORIES {
             assert!(
-                dict["zoneDomainCount"][category].is_string(),
-                "en zoneDomainCount must have a {category} form (English has \
-                 exactly 2 Intl.PluralRules categories)"
+                categories.contains(&"other"),
+                "{code}'s expected-category list must include \"other\" - tPlural()'s fallback"
             );
+            let Some(json) = i18n_dict(code) else {
+                panic!("{code} must be registered in I18N_DICTS");
+            };
+            let Ok(dict) = serde_json::from_str::<serde_json::Value>(json) else {
+                panic!("{code}.json must be valid JSON");
+            };
+            for category in categories {
+                assert!(
+                    dict["zoneDomainCount"][*category].is_string(),
+                    "{code} zoneDomainCount must have a {category} form"
+                );
+            }
         }
     }
 
@@ -635,47 +686,46 @@ mod tests {
         }
     }
 
-    // T-151 Батч 5.2 — every HERO_PRESENTATION key's state/detail text must
-    // exist in *both* dictionaries, not just the one main_js_hero_has_a_
-    // dedicated_paused_presentation happens to check. A missing key isn't a
-    // crash (t() falls back to the key itself) so nothing else would catch a
-    // 10th hero state added later with only one locale's pair filled in.
+    // T-151 Батч 5.2 / T-236 — every HERO_PRESENTATION key's state/detail
+    // text must exist in *every* dictionary, not just the one
+    // main_js_hero_has_a_dedicated_paused_presentation happens to check. A
+    // missing key isn't a crash (t() falls back to the key itself) so
+    // nothing else would catch a 10th hero state added later with only some
+    // locales' pairs filled in. Already generalized by
+    // every_locale_has_the_same_top_level_key_set_as_en for the *set* of
+    // keys - this test additionally proves the *specific* hero keys are
+    // among them, so a typo in a hero key name (present in every file, so
+    // the key-set test alone wouldn't catch it) still fails loudly.
     #[test]
-    fn every_hero_presentation_key_has_state_and_detail_in_both_locales() {
-        let Ok(uk) = serde_json::from_str::<serde_json::Value>(UK_I18N) else {
-            panic!("uk.json must be valid JSON");
-        };
-        let Ok(en) = serde_json::from_str::<serde_json::Value>(EN_I18N) else {
-            panic!("en.json must be valid JSON");
-        };
-        for key in [
-            "SERVICE_UNREACHABLE",
-            "WATCHDOG_GAVE_UP",
-            "WATCHDOG_RESTARTING",
-            "OFFLINE",
-            "PAUSED",
-            "NO_PROVIDERS",
-            "CERT_NOT_TRUSTED",
-            "CERT_UNKNOWN",
-            "PROTECTED",
-        ] {
-            for field in ["state", "detail"] {
-                let dict_key = format!("hero.{key}.{field}");
-                assert!(
-                    uk[&dict_key].is_string(),
-                    "uk.json must have a string at {dict_key}"
-                );
-                assert!(
-                    en[&dict_key].is_string(),
-                    "en.json must have a string at {dict_key}"
-                );
+    fn every_hero_presentation_key_has_state_and_detail_in_every_locale() {
+        for &(code, json) in I18N_DICTS {
+            let Ok(dict) = serde_json::from_str::<serde_json::Value>(json) else {
+                panic!("{code}.json must be valid JSON");
+            };
+            for key in [
+                "SERVICE_UNREACHABLE",
+                "WATCHDOG_GAVE_UP",
+                "WATCHDOG_RESTARTING",
+                "OFFLINE",
+                "PAUSED",
+                "NO_PROVIDERS",
+                "CERT_NOT_TRUSTED",
+                "CERT_UNKNOWN",
+                "PROTECTED",
+            ] {
+                for field in ["state", "detail"] {
+                    let dict_key = format!("hero.{key}.{field}");
+                    assert!(
+                        dict[&dict_key].is_string(),
+                        "{code}.json must have a string at {dict_key}"
+                    );
+                }
             }
+            assert!(
+                dict["hero.PROTECTED.detailWithBlocked"].is_string(),
+                "{code}.json: the blocked-count PROTECTED variant needs its own key too"
+            );
         }
-        assert!(
-            uk["hero.PROTECTED.detailWithBlocked"].is_string()
-                && en["hero.PROTECTED.detailWithBlocked"].is_string(),
-            "the blocked-count PROTECTED variant needs its own key in both locales too"
-        );
     }
 
     // T-193 / T-204 — the paused hero must name the state and not read as
@@ -694,9 +744,12 @@ mod tests {
             row.contains("is-warn"),
             "paused is a warning, not the green is-ok class"
         );
-        // T-151 Батч 5.2: the state text itself moved to ui/i18n/{uk,en}.json -
+        // T-151 Батч 5.2: the state text itself moved to ui/i18n/<locale>.json -
         // verified against the dictionary, not a literal in main.js any more.
-        let Ok(dict) = serde_json::from_str::<serde_json::Value>(UK_I18N) else {
+        let Some(uk_json) = i18n_dict("uk") else {
+            panic!("uk.json must be registered in I18N_DICTS");
+        };
+        let Ok(dict) = serde_json::from_str::<serde_json::Value>(uk_json) else {
             panic!("uk.json must be valid JSON");
         };
         assert_eq!(
