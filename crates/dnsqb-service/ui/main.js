@@ -111,25 +111,39 @@ function tPlural(key, n) {
 // Lists only SUPPORTED_LOCALES - deliberately not a broader "every language"
 // list: a selector entry for a locale with no dictionary would silently snap
 // back to English the moment it's picked (Три Б - never offer a choice that
-// isn't real). T-236: 37 entries in SUPPORTED_LOCALES's own array-insertion
-// order isn't browsable, so the options are sorted by their *localized*
-// display name using the CURRENT locale's own collation - a Ukrainian
-// speaker gets a Ukrainian-alphabetized list, an English speaker an
-// English-alphabetized one, not one fixed ordering for everyone.
+// isn't real). 2026-09-19, direct user request: every entry names itself in
+// its OWN language (autonym) - Intl.DisplayNames([code]), never
+// CURRENT_LOCALE - the same principle Wikipedia's own interlanguage picker
+// uses ("Deutsch", "日本語", never translated into the reader's current
+// language). This is deliberately the ONE picker in this file that works
+// this way - GeoIP/ccTLD country names stay CURRENT_LOCALE-translated
+// (user confirmed 2026-09-19, DECISIONS.md) - because translating this
+// specific list defeats its own purpose: an admin stuck on a locale they
+// can't read must still recognise their own language's name to click their
+// way back, which only works if it was never translated away from itself.
+// Sorted by the autonym text but WITHOUT a locale argument to
+// localeCompare() (root collation) - once every entry can be in a different
+// script, the admin's own CURRENT_LOCALE has no more claim to ordering them
+// than any other, and root collation groups scripts into stable,
+// predictable clusters (Latin/Cyrillic/Greek/Hebrew/Arabic/Indic/Thai/
+// Korean/Chinese/Japanese, verified empirically for all 37 codes) that -
+// unlike a CURRENT_LOCALE-keyed sort - don't reshuffle every time the
+// admin switches locale.
 function populateLocaleSelect() {
   // The switcher's own label/aria-label are translated here too, not left
   // hardcoded - this is the one control an English-speaking user must be
   // able to find before anything else on the page is readable to them.
   localeSwitcherLabel.textContent = t("localeSwitcher.label");
-  const names = new Intl.DisplayNames([CURRENT_LOCALE], { type: "language" });
-  const sortedCodes = [...SUPPORTED_LOCALES].sort((a, b) =>
-    names.of(a).localeCompare(names.of(b), CURRENT_LOCALE),
-  );
+  const entries = SUPPORTED_LOCALES.map((code) => ({
+    code,
+    name: new Intl.DisplayNames([code], { type: "language" }).of(code),
+  }));
+  entries.sort((a, b) => a.name.localeCompare(b.name));
   localeSelect.textContent = "";
-  for (const code of sortedCodes) {
+  for (const { code, name } of entries) {
     const option = document.createElement("option");
     option.value = code;
-    option.textContent = names.of(code);
+    option.textContent = name;
     option.selected = code === CURRENT_LOCALE;
     localeSelect.appendChild(option);
   }

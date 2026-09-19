@@ -94,6 +94,19 @@ translated content. `sr-Latn` is kept as the full locale code (a valid literal p
 Serbian user has to pick it manually from the `<select>` — `detectLocale()`'s fallback to `en` on
 a miss is the same graceful behavior every unmatched locale already gets).
 
+## Locale-switcher entries are not part of this dictionary
+
+`#locale-switcher`'s own `<option>` labels (`populateLocaleSelect()`, `main.js`) are deliberately
+**not** translated keys in `ui/i18n/*.json` and never go through `CURRENT_LOCALE` at all — each
+language names itself (`Intl.DisplayNames([code], { type: "language" }).of(code)`, e.g. `de` →
+"Deutsch", `ja` → "日本語"), the same principle Wikipedia's own interlanguage picker uses.
+2026-09-19, direct user request. This is the one deliberate exception to "everything on the page
+follows `CURRENT_LOCALE`": an admin stuck on a locale they don't read still has to recognise their
+own language's name in this specific list to get back, which only works if that name was never
+translated away from itself. **Scoped narrowly** — GeoIP/ccTLD country-name pickers
+(`regionLabel()`/`cctldLabel()`) stay `CURRENT_LOCALE`-translated as before; the user confirmed
+this rule does not extend to them (DECISIONS.md 2026-09-19).
+
 ## Known limitation — machine translation, not native review
 
 All 35 non-uk/en dictionaries (uk and en predate T-236 and were already reviewed in Батч 5.2) were

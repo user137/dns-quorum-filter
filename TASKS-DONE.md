@@ -6802,6 +6802,16 @@ top_level_key_set_as_en`/`every_locale_zone_domain_count_has_its_measured_plural
 dnsqb-service` (7/7), `cargo test --workspace --doc --locked` (9/9), `RUSTDOCFLAGS="-D warnings"
 cargo doc --workspace --no-deps --document-private-items` — усі зелені, без правок коду.
 
+**Уточнення 2026-09-19 (окремий коміт, поза Фазою 5):** "UX-деталь" вище (сортування за
+`Intl.DisplayNames([CURRENT_LOCALE])`) виправлено — прямий запит користувача: підпис кожної опції
+має бути мовою, яку вона репрезентує (autonym), не перекладений поточною адмінською локаллю, той
+самий принцип, що інтермов-список Вікіпедії. `populateLocaleSelect()` тепер бере
+`Intl.DisplayNames([code], { type: "language" })`, сортування — за текстом автоніма без аргументу
+локалі. **Свідомо не поширено на GeoIP/ccTLD** (`regionLabel()`/`cctldLabel()`, Батч 5.3 нижче) —
+користувач підтвердив лишити їх `CURRENT_LOCALE`-перекладеними. Повне обґрунтування —
+DECISIONS.md 2026-09-19. Новий тест: `admin_ui.rs::locale_switcher_options_name_themselves_
+not_the_admin_locale`.
+
 ---
 
 **Батч 5.3 — ccTLD-блок UI (T-118) + міграція GeoIP `COUNTRY_NAMES` на `Intl.DisplayNames`,

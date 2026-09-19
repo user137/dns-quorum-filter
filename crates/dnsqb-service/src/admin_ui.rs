@@ -769,6 +769,28 @@ mod tests {
         }
     }
 
+    // 2026-09-19, direct user request: the locale switcher's own entries
+    // must name themselves in their own language (autonym), never
+    // translated through CURRENT_LOCALE - same principle as Wikipedia's own
+    // interlanguage picker. Deliberately the opposite of every other picker
+    // in main.js - GeoIP/ccTLD country names stay CURRENT_LOCALE-translated,
+    // user confirmed (DECISIONS.md) - this guards the one place that split
+    // decision applies, same "migration guard" pattern as
+    // geoip_country_names_migrated_to_intl_display_names above.
+    #[test]
+    fn locale_switcher_options_name_themselves_not_the_admin_locale() {
+        assert!(
+            MAIN_JS.contains("new Intl.DisplayNames([code], { type: \"language\" })"),
+            "each locale option must ask that language to name itself, not \
+             the admin's currently active CURRENT_LOCALE"
+        );
+        assert!(
+            !MAIN_JS.contains("new Intl.DisplayNames([CURRENT_LOCALE], { type: \"language\" })"),
+            "must never go back to translating the switcher's own entries \
+             through the admin's current interface locale"
+        );
+    }
+
     // T-193 / T-204 — the paused hero must name the state and not read as
     // green. (That a pause *outranks* the 0-voters case is the server's job
     // now — `admin::hero_and_category_tests::hero_state_offline_outranks_paused`
