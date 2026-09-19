@@ -22,6 +22,8 @@ const ratingFilterBody = document.getElementById("rating-filter-body");
 const ratingFilterBadge = document.getElementById("rating-filter-badge");
 // T-218 Фаза 7, Батч 7.4 частина 3: the public blocklist-bundles card.
 const blocklistBundlesBody = document.getElementById("blocklist-bundles-body");
+// Фаза 5, Батч 5.3: the ccTLD-block card (T-118).
+const cctldBlockBody = document.getElementById("cctld-block-body");
 // T-151 Батч 5.2: static, never rewritten by render()/renderProtectionHero() -
 // see the comment on #locale-switcher in index.html.
 const localeSelect = document.getElementById("locale-select");
@@ -147,14 +149,16 @@ function applyDocumentLanguage() {
 }
 
 // Every card whose render path calls t()/tPlural() through a FIELD_HELP-key
-// cardHeading() or HERO_PRESENTATION - listed once so the initial-load
-// bootstrap and setLocale() below can't drift apart on which cards actually
-// need re-rendering after DICT changes. #overrides-body/#cache-config-body/
-// #providers-body/#log-body's filter row are each their own fetch/render
-// cycle, off the 2s poll, same reasoning as #rating-filter-body (CLAUDE.md) -
-// none of them are otherwise reachable from refresh(). refreshGeoip()/
-// refreshMaxmind()/refreshLog()/initBrowserSetup() render no FIELD_HELP/HERO
-// text and are deliberately left out.
+// cardHeading() or HERO_PRESENTATION, OR (Батч 5.3) whose render path calls
+// regionLabel()/Intl.DisplayNames and so also depends on CURRENT_LOCALE -
+// listed once so the initial-load bootstrap and setLocale() below can't
+// drift apart on which cards actually need re-rendering after DICT/locale
+// changes. #overrides-body/#cache-config-body/#providers-body/#log-body's
+// filter row are each their own fetch/render cycle, off the 2s poll, same
+// reasoning as #rating-filter-body (CLAUDE.md) - none of them are otherwise
+// reachable from refresh(). refreshMaxmind()/refreshLog()/
+// initBrowserSetup() render no FIELD_HELP/HERO/region-name text and are
+// deliberately left out.
 function renderTranslatedCards() {
   refresh();
   refreshRatingFilter();
@@ -162,6 +166,8 @@ function renderTranslatedCards() {
   refreshOverrides();
   refreshCacheConfig();
   refreshProviders();
+  refreshGeoip();
+  refreshCctldBlock();
   buildLogFilterRow();
   refreshLog(); // must come after buildLogFilterRow() - see its own comment
 }
@@ -880,6 +886,482 @@ async function refreshCacheConfig() {
 // T-151 Батч 5.2: kicked off from renderTranslatedCards() - see the comment
 // by refreshOverrides() above.
 
+// T-226(а)/Батч 5.3: ISO 3166-1 alpha-2 codes for the GeoIP country-add
+// datalist below, generated via `pycountry` (canonical iso-codes data, not
+// hand-typed - same "script, not manual retyping" rule this project applies
+// to any large data block). T-151/Батч 5.3: this used to also carry an
+// English display name per code (a static `{code: name}` object) - that
+// half is gone now, replaced by `regionLabel()` below, which asks the
+// browser's own `Intl.DisplayNames` for a name in whatever locale is
+// active, instead of shipping (and never localising) 249 hardcoded English
+// strings.
+const GEOIP_COUNTRY_CODES = [
+  "AF", "AL", "DZ", "AS", "AD", "AO", "AI", "AQ", "AG", "AR", "AM", "AW",
+  "AU", "AT", "AZ", "BS", "BH", "BD", "BB", "BY", "BE", "BZ", "BJ", "BM",
+  "BT", "BO", "BQ", "BA", "BW", "BV", "BR", "IO", "BN", "BG", "BF", "BI",
+  "CV", "KH", "CM", "CA", "KY", "CF", "TD", "CL", "CN", "CX", "CC", "CO",
+  "KM", "CG", "CD", "CK", "CR", "HR", "CU", "CW", "CY", "CZ", "CI", "DK",
+  "DJ", "DM", "DO", "EC", "EG", "SV", "GQ", "ER", "EE", "SZ", "ET", "FK",
+  "FO", "FJ", "FI", "FR", "GF", "PF", "TF", "GA", "GM", "GE", "DE", "GH",
+  "GI", "GR", "GL", "GD", "GP", "GU", "GT", "GG", "GN", "GW", "GY", "HT",
+  "HM", "VA", "HN", "HK", "HU", "IS", "IN", "ID", "IR", "IQ", "IE", "IM",
+  "IL", "IT", "JM", "JP", "JE", "JO", "KZ", "KE", "KI", "KW", "KG", "LA",
+  "LV", "LB", "LS", "LR", "LY", "LI", "LT", "LU", "MO", "MG", "MW", "MY",
+  "MV", "ML", "MT", "MH", "MQ", "MR", "MU", "YT", "MX", "FM", "MD", "MC",
+  "MN", "ME", "MS", "MA", "MZ", "MM", "NA", "NR", "NP", "NL", "NC", "NZ",
+  "NI", "NE", "NG", "NU", "NF", "KP", "MK", "MP", "NO", "OM", "PK", "PW",
+  "PS", "PA", "PG", "PY", "PE", "PH", "PN", "PL", "PT", "PR", "QA", "RO",
+  "RU", "RW", "RE", "BL", "SH", "KN", "LC", "MF", "PM", "VC", "WS", "SM",
+  "ST", "SA", "SN", "RS", "SC", "SL", "SG", "SX", "SK", "SI", "SB", "SO",
+  "ZA", "GS", "KR", "SS", "ES", "LK", "SD", "SR", "SJ", "SE", "CH", "SY",
+  "TW", "TJ", "TZ", "TH", "TL", "TG", "TK", "TO", "TT", "TN", "TM", "TC",
+  "TV", "TR", "UG", "UA", "AE", "GB", "US", "UM", "UY", "UZ", "VU", "VE",
+  "VN", "VG", "VI", "WF", "EH", "YE", "ZM", "ZW", "AX"
+];
+
+// Локалізована назва регіону за ISO/CLDR-кодом (Батч 5.3) - ділиться між
+// GeoIP-датаlist'ом і cctldLabel() нижче. Кешується по CURRENT_LOCALE, не
+// захоплюється один раз при завантаженні модуля: setLocale() присвоює
+// CURRENT_LOCALE до виклику renderTranslatedCards(), тож кеш інвалідується
+// сам, без окремого "скинути" кроку. Жодного try/catch - кожен код, що сюди
+// доходить, уже або сервер-валідований, або regex-звужений на вході
+// (`/^[A-Z]{2}$/`); Intl.DisplayNames кидає RangeError лише на синтаксично
+// невалідний субтег (цифри тощо), а для невідомого, але валідного коду тихо
+// повертає сам код назад - той самий fallback, що раніше давав `|| code`.
+let regionNamesCache = null;
+let regionNamesCacheLocale = null;
+function regionLabel(code) {
+  if (regionNamesCacheLocale !== CURRENT_LOCALE) {
+    regionNamesCache = new Intl.DisplayNames([CURRENT_LOCALE], { type: "region" });
+    regionNamesCacheLocale = CURRENT_LOCALE;
+  }
+  return regionNamesCache.of(code.toUpperCase());
+}
+
+// Фаза 5, Батч 5.3: ccTLD-block editor (T-118, SPEC.md §5.2). Same isolation
+// reasoning as #overrides-body/#geoip-body below - a free-text combobox
+// input being typed into must not be wiped by the unrelated 2s status poll,
+// so this has its own fetch/render cycle off GET /admin/status (once on
+// load) + the POST /admin/cctld-block response, same shape as
+// #rating-filter-body. `[cctld_block]` has no `enabled` flag - an empty
+// list already means "off" (CctldBlockStatusView's own doc comment), so
+// unlike rating-filter there's no on/off switch or arm-on-enable step here.
+
+// SPEC.md §5.2's own bluntness, translated - analogous to
+// GEOIP_OVER_BLOCKING_WARNING below but about a different risk: a ccTLD
+// match blocks by domain suffix alone, catching every legitimate site
+// registered under that TLD regardless of who actually runs it or where its
+// content is hosted (a `.io`/`.co`-registered business with nothing to do
+// with the sponsoring territory, for instance) - not a GeoIP-style anycast
+// routing quirk, but the same class of "the signal is real but coarse"
+// warning T-118 asked for alongside the picker itself.
+const CCTLD_OVER_BLOCKING_WARNING =
+  "Блокування за ccTLD ловить кожен домен під цим суфіксом - незалежно від " +
+  "того, хто фактично керує сайтом чи де розміщений його контент. Багато " +
+  "легітимних сайтів реєструються під нетиповим для себе доменом " +
+  "(наприклад .io/.co) з причин, що не мають стосунку до юрисдикції.";
+
+// ccTLD codes that aren't ISO 3166-1 alpha-2 (so aren't in
+// GEOIP_COUNTRY_CODES) but are real, delegated ccTLDs - the three TASKS.md
+// itself named as the reconciliation to do before reusing GeoIP's code set:
+// `.uk` (the UK's actual ccTLD - its ISO code is GB, there is no `.gb`),
+// `.eu` (European Union, a valid CLDR region despite not being a country),
+// `.su` (the Soviet Union's ccTLD - still delegated and in use today, a
+// genuinely separate namespace from `.ru`, not a historical alias of it).
+// `.tp` (East Timor's old ccTLD, superseded by `.tl`, already in
+// GEOIP_COUNTRY_CODES) is deliberately left out of this suggestion
+// catalogue - IANA retired it, no live reason to suggest blocking it. This
+// catalogue is discoverability only, same as GEOIP_COUNTRY_CODES's datalist
+// - `validate_cctld_code` accepts any syntactically valid 2-letter code,
+// and the combobox below has its own typed-code fallback for anything not
+// listed here (so a code missing from this catalogue is a worse search
+// experience, never a capability gap).
+// Lowercased, unlike GEOIP_COUNTRY_CODES itself (which stays uppercase for
+// the GeoIP card's own display convention) - a ccTLD suffix is
+// conventionally written lowercase (`.ru`, not `.RU`), and the server
+// always echoes `blocked_codes` lowercase (`validate_cctld_code`), so
+// showing `RU` here would be a visible, un-caught-by-any-test inconsistency
+// against the three hand-typed additions below, which were already
+// lowercase (caught live in Chrome under a Japanese locale, not by a test -
+// admin_ui.rs only asserts substrings, never renders the actual menu).
+const CCTLD_CODES = GEOIP_COUNTRY_CODES.map((code) => code.toLowerCase()).concat([
+  "uk",
+  "eu",
+  "su",
+]);
+
+// `Intl.DisplayNames`'s own CLDR data maps `SU` to "Russia" (SU is treated
+// as a historical alias of RU) - misleading here, where an operator is
+// choosing what to block and `.su` is a genuinely separate, still-live
+// namespace from `.ru`. One explicit override, not a general exceptions
+// map - `uk`/`eu`/`tp` were all checked and already resolve sensibly
+// through regionLabel() alone.
+//
+// Side effect, not a bug: this override text itself contains ".ru", so
+// visibleCodes()'s label-substring search surfaces `su` as a match on the
+// query "ru" too (confirmed live) - a coincidence of this override's own
+// wording, not a code/label mismatch to "fix" later.
+function cctldLabel(code) {
+  if (code.toLowerCase() === "su") {
+    return "Колишній СРСР (окремий простір від .ru)";
+  }
+  return regionLabel(code);
+}
+
+async function setCctldBlock(blockedCodes) {
+  const response = await fetch("/admin/cctld-block", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ blocked_codes: blockedCodes }),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function renderCctldBlock(status) {
+  const cc = status.cctld_block;
+  cctldBlockBody.textContent = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Блокування за ccTLD";
+  cctldBlockBody.appendChild(heading);
+
+  const desc = document.createElement("p");
+  desc.className = "rf-desc";
+  desc.textContent =
+    "Блокує весь домен, якщо він закінчується на обраний код TLD (наприклад .ru).";
+  cctldBlockBody.appendChild(desc);
+
+  // Same "silent data loss" concern as #overrides-body/#geoip-body/
+  // #rating-filter-body (T-47/T-57/T-77/T-127 - CLAUDE.md's own recurring
+  // pattern, "a failed disk save must surface persisted: false"). Not on
+  // the 2s poll, so this stays on screen until the next action, same as
+  // #rating-filter-body.
+  if (status.persisted === false) {
+    const notPersisted = document.createElement("div");
+    notPersisted.className = "notice warn";
+    notPersisted.textContent =
+      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    cctldBlockBody.appendChild(notPersisted);
+  }
+
+  const card = document.createElement("div");
+  card.className = "rf-card";
+
+  // Save-time arm-confirm block, hidden until a save adds at least one new
+  // code (Три Б: "an always-on warning ≡ no warning", T-77's own
+  // arm-on-add precedent) - a save that only removes codes de-risks and
+  // commits immediately below, no arming.
+  const confirmNotice = document.createElement("div");
+  confirmNotice.className = "notice warn";
+  confirmNotice.hidden = true;
+  confirmNotice.textContent = CCTLD_OVER_BLOCKING_WARNING;
+  card.appendChild(confirmNotice);
+
+  const confirmRow = document.createElement("div");
+  confirmRow.className = "rf-confirm-row cc-confirm-row";
+  confirmRow.hidden = true;
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Скасувати";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "rf-confirm cc-confirm";
+  confirmBtn.textContent = "Підтвердити блокування";
+  confirmRow.appendChild(cancelBtn);
+  confirmRow.appendChild(confirmBtn);
+  card.appendChild(confirmRow);
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+  card.appendChild(errorLine);
+
+  // Same "no local optimistic state" rule as #rating-filter-body - picked
+  // codes are re-seeded from the server's own echo on every render.
+  const savedCodes = cc.blocked_codes.slice();
+  const picked = new Set(savedCodes);
+
+  const combo = document.createElement("div");
+  combo.className = "rf-combo cc-combo";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.setAttribute("role", "combobox");
+  input.setAttribute("aria-expanded", "false");
+  input.setAttribute("aria-controls", "cc-code-menu");
+  input.setAttribute("aria-autocomplete", "list");
+  input.setAttribute("aria-label", "Пошук коду ccTLD");
+  input.placeholder = "Додати код — країна або код (наприклад ru)…";
+  const menu = document.createElement("ul");
+  menu.className = "rf-menu cc-menu";
+  menu.id = "cc-code-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+  combo.appendChild(input);
+  combo.appendChild(menu);
+  card.appendChild(combo);
+
+  const pickedList = document.createElement("ul");
+  pickedList.className = "rf-picked cc-picked";
+  card.appendChild(pickedList);
+
+  const emptyLine = document.createElement("p");
+  emptyLine.className = "rf-empty cc-empty";
+  emptyLine.textContent = "Жодного коду не заблоковано.";
+  card.appendChild(emptyLine);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "rf-save cc-save";
+  saveBtn.textContent = "Зберегти";
+  saveBtn.hidden = true;
+  card.appendChild(saveBtn);
+
+  let activeIndex = -1;
+
+  function pickedMatchesSaved() {
+    if (picked.size !== savedCodes.length) {
+      return false;
+    }
+    return savedCodes.every((code) => picked.has(code));
+  }
+
+  function syncSaveBtn() {
+    saveBtn.hidden = pickedMatchesSaved();
+  }
+
+  function hasAdditions() {
+    return [...picked].some((code) => !savedCodes.includes(code));
+  }
+
+  // Never hide a code the server actually has (or the user just picked)
+  // just because it's outside CCTLD_CODES's suggestion catalogue - same
+  // "never a silently hidden zone" rule as rating-filter's displayCodes()
+  // (main.js's own precedent for this exact shape, T-108).
+  function displayCodes() {
+    const extra = [...picked].filter((code) => !CCTLD_CODES.includes(code));
+    return CCTLD_CODES.concat(extra);
+  }
+
+  function renderPicked() {
+    pickedList.textContent = "";
+    const codes = displayCodes().filter((code) => picked.has(code));
+    emptyLine.hidden = codes.length > 0;
+    codes.forEach((code) => {
+      const li = document.createElement("li");
+      const nm = document.createElement("span");
+      nm.className = "rf-nm cc-nm";
+      nm.textContent = `${code} — ${cctldLabel(code)}`;
+      li.appendChild(nm);
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "rf-x cc-x";
+      removeBtn.textContent = "×";
+      removeBtn.setAttribute("aria-label", `Прибрати: ${code}`);
+      removeBtn.addEventListener("click", () => {
+        picked.delete(code);
+        renderPicked();
+        renderMenu();
+        resetArming();
+      });
+      li.appendChild(removeBtn);
+      pickedList.appendChild(li);
+    });
+  }
+
+  function visibleCodes() {
+    const query = input.value.trim().toLowerCase();
+    return displayCodes().filter((code) => {
+      if (!query) {
+        return true;
+      }
+      return (
+        code.toLowerCase().includes(query) ||
+        cctldLabel(code).toLowerCase().includes(query)
+      );
+    });
+  }
+
+  function renderMenu() {
+    menu.textContent = "";
+    const codes = visibleCodes();
+    if (activeIndex >= codes.length) {
+      activeIndex = codes.length - 1;
+    }
+    codes.forEach((code, index) => {
+      const li = document.createElement("li");
+      li.className = "rf-opt cc-opt";
+      li.id = `cc-opt-${code}`;
+      li.setAttribute("role", "option");
+      const isPicked = picked.has(code);
+      li.setAttribute("aria-selected", isPicked ? "true" : "false");
+      if (isPicked) {
+        li.classList.add("picked");
+      }
+      if (index === activeIndex) {
+        li.classList.add("active");
+      }
+      const box = document.createElement("span");
+      box.className = "rf-box cc-box";
+      box.textContent = isPicked ? "✓" : "";
+      li.appendChild(box);
+      const nm = document.createElement("span");
+      nm.className = "rf-nm cc-nm";
+      nm.textContent = `${code} — ${cctldLabel(code)}`;
+      li.appendChild(nm);
+      // mousedown, not click: it fires before the input's blur handler
+      // closes the menu.
+      li.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        toggleCode(code);
+      });
+      menu.appendChild(li);
+    });
+    if (codes.length > 0 && activeIndex >= 0) {
+      input.setAttribute("aria-activedescendant", `cc-opt-${codes[activeIndex]}`);
+    } else {
+      input.removeAttribute("aria-activedescendant");
+    }
+  }
+
+  function toggleCode(code) {
+    if (picked.has(code)) {
+      picked.delete(code);
+    } else {
+      picked.add(code);
+    }
+    renderPicked();
+    renderMenu();
+    resetArming();
+  }
+
+  function openMenu() {
+    if (!menu.hidden) {
+      return;
+    }
+    menu.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    activeIndex = -1;
+    renderMenu();
+  }
+
+  function closeMenu() {
+    menu.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    activeIndex = -1;
+    input.removeAttribute("aria-activedescendant");
+  }
+
+  input.addEventListener("focus", openMenu);
+  input.addEventListener("input", () => {
+    openMenu();
+    activeIndex = -1;
+    renderMenu();
+  });
+  input.addEventListener("blur", () => {
+    // Delay so a mousedown on an option runs first.
+    setTimeout(closeMenu, 120);
+  });
+  input.addEventListener("keydown", (event) => {
+    const codes = visibleCodes();
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      openMenu();
+      activeIndex = Math.min(activeIndex + 1, codes.length - 1);
+      renderMenu();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      openMenu();
+      activeIndex = Math.max(activeIndex - 1, 0);
+      renderMenu();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (!menu.hidden && activeIndex >= 0 && activeIndex < codes.length) {
+        toggleCode(codes[activeIndex]);
+        return;
+      }
+      // Typed-code fallback (Батч 5.3): the combobox catalogue
+      // (CCTLD_CODES) is discoverability only, not the source of truth -
+      // validate_cctld_code accepts any syntactically valid 2-letter code
+      // server-side, so a code the menu has no entry for must still be
+      // addable. Lowercased before toggling (the server always echoes
+      // lowercase - "RU" and "ru" must never become two separate chips),
+      // and the input is cleared BEFORE toggleCode() so the renderMenu()
+      // inside it re-filters against an empty query in the same pass.
+      const typed = input.value.trim().toLowerCase();
+      if (/^[a-z]{2}$/.test(typed)) {
+        input.value = "";
+        toggleCode(typed);
+      }
+    } else if (event.key === "Escape") {
+      closeMenu();
+    }
+  });
+
+  // Resets the save-arm state on any edit to `picked` - GeoIP's own
+  // resetArming precedent (input.addEventListener("input", resetArming)),
+  // applied here to every mutation of `picked` (toggleCode/×), not just
+  // Скасувати: without this, removing the just-added code that triggered
+  // the arm would leave Підтвердити wired to a warning describing a state
+  // that no longer exists.
+  function resetArming() {
+    confirmNotice.hidden = true;
+    confirmRow.hidden = true;
+    syncSaveBtn();
+  }
+
+  saveBtn.addEventListener("click", async () => {
+    errorLine.textContent = "";
+    if (hasAdditions()) {
+      confirmNotice.hidden = false;
+      confirmRow.hidden = false;
+      saveBtn.hidden = true;
+      return;
+    }
+    try {
+      renderCctldBlock(await setCctldBlock([...picked]));
+    } catch (err) {
+      errorLine.textContent = `Не вдалося зберегти: ${(err && err.message) || String(err)}`;
+    }
+  });
+  cancelBtn.addEventListener("click", resetArming);
+  confirmBtn.addEventListener("click", async () => {
+    try {
+      renderCctldBlock(await setCctldBlock([...picked]));
+    } catch (err) {
+      errorLine.textContent = `Не вдалося зберегти: ${(err && err.message) || String(err)}`;
+    }
+  });
+
+  renderPicked();
+  syncSaveBtn();
+  cctldBlockBody.appendChild(card);
+}
+
+function renderCctldBlockError(err) {
+  cctldBlockBody.textContent = "";
+  const heading = document.createElement("h3");
+  heading.textContent = "Блокування за ccTLD";
+  cctldBlockBody.appendChild(heading);
+  const panel = document.createElement("div");
+  panel.className = "error-panel";
+  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  cctldBlockBody.appendChild(panel);
+}
+
+async function refreshCctldBlock() {
+  try {
+    renderCctldBlock(await getStatus());
+  } catch (err) {
+    renderCctldBlockError(err);
+  }
+}
+
+// Батч 5.3: kicked off from renderTranslatedCards() only (see the comment by
+// refreshOverrides() above) - no eager module-scope call, same reasoning as
+// refreshGeoip() right below.
+
 // T-77: GeoIP blocked-country list editor. Same isolation reasoning as the
 // overrides/cache-config sections above - a country-code input the user is
 // actively typing into must not lose its value to the unrelated 2s poll.
@@ -932,281 +1414,29 @@ const DATABASE_SOURCE_LABELS = {
   OTHER: "інше джерело",
 };
 
-// T-226(а): ISO 3166-1 alpha-2 -> English short name, generated via
-// `pycountry` (canonical iso-codes data, not hand-typed - same "script, not
-// manual retyping" rule this project applies to any large data block) for
-// the GeoIP country-add datalist below. English, not Ukrainian, on purpose:
-// no verified Ukrainian ISO-3166 name source was available, and a wrong
-// translation is worse than a correct English one; swap this one object for
-// a locale lookup at T-151 (i18n), same forward-looking shape as FIELD_HELP
-// above.
-const COUNTRY_NAMES = {
-  AF: "Afghanistan",
-  AL: "Albania",
-  DZ: "Algeria",
-  AS: "American Samoa",
-  AD: "Andorra",
-  AO: "Angola",
-  AI: "Anguilla",
-  AQ: "Antarctica",
-  AG: "Antigua and Barbuda",
-  AR: "Argentina",
-  AM: "Armenia",
-  AW: "Aruba",
-  AU: "Australia",
-  AT: "Austria",
-  AZ: "Azerbaijan",
-  BS: "Bahamas",
-  BH: "Bahrain",
-  BD: "Bangladesh",
-  BB: "Barbados",
-  BY: "Belarus",
-  BE: "Belgium",
-  BZ: "Belize",
-  BJ: "Benin",
-  BM: "Bermuda",
-  BT: "Bhutan",
-  BO: "Bolivia",
-  BQ: "Bonaire, Sint Eustatius and Saba",
-  BA: "Bosnia and Herzegovina",
-  BW: "Botswana",
-  BV: "Bouvet Island",
-  BR: "Brazil",
-  IO: "British Indian Ocean Territory",
-  BN: "Brunei Darussalam",
-  BG: "Bulgaria",
-  BF: "Burkina Faso",
-  BI: "Burundi",
-  CV: "Cabo Verde",
-  KH: "Cambodia",
-  CM: "Cameroon",
-  CA: "Canada",
-  KY: "Cayman Islands",
-  CF: "Central African Republic",
-  TD: "Chad",
-  CL: "Chile",
-  CN: "China",
-  CX: "Christmas Island",
-  CC: "Cocos (Keeling) Islands",
-  CO: "Colombia",
-  KM: "Comoros",
-  CG: "Congo",
-  CD: "Congo, The Democratic Republic of the",
-  CK: "Cook Islands",
-  CR: "Costa Rica",
-  HR: "Croatia",
-  CU: "Cuba",
-  CW: "Curaçao",
-  CY: "Cyprus",
-  CZ: "Czechia",
-  CI: "Côte d'Ivoire",
-  DK: "Denmark",
-  DJ: "Djibouti",
-  DM: "Dominica",
-  DO: "Dominican Republic",
-  EC: "Ecuador",
-  EG: "Egypt",
-  SV: "El Salvador",
-  GQ: "Equatorial Guinea",
-  ER: "Eritrea",
-  EE: "Estonia",
-  SZ: "Eswatini",
-  ET: "Ethiopia",
-  FK: "Falkland Islands (Malvinas)",
-  FO: "Faroe Islands",
-  FJ: "Fiji",
-  FI: "Finland",
-  FR: "France",
-  GF: "French Guiana",
-  PF: "French Polynesia",
-  TF: "French Southern Territories",
-  GA: "Gabon",
-  GM: "Gambia",
-  GE: "Georgia",
-  DE: "Germany",
-  GH: "Ghana",
-  GI: "Gibraltar",
-  GR: "Greece",
-  GL: "Greenland",
-  GD: "Grenada",
-  GP: "Guadeloupe",
-  GU: "Guam",
-  GT: "Guatemala",
-  GG: "Guernsey",
-  GN: "Guinea",
-  GW: "Guinea-Bissau",
-  GY: "Guyana",
-  HT: "Haiti",
-  HM: "Heard Island and McDonald Islands",
-  VA: "Holy See (Vatican City State)",
-  HN: "Honduras",
-  HK: "Hong Kong",
-  HU: "Hungary",
-  IS: "Iceland",
-  IN: "India",
-  ID: "Indonesia",
-  IR: "Iran",
-  IQ: "Iraq",
-  IE: "Ireland",
-  IM: "Isle of Man",
-  IL: "Israel",
-  IT: "Italy",
-  JM: "Jamaica",
-  JP: "Japan",
-  JE: "Jersey",
-  JO: "Jordan",
-  KZ: "Kazakhstan",
-  KE: "Kenya",
-  KI: "Kiribati",
-  KW: "Kuwait",
-  KG: "Kyrgyzstan",
-  LA: "Laos",
-  LV: "Latvia",
-  LB: "Lebanon",
-  LS: "Lesotho",
-  LR: "Liberia",
-  LY: "Libya",
-  LI: "Liechtenstein",
-  LT: "Lithuania",
-  LU: "Luxembourg",
-  MO: "Macao",
-  MG: "Madagascar",
-  MW: "Malawi",
-  MY: "Malaysia",
-  MV: "Maldives",
-  ML: "Mali",
-  MT: "Malta",
-  MH: "Marshall Islands",
-  MQ: "Martinique",
-  MR: "Mauritania",
-  MU: "Mauritius",
-  YT: "Mayotte",
-  MX: "Mexico",
-  FM: "Micronesia, Federated States of",
-  MD: "Moldova",
-  MC: "Monaco",
-  MN: "Mongolia",
-  ME: "Montenegro",
-  MS: "Montserrat",
-  MA: "Morocco",
-  MZ: "Mozambique",
-  MM: "Myanmar",
-  NA: "Namibia",
-  NR: "Nauru",
-  NP: "Nepal",
-  NL: "Netherlands",
-  NC: "New Caledonia",
-  NZ: "New Zealand",
-  NI: "Nicaragua",
-  NE: "Niger",
-  NG: "Nigeria",
-  NU: "Niue",
-  NF: "Norfolk Island",
-  KP: "North Korea",
-  MK: "North Macedonia",
-  MP: "Northern Mariana Islands",
-  NO: "Norway",
-  OM: "Oman",
-  PK: "Pakistan",
-  PW: "Palau",
-  PS: "Palestine, State of",
-  PA: "Panama",
-  PG: "Papua New Guinea",
-  PY: "Paraguay",
-  PE: "Peru",
-  PH: "Philippines",
-  PN: "Pitcairn",
-  PL: "Poland",
-  PT: "Portugal",
-  PR: "Puerto Rico",
-  QA: "Qatar",
-  RO: "Romania",
-  RU: "Russian Federation",
-  RW: "Rwanda",
-  RE: "Réunion",
-  BL: "Saint Barthélemy",
-  SH: "Saint Helena, Ascension and Tristan da Cunha",
-  KN: "Saint Kitts and Nevis",
-  LC: "Saint Lucia",
-  MF: "Saint Martin (French part)",
-  PM: "Saint Pierre and Miquelon",
-  VC: "Saint Vincent and the Grenadines",
-  WS: "Samoa",
-  SM: "San Marino",
-  ST: "Sao Tome and Principe",
-  SA: "Saudi Arabia",
-  SN: "Senegal",
-  RS: "Serbia",
-  SC: "Seychelles",
-  SL: "Sierra Leone",
-  SG: "Singapore",
-  SX: "Sint Maarten (Dutch part)",
-  SK: "Slovakia",
-  SI: "Slovenia",
-  SB: "Solomon Islands",
-  SO: "Somalia",
-  ZA: "South Africa",
-  GS: "South Georgia and the South Sandwich Islands",
-  KR: "South Korea",
-  SS: "South Sudan",
-  ES: "Spain",
-  LK: "Sri Lanka",
-  SD: "Sudan",
-  SR: "Suriname",
-  SJ: "Svalbard and Jan Mayen",
-  SE: "Sweden",
-  CH: "Switzerland",
-  SY: "Syria",
-  TW: "Taiwan",
-  TJ: "Tajikistan",
-  TZ: "Tanzania",
-  TH: "Thailand",
-  TL: "Timor-Leste",
-  TG: "Togo",
-  TK: "Tokelau",
-  TO: "Tonga",
-  TT: "Trinidad and Tobago",
-  TN: "Tunisia",
-  TM: "Turkmenistan",
-  TC: "Turks and Caicos Islands",
-  TV: "Tuvalu",
-  TR: "Türkiye",
-  UG: "Uganda",
-  UA: "Ukraine",
-  AE: "United Arab Emirates",
-  GB: "United Kingdom",
-  US: "United States",
-  UM: "United States Minor Outlying Islands",
-  UY: "Uruguay",
-  UZ: "Uzbekistan",
-  VU: "Vanuatu",
-  VE: "Venezuela",
-  VN: "Vietnam",
-  VG: "Virgin Islands, British",
-  VI: "Virgin Islands, U.S.",
-  WF: "Wallis and Futuna",
-  EH: "Western Sahara",
-  YE: "Yemen",
-  ZM: "Zambia",
-  ZW: "Zimbabwe",
-  AX: "Åland Islands",
-};
 
 // One <datalist>, shared by every renderGeoip() call - native browser
 // autocomplete on the free-text code input below (T-226(a)), never a
-// replacement for validate_country_code's own server-side check. Built once
-// at module scope since COUNTRY_NAMES never changes at runtime, unlike the
-// per-render DOM elements elsewhere in this file.
+// replacement for validate_country_code's own server-side check. The node
+// itself is built once (renderGeoip() re-appends the same node every call,
+// it doesn't need a fresh one); its <option>s are rebuilt on every
+// renderGeoip() call instead of once at module load (Батч 5.3) - unlike the
+// old static per-code English-name map this replaced, a name from
+// Intl.DisplayNames depends on CURRENT_LOCALE, so a locale switch must be
+// able to change it.
 const geoipCountryDatalist = document.createElement("datalist");
 geoipCountryDatalist.id = "geoip-country-list";
-Object.keys(COUNTRY_NAMES)
-  .sort((a, b) => COUNTRY_NAMES[a].localeCompare(COUNTRY_NAMES[b]))
-  .forEach((code) => {
-    const option = document.createElement("option");
-    option.value = code;
-    option.textContent = `${code} — ${COUNTRY_NAMES[code]}`;
-    geoipCountryDatalist.appendChild(option);
-  });
+function populateGeoipCountryDatalist() {
+  geoipCountryDatalist.textContent = "";
+  [...GEOIP_COUNTRY_CODES]
+    .sort((a, b) => regionLabel(a).localeCompare(regionLabel(b), CURRENT_LOCALE))
+    .forEach((code) => {
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = `${code} — ${regionLabel(code)}`;
+      geoipCountryDatalist.appendChild(option);
+    });
+}
 
 // SPEC.md §3.5's own wording, translated - large CDNs hand out anycast IPs
 // whose apparent country changes between requests/points of presence, so
@@ -1245,6 +1475,7 @@ function geoipListItem(code) {
 
 function renderGeoip(data) {
   geoipBody.textContent = "";
+  populateGeoipCountryDatalist();
 
   const heading = document.createElement("h3");
   heading.textContent = "GeoIP-блокування";
@@ -1414,7 +1645,12 @@ async function refreshGeoip() {
   }
 }
 
-refreshGeoip();
+// Батч 5.3: no eager module-scope call here any more (there used to be one,
+// unconditional, independent of DICTIONARY_READY) - the datalist's option
+// labels now depend on CURRENT_LOCALE via regionLabel(), so this card joined
+// renderTranslatedCards() below instead, the same "only reachable from
+// renderTranslatedCards()" shape every other locale-dependent card already
+// has. Calling both would double-fetch on first load.
 
 // T-162/T-163: MaxMind GeoLite2 credentials card. Own fetch/render cycle (a
 // license-key field the operator is typing must not be wiped by the 2s

@@ -558,6 +558,20 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   width: 7px; height: 7px; border-radius: 999px; background: currentColor;
 }
 
+/* Фаза 5, Батч 5.3: #cctld-block-body (T-118) reuses this whole combobox
+   ruleset (.rf-combo/.rf-menu/.rf-opt/.rf-picked/... above) - its markup is
+   structurally identical to the rating-filter picker (search box, listbox
+   menu, removable chip list), unlike .bl-list below, which earned its own
+   separate ruleset because its markup genuinely differs (checkbox rows, no
+   ×). Rather than duplicating ~60 lines under a new prefix, or renaming
+   these selectors, main.js dual-classes each ccTLD element with both its
+   .rf-* class (for the shared rule above) and a .cc-* one (so the DOM
+   itself stays honestly labelled as ccTLD-block markup, not "borrowed
+   rating-filter markup") - e.g. `class="rf-combo cc-combo"`. No selector
+   below needs editing when #cctld-block-body changes; a rule that should
+   diverge between the two cards is the one place to add a `.cc-*`-only
+   selector. */
+
 /* T-218 Фаза 7, Батч 7.4 частина 3: the blocklist-bundles source checklist
    (#blocklist-bundles-body, mockups/gui-dashboard.html Артборд F, lines
    313-344) - fixed source-list rows (checkbox + name + status), not a

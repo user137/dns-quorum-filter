@@ -192,6 +192,17 @@
         <p>Завантаження…</p>
       </div>
 
+      <!-- Фаза 5, Батч 5.3 (T-118, SPEC.md §5.2): ccTLD-block combobox
+           picker, UX-style of #rating-filter-body below (search box the user
+           types into, so its own fetch/render cycle, not the 2s poll - same
+           reasoning as #overrides-body/#geoip-body). Sits right before
+           #geoip-body - both block by a country-derived code, ccTLD is the
+           blunter of the two signals. -->
+      <div id="cctld-block-body" class="card">
+        <h3>Блокування за ccTLD</h3>
+        <p>Завантаження…</p>
+      </div>
+
       <!-- T-77: same reasoning as #overrides-body/#cache-config-body above - a
            country-code input the user is actively typing into must not lose its
            value to the unrelated 2s status poll. -->

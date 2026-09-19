@@ -527,6 +527,10 @@ mod tests {
         "timeout-config-body",
         "providers-body",
         "cache-config-body",
+        // Фаза 5, Батч 5.3 — ccTLD-block combobox picker (T-118). Sits right
+        // before geoip-body in index.html (both block by a country-derived
+        // code); this list doesn't encode ordering, only membership.
+        "cctld-block-body",
         "geoip-body",
         "geoip-maxmind-body",
         // T-127/T-111 — the rating-filter «bubble» zone-config card. A niche
@@ -1030,6 +1034,179 @@ mod tests {
         assert!(
             MAIN_JS.contains("orphanIds"),
             "an id outside the static catalogue must still get a row"
+        );
+    }
+
+    // Фаза 5, Батч 5.3 — the ccTLD-block combobox picker (T-118). Backend
+    // (CctldBlockStatusView, POST /admin/cctld-block, validate_cctld_codes)
+    // is fully covered by dispatch.rs's/config.rs's own tests (Батч 5.1);
+    // this batch only adds ui/* markup, same "presence smoke test" bar as
+    // the blocklist-bundles tests above.
+    #[test]
+    fn cctld_block_card_sits_before_geoip_inside_the_advanced_disclosure() {
+        let Some(details_at) = INDEX_HTML.find("<details id=\"advanced-settings\">") else {
+            panic!("advanced disclosure must exist");
+        };
+        let Some(cctld_at) = INDEX_HTML.find("id=\"cctld-block-body\"") else {
+            panic!("the card needs its slot");
+        };
+        let Some(geoip_at) = INDEX_HTML.find("id=\"geoip-body\"") else {
+            panic!("geoip card must exist");
+        };
+        assert!(
+            details_at < cctld_at && cctld_at < geoip_at,
+            "the card must sit inside the advanced disclosure, before #geoip-body \
+             - both block by a country-derived code, ccTLD is the blunter signal"
+        );
+    }
+
+    #[test]
+    fn cctld_block_card_has_its_own_fetch_render_cycle_off_the_2s_poll() {
+        assert!(
+            MAIN_JS.contains("function renderCctldBlock(status)"),
+            "render function must exist"
+        );
+        assert!(
+            MAIN_JS.contains("async function refreshCctldBlock()"),
+            "must have its own refresh cycle, not ride the shared 2s poll \
+             (a search box being typed into must never revert under an \
+             unrelated re-render)"
+        );
+        assert!(
+            MAIN_JS.contains("refreshCctldBlock();"),
+            "must actually be called (see the next test for exactly where)"
+        );
+    }
+
+    #[test]
+    fn cctld_block_and_geoip_are_reachable_only_from_render_translated_cards() {
+        let Some(fn_start) = MAIN_JS.find("function renderTranslatedCards() {") else {
+            panic!("renderTranslatedCards must exist");
+        };
+        let Some(fn_end) = MAIN_JS[fn_start..].find('}') else {
+            panic!("renderTranslatedCards must be closed");
+        };
+        let body = &MAIN_JS[fn_start..fn_start + fn_end];
+        assert!(
+            body.contains("refreshCctldBlock()"),
+            "renderTranslatedCards() must call refreshCctldBlock() - its \
+             labels come from regionLabel()/Intl.DisplayNames, which \
+             depends on CURRENT_LOCALE just like a t()/tPlural() card"
+        );
+        assert!(
+            body.contains("refreshGeoip()"),
+            "renderTranslatedCards() must call refreshGeoip() too - its \
+             datalist labels have the same CURRENT_LOCALE dependency since \
+             the COUNTRY_NAMES -> Intl.DisplayNames migration"
+        );
+        // Батч 5.3 removed the old unconditional module-scope `refreshGeoip();`
+        // call - calling both it and renderTranslatedCards()'s copy on first
+        // load would double-fetch /admin/geoip.
+        assert!(
+            !MAIN_JS.contains("\nrefreshGeoip();\n"),
+            "must not also fire eagerly at module scope any more - that \
+             would double-fetch on first load alongside renderTranslatedCards()"
+        );
+        assert!(
+            !MAIN_JS.contains("\nrefreshCctldBlock();\n"),
+            "must never gain an eager module-scope call either - same \
+             double-fetch risk as refreshGeoip() above"
+        );
+    }
+
+    #[test]
+    fn cctld_block_posts_to_the_documented_route() {
+        assert!(
+            MAIN_JS.contains("fetch(\"/admin/cctld-block\""),
+            "must POST to the route dispatch.rs registers"
+        );
+    }
+
+    // Три Б / T-77's own arm-on-add precedent: a save that only removes
+    // codes de-risks and must commit immediately, never behind a permanent
+    // or unconditional warning banner (CLAUDE.md: "an always-on warning ≡
+    // no warning").
+    #[test]
+    fn cctld_block_save_arms_only_when_the_picked_set_adds_a_code() {
+        assert!(
+            MAIN_JS.contains("hasAdditions()"),
+            "save must distinguish \"adds a code\" from \"only removes\""
+        );
+        assert!(
+            MAIN_JS.contains("Підтвердити блокування"),
+            "the armed confirm step's own label must exist"
+        );
+        assert!(
+            MAIN_JS.contains("function resetArming() {"),
+            "must be able to un-arm - toggling a code after arming (e.g. \
+             removing the very code that triggered it) must not leave a \
+             stale confirm step wired to a state that no longer exists"
+        );
+    }
+
+    // Same "never a silently hidden entry" rule as renderRatingFilter's
+    // displayCodes()/blocklist-bundles' orphanIds (see their own tests
+    // above) - a code outside CCTLD_CODES (e.g. hand-edited into
+    // resolver_config.toml, since validate_cctld_code accepts any
+    // syntactically valid 2-letter code) must still render as a removable
+    // chip.
+    #[test]
+    fn cctld_block_never_silently_hides_a_code_outside_the_catalogue() {
+        assert!(
+            MAIN_JS.contains("!CCTLD_CODES.includes(code)"),
+            "a code outside the suggestion catalogue must still get a chip"
+        );
+    }
+
+    #[test]
+    fn cctld_block_surfaces_a_failed_persist() {
+        assert!(
+            MAIN_JS.contains("не переживе перезапуск сервісу")
+                && MAIN_JS.matches("не переживе перезапуск сервісу").count() >= 3,
+            "the persisted:false notice must exist on this card too - same \
+             recurring bug class as #rating-filter-body/#geoip-body (CLAUDE.md: \
+             \"a failed disk save must surface persisted: false\")"
+        );
+    }
+
+    // T-151/Батч 5.3: the 249-entry hardcoded English country-name map is
+    // gone, replaced by Intl.DisplayNames - guards against it creeping back
+    // in alongside the new mechanism, same precedent as the FIELD_HELP/
+    // computeProtectionState migration guards above.
+    #[test]
+    fn geoip_country_names_migrated_to_intl_display_names() {
+        assert!(
+            !MAIN_JS.contains("COUNTRY_NAMES"),
+            "the old static per-code English-name map must be fully gone"
+        );
+        assert!(
+            MAIN_JS.contains("const GEOIP_COUNTRY_CODES = ["),
+            "the codes-only replacement must exist"
+        );
+        assert!(
+            MAIN_JS.contains("new Intl.DisplayNames([CURRENT_LOCALE], { type: \"region\" })"),
+            "names must come from the browser's own Intl.DisplayNames, not a \
+             second hardcoded map"
+        );
+    }
+
+    // TASKS.md's own reconciliation requirement: a ccTLD code set is not a
+    // reprint of GeoIP's ISO 3166-1 code set.
+    #[test]
+    fn cctld_codes_reconcile_the_documented_deltas_from_geoip() {
+        assert!(
+            MAIN_JS.contains("GEOIP_COUNTRY_CODES.map((code) => code.toLowerCase()).concat([")
+                && MAIN_JS.contains("\"uk\",\n  \"eu\",\n  \"su\","),
+            "must add the three real ccTLDs TASKS.md named that aren't ISO \
+             3166-1 codes (uk/eu/su) - and no others, without re-litigating \
+             the .tp exclusion rationale documented in main.js"
+        );
+        assert!(
+            MAIN_JS.contains("Колишній СРСР"),
+            "su must carry an explicit override label - Intl.DisplayNames' \
+             own CLDR data resolves SU to \"Russia\", which is misleading \
+             for a block-list UI where .su is a separate, still-live \
+             namespace from .ru"
         );
     }
 }
