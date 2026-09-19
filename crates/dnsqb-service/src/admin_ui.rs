@@ -30,6 +30,11 @@ use http_body_util::Full;
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const MAIN_JS: &str = include_str!("../ui/main.js");
 const STYLE_CSS: &str = include_str!("../ui/style.css");
+/// T-151 Батч 5.2 — flat locale dictionaries (`fieldHelp.*`/`hero.*.{state,detail}`/
+/// `zoneDomainCount`), served alongside `main.js` for the same reason: `main.js`
+/// fetches its own translated text at runtime rather than shipping it inline.
+const UK_I18N: &str = include_str!("../ui/i18n/uk.json");
+const EN_I18N: &str = include_str!("../ui/i18n/en.json");
 
 /// `GET /admin/ui` — the config page itself, the only one of the three that
 /// carries the strict CSP (the response a browser actually navigates to).
@@ -45,6 +50,18 @@ pub(crate) fn serve_js(method: &Method) -> Response<Full<Bytes>> {
 /// `GET /admin/ui/style.css`.
 pub(crate) fn serve_css(method: &Method) -> Response<Full<Bytes>> {
     respond(method, STYLE_CSS, "text/css; charset=utf-8", false)
+}
+
+/// `GET /admin/ui/i18n/uk.json`. `"application/json"` with no `charset` —
+/// matches the convention every other JSON response in `dispatch.rs` already
+/// uses, unlike the HTML/JS/CSS responses above.
+pub(crate) fn serve_i18n_uk(method: &Method) -> Response<Full<Bytes>> {
+    respond(method, UK_I18N, "application/json", false)
+}
+
+/// `GET /admin/ui/i18n/en.json`.
+pub(crate) fn serve_i18n_en(method: &Method) -> Response<Full<Bytes>> {
+    respond(method, EN_I18N, "application/json", false)
 }
 
 /// Any other method on one of these three paths is 405 — same convention as
@@ -91,8 +108,11 @@ fn respond(
 
 #[cfg(test)]
 mod tests {
-    use super::{serve_css, serve_html, serve_js, INDEX_HTML, MAIN_JS};
-    use http::{Method, StatusCode};
+    use super::{
+        serve_css, serve_html, serve_i18n_en, serve_i18n_uk, serve_js, EN_I18N, INDEX_HTML,
+        MAIN_JS, UK_I18N,
+    };
+    use http::{HeaderValue, Method, StatusCode};
 
     // T-70: MSIX has no uninstall-time code hook, so the danger-zone card is
     // the only place the trusted cert / Credential Manager secrets ever get
@@ -266,6 +286,133 @@ mod tests {
         assert_eq!(
             serve_css(&Method::POST).status(),
             StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
+
+    // T-151 Батч 5.2 — i18n dictionaries.
+
+    #[test]
+    fn serve_i18n_uk_json_has_expected_content_type_and_no_csp() {
+        let response = serve_i18n_uk(&Method::GET);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type"),
+            Some(&HeaderValue::from_static("application/json"))
+        );
+        assert!(response.headers().get("content-security-policy").is_none());
+        assert!(response.headers().get("x-content-type-options").is_some());
+    }
+
+    #[test]
+    fn serve_i18n_en_json_has_expected_content_type_and_no_csp() {
+        let response = serve_i18n_en(&Method::GET);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type"),
+            Some(&HeaderValue::from_static("application/json"))
+        );
+        assert!(response.headers().get("content-security-policy").is_none());
+        assert!(response.headers().get("x-content-type-options").is_some());
+    }
+
+    #[test]
+    fn serve_i18n_uk_rejects_non_get() {
+        assert_eq!(
+            serve_i18n_uk(&Method::POST).status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
+
+    #[test]
+    fn serve_i18n_en_rejects_non_get() {
+        assert_eq!(
+            serve_i18n_en(&Method::POST).status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+    }
+
+    #[test]
+    fn uk_i18n_and_en_i18n_are_valid_json() {
+        for dict in [UK_I18N, EN_I18N] {
+            let Ok(_) = serde_json::from_str::<serde_json::Value>(dict) else {
+                panic!("i18n dictionary must be valid JSON: {dict}");
+            };
+        }
+    }
+
+    // Only the top-level key SET must match - the plural object *shape* is
+    // deliberately different per locale (uk: one/few/many/other, en: one/other,
+    // per Intl.PluralRules), so a recursive comparison would fail by design.
+    #[test]
+    fn uk_i18n_and_en_i18n_have_matching_top_level_key_sets() {
+        let Ok(serde_json::Value::Object(uk)) = serde_json::from_str::<serde_json::Value>(UK_I18N)
+        else {
+            panic!("uk.json must be a JSON object");
+        };
+        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(EN_I18N)
+        else {
+            panic!("en.json must be a JSON object");
+        };
+        let mut uk_keys: Vec<&String> = uk.keys().collect();
+        let mut en_keys: Vec<&String> = en.keys().collect();
+        uk_keys.sort_unstable();
+        en_keys.sort_unstable();
+        assert_eq!(
+            uk_keys, en_keys,
+            "uk.json and en.json must translate exactly the same key set"
+        );
+    }
+
+    #[test]
+    fn uk_i18n_zone_domain_count_has_one_few_many_other() {
+        let Ok(dict) = serde_json::from_str::<serde_json::Value>(UK_I18N) else {
+            panic!("uk.json must be valid JSON");
+        };
+        for category in ["one", "few", "many", "other"] {
+            assert!(
+                dict["zoneDomainCount"][category].is_string(),
+                "uk zoneDomainCount must have a {category} form (Ukrainian has 3 \
+                 cardinal plural categories + other for fractions)"
+            );
+        }
+    }
+
+    #[test]
+    fn en_i18n_zone_domain_count_has_one_and_other() {
+        let Ok(dict) = serde_json::from_str::<serde_json::Value>(EN_I18N) else {
+            panic!("en.json must be valid JSON");
+        };
+        for category in ["one", "other"] {
+            assert!(
+                dict["zoneDomainCount"][category].is_string(),
+                "en zoneDomainCount must have a {category} form (English has \
+                 exactly 2 Intl.PluralRules categories)"
+            );
+        }
+    }
+
+    #[test]
+    fn main_js_field_help_uses_the_t_helper_not_an_inline_object() {
+        assert!(
+            MAIN_JS.contains("t(`fieldHelp.${key}`)"),
+            "helpDetails must look up field-help text through t(), not a literal \
+             FIELD_HELP object"
+        );
+        assert!(
+            !MAIN_JS.contains("FIELD_HELP."),
+            "no call site may read the old FIELD_HELP object as a property \
+             lookup any more (caught a real bug this way: renderTimeoutConfig \
+             kept a literal ${{FIELD_HELP.timeoutMode}} outside helpDetails())"
+        );
+    }
+
+    #[test]
+    fn main_js_hero_presentation_uses_the_t_helper_for_text() {
+        assert!(
+            MAIN_JS.contains("t(`hero.${key}.detail`)")
+                && MAIN_JS.contains("t(`hero.${key}.state`)"),
+            "heroPresentation must look up state/detail text through t(), not a \
+             literal string in HERO_PRESENTATION"
         );
     }
 
@@ -488,6 +635,49 @@ mod tests {
         }
     }
 
+    // T-151 Батч 5.2 — every HERO_PRESENTATION key's state/detail text must
+    // exist in *both* dictionaries, not just the one main_js_hero_has_a_
+    // dedicated_paused_presentation happens to check. A missing key isn't a
+    // crash (t() falls back to the key itself) so nothing else would catch a
+    // 10th hero state added later with only one locale's pair filled in.
+    #[test]
+    fn every_hero_presentation_key_has_state_and_detail_in_both_locales() {
+        let Ok(uk) = serde_json::from_str::<serde_json::Value>(UK_I18N) else {
+            panic!("uk.json must be valid JSON");
+        };
+        let Ok(en) = serde_json::from_str::<serde_json::Value>(EN_I18N) else {
+            panic!("en.json must be valid JSON");
+        };
+        for key in [
+            "SERVICE_UNREACHABLE",
+            "WATCHDOG_GAVE_UP",
+            "WATCHDOG_RESTARTING",
+            "OFFLINE",
+            "PAUSED",
+            "NO_PROVIDERS",
+            "CERT_NOT_TRUSTED",
+            "CERT_UNKNOWN",
+            "PROTECTED",
+        ] {
+            for field in ["state", "detail"] {
+                let dict_key = format!("hero.{key}.{field}");
+                assert!(
+                    uk[&dict_key].is_string(),
+                    "uk.json must have a string at {dict_key}"
+                );
+                assert!(
+                    en[&dict_key].is_string(),
+                    "en.json must have a string at {dict_key}"
+                );
+            }
+        }
+        assert!(
+            uk["hero.PROTECTED.detailWithBlocked"].is_string()
+                && en["hero.PROTECTED.detailWithBlocked"].is_string(),
+            "the blocked-count PROTECTED variant needs its own key in both locales too"
+        );
+    }
+
     // T-193 / T-204 — the paused hero must name the state and not read as
     // green. (That a pause *outranks* the 0-voters case is the server's job
     // now — `admin::hero_and_category_tests::hero_state_offline_outranks_paused`
@@ -501,12 +691,17 @@ mod tests {
             panic!("the PAUSED row must be a bounded object literal");
         };
         assert!(
-            row.contains("Фільтрацію призупинено"),
-            "the paused hero must name the state plainly"
-        );
-        assert!(
             row.contains("is-warn"),
             "paused is a warning, not the green is-ok class"
+        );
+        // T-151 Батч 5.2: the state text itself moved to ui/i18n/{uk,en}.json -
+        // verified against the dictionary, not a literal in main.js any more.
+        let Ok(dict) = serde_json::from_str::<serde_json::Value>(UK_I18N) else {
+            panic!("uk.json must be valid JSON");
+        };
+        assert_eq!(
+            dict["hero.PAUSED.state"], "Фільтрацію призупинено",
+            "the paused hero must name the state plainly"
         );
     }
 

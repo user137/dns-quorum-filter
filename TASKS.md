@@ -1369,16 +1369,16 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
    `cctld_block.rs` (pure core + `[cctld_block]` config + `POST /admin/cctld-block`, той самий
    shape, що `[blocklist_bundles]`), крок 3 конвеєра, `decision_source = CCTLD_BLOCK`. Без UI —
    "backend before UI" (CLAUDE.md "Recurring patterns"). Деталі й advisor-catch'і — TASKS-DONE.md.
-2. **Батч 5.2** — i18n-інфраструктура сайту, **перед** ccTLD UI, не після (advisor-catch: писати
-   UI до появи поняття "поточна локаль" означало б хардкодити 'uk' і переписувати згодом).
-   Плаский JSON-словник на локаль, **два типи значення** — звичайний рядок і плюралізований
-   об'єкт (`{one,few,many,other}`, категорія через `Intl.PluralRules`, не власна таблиця правил —
-   `pluralUk` інакше не влазить у формат, 3 форми, не universal). `include_str!` лише для
-   `uk.json`/`en.json` (контент цього проходу), route фолбечить невідому локаль на `en` у
-   рантаймі, не 36-файлова таблиця. `t()`/`tPlural()` у JS, `navigator.language`-автовизначення +
-   `localStorage` + ручний `<select>` (36 варіантів, назви мов — `Intl.DisplayNames`). Проба на
-   `FIELD_HELP`+`HERO_PRESENTATION` + один реальний плюралізований ключ перед Батчем 5.4. Власний
-   план+advisor-цикл.
+2. **Батч 5.2 — зроблено 2026-09-19** — i18n-інфраструктура сайту. Плаский JSON-словник на
+   локаль (`ui/i18n/{uk,en}.json`, `include_str!`), два типи значення — звичайний рядок і
+   плюралізований об'єкт (`{one,few,many,other}` для uk, `{one,other}` для en, категорія через
+   `Intl.PluralRules`). Два літеральні GET-роути (`/admin/ui/i18n/{uk,en}.json`) — не
+   параметризовано, клієнт резолвить невідому локаль на `en` до фетчу. `t()`/`tPlural()` у JS,
+   `navigator.language`-автовизначення + `localStorage` + ручний `<select>` — **лише uk+en**
+   (уточнено з користувачем, не 36-варіантний список, DECISIONS.md). Pilot: усі 5 `FIELD_HELP`
+   ключів + усі 8 `HERO_PRESENTATION` варіантів + один плюралізований ключ
+   (`zoneDomainCount`). Деталі, 5 advisor-catch'ів на плані + 2 живо виловлені баги (bootstrap
+   dictionary-race на 4 картках, забутий `FIELD_HELP.timeoutMode` call-site) — TASKS-DONE.md.
 3. **Батч 5.3** — ccTLD UI (T-118) + міграція GeoIP `COUNTRY_NAMES` (249 рядків) на
    `Intl.DisplayNames` в тому самому батчі — один механізм на обидві фічі за одну правку.
 4. **Батч 5.4** — решта сайту (T-151, той самий механізм з 5.2) — мультикомітний, один розділ
@@ -1413,7 +1413,7 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
   завжди ISO 3166-1 alpha-2 country code (`.uk` не ISO, `.su`/`.tp` — застарілі/неіснуючі країни,
   `.eu` — не країна) — мапа код→назва для ccTLD НЕ може бути прямим передруком GeoIP's
   `COUNTRY_NAMES` без звірки різниці, окреме дослідження перед кодом.
-- [ ] T-151 — Інтернаціоналізація UI: рядки веб-UI (`/admin/ui`) та `dnsqb-tray` (меню/tooltip) винесені у файли перекладу замість хардкоду в `admin_ui.rs`/`main.js`/Rust-рядках трея, підтримка щонайменше української й англійської, вибір мови — автовизначення з ОС + ручний перемикач в UI; SPEC.md/UI-SPEC.md наразі не називають жодної мовної вимоги — новий, не раніше зафіксований скоуп
+- [ ] T-151 — Інтернаціоналізація UI: рядки веб-UI (`/admin/ui`) та `dnsqb-tray` (меню/tooltip) винесені у файли перекладу замість хардкоду в `admin_ui.rs`/`main.js`/Rust-рядках трея, підтримка щонайменше української й англійської, вибір мови — автовизначення з ОС + ручний перемикач в UI; SPEC.md/UI-SPEC.md наразі не називають жодної мовної вимоги — новий, не раніше зафіксований скоуп. **Батч 5.2 (i18n-інфраструктура + pilot-переклад FIELD_HELP/HERO_PRESENTATION) зроблено 2026-09-19** — решта сайту (Батч 5.4), трей (Батч 5.5), `nudge_popup` (Батч 5.7) ще попереду
 - [ ] T-235 — **CLI `--help` для трьох бінарників, заведено 2026-09-18 (запит користувача,
   приєднано до Фази 5 разом з i18n).** Підтверджено grep'ом по всіх трьох `main.rs` +
   `Cargo.toml` (жодного `clap`/`argh`/`std::env::args`-парсингу): сьогодні **жодного** CLI-тексту

@@ -9,6 +9,16 @@
 <body>
   <h1>DNS Quorum Filter</h1>
 
+  <!-- T-151 Батч 5.2: locale switcher. Deliberately static markup outside
+       every container main.js ever rewrites via innerHTML/textContent
+       (#protection-hero, #app-body, ...) - its <option>s are populated once
+       by main.js and its change listener is attached once in bootstrap, so
+       neither survives being inside a periodically-replaced subtree. -->
+  <div id="locale-switcher">
+    <label id="locale-switcher-label" for="locale-select">Мова</label>
+    <select id="locale-select"></select>
+  </div>
+
   <!-- T-176: the one big element of the basic view - a computed
        "protected / not protected" status. Filled by main.js from
        AdminStatusResponse.{network,watchdog} + ProvidersResponse.filtering_active

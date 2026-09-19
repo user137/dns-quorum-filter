@@ -22,34 +22,146 @@ const ratingFilterBody = document.getElementById("rating-filter-body");
 const ratingFilterBadge = document.getElementById("rating-filter-badge");
 // T-218 Фаза 7, Батч 7.4 частина 3: the public blocklist-bundles card.
 const blocklistBundlesBody = document.getElementById("blocklist-bundles-body");
+// T-151 Батч 5.2: static, never rewritten by render()/renderProtectionHero() -
+// see the comment on #locale-switcher in index.html.
+const localeSelect = document.getElementById("locale-select");
+const localeSwitcherLabel = document.getElementById("locale-switcher-label");
 
-// T-159: short per-card help text, one entry per "?" toggle below. Text is
-// authored in UI-SPEC.md §3.8 (the docs-map owner of field descriptions,
-// not invented on the fly here) - this object is a verbatim mirror, not a
-// second source of truth. Deliberately one flat object, not text scattered
-// across each render function: when T-151 (i18n) lands, this is the one
-// place that needs to become a locale lookup instead of a file-wide hunt.
-const FIELD_HELP = {
-  providers: "Кожен увімкнений провайдер перевіряє домен незалежно; якщо хоч " +
-    "один каже «блокувати» — кворум блокує (OR-логіка). Більше провайдерів " +
-    "— ширше покриття, але й більше третіх сторін бачать ваші запити.",
-  timeoutMode: "Як трактувати провайдера, що не відповів вчасно. «fail_open» " +
-    "(типово) — пропустити, вважаючи безпечним; «fail_closed» — заблокувати; " +
-    "«degraded» — як fail_open, але явно позначає рішення неповним у лозі.",
-  cache: "Мін./макс. час життя запису кешу (обмежує TTL від провайдера), " +
-    "скільки тримати «заблоковано», і скільки записів кеш утримує " +
-    "одночасно, перш ніж почне витісняти найстаріші.",
-  overrides: "Власні винятки поверх кворуму: allowlist завжди дозволяє, " +
-    "blocklist завжди блокує, незалежно від відповіді провайдерів. При " +
-    "конфлікті між списками виграє allowlist.",
-  logFilters: "Пошук і фільтри діють лише в межах поточного вікна журналу " +
-    "— останні ~1000 запитів або 24 години; старіші записи вже не " +
-    "зберігаються.",
-};
+// T-151 Батч 5.2: i18n infra. Flat per-locale JSON (crates/dnsqb-service/ui/i18n/{uk,en}.json),
+// two value shapes - plain string, or {one,few,many,other} selected via Intl.PluralRules for a
+// count-dependent string. Only FIELD_HELP + HERO_PRESENTATION + one plural key (zoneDomainCount)
+// are migrated this batch (pilot scope, DECISIONS.md); the rest of the page is Батч 5.4.
+const SUPPORTED_LOCALES = ["uk", "en"]; // extended in a later batch, not here
+const LOCALE_STORAGE_KEY = "dqf-locale";
+
+function resolveLocale(code) {
+  return SUPPORTED_LOCALES.includes(code) ? code : "en";
+}
+
+function detectLocale() {
+  try {
+    const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
+    if (stored) {
+      return resolveLocale(stored);
+    }
+  } catch {
+    // localStorage unavailable (private mode etc.) - fall through to navigator.language
+  }
+  return resolveLocale((navigator.language || "en").split("-")[0].toLowerCase());
+}
+
+let CURRENT_LOCALE = detectLocale();
+let DICT = {};
+
+// Kicked off at parse time so every top-level render kickoff below (refresh(),
+// refreshRatingFilter(), refreshBlocklistBundles()) can await the same promise
+// instead of racing it. On failure DICT stays {} - t()/tPlural() then degrade
+// visibly (return the key / the raw number) instead of the page staying blank
+// forever (Три Б: a live, ugly page beats a silently empty one).
+const DICTIONARY_READY = loadDictionary(CURRENT_LOCALE).catch(() => {});
+
+async function loadDictionary(locale) {
+  const response = await fetch(`/admin/ui/i18n/${locale}.json`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  DICT = await response.json();
+}
+
+// Missing key returns the key itself, never silently blank - a visible seam
+// beats a silently absent label (Три Б).
+function t(key, vars) {
+  let value = DICT[key];
+  if (value === undefined) {
+    return key;
+  }
+  if (vars) {
+    for (const [name, replacement] of Object.entries(vars)) {
+      value = value.replaceAll(`{${name}}`, replacement);
+    }
+  }
+  return value;
+}
+
+function tPlural(key, n) {
+  const entry = DICT[key];
+  if (entry === undefined) {
+    return String(n);
+  }
+  const category = new Intl.PluralRules(CURRENT_LOCALE).select(n);
+  const template = entry[category] ?? entry.other;
+  return template.replace("{n}", n);
+}
+
+// Lists only SUPPORTED_LOCALES (uk, en) - deliberately not a broad "every
+// language" list: this pass ships exactly two dictionaries, and a selector
+// entry for a locale with no dictionary would silently snap back to English
+// the moment it's picked (Три Б - never offer a choice that isn't real).
+function populateLocaleSelect() {
+  // The switcher's own label/aria-label are translated here too, not left
+  // hardcoded - this is the one control an English-speaking user must be
+  // able to find before anything else on the page is readable to them.
+  localeSwitcherLabel.textContent = t("localeSwitcher.label");
+  const names = new Intl.DisplayNames([CURRENT_LOCALE], { type: "language" });
+  localeSelect.textContent = "";
+  for (const code of SUPPORTED_LOCALES) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = names.of(code);
+    option.selected = code === CURRENT_LOCALE;
+    localeSelect.appendChild(option);
+  }
+}
+
+// Every card whose render path calls t()/tPlural() through a FIELD_HELP-key
+// cardHeading() or HERO_PRESENTATION - listed once so the initial-load
+// bootstrap and setLocale() below can't drift apart on which cards actually
+// need re-rendering after DICT changes. #overrides-body/#cache-config-body/
+// #providers-body/#log-body's filter row are each their own fetch/render
+// cycle, off the 2s poll, same reasoning as #rating-filter-body (CLAUDE.md) -
+// none of them are otherwise reachable from refresh(). refreshGeoip()/
+// refreshMaxmind()/refreshLog()/initBrowserSetup() render no FIELD_HELP/HERO
+// text and are deliberately left out.
+function renderTranslatedCards() {
+  refresh();
+  refreshRatingFilter();
+  refreshBlocklistBundles();
+  refreshOverrides();
+  refreshCacheConfig();
+  refreshProviders();
+  buildLogFilterRow();
+  refreshLog(); // must come after buildLogFilterRow() - see its own comment
+}
+
+async function setLocale(requested) {
+  const next = resolveLocale(requested);
+  try {
+    await loadDictionary(next);
+  } catch {
+    // the fetch failed (service down between page load and this click) -
+    // CURRENT_LOCALE/localStorage are deliberately left untouched, so DICT
+    // and CURRENT_LOCALE never end up pointing at different locales (the
+    // same DICTIONARY_READY.catch() reasoning as bootstrap, applied here).
+    // Snap the <select> back to the locale that's actually still loaded.
+    populateLocaleSelect();
+    return;
+  }
+  CURRENT_LOCALE = next;
+  try {
+    localStorage.setItem(LOCALE_STORAGE_KEY, CURRENT_LOCALE);
+  } catch {
+    // per-viewer convenience only, safe to lose (same precedent as
+    // BROWSER_SETUP_SEEN_KEY below)
+  }
+  populateLocaleSelect();
+  renderTranslatedCards();
+}
 
 // Native <details><summary> - zero JS beyond construction, keyboard-
 // accessible (Enter/Space) out of the box, works on touch where a
 // hover-only tooltip wouldn't (T-159's own two options, this is #1).
+// Help text is authored in UI-SPEC.md §3.8 and shipped as ui/i18n/{uk,en}.json's
+// `fieldHelp.*` keys - this function is a lookup, not a second source of truth.
 function helpDetails(key) {
   const details = document.createElement("details");
   details.className = "field-help";
@@ -57,7 +169,7 @@ function helpDetails(key) {
   summary.textContent = "?";
   summary.setAttribute("aria-label", "Довідка");
   const text = document.createElement("p");
-  text.textContent = FIELD_HELP[key];
+  text.textContent = t(`fieldHelp.${key}`);
   details.appendChild(summary);
   details.appendChild(text);
   return details;
@@ -85,72 +197,33 @@ function cardHeading(text, helpKey) {
 // case the server can't report is its own unreachability - when the
 // /admin/status fetch itself fails, renderError() renders SERVICE_UNREACHABLE
 // directly.
+// T-151 Батч 5.2: `state`/`detail` text now lives in ui/i18n/{uk,en}.json under
+// `hero.<KEY>.state`/`hero.<KEY>.detail` - this object keeps only the structural,
+// non-textual fields (`cls`, `action`), looked up by heroPresentation() below.
 const HERO_PRESENTATION = {
-  SERVICE_UNREACHABLE: {
-    cls: "is-bad",
-    state: "Не захищено",
-    detail: "Служба фільтрації не відповідає. Перевірте, чи вона запущена.",
-  },
-  WATCHDOG_GAVE_UP: {
-    cls: "is-bad",
-    state: "Служба зупинилась",
-    detail: "Автоматичний перезапуск не вдався. Перезапустіть застосунок вручну.",
-  },
-  WATCHDOG_RESTARTING: {
-    cls: "is-warn",
-    state: "Відновлення…",
-    detail: "Службу фільтрації перезапускають. Зачекайте кілька секунд.",
-  },
-  OFFLINE: {
-    cls: "is-warn",
-    state: "Немає інтернету",
-    detail: "Резолвінг призупинено, доки не відновиться зв'язок.",
-  },
-  PAUSED: {
-    cls: "is-warn",
-    state: "Фільтрацію призупинено",
-    detail:
-      "DNS працює, але без фільтра: quorum і GeoIP вимкнено. Ваші власні " +
-      "списки блокування та дозволу діють. Відновіть через меню іконки в треї.",
-  },
-  NO_PROVIDERS: {
-    cls: "is-bad",
-    state: "Не захищено",
-    detail: "Фільтрація вимкнена — жоден провайдер не активний.",
-  },
-  CERT_NOT_TRUSTED: {
-    cls: "is-bad",
-    state: "Сертифікат не встановлено",
-    detail:
-      "Локальний сертифікат не додано до довірених кореневих сертифікатів. " +
-      "Без цього браузер не довірятиме сторінці налаштувань.",
-    action: "install-cert",
-  },
-  CERT_UNKNOWN: {
-    cls: "is-warn",
-    state: "Сертифікат не перевірено",
-    detail: "Не вдалося перевірити стан локального сертифіката.",
-  },
-  PROTECTED: {
-    cls: "is-ok",
-    state: "Захищено",
-    detail: "Фільтрація працює.",
-  },
+  SERVICE_UNREACHABLE: { cls: "is-bad" },
+  WATCHDOG_GAVE_UP: { cls: "is-bad" },
+  WATCHDOG_RESTARTING: { cls: "is-warn" },
+  OFFLINE: { cls: "is-warn" },
+  PAUSED: { cls: "is-warn" },
+  NO_PROVIDERS: { cls: "is-bad" },
+  CERT_NOT_TRUSTED: { cls: "is-bad", action: "install-cert" },
+  CERT_UNKNOWN: { cls: "is-warn" },
+  PROTECTED: { cls: "is-ok" },
 };
 
 // Map `status.hero_state` to {cls,state,detail,action?}. The only
 // presentation logic left here: the PROTECTED detail gains the blocked count
 // (a number the server already sends in `stats`, formatted client-side).
 function heroPresentation(heroState, stats) {
-  const base = HERO_PRESENTATION[heroState] || HERO_PRESENTATION.SERVICE_UNREACHABLE;
+  const key = HERO_PRESENTATION[heroState] ? heroState : "SERVICE_UNREACHABLE";
+  const base = HERO_PRESENTATION[key];
   const blocked = stats ? stats.blocked : 0;
-  if (heroState === "PROTECTED" && blocked > 0) {
-    return {
-      ...base,
-      detail: `Фільтрація працює. За поточний журнал заблоковано ${blocked}.`,
-    };
-  }
-  return base;
+  const detail =
+    key === "PROTECTED" && blocked > 0
+      ? t("hero.PROTECTED.detailWithBlocked", { blocked })
+      : t(`hero.${key}.detail`);
+  return { ...base, state: t(`hero.${key}.state`), detail };
 }
 
 const HERO_MARK = { "is-ok": "✓", "is-bad": "✕", "is-warn": "↺" };
@@ -299,7 +372,7 @@ function renderTimeoutConfig(status) {
       ? `<div class="notice warn">Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.</div>`
       : "";
   timeoutConfigBody.innerHTML = `
-    <div class="card-heading-row"><h3>Поведінка при збої</h3><details class="field-help"><summary aria-label="Довідка">?</summary><p>${FIELD_HELP.timeoutMode}</p></details></div>
+    <div class="card-heading-row"><h3>Поведінка при збої</h3><details class="field-help"><summary aria-label="Довідка">?</summary><p>${t("fieldHelp.timeoutMode")}</p></details></div>
     ${configWarning}
     <div class="radio-group">
       ${["fail_open", "fail_closed", "degraded"]
@@ -416,20 +489,34 @@ async function refresh() {
   }
 }
 
-refresh();
-// T-204: cert-trust used to be its own GET here (+ a visibilitychange
-// re-fetch). It is now a field of `status.hero_state`, computed server-side
-// from a cache the background `cert_watch` poll keeps warm (T-211), so the
-// 2s poll below picks up a tray-side "Видалити сертифікат" on its own.
-// `in_flight` (a live count of requests being resolved right now) is
-// otherwise only ever sampled at the instant of a toggle click - a page
-// that only re-renders on user action would show it near-permanently 0,
-// reading as "the resolver is idle" even while it's busy (the same
-// honesty failure this project already corrected twice: T-66's cold/warm
-// relabel, T-52's "never a fake 0/0 stat"). Polling every 2s keeps every
-// rendered value the server's actual live response, same "no local
-// optimistic state" philosophy as every other render() call here.
-setInterval(refresh, 2000);
+// T-151 Батч 5.2: wait for DICTIONARY_READY first - every card in
+// renderTranslatedCards() calls t()/tPlural(), so the first paint must not
+// race the dictionary fetch. This is now the single top-level kickoff for
+// all of them (the standalone refreshOverrides()/refreshCacheConfig()/
+// refreshProviders()/buildLogFilterRow() calls further down were folded in
+// here - grep for "renderTranslatedCards()" if one of those cards looks
+// like it isn't loading on its own any more, it's on purpose). The <select>
+// listener is attached exactly once here, never inside a render function
+// (see the comment on #locale-switcher in index.html).
+(async () => {
+  await DICTIONARY_READY;
+  populateLocaleSelect();
+  localeSelect.addEventListener("change", (event) => setLocale(event.target.value));
+  renderTranslatedCards();
+  // T-204: cert-trust used to be its own GET here (+ a visibilitychange
+  // re-fetch). It is now a field of `status.hero_state`, computed server-side
+  // from a cache the background `cert_watch` poll keeps warm (T-211), so the
+  // 2s poll below picks up a tray-side "Видалити сертифікат" on its own.
+  // `in_flight` (a live count of requests being resolved right now) is
+  // otherwise only ever sampled at the instant of a toggle click - a page
+  // that only re-renders on user action would show it near-permanently 0,
+  // reading as "the resolver is idle" even while it's busy (the same
+  // honesty failure this project already corrected twice: T-66's cold/warm
+  // relabel, T-52's "never a fake 0/0 stat"). Polling every 2s keeps every
+  // rendered value the server's actual live response, same "no local
+  // optimistic state" philosophy as every other render() call here.
+  setInterval(refresh, 2000);
+})();
 
 // T-47: the override-list editor. Deliberately NOT part of refresh()/render()
 // above and NOT on the 2s poll - #overrides-body is a separate DOM subtree
@@ -621,7 +708,10 @@ async function refreshOverrides() {
   }
 }
 
-refreshOverrides();
+// T-151 Батч 5.2: kicked off from renderTranslatedCards() (bootstrap, near
+// the top of this file) instead of a bare top-level call here - its
+// cardHeading() reads t("fieldHelp.overrides"), so it must not race
+// DICTIONARY_READY.
 
 // T-153: cache TTL/capacity editor. Same reasoning as the overrides section
 // above - a separate #cache-config-body DOM subtree, not part of
@@ -752,7 +842,8 @@ async function refreshCacheConfig() {
   }
 }
 
-refreshCacheConfig();
+// T-151 Батч 5.2: kicked off from renderTranslatedCards() - see the comment
+// by refreshOverrides() above.
 
 // T-77: GeoIP blocked-country list editor. Same isolation reasoning as the
 // overrides/cache-config sections above - a country-code input the user is
@@ -1852,9 +1943,10 @@ async function refreshLog() {
 // Order matters: buildLogFilterRow() must run first - refreshLog() calls
 // currentLogQuery(), which reads #log-search/#log-decision/#log-voter, and
 // those elements don't exist until buildLogFilterRow() creates them (see its
-// own comment above for the null-deref this fixed).
-buildLogFilterRow();
-refreshLog();
+// own comment above for the null-deref this fixed). T-151 Батч 5.2:
+// buildLogFilterRow() moved into renderTranslatedCards() (its cardHeading()
+// reads t("fieldHelp.logFilters")) - refreshLog() moved there too, right
+// after it, so this order requirement survives the move intact.
 
 // T-72/T-73: the voter (provider) list editor. Same isolation reasoning as
 // the overrides/geoip sections - #providers-body is its own DOM subtree with
@@ -2258,7 +2350,8 @@ async function refreshProviders() {
   }
 }
 
-refreshProviders();
+// T-151 Батч 5.2: kicked off from renderTranslatedCards() - see the comment
+// by refreshOverrides() above.
 
 // ===================================================================
 // T-176: basic-view filter controls (master + category toggles) and the
@@ -3038,7 +3131,7 @@ function renderRatingFilter(status) {
     if (Object.prototype.hasOwnProperty.call(counts, code)) {
       return isBlanketGovZone
         ? { text: "весь простір", loading: false }
-        : { text: `${counts[code]} дом.`, loading: false };
+        : { text: tPlural("zoneDomainCount", counts[code]), loading: false };
     }
     if (rf.enabled) {
       return { text: "завантажується…", loading: true };
@@ -3717,5 +3810,6 @@ async function refreshBlocklistBundles() {
   }
 }
 
-refreshRatingFilter();
-refreshBlocklistBundles();
+// T-151 Батч 5.2: kicked off from renderTranslatedCards() - see the comment
+// by refreshOverrides() above (own fetch/render cycle, off the 2s poll, same
+// reasoning as the doc comment above refreshBlocklistBundles itself).

@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Language",
+  "fieldHelp.providers": "Each enabled provider checks the domain independently; if even one says \"block\", the quorum blocks (OR logic). More providers means wider coverage, but more third parties see your queries.",
+  "fieldHelp.timeoutMode": "How to treat a provider that didn't answer in time. \"fail_open\" (default) - pass through, treating it as safe; \"fail_closed\" - block; \"degraded\" - like fail_open, but explicitly marks the decision as incomplete in the log.",
+  "fieldHelp.cache": "Min/max lifetime of a cache entry (caps the provider's own TTL), how long to keep a \"blocked\" verdict, and how many entries the cache holds at once before it starts evicting the oldest.",
+  "fieldHelp.overrides": "Your own exceptions on top of the quorum: the allowlist always allows, the blocklist always blocks, regardless of what the providers say. On conflict between the two lists, the allowlist wins.",
+  "fieldHelp.logFilters": "Search and filters only act within the current log window - the last ~1000 queries or 24 hours; older entries are no longer kept.",
+  "hero.SERVICE_UNREACHABLE.state": "Not protected",
+  "hero.SERVICE_UNREACHABLE.detail": "The filtering service isn't responding. Check that it's running.",
+  "hero.WATCHDOG_GAVE_UP.state": "Service stopped",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatic restart failed. Restart the application manually.",
+  "hero.WATCHDOG_RESTARTING.state": "Recovering…",
+  "hero.WATCHDOG_RESTARTING.detail": "The filtering service is being restarted. Please wait a few seconds.",
+  "hero.OFFLINE.state": "No internet connection",
+  "hero.OFFLINE.detail": "Resolution is paused until the connection is restored.",
+  "hero.PAUSED.state": "Filtering paused",
+  "hero.PAUSED.detail": "DNS is working, but without the filter: quorum and GeoIP are off. Your own block/allow lists still apply. Resume from the tray icon menu.",
+  "hero.NO_PROVIDERS.state": "Not protected",
+  "hero.NO_PROVIDERS.detail": "Filtering is off - no provider is active.",
+  "hero.CERT_NOT_TRUSTED.state": "Certificate not installed",
+  "hero.CERT_NOT_TRUSTED.detail": "The local certificate hasn't been added to trusted root certificates. Without it, the browser won't trust the settings page.",
+  "hero.CERT_UNKNOWN.state": "Certificate not checked",
+  "hero.CERT_UNKNOWN.detail": "Couldn't verify the local certificate's status.",
+  "hero.PROTECTED.state": "Protected",
+  "hero.PROTECTED.detail": "Filtering is active.",
+  "hero.PROTECTED.detailWithBlocked": "Filtering is active. {blocked} blocked in the current log.",
+  "zoneDomainCount": {
+    "one": "{n} domain",
+    "other": "{n} domains"
+  }
+}

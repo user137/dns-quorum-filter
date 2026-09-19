@@ -6566,3 +6566,137 @@ indicator.md` не посилається на цей крок конвеєра 
 поспіль, коли ця дисципліна ловить реальний CI-фейл до CI), `cargo test --test conformance -p
 dnsqb-service` (18/18, конвеєр-крок не зламав жодного RFC-тесту), `cargo test --test admin_client
 -p dnsqb-service` (7/7), `cargo test --workspace --doc --locked -j 1` (9/9) — усі зелені.
+
+**Батч 5.2 — i18n-інфраструктура сайту (T-151, частина 1 з 6 батчів того таска), 2026-09-19,
+plan-mode + advisor (три раунди: 5 advisor-catch'ів на плані, 2 реальні баги живим смоук-тестом у
+Chrome, ще 4 advisor-catch'і на закритті — деталі нижче кожен своїм блоком).** Другий з 7 узгоджених батчів Фази 5 — навмисно
+перед Батчем 5.3 (ccTLD UI), бо тому UI потрібне поняття "поточна локаль", яке інакше довелось би
+хардкодити на `'uk'` і переписувати згодом. Референс-план попередньої сесії (plan-mode+advisor,
+2026-09-18) не пережив у сесійному `plans/`-файлі — контекст відновлено з `TASKS.md:1372-1381` +
+свіжий grep коду; одна деталь зведення ("36 варіантів" у мовному `<select>`) суперечила власній
+вимозі T-151 ("підтримка щонайменше uk+en") — уточнено з користувачем (`AskUserQuestion`): **лише
+uk+en у перемикачі цього проходу**, без спекулятивного списку "ще не перекладених" мов (DECISIONS.md).
+
+- Плаский JSON-словник на локаль, два типи значення: звичайний рядок і плюралізований об'єкт
+  (`{one,few,many,other}`, категорія через `Intl.PluralRules`, не власна uk-таблиця правил — uk
+  використовує всі 4 форми, en лише `one`/`other`, бо `Intl.PluralRules('en')` інших не повертає).
+  Нові файли `crates/dnsqb-service/ui/i18n/{uk,en}.json`, `include_str!`-ембед в `admin_ui.rs`
+  (`UK_I18N`/`EN_I18N`), два нові літеральні GET-роути `/admin/ui/i18n/{uk,en}.json` (не
+  параметризований — `dispatch.rs`'s `ROUTES`/`serve()` матчать лише точні рядки, і цей прохід
+  свідомо шипить рівно два словники, не 36-файлову таблицю).
+- `t(key, vars)`/`tPlural(key, n)` у `main.js` — відсутній ключ повертає сам ключ (видима, не
+  мовчазна прогалина), `vars`-інтерполяція через `{name}`-токени. `detectLocale()` —
+  `localStorage` → `navigator.language` (базова мова, без регіону) → `'en'`; `resolveLocale()`
+  мапить будь-який нерозпізнаний код на `'en'` **до** фетчу — сервер ніколи не бачить запиту на
+  неіснуючий файл словника.
+- Pilot-обсяг ключів (решта сайту — Батч 5.4, той самий механізм): усі 5 `FIELD_HELP` ключів
+  (`fieldHelp.providers`/`.timeoutMode`/`.cache`/`.overrides`/`.logFilters`), усі 8 варіантів
+  `HERO_PRESENTATION`'s `state`/`detail` + окремий параметризований
+  `hero.protected.detailWithBlocked`, і один плюралізований ключ `zoneDomainCount`
+  (замінює `zoneMeta()`'s колишнє `` `${n} дом.` `` — завжди одна форма незалежно від числа).
+  `HERO_PRESENTATION` в JS лишає тільки структурні поля (`cls`/`action`); "Встановити сертифікат"
+  (кнопка), aria-label "Довідка", `blocklistRelativeTime` і решта карток свідомо лишились
+  хардкодженими — поза pilot-обсягом.
+- Мовний `<select id="locale-select">` — статична розмітка в `index.html`, **поза** будь-яким
+  контейнером, що `main.js` коли-небудь переписує через `innerHTML`/`textContent =`
+  (`#app-body`/`#protection-hero`/...), listener чіпляється один раз у bootstrap. Опції — лише
+  `SUPPORTED_LOCALES` (uk, en) через `Intl.DisplayNames`, не ширший список.
+
+**Advisor-catch'і на плані (5 пунктів, усі застосовані до коду, не лишені на потім):**
+1. **Падіння фетчу словника без try/catch вбило б увесь bootstrap** — `loadDictionary()` тепер
+   обгорнута в `.catch(() => {})` на рівні кикофа (`DICTIONARY_READY`); при відмові `DICT`
+   лишається `{}`, `t()`/`tPlural()` деградують видимо (повертають ключ/число), а не залишають
+   сторінку порожньою назавжди.
+2. **Розміщення `<select>` поза будь-яким `innerHTML`-контейнером** — явно задокументовано й
+   перевірено (`index.html`'s власний коментар на контейнері).
+3. **Перелік усіх top-level кикофів, що читають `DICT`** — план спершу назвав лише 3
+   (`refresh`/`refreshRatingFilter`/`refreshBlocklistBundles`); реалізація виявила ще 4
+   (`refreshOverrides`/`refreshCacheConfig`/`refreshProviders`/`buildLogFilterRow`) — див. нижче,
+   "виловлено живим смоуком", не advisor'ом напряму, але advisor'ів пункт 3 ("перелічи всі, що
+   ініціюють fetch/render на завантаженні") прямо попереджав, що список може бути неповним.
+4. **Список зламаних тестів наперед** — грепом по всьому тестовому модулю підтверджено рівно один
+   реальний злам (`main_js_hero_has_a_dedicated_paused_presentation`, шукав літерал
+   `"Фільтрацію призупинено"` прямо в `main.js`), переписаний на перевірку через `UK_I18N`.
+5. **Перевірка плюралізації через console-evaluation, не через реальну зону-картку** —
+   `zoneMeta()`'s `counts[code]` з'являється лише після завантаження top-N списків, на
+   скретч-інстансі живих значень 1/2/5 не буде; підтверджено через `tPlural('zoneDomainCount', n)`
+   у devtools (uk: `"1 домен"`/`"2 домени"`/`"5 доменів"`/`"21 домен"`, en:
+   `"1 domain"`/`"2 domains"`).
+
+**Два реальні баги, виловлені живим смоук-тестом у Chrome (chrome-devtools MCP), не тестами й не
+advisor'ом:**
+1. **`renderTimeoutConfig` лишила пряме `${FIELD_HELP.timeoutMode}` поза `helpDetails()`** —
+   `FIELD_HELP`-об'єкт видалений на користь `t()`, але один call-site поза pilot-рефактором
+   (виявлений лише живим рендером: `Помилка: FIELD_HELP is not defined` на першому ж завантаженні
+   сторінки) продовжував читати його напряму. Виправлено на `t("fieldHelp.timeoutMode")`; новий
+   тест `main_js_field_help_uses_the_t_helper_not_an_inline_object` зміцнено — перевіряє
+   відсутність **будь-якого** `FIELD_HELP.`-звернення в `main.js`, не лише відсутність самого
+   оголошення об'єкта (слабший варіант цього ж тесту не спіймав би саме цей регрес).
+2. **4 top-level кикофи гонилися за `DICTIONARY_READY`, план назвав лише 3** — `refreshOverrides`/
+   `refreshCacheConfig`/`refreshProviders`/`buildLogFilterRow` кожен рендерить `cardHeading()` з
+   одним із `FIELD_HELP`-ключів, кожен був окремим bare top-level викликом (власний fetch/render
+   цикл, off 2s-поллінгу — той самий патерн, що `#rating-filter-body`), і жоден не чекав словника.
+   На практиці це означало б: на повільному з'єднанні поля "Провайдери"/"Кеш"/"Списки
+   виключень"/"Лог запитів" короткочасно показали б сирі ключі (`fieldHelp.providers` замість
+   тексту) до завершення фетчу — і, що гірше, ці картки **ніколи не перерендерюються самі**, тож
+   перемикання мови (`setLocale()`) теж мовчки не оновило б їхній текст. Виправлено: усі 7
+   кикофів (+`refreshLog()`, з дотриманням наявної залежності порядку — `buildLogFilterRow()`
+   створює DOM-елементи, які `refreshLog()`'s `currentLogQuery()` читає) згорнуто в один
+   `renderTranslatedCards()`, викликаний і з bootstrap-IIFE (після `await DICTIONARY_READY`), і з
+   `setLocale()` — один список, який не може розійтися між двома місцями виклику. Побічний ефект,
+   свідомо прийнятий: перемикання мови тепер скидає будь-який недописаний "add domain"-текст у
+   картці винятків (`#overrides-body`) — прийнятний trade-off для явної, рідкісної дії користувача
+   проти застояного неперекладеного тексту назавжди.
+
+**Живий смоук-тест** (scratch `%LOCALAPPDATA%`, порт 18463, chrome-devtools MCP,
+self-signed-сертифікат прийнято вручну через "Перейти на сайт (небезпечно)"): усі 5 `fieldHelp`-
+карток (Провайдери/Таймаут/Кеш/Винятки/Лог) відрендерили правильний переклад одразу на першому
+завантаженні (uk за замовчуванням, потім en); hero-стан (`CERT_NOT_TRUSTED`) переклався коректно
+на обох мовах; перемикання мови без перезавантаження оновило hero + усі 4 картки одночасно; вибір
+locale пережив `F5` (localStorage); жодних консольних помилок на жодному кроці.
+
+**Advisor-catch'і на закритті (4 пункти, усі застосовані в тому самому комміті):**
+1. **`setLocale()` повторювала точно той самий bootstrap-race, який уже був закритий для
+   `DICTIONARY_READY`** — `CURRENT_LOCALE` і `localStorage` записувались **до** `await
+   loadDictionary()`, без try/catch; відмова фетчу (сервіс ліг між завантаженням сторінки й
+   кліком по `<select>`) лишала б `DICT` від старої локалі, а `CURRENT_LOCALE` вже вказувала б на
+   нову — `tPlural` брав би категорію `Intl.PluralRules` однієї локалі проти форм іншої, плюс
+   unhandled promise rejection у консолі, нуль сигналу користувачу. Виправлено: `next =
+   resolveLocale(...)` резолвиться окремо, `CURRENT_LOCALE`/`localStorage` комітяться лише
+   **після** успішного `await loadDictionary(next)`; невдача повертає `<select>` на живу локаль
+   через `populateLocaleSelect()` і виходить, нічого не змінивши.
+2. **Три CI-паритетні гейти не були прогнані локально перед комітом** — `cargo test --workspace
+   --lib --bins` не запускає `tests/`-бінарники (`conformance`/`admin_client`) чи doctest/rustdoc
+   гейти (CLAUDE.md явно про це попереджає, і Батч 5.1's власний запис цитує "третя сесія
+   поспіль, коли ця дисципліна ловить реальний CI-фейл до CI"). Прогнано всі чотири:
+   `cargo test --test conformance -p dnsqb-service --locked` (18/18), `cargo test --test
+   admin_client -p dnsqb-service --locked` (7/7), `cargo test --workspace --doc --locked` (9/9),
+   `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked`
+   — усі зелені без правок.
+3. **Не було тесту "кожен `HERO_PRESENTATION`-ключ має `.state`+`.detail` в обох словниках"** —
+   `t()` на відсутньому ключі повертає сам ключ, тож 10-й майбутній hero-стан з заповненим лише
+   одним словником відрендерився б як буквальний рядок `hero.FOO.detail` і жоден наявний тест не
+   впав би (той самий клас мовчазної прогалини, що вже двічі виловив живий смоук у цьому батчі, не
+   тести). Новий `every_hero_presentation_key_has_state_and_detail_in_both_locales` (`admin_ui.rs`)
+   перевикористовує вже наявний 9-ключовий список, перевіряє `hero.<KEY>.state`/`.detail` як рядок
+   в `UK_I18N` **і** `EN_I18N`, плюс окремо `hero.PROTECTED.detailWithBlocked`.
+4. **Дві дрібниці до того, як файл стане прецедентом для Батчів 5.4/5.5/5.7:** ключ
+   `hero.protected.detailWithBlocked` перейменовано на `hero.PROTECTED.detailWithBlocked` —
+   був єдиним у нижньому регістрі серед решти `hero.*`-ключів. І мітка самого перемикача мови
+   (`<label id="locale-switcher-label">`, раніше статичний хардкод "Мова" в `index.html`) тепер
+   теж переклада́ється через новий ключ `localeSwitcher.label` (`populateLocaleSelect()`) — це
+   єдиний контрол, який саме англомовний користувач мусить знайти, лишати його неперекладеним
+   було б протиріччям самій меті батчу. Статичний `aria-label` на `<select>` прибрано — `<label
+   for="locale-select">` вже дає йому доступне ім'я, дублювати не було сенсу.
+
+Живий смоук перепрогнано після всіх чотирьох правок (той самий скретч-інстанс, порт 18463):
+підтверджено, що `Мова`/`Language`-мітка перемикається разом з рештою тексту, і що жодна нова
+консольна помилка не з'явилась (єдине повідомлення в консолі — `favicon.ico` 404, наявне й до
+цього батчу, поза його обсягом).
+
+Повне верифікаційне зведення: `cargo build --workspace`, `cargo test --workspace --lib --bins`
+(944, було 933 — 11 нових тестів), `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo fmt --all -- --check`, `cargo test --test conformance -p dnsqb-service --locked` (18/18),
+`cargo test --test admin_client -p dnsqb-service --locked` (7/7), `cargo test --workspace --doc
+--locked` (9/9), `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+--document-private-items --locked` — усі зелені.

@@ -136,6 +136,10 @@ const ADMIN_INSTALL_CERT_PATH: &str = "/admin/install-cert";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
+// T-151 Батч 5.2 — two literal routes, not a parameterized one: `ROUTES`/`serve()`
+// only ever exact-match a path, and this pass ships exactly two dictionaries.
+const ADMIN_UI_I18N_UK_PATH: &str = "/admin/ui/i18n/uk.json";
+const ADMIN_UI_I18N_EN_PATH: &str = "/admin/ui/i18n/en.json";
 
 /// T-53/T-59: the single source of truth for which paths [`serve`] routes at
 /// all and which method(s) each one accepts — `serve` checks a request
@@ -179,6 +183,8 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
+    (ADMIN_UI_I18N_UK_PATH, &[Method::GET]),
+    (ADMIN_UI_I18N_EN_PATH, &[Method::GET]),
 ];
 
 /// `POST /admin/config`'s body is two bools and a short enum — this bound
@@ -4024,6 +4030,8 @@ where
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
+        ADMIN_UI_I18N_UK_PATH => admin_ui::serve_i18n_uk(req.method()),
+        ADMIN_UI_I18N_EN_PATH => admin_ui::serve_i18n_en(req.method()),
         // Unreachable: `path` already matched a `ROUTES` entry above, and
         // every `ROUTES` path has a corresponding arm here - kept as an
         // explicit, safe (404) fallback because the match itself has no way
@@ -9422,6 +9430,8 @@ mod tests {
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),
+        ("/admin/ui/i18n/uk.json", &[Method::GET]),
+        ("/admin/ui/i18n/en.json", &[Method::GET]),
     ];
 
     #[test]

@@ -6,8 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Current phase:** Фаза 5 (ccTLD block §5.2 + i18n T-151 + CLI `--help` T-235) **in progress** —
 Батч 5.1 (ccTLD-block backend: pure core, `[cctld_block]` config, `POST /admin/cctld-block`,
-pipeline step 3, `DecisionSource::CctldBlock`) shipped 2026-09-19; T-118 (UI) waits on Батч 5.2
-(i18n infra) per the agreed 7-batch order (`TASKS.md`). Фаза 7 (T-218, public blocklist bundles)
+pipeline step 3, `DecisionSource::CctldBlock`) shipped 2026-09-19. Батч 5.2 (i18n infra: flat
+per-locale JSON dictionaries, `t()`/`tPlural()`, `/admin/ui/i18n/{uk,en}.json`, pilot-migrated
+FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19; T-118 (ccTLD UI) now
+unblocked, next per the agreed 7-batch order (`TASKS.md`). Фаза 7 (T-218, public blocklist bundles)
 fully closed 2026-09-17 — full `AppState`/pipeline/admin-route/DTO/`/admin/ui` stack shipped
 across Батчі 7.1-7.4 (part 3 being the `#blocklist-bundles-body` card render, mockup's own open
 questions on Артборд F resolved by taking the mockup itself as the approved design). Фаза 4
@@ -135,7 +137,9 @@ collapses to `UNKNOWN` on the wire), a cache kept warm by the detached `cert_wat
 `certutil` per call → **not** in `FUZZ_EXCLUDED_ROUTES`) + `POST /admin/install-cert`
 (`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
 `CurrentUser\Root` like `/admin/uninstall-local-state`; **stays** in `FUZZ_EXCLUDED_ROUTES` — mutating);
-`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`. Also on the same listener but
+`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/i18n/uk.json`,
+`/admin/ui/i18n/en.json` (T-151 Батч 5.2 — two literal routes, not one parameterized, mirroring
+`main.js`/`style.css`'s own shape). Also on the same listener but
 **not** an admin route: `GET /health` (watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
 creds are their own OS secret-store entry with a single writer (that one POST route), not part of
