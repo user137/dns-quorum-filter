@@ -96,7 +96,7 @@ a miss is the same graceful behavior every unmatched locale already gets).
 
 ## Locale-switcher entries are not part of this dictionary
 
-`#locale-switcher`'s own `<option>` labels (`populateLocaleSelect()`, `main.js`) are deliberately
+`#locale-select`'s own `<option>` labels (`populateLocaleSelect()`, `main.js`) are deliberately
 **not** translated keys in `ui/i18n/*.json` and never go through `CURRENT_LOCALE` at all — each
 language names itself (`Intl.DisplayNames([code], { type: "language" }).of(code)`, e.g. `de` →
 "Deutsch", `ja` → "日本語"), the same principle Wikipedia's own interlanguage picker uses.

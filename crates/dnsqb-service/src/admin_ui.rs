@@ -789,6 +789,13 @@ mod tests {
             "must never go back to translating the switcher's own entries \
              through the admin's current interface locale"
         );
+        assert!(
+            MAIN_JS.contains("option.lang = code;"),
+            "each <option> needs its own lang attribute - the document's \
+             <html lang> is CURRENT_LOCALE (T-236), so a CJK autonym \
+             rendered without this picks up the wrong Han glyph variants \
+             for its own script (closing-review advisor-catch)"
+        );
     }
 
     // T-193 / T-204 — the paused hero must name the state and not read as

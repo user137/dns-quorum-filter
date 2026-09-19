@@ -122,13 +122,14 @@ function tPlural(key, n) {
 // can't read must still recognise their own language's name to click their
 // way back, which only works if it was never translated away from itself.
 // Sorted by the autonym text but WITHOUT a locale argument to
-// localeCompare() (root collation) - once every entry can be in a different
+// localeCompare() - that uses the host's own default-locale collation, not
+// CLDR root and not CURRENT_LOCALE; once every entry can be in a different
 // script, the admin's own CURRENT_LOCALE has no more claim to ordering them
-// than any other, and root collation groups scripts into stable,
-// predictable clusters (Latin/Cyrillic/Greek/Hebrew/Arabic/Indic/Thai/
-// Korean/Chinese/Japanese, verified empirically for all 37 codes) that -
-// unlike a CURRENT_LOCALE-keyed sort - don't reshuffle every time the
-// admin switches locale.
+// than any other. In practice this groups scripts into stable, predictable
+// clusters (Latin/Cyrillic/Greek/Hebrew/Arabic/Indic/Thai/Korean/Chinese/
+// Japanese, verified empirically for all 37 codes, both in Node and live in
+// Chrome) that - unlike a CURRENT_LOCALE-keyed sort - don't reshuffle every
+// time the admin switches locale.
 function populateLocaleSelect() {
   // The switcher's own label/aria-label are translated here too, not left
   // hardcoded - this is the one control an English-speaking user must be
@@ -143,6 +144,13 @@ function populateLocaleSelect() {
   for (const { code, name } of entries) {
     const option = document.createElement("option");
     option.value = code;
+    // The document's own <html lang> can be a different language entirely
+    // (applyDocumentLanguage() below sets it to CURRENT_LOCALE) - without
+    // this, a CJK autonym rendered inside e.g. lang="ja" picks up the wrong
+    // Han glyph variants for its own script (the same class of bug T-236's
+    // own <html lang> fix, right below, already exists to prevent - here
+    // per-option, not just once for the whole page).
+    option.lang = code;
     option.textContent = name;
     option.selected = code === CURRENT_LOCALE;
     localeSelect.appendChild(option);
