@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "Idioma",
+  "fieldHelp.providers": "Cada proveedor habilitado comprueba el dominio de forma independiente; si aunque sea uno dice «block», el quorum bloquea (lógica OR). Más proveedores significa mayor cobertura, pero también que más terceros ven tus consultas.",
+  "fieldHelp.timeoutMode": "Cómo tratar a un proveedor que no respondió a tiempo. «fail_open» (predeterminado): dejar pasar, tratándolo como seguro; «fail_closed»: bloquear; «degraded»: como fail_open, pero marca explícitamente la decisión como incompleta en el registro.",
+  "fieldHelp.cache": "Vida mín./máx. de una entrada de caché (limita el TTL propio del proveedor), cuánto tiempo se conserva un veredicto «bloqueado», y cuántas entradas mantiene la caché a la vez antes de empezar a descartar las más antiguas.",
+  "fieldHelp.overrides": "Tus propias excepciones por encima del quorum: la lista de permitidos siempre permite, la lista de bloqueados siempre bloquea, sin importar lo que digan los proveedores. En caso de conflicto entre ambas listas, gana la lista de permitidos.",
+  "fieldHelp.logFilters": "La búsqueda y los filtros solo actúan dentro de la ventana actual del registro: las últimas ~1000 consultas o 24 horas; las entradas más antiguas ya no se conservan.",
+  "hero.SERVICE_UNREACHABLE.state": "Sin protección",
+  "hero.SERVICE_UNREACHABLE.detail": "El servicio de filtrado no responde. Comprueba que esté en ejecución.",
+  "hero.WATCHDOG_GAVE_UP.state": "Servicio detenido",
+  "hero.WATCHDOG_GAVE_UP.detail": "El reinicio automático falló. Reinicia la aplicación manualmente.",
+  "hero.WATCHDOG_RESTARTING.state": "Recuperando…",
+  "hero.WATCHDOG_RESTARTING.detail": "El servicio de filtrado se está reiniciando. Espera unos segundos.",
+  "hero.OFFLINE.state": "Sin conexión a internet",
+  "hero.OFFLINE.detail": "La resolución está en pausa hasta que se restablezca la conexión.",
+  "hero.PAUSED.state": "Filtrado en pausa",
+  "hero.PAUSED.detail": "El DNS funciona, pero sin el filtro: el quorum y GeoIP están desactivados. Tus propias listas de bloqueo/permitidos siguen aplicándose. Reanuda desde el menú del icono de la bandeja.",
+  "hero.NO_PROVIDERS.state": "Sin protección",
+  "hero.NO_PROVIDERS.detail": "El filtrado está desactivado: ningún proveedor está activo.",
+  "hero.CERT_NOT_TRUSTED.state": "Certificado no instalado",
+  "hero.CERT_NOT_TRUSTED.detail": "El certificado local no se ha añadido a los certificados raíz de confianza. Sin él, el navegador no confiará en la página de configuración.",
+  "hero.CERT_UNKNOWN.state": "Certificado no verificado",
+  "hero.CERT_UNKNOWN.detail": "No se pudo verificar el estado del certificado local.",
+  "hero.PROTECTED.state": "Protegido",
+  "hero.PROTECTED.detail": "El filtrado está activo.",
+  "hero.PROTECTED.detailWithBlocked": "El filtrado está activo. Bloqueados en el registro actual: {blocked}.",
+  "zoneDomainCount": {
+    "one": "{n} dominio",
+    "many": "{n} de dominios",
+    "other": "{n} dominios"
+  }
+}

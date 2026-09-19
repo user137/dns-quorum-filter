@@ -50,7 +50,11 @@ macro_rules! i18n_dicts {
         ];
     };
 }
-i18n_dicts!("de", "en", "pl", "uk");
+i18n_dicts!(
+    "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id",
+    "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "sk", "sl", "sr-Latn", "sv", "sw",
+    "th", "tr", "uk", "ur", "vi", "zh",
+);
 
 /// Looks up one locale's dictionary by code — the single place both
 /// [`serve_i18n`] and this module's own tests read [`I18N_DICTS`] through, so
@@ -408,10 +412,43 @@ mod tests {
     /// that's the actual ground truth `tPlural()` resolves against at
     /// runtime, so it's what `zoneDomainCount`'s shape must match per locale.
     const EXPECTED_PLURAL_CATEGORIES: &[(&str, &[&str])] = &[
+        ("ar", &["zero", "one", "two", "few", "many", "other"]),
+        ("bg", &["one", "other"]),
+        ("cs", &["one", "few", "many", "other"]),
+        ("da", &["one", "other"]),
         ("de", &["one", "other"]),
+        ("el", &["one", "other"]),
         ("en", &["one", "other"]),
+        ("es", &["one", "many", "other"]),
+        ("et", &["one", "other"]),
+        ("fi", &["one", "other"]),
+        ("fr", &["one", "many", "other"]),
+        ("he", &["one", "two", "other"]),
+        ("hi", &["one", "other"]),
+        ("hr", &["one", "few", "other"]),
+        ("hu", &["one", "other"]),
+        ("id", &["other"]),
+        ("it", &["one", "many", "other"]),
+        ("ja", &["other"]),
+        ("ko", &["other"]),
+        ("lt", &["one", "few", "many", "other"]),
+        ("lv", &["zero", "one", "other"]),
+        ("nb", &["one", "other"]),
+        ("nl", &["one", "other"]),
         ("pl", &["one", "few", "many", "other"]),
+        ("pt", &["one", "many", "other"]),
+        ("ro", &["one", "few", "other"]),
+        ("sk", &["one", "few", "many", "other"]),
+        ("sl", &["one", "two", "few", "other"]),
+        ("sr-Latn", &["one", "few", "other"]),
+        ("sv", &["one", "other"]),
+        ("sw", &["one", "other"]),
+        ("th", &["other"]),
+        ("tr", &["one", "other"]),
         ("uk", &["one", "few", "many", "other"]),
+        ("ur", &["one", "other"]),
+        ("vi", &["other"]),
+        ("zh", &["other"]),
     ];
 
     #[test]

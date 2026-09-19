@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "Limbă",
+  "fieldHelp.providers": "Fiecare furnizor activat verifică domeniul independent; dacă măcar unul spune „block”, cvorumul blochează (logică SAU). Mai mulți furnizori înseamnă acoperire mai largă, dar și mai multe terțe părți văd interogările tale.",
+  "fieldHelp.timeoutMode": "Cum este tratat un furnizor care nu a răspuns la timp. „fail_open” (implicit) — lasă să treacă, tratându-l ca sigur; „fail_closed” — blochează; „degraded” — ca fail_open, dar marchează explicit decizia ca incompletă în jurnal.",
+  "fieldHelp.cache": "Durata min./max. de viață a unei intrări din cache (limitează TTL-ul propriu al furnizorului), cât timp se păstrează un verdict „blocat”, și câte intrări reține cache-ul simultan înainte să înceapă să elimine cele mai vechi.",
+  "fieldHelp.overrides": "Excepțiile tale proprii peste cvorum: lista de permisiuni permite întotdeauna, lista de blocare blochează întotdeauna, indiferent ce spun furnizorii. În caz de conflict între cele două liste, câștigă lista de permisiuni.",
+  "fieldHelp.logFilters": "Căutarea și filtrele funcționează doar în fereastra curentă a jurnalului — ultimele ~1000 de interogări sau 24 de ore; intrările mai vechi nu mai sunt păstrate.",
+  "hero.SERVICE_UNREACHABLE.state": "Neprotejat",
+  "hero.SERVICE_UNREACHABLE.detail": "Serviciul de filtrare nu răspunde. Verifică dacă rulează.",
+  "hero.WATCHDOG_GAVE_UP.state": "Serviciul s-a oprit",
+  "hero.WATCHDOG_GAVE_UP.detail": "Repornirea automată a eșuat. Repornește aplicația manual.",
+  "hero.WATCHDOG_RESTARTING.state": "Se recuperează…",
+  "hero.WATCHDOG_RESTARTING.detail": "Serviciul de filtrare este repornit. Așteaptă câteva secunde.",
+  "hero.OFFLINE.state": "Nicio conexiune la internet",
+  "hero.OFFLINE.detail": "Rezolvarea este întreruptă până la restabilirea conexiunii.",
+  "hero.PAUSED.state": "Filtrare întreruptă",
+  "hero.PAUSED.detail": "DNS-ul funcționează, dar fără filtru: cvorumul și GeoIP sunt dezactivate. Listele tale proprii de blocare/permisiuni se aplică în continuare. Reia din meniul pictogramei din tavă.",
+  "hero.NO_PROVIDERS.state": "Neprotejat",
+  "hero.NO_PROVIDERS.detail": "Filtrarea este dezactivată — niciun furnizor nu este activ.",
+  "hero.CERT_NOT_TRUSTED.state": "Certificatul nu este instalat",
+  "hero.CERT_NOT_TRUSTED.detail": "Certificatul local nu a fost adăugat la certificatele rădăcină de încredere. Fără el, browserul nu va avea încredere în pagina de setări.",
+  "hero.CERT_UNKNOWN.state": "Certificatul nu a fost verificat",
+  "hero.CERT_UNKNOWN.detail": "Starea certificatului local nu a putut fi verificată.",
+  "hero.PROTECTED.state": "Protejat",
+  "hero.PROTECTED.detail": "Filtrarea este activă.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrarea este activă. {blocked} blocate în jurnalul curent.",
+  "zoneDomainCount": {
+    "one": "{n} domeniu",
+    "few": "{n} domenii",
+    "other": "{n} de domenii"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "localeSwitcher.label": "语言",
+  "fieldHelp.providers": "每个启用的提供商都独立检查域名；只要有一个说«block»，法定人数就会阻止(OR 逻辑)。提供商越多意味着覆盖范围越广，但也意味着更多第三方能看到您的查询。",
+  "fieldHelp.timeoutMode": "如何处理未按时响应的提供商。«fail_open»(默认) — 放行,视为安全;«fail_closed» — 阻止;«degraded» — 与 fail_open 相同,但会在日志中明确将该判定标记为不完整。",
+  "fieldHelp.cache": "缓存条目的最短/最长生存时间(限制提供商自身的 TTL)、«已阻止»判定的保留时长,以及缓存在开始淘汰最旧条目之前同时保留的条目数量。",
+  "fieldHelp.overrides": "您在法定人数之上的自定义例外:允许列表始终允许,阻止列表始终阻止,无论提供商怎么说。两个列表发生冲突时,允许列表优先。",
+  "fieldHelp.logFilters": "搜索和过滤仅在当前日志窗口内生效 — 最近约 1000 次查询或 24 小时;更早的条目不再保留。",
+  "hero.SERVICE_UNREACHABLE.state": "未受保护",
+  "hero.SERVICE_UNREACHABLE.detail": "过滤服务没有响应。请检查它是否正在运行。",
+  "hero.WATCHDOG_GAVE_UP.state": "服务已停止",
+  "hero.WATCHDOG_GAVE_UP.detail": "自动重启失败。请手动重启应用程序。",
+  "hero.WATCHDOG_RESTARTING.state": "正在恢复…",
+  "hero.WATCHDOG_RESTARTING.detail": "过滤服务正在重启,请稍候几秒。",
+  "hero.OFFLINE.state": "没有互联网连接",
+  "hero.OFFLINE.detail": "解析已暂停,直到连接恢复。",
+  "hero.PAUSED.state": "过滤已暂停",
+  "hero.PAUSED.detail": "DNS 正常工作,但没有过滤器:法定人数和 GeoIP 已关闭。您自己的阻止/允许列表仍然有效。从托盘图标菜单恢复。",
+  "hero.NO_PROVIDERS.state": "未受保护",
+  "hero.NO_PROVIDERS.detail": "过滤已关闭 — 没有活跃的提供商。",
+  "hero.CERT_NOT_TRUSTED.state": "证书未安装",
+  "hero.CERT_NOT_TRUSTED.detail": "本地证书尚未添加到受信任的根证书中。没有它,浏览器将不信任设置页面。",
+  "hero.CERT_UNKNOWN.state": "证书未检查",
+  "hero.CERT_UNKNOWN.detail": "无法验证本地证书的状态。",
+  "hero.PROTECTED.state": "已受保护",
+  "hero.PROTECTED.detail": "过滤已启用。",
+  "hero.PROTECTED.detailWithBlocked": "过滤已启用。当前日志中已阻止 {blocked} 个。",
+  "zoneDomainCount": {
+    "other": "{n} 个域名"
+  }
+}

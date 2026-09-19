@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Lugha",
+  "fieldHelp.providers": "Kila mtoa huduma aliyewezeshwa hukagua kikoa kwa kujitegemea; hata mmoja akisema «block», akidi huzuia (mantiki ya AU). Watoa huduma wengi zaidi humaanisha ufunikaji mpana zaidi, lakini pia wahusika wengine zaidi huona maswali yako.",
+  "fieldHelp.timeoutMode": "Jinsi ya kumtendea mtoa huduma ambaye hakujibu kwa wakati. «fail_open» (chaguo-msingi) — ruhusu kupita, ukiutendea kama salama; «fail_closed» — zuia; «degraded» — kama fail_open, lakini huweka alama wazi kwenye kumbukumbu kuwa uamuzi haujakamilika.",
+  "fieldHelp.cache": "Muda mfupi/mrefu zaidi wa kuishi kwa kipengee cha akiba (hupunguza TTL ya mtoa huduma mwenyewe), muda gani wa kuweka uamuzi wa «umezuiwa», na vipengee vingapi akiba huhifadhi kwa wakati mmoja kabla ya kuanza kuondoa vya zamani zaidi.",
+  "fieldHelp.overrides": "Vibali vyako mwenyewe juu ya akidi: orodha ya ruhusa daima huruhusu, orodha ya kuzuia daima huzuia, bila kujali watoa huduma wanasema nini. Ikiwa kuna mgongano kati ya orodha mbili, orodha ya ruhusa hushinda.",
+  "fieldHelp.logFilters": "Utafutaji na vichujio hufanya kazi tu ndani ya dirisha la sasa la kumbukumbu — maswali ya karibuni ~1000 au masaa 24; vipengee vya zamani zaidi havihifadhiwi tena.",
+  "hero.SERVICE_UNREACHABLE.state": "Haijalindwa",
+  "hero.SERVICE_UNREACHABLE.detail": "Huduma ya kuchuja haijibu. Angalia kama inaendesha.",
+  "hero.WATCHDOG_GAVE_UP.state": "Huduma imesimama",
+  "hero.WATCHDOG_GAVE_UP.detail": "Kuanzisha upya kiotomatiki kumeshindwa. Anzisha upya programu wewe mwenyewe.",
+  "hero.WATCHDOG_RESTARTING.state": "Inarejesha…",
+  "hero.WATCHDOG_RESTARTING.detail": "Huduma ya kuchuja inaanzishwa upya. Tafadhali subiri sekunde chache.",
+  "hero.OFFLINE.state": "Hakuna muunganisho wa intaneti",
+  "hero.OFFLINE.detail": "Utatuzi wa majina umesitishwa hadi muunganisho urejeshwe.",
+  "hero.PAUSED.state": "Uchujaji umesitishwa",
+  "hero.PAUSED.detail": "DNS inafanya kazi, lakini bila kichujio: akidi na GeoIP zimezimwa. Orodha zako za kuzuia/kuruhusu bado zinatumika. Endelea kutoka kwenye menyu ya aikoni ya tray.",
+  "hero.NO_PROVIDERS.state": "Haijalindwa",
+  "hero.NO_PROVIDERS.detail": "Uchujaji umezimwa — hakuna mtoa huduma anayefanya kazi.",
+  "hero.CERT_NOT_TRUSTED.state": "Cheti hakijasakinishwa",
+  "hero.CERT_NOT_TRUSTED.detail": "Cheti la ndani halijaongezwa kwenye vyeti vya mzizi vinavyoaminika. Bila hilo, kivinjari hakitaamini ukurasa wa mipangilio.",
+  "hero.CERT_UNKNOWN.state": "Cheti hakijaangaliwa",
+  "hero.CERT_UNKNOWN.detail": "Imeshindwa kuthibitisha hali ya cheti la ndani.",
+  "hero.PROTECTED.state": "Imelindwa",
+  "hero.PROTECTED.detail": "Uchujaji unafanya kazi.",
+  "hero.PROTECTED.detailWithBlocked": "Uchujaji unafanya kazi. {blocked} zimezuiwa kwenye kumbukumbu ya sasa.",
+  "zoneDomainCount": {
+    "one": "kikoa {n}",
+    "other": "vikoa {n}"
+  }
+}

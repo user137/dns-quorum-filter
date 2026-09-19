@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Sprog",
+  "fieldHelp.providers": "Hver aktiveret udbyder tjekker domænet uafhængigt; hvis blot én siger „block“, blokerer kvorummet (ELLER-logik). Flere udbydere betyder bredere dækning, men flere tredjeparter ser dine forespørgsler.",
+  "fieldHelp.timeoutMode": "Hvordan en udbyder, der ikke svarede i tide, behandles. „fail_open“ (standard) — lad passere, behandl som sikker; „fail_closed“ — bloker; „degraded“ — som fail_open, men markerer eksplicit afgørelsen som ufuldstændig i loggen.",
+  "fieldHelp.cache": "Min./maks. levetid for en cache-post (begrænser udbyderens egen TTL), hvor længe en „blokeret“-afgørelse gemmes, og hvor mange poster cachen rummer ad gangen, før den begynder at fjerne de ældste.",
+  "fieldHelp.overrides": "Dine egne undtagelser oven på kvorummet: allowlisten tillader altid, blocklisten blokerer altid, uanset hvad udbyderne siger. Ved konflikt mellem de to lister vinder allowlisten.",
+  "fieldHelp.logFilters": "Søgning og filtre virker kun inden for det aktuelle logvindue — de seneste ~1000 forespørgsler eller 24 timer; ældre poster gemmes ikke længere.",
+  "hero.SERVICE_UNREACHABLE.state": "Ikke beskyttet",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtreringstjenesten svarer ikke. Kontrollér, at den kører.",
+  "hero.WATCHDOG_GAVE_UP.state": "Tjeneste stoppet",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatisk genstart mislykkedes. Genstart programmet manuelt.",
+  "hero.WATCHDOG_RESTARTING.state": "Gendanner…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtreringstjenesten genstartes. Vent venligst et øjeblik.",
+  "hero.OFFLINE.state": "Ingen internetforbindelse",
+  "hero.OFFLINE.detail": "Navneopløsning er sat på pause, indtil forbindelsen er genoprettet.",
+  "hero.PAUSED.state": "Filtrering sat på pause",
+  "hero.PAUSED.detail": "DNS virker, men uden filteret: kvorum og GeoIP er slået fra. Dine egne blokerings-/tilladelseslister gælder stadig. Genoptag fra bakkeikonets menu.",
+  "hero.NO_PROVIDERS.state": "Ikke beskyttet",
+  "hero.NO_PROVIDERS.detail": "Filtrering er slået fra — ingen udbyder er aktiv.",
+  "hero.CERT_NOT_TRUSTED.state": "Certifikat ikke installeret",
+  "hero.CERT_NOT_TRUSTED.detail": "Det lokale certifikat er ikke tilføjet til de betroede rodcertifikater. Uden det vil browseren ikke stole på indstillingssiden.",
+  "hero.CERT_UNKNOWN.state": "Certifikat ikke kontrolleret",
+  "hero.CERT_UNKNOWN.detail": "Kunne ikke bekræfte det lokale certifikats status.",
+  "hero.PROTECTED.state": "Beskyttet",
+  "hero.PROTECTED.detail": "Filtrering er aktiv.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrering er aktiv. {blocked} blokeret i den aktuelle log.",
+  "zoneDomainCount": {
+    "one": "{n} domæne",
+    "other": "{n} domæner"
+  }
+}

@@ -27,12 +27,25 @@ const blocklistBundlesBody = document.getElementById("blocklist-bundles-body");
 const localeSelect = document.getElementById("locale-select");
 const localeSwitcherLabel = document.getElementById("locale-switcher-label");
 
-// T-151 Батч 5.2: i18n infra. Flat per-locale JSON (crates/dnsqb-service/ui/i18n/{uk,en}.json),
-// two value shapes - plain string, or {one,few,many,other} selected via Intl.PluralRules for a
-// count-dependent string. Only FIELD_HELP + HERO_PRESENTATION + one plural key (zoneDomainCount)
-// are migrated this batch (pilot scope, DECISIONS.md); the rest of the page is Батч 5.4.
-const SUPPORTED_LOCALES = ["uk", "en"]; // extended in a later batch, not here
+// T-151 Батч 5.2: i18n infra. Flat per-locale JSON (crates/dnsqb-service/ui/i18n/<code>.json),
+// two value shapes - plain string, or a pluralized object (keys per Intl.PluralRules
+// .resolvedOptions().pluralCategories, see ui/i18n/GLOSSARY.md's measured table) selected via
+// Intl.PluralRules for a count-dependent string. Only FIELD_HELP + HERO_PRESENTATION + one plural
+// key (zoneDomainCount) are migrated - pilot scope, DECISIONS.md; the rest of the page's text is
+// Батч 5.4 (a different axis - more keys within these locales, not more locales for these keys).
+// T-236: grown from ["uk", "en"] to the full 36-culture set windows-archiver-wrapper's own
+// PasswordMessages.*.resx ships (+ en, the neutral default) - see DECISIONS.md and
+// ui/i18n/GLOSSARY.md for the sr-Latn-not-bare-sr rationale.
+const SUPPORTED_LOCALES = [
+  "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id",
+  "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "sk", "sl", "sr-Latn", "sv", "sw",
+  "th", "tr", "uk", "ur", "vi", "zh",
+];
 const LOCALE_STORAGE_KEY = "dqf-locale";
+// T-236: the only three RTL scripts in SUPPORTED_LOCALES. document.dir is set from this in
+// setLocale()/bootstrap - correct text direction/alignment, but NOT a mirrored flex/grid layout
+// (KNOWN-LIMITATIONS.md: that's a separate, much larger CSS-logical-properties effort).
+const RTL_LOCALES = ["ar", "he", "ur"];
 
 function resolveLocale(code) {
   return SUPPORTED_LOCALES.includes(code) ? code : "en";
@@ -93,24 +106,44 @@ function tPlural(key, n) {
   return template.replace("{n}", n);
 }
 
-// Lists only SUPPORTED_LOCALES (uk, en) - deliberately not a broad "every
-// language" list: this pass ships exactly two dictionaries, and a selector
-// entry for a locale with no dictionary would silently snap back to English
-// the moment it's picked (Три Б - never offer a choice that isn't real).
+// Lists only SUPPORTED_LOCALES - deliberately not a broader "every language"
+// list: a selector entry for a locale with no dictionary would silently snap
+// back to English the moment it's picked (Три Б - never offer a choice that
+// isn't real). T-236: 37 entries in SUPPORTED_LOCALES's own array-insertion
+// order isn't browsable, so the options are sorted by their *localized*
+// display name using the CURRENT locale's own collation - a Ukrainian
+// speaker gets a Ukrainian-alphabetized list, an English speaker an
+// English-alphabetized one, not one fixed ordering for everyone.
 function populateLocaleSelect() {
   // The switcher's own label/aria-label are translated here too, not left
   // hardcoded - this is the one control an English-speaking user must be
   // able to find before anything else on the page is readable to them.
   localeSwitcherLabel.textContent = t("localeSwitcher.label");
   const names = new Intl.DisplayNames([CURRENT_LOCALE], { type: "language" });
+  const sortedCodes = [...SUPPORTED_LOCALES].sort((a, b) =>
+    names.of(a).localeCompare(names.of(b), CURRENT_LOCALE),
+  );
   localeSelect.textContent = "";
-  for (const code of SUPPORTED_LOCALES) {
+  for (const code of sortedCodes) {
     const option = document.createElement("option");
     option.value = code;
     option.textContent = names.of(code);
     option.selected = code === CURRENT_LOCALE;
     localeSelect.appendChild(option);
   }
+}
+
+// T-236: sets both <html lang> and dir, not just dir (advisor-catch on
+// closing review) - index.html never had a lang attribute at all, so
+// leaving it unset would keep every locale (including CJK, where lang
+// drives glyph-variant selection) rendering under the browser's default
+// language for screen readers/spellcheck/font shaping. RTL - see
+// RTL_LOCALES's own comment. Called from both the bootstrap IIFE and
+// setLocale(), same "one place, not duplicated at each call site"
+// reasoning as renderTranslatedCards().
+function applyDocumentLanguage() {
+  document.documentElement.lang = CURRENT_LOCALE;
+  document.documentElement.dir = RTL_LOCALES.includes(CURRENT_LOCALE) ? "rtl" : "ltr";
 }
 
 // Every card whose render path calls t()/tPlural() through a FIELD_HELP-key
@@ -153,6 +186,7 @@ async function setLocale(requested) {
     // per-viewer convenience only, safe to lose (same precedent as
     // BROWSER_SETUP_SEEN_KEY below)
   }
+  applyDocumentLanguage();
   populateLocaleSelect();
   renderTranslatedCards();
 }
@@ -500,6 +534,7 @@ async function refresh() {
 // (see the comment on #locale-switcher in index.html).
 (async () => {
   await DICTIONARY_READY;
+  applyDocumentLanguage();
   populateLocaleSelect();
   localeSelect.addEventListener("change", (event) => setLocale(event.target.value));
   renderTranslatedCards();

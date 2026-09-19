@@ -200,7 +200,11 @@ macro_rules! i18n_routes {
         ];
     };
 }
-i18n_routes!("de", "en", "pl", "uk");
+i18n_routes!(
+    "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id",
+    "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "sk", "sl", "sr-Latn", "sv", "sw",
+    "th", "tr", "uk", "ur", "vi", "zh",
+);
 
 /// `POST /admin/config`'s body is two bools and a short enum — this bound
 /// exists for the same reason `MAX_MESSAGE_SIZE` does (SPEC.md §8.1: "ліміт
@@ -4073,7 +4077,11 @@ where
                     }
                 };
             }
-            i18n_dispatch!("de", "en", "pl", "uk")
+            i18n_dispatch!(
+                "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr",
+                "hu", "id", "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "sk", "sl",
+                "sr-Latn", "sv", "sw", "th", "tr", "uk", "ur", "vi", "zh",
+            )
         }
         // Unreachable: `path` already matched a `ROUTES`/`I18N_ROUTES` entry
         // above, and every entry has a corresponding arm here - kept as an
@@ -9490,10 +9498,43 @@ mod tests {
     /// is itself a separate table (see `I18N_ROUTES`'s own doc comment for
     /// why it isn't spliced into `ROUTES`).
     const EXPECTED_I18N_ROUTES: &[(&str, &[Method])] = &[
+        ("/admin/ui/i18n/ar.json", &[Method::GET]),
+        ("/admin/ui/i18n/bg.json", &[Method::GET]),
+        ("/admin/ui/i18n/cs.json", &[Method::GET]),
+        ("/admin/ui/i18n/da.json", &[Method::GET]),
         ("/admin/ui/i18n/de.json", &[Method::GET]),
+        ("/admin/ui/i18n/el.json", &[Method::GET]),
         ("/admin/ui/i18n/en.json", &[Method::GET]),
+        ("/admin/ui/i18n/es.json", &[Method::GET]),
+        ("/admin/ui/i18n/et.json", &[Method::GET]),
+        ("/admin/ui/i18n/fi.json", &[Method::GET]),
+        ("/admin/ui/i18n/fr.json", &[Method::GET]),
+        ("/admin/ui/i18n/he.json", &[Method::GET]),
+        ("/admin/ui/i18n/hi.json", &[Method::GET]),
+        ("/admin/ui/i18n/hr.json", &[Method::GET]),
+        ("/admin/ui/i18n/hu.json", &[Method::GET]),
+        ("/admin/ui/i18n/id.json", &[Method::GET]),
+        ("/admin/ui/i18n/it.json", &[Method::GET]),
+        ("/admin/ui/i18n/ja.json", &[Method::GET]),
+        ("/admin/ui/i18n/ko.json", &[Method::GET]),
+        ("/admin/ui/i18n/lt.json", &[Method::GET]),
+        ("/admin/ui/i18n/lv.json", &[Method::GET]),
+        ("/admin/ui/i18n/nb.json", &[Method::GET]),
+        ("/admin/ui/i18n/nl.json", &[Method::GET]),
         ("/admin/ui/i18n/pl.json", &[Method::GET]),
+        ("/admin/ui/i18n/pt.json", &[Method::GET]),
+        ("/admin/ui/i18n/ro.json", &[Method::GET]),
+        ("/admin/ui/i18n/sk.json", &[Method::GET]),
+        ("/admin/ui/i18n/sl.json", &[Method::GET]),
+        ("/admin/ui/i18n/sr-Latn.json", &[Method::GET]),
+        ("/admin/ui/i18n/sv.json", &[Method::GET]),
+        ("/admin/ui/i18n/sw.json", &[Method::GET]),
+        ("/admin/ui/i18n/th.json", &[Method::GET]),
+        ("/admin/ui/i18n/tr.json", &[Method::GET]),
         ("/admin/ui/i18n/uk.json", &[Method::GET]),
+        ("/admin/ui/i18n/ur.json", &[Method::GET]),
+        ("/admin/ui/i18n/vi.json", &[Method::GET]),
+        ("/admin/ui/i18n/zh.json", &[Method::GET]),
     ];
 
     #[test]

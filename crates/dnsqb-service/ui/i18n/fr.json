@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "Langue",
+  "fieldHelp.providers": "Chaque fournisseur activé vérifie le domaine indépendamment ; si ne serait-ce qu'un seul dit « block », le quorum bloque (logique OU). Plus de fournisseurs signifie une couverture plus large, mais aussi plus de tiers voyant vos requêtes.",
+  "fieldHelp.timeoutMode": "Comment traiter un fournisseur qui n'a pas répondu à temps. « fail_open » (par défaut) — laisser passer, en le considérant comme sûr ; « fail_closed » — bloquer ; « degraded » — comme fail_open, mais marque explicitement la décision comme incomplète dans le journal.",
+  "fieldHelp.cache": "Durée de vie min./max. d'une entrée de cache (plafonne le TTL propre au fournisseur), durée de conservation d'un verdict « bloqué », et nombre d'entrées que le cache conserve à la fois avant de commencer à évincer les plus anciennes.",
+  "fieldHelp.overrides": "Vos propres exceptions au-dessus du quorum : la liste d'autorisation autorise toujours, la liste de blocage bloque toujours, quoi qu'en disent les fournisseurs. En cas de conflit entre les deux listes, la liste d'autorisation l'emporte.",
+  "fieldHelp.logFilters": "La recherche et les filtres n'agissent que dans la fenêtre actuelle du journal — les ~1000 dernières requêtes ou les dernières 24 heures ; les entrées plus anciennes ne sont plus conservées.",
+  "hero.SERVICE_UNREACHABLE.state": "Non protégé",
+  "hero.SERVICE_UNREACHABLE.detail": "Le service de filtrage ne répond pas. Vérifiez qu'il est bien en cours d'exécution.",
+  "hero.WATCHDOG_GAVE_UP.state": "Service arrêté",
+  "hero.WATCHDOG_GAVE_UP.detail": "Le redémarrage automatique a échoué. Redémarrez l'application manuellement.",
+  "hero.WATCHDOG_RESTARTING.state": "Récupération…",
+  "hero.WATCHDOG_RESTARTING.detail": "Le service de filtrage est en cours de redémarrage. Veuillez patienter quelques secondes.",
+  "hero.OFFLINE.state": "Aucune connexion internet",
+  "hero.OFFLINE.detail": "La résolution est en pause jusqu'au rétablissement de la connexion.",
+  "hero.PAUSED.state": "Filtrage en pause",
+  "hero.PAUSED.detail": "Le DNS fonctionne, mais sans le filtre : le quorum et GeoIP sont désactivés. Vos propres listes de blocage/autorisation restent appliquées. Reprenez depuis le menu de l'icône de la barre système.",
+  "hero.NO_PROVIDERS.state": "Non protégé",
+  "hero.NO_PROVIDERS.detail": "Le filtrage est désactivé — aucun fournisseur n'est actif.",
+  "hero.CERT_NOT_TRUSTED.state": "Certificat non installé",
+  "hero.CERT_NOT_TRUSTED.detail": "Le certificat local n'a pas été ajouté aux certificats racine de confiance. Sans cela, le navigateur ne fera pas confiance à la page de paramètres.",
+  "hero.CERT_UNKNOWN.state": "Certificat non vérifié",
+  "hero.CERT_UNKNOWN.detail": "Impossible de vérifier l'état du certificat local.",
+  "hero.PROTECTED.state": "Protégé",
+  "hero.PROTECTED.detail": "Le filtrage est actif.",
+  "hero.PROTECTED.detailWithBlocked": "Le filtrage est actif. Bloqués dans le journal actuel : {blocked}.",
+  "zoneDomainCount": {
+    "one": "{n} domaine",
+    "many": "{n} de domaines",
+    "other": "{n} domaines"
+  }
+}

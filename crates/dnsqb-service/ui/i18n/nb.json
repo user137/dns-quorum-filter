@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Språk",
+  "fieldHelp.providers": "Hver aktiverte leverandør sjekker domenet uavhengig; hvis bare én sier «block», blokkerer kvorumet (ELLER-logikk). Flere leverandører betyr bredere dekning, men flere tredjeparter ser spørringene dine.",
+  "fieldHelp.timeoutMode": "Hvordan en leverandør som ikke svarte i tide, behandles. «fail_open» (standard) — slipp gjennom, behandle som trygt; «fail_closed» — blokker; «degraded» — som fail_open, men markerer avgjørelsen eksplisitt som ufullstendig i loggen.",
+  "fieldHelp.cache": "Min./maks. levetid for en buffer-oppføring (begrenser leverandørens egen TTL), hvor lenge en «blokkert»-avgjørelse beholdes, og hvor mange oppføringer bufferen holder samtidig før den begynner å fjerne de eldste.",
+  "fieldHelp.overrides": "Dine egne unntak utover kvorumet: tillatelseslisten tillater alltid, blokkeringslisten blokkerer alltid, uansett hva leverandørene sier. Ved konflikt mellom de to listene vinner tillatelseslisten.",
+  "fieldHelp.logFilters": "Søk og filtre virker bare innenfor det gjeldende loggvinduet — de siste ~1000 spørringene eller 24 timene; eldre oppføringer beholdes ikke lenger.",
+  "hero.SERVICE_UNREACHABLE.state": "Ikke beskyttet",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtreringstjenesten svarer ikke. Kontroller at den kjører.",
+  "hero.WATCHDOG_GAVE_UP.state": "Tjenesten stoppet",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatisk omstart mislyktes. Start programmet på nytt manuelt.",
+  "hero.WATCHDOG_RESTARTING.state": "Gjenoppretter…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtreringstjenesten starter på nytt. Vennligst vent noen sekunder.",
+  "hero.OFFLINE.state": "Ingen internettforbindelse",
+  "hero.OFFLINE.detail": "Navneoppløsning er satt på pause til forbindelsen er gjenopprettet.",
+  "hero.PAUSED.state": "Filtrering satt på pause",
+  "hero.PAUSED.detail": "DNS fungerer, men uten filteret: kvorum og GeoIP er slått av. Dine egne blokkerings-/tillatelseslister gjelder fortsatt. Gjenoppta fra menyen til systemstatusfeltikonet.",
+  "hero.NO_PROVIDERS.state": "Ikke beskyttet",
+  "hero.NO_PROVIDERS.detail": "Filtrering er slått av — ingen leverandør er aktiv.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifikat ikke installert",
+  "hero.CERT_NOT_TRUSTED.detail": "Det lokale sertifikatet er ikke lagt til i de klarerte rotsertifikatene. Uten det vil ikke nettleseren stole på innstillingssiden.",
+  "hero.CERT_UNKNOWN.state": "Sertifikat ikke kontrollert",
+  "hero.CERT_UNKNOWN.detail": "Kunne ikke bekrefte statusen til det lokale sertifikatet.",
+  "hero.PROTECTED.state": "Beskyttet",
+  "hero.PROTECTED.detail": "Filtrering er aktiv.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrering er aktiv. {blocked} blokkert i den gjeldende loggen.",
+  "zoneDomainCount": {
+    "one": "{n} domene",
+    "other": "{n} domener"
+  }
+}

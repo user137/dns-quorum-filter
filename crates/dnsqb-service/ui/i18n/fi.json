@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Kieli",
+  "fieldHelp.providers": "Jokainen käytössä oleva palveluntarjoaja tarkistaa verkkotunnuksen itsenäisesti; jos edes yksi sanoo „block“, kvorumi estää (TAI-logiikka). Useampi tarjoaja tarkoittaa laajempaa kattavuutta, mutta myös useammat kolmannet osapuolet näkevät kyselysi.",
+  "fieldHelp.timeoutMode": "Miten kohdellaan tarjoajaa, joka ei vastannut ajoissa. „fail_open“ (oletus) — päästetään läpi, käsitellään turvallisena; „fail_closed“ — estetään; „degraded“ — kuten fail_open, mutta merkitsee päätöksen lokissa nimenomaisesti puutteelliseksi.",
+  "fieldHelp.cache": "Välimuistimerkinnän min./maks. elinaika (rajoittaa tarjoajan omaa TTL:ää), kuinka kauan „estetty“-päätös säilytetään, ja kuinka monta merkintää välimuisti pitää kerrallaan ennen vanhimpien poistamista.",
+  "fieldHelp.overrides": "Omat poikkeuksesi kvorumin lisäksi: sallittujen lista sallii aina, estettyjen lista estää aina, riippumatta tarjoajien vastauksesta. Jos listat ovat ristiriidassa, sallittujen lista voittaa.",
+  "fieldHelp.logFilters": "Haku ja suodattimet toimivat vain nykyisen lokiaikaikkunan sisällä — viimeiset ~1000 kyselyä tai 24 tuntia; vanhempia merkintöjä ei enää säilytetä.",
+  "hero.SERVICE_UNREACHABLE.state": "Ei suojattu",
+  "hero.SERVICE_UNREACHABLE.detail": "Suodatuspalvelu ei vastaa. Tarkista, että se on käynnissä.",
+  "hero.WATCHDOG_GAVE_UP.state": "Palvelu pysähtyi",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automaattinen uudelleenkäynnistys epäonnistui. Käynnistä sovellus uudelleen manuaalisesti.",
+  "hero.WATCHDOG_RESTARTING.state": "Palautetaan…",
+  "hero.WATCHDOG_RESTARTING.detail": "Suodatuspalvelua käynnistetään uudelleen. Odota hetki.",
+  "hero.OFFLINE.state": "Ei internetyhteyttä",
+  "hero.OFFLINE.detail": "Nimenselvitys on keskeytetty, kunnes yhteys palautuu.",
+  "hero.PAUSED.state": "Suodatus keskeytetty",
+  "hero.PAUSED.detail": "DNS toimii, mutta ilman suodatinta: kvorumi ja GeoIP ovat pois käytöstä. Omat esto-/salluslistasi ovat yhä voimassa. Jatka tarjottimen kuvakkeen valikosta.",
+  "hero.NO_PROVIDERS.state": "Ei suojattu",
+  "hero.NO_PROVIDERS.detail": "Suodatus on pois käytöstä — yksikään tarjoaja ei ole aktiivinen.",
+  "hero.CERT_NOT_TRUSTED.state": "Varmennetta ei ole asennettu",
+  "hero.CERT_NOT_TRUSTED.detail": "Paikallista varmennetta ei ole lisätty luotettuihin juurivarmenteisiin. Ilman sitä selain ei luota asetussivuun.",
+  "hero.CERT_UNKNOWN.state": "Varmennetta ei tarkistettu",
+  "hero.CERT_UNKNOWN.detail": "Paikallisen varmenteen tilaa ei voitu vahvistaa.",
+  "hero.PROTECTED.state": "Suojattu",
+  "hero.PROTECTED.detail": "Suodatus on käytössä.",
+  "hero.PROTECTED.detailWithBlocked": "Suodatus on käytössä. {blocked} estetty nykyisessä lokissa.",
+  "zoneDomainCount": {
+    "one": "{n} verkkotunnus",
+    "other": "{n} verkkotunnusta"
+  }
+}

@@ -220,4 +220,13 @@ TASKS-DONE.md, never here.
   See T-233 in `TASKS-DONE.md` (closed 2026-09-18, all three planned parts shipped) for the full
   threat-model writeup; the one remaining structural gap (small-domain injection) is tracked as
   T-234 in `TASKS.md`'s backlog.
+- **i18n locale dictionaries (T-236) — 35 of 37 are machine-translated, not natively reviewed.**
+  `uk`/`en` predate T-236 (Батч 5.2) and were reviewed then; the other 35 `ui/i18n/*.json` files
+  were translated by Claude with a self-review pass covering structural correctness only (glossary
+  consistency, JSON validity, the measured `Intl.PluralRules` category shape) — not idiomatic
+  quality or register, which only a native speaker can confirm. See `ui/i18n/GLOSSARY.md`'s own
+  closing note. Also: `ar`/`he`/`ur` (RTL) get a correct `document.dir` but not a mirrored
+  flex/grid layout — text reads right-to-left correctly, but component layout (the locale
+  switcher, cards, buttons) stays left-to-right-oriented; full RTL mirroring via CSS logical
+  properties is unscoped future work.
 

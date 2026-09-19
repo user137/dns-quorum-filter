@@ -1,0 +1,33 @@
+{
+  "localeSwitcher.label": "Jazyk",
+  "fieldHelp.providers": "Každý zapnutý poskytovatel kontroluje doménu nezávisle; pokud alespoň jeden řekne „block“, kvorum blokuje (logika NEBO). Více poskytovatelů znamená širší pokrytí, ale více třetích stran vidí vaše dotazy.",
+  "fieldHelp.timeoutMode": "Jak zacházet s poskytovatelem, který včas neodpověděl. „fail_open“ (výchozí) — propustit, považovat za bezpečné; „fail_closed“ — blokovat; „degraded“ — jako fail_open, ale v deníku je rozhodnutí výslovně označeno jako neúplné.",
+  "fieldHelp.cache": "Min./max. doba života položky mezipaměti (omezuje vlastní TTL poskytovatele), jak dlouho se uchovává verdikt „blokováno“ a kolik položek mezipaměť drží najednou, než začne odstraňovat nejstarší.",
+  "fieldHelp.overrides": "Vlastní výjimky nad rámec kvora: allowlist vždy povoluje, blocklist vždy blokuje, bez ohledu na odpověď poskytovatelů. Při konfliktu mezi seznamy vyhrává allowlist.",
+  "fieldHelp.logFilters": "Hledání a filtry fungují pouze v rámci aktuálního okna deníku — posledních ~1000 dotazů nebo 24 hodin; starší záznamy se již neuchovávají.",
+  "hero.SERVICE_UNREACHABLE.state": "Nechráněno",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtrovací služba neodpovídá. Zkontrolujte, zda běží.",
+  "hero.WATCHDOG_GAVE_UP.state": "Služba zastavena",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatický restart selhal. Restartujte aplikaci ručně.",
+  "hero.WATCHDOG_RESTARTING.state": "Obnovování…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtrovací služba se restartuje. Počkejte prosím pár vteřin.",
+  "hero.OFFLINE.state": "Bez připojení k internetu",
+  "hero.OFFLINE.detail": "Rozpoznávání jmen je pozastaveno, dokud se připojení neobnoví.",
+  "hero.PAUSED.state": "Filtrování pozastaveno",
+  "hero.PAUSED.detail": "DNS funguje, ale bez filtru: kvorum a GeoIP jsou vypnuté. Vaše vlastní seznamy blokování/povolení stále platí. Obnovte z nabídky ikony v systémové liště.",
+  "hero.NO_PROVIDERS.state": "Nechráněno",
+  "hero.NO_PROVIDERS.detail": "Filtrování je vypnuté — žádný poskytovatel není aktivní.",
+  "hero.CERT_NOT_TRUSTED.state": "Certifikát není nainstalován",
+  "hero.CERT_NOT_TRUSTED.detail": "Místní certifikát nebyl přidán mezi důvěryhodné kořenové certifikáty. Bez něj prohlížeč nebude důvěřovat stránce nastavení.",
+  "hero.CERT_UNKNOWN.state": "Certifikát nezkontrolován",
+  "hero.CERT_UNKNOWN.detail": "Stav místního certifikátu se nepodařilo ověřit.",
+  "hero.PROTECTED.state": "Chráněno",
+  "hero.PROTECTED.detail": "Filtrování je aktivní.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrování je aktivní. V aktuálním deníku blokováno {blocked}.",
+  "zoneDomainCount": {
+    "one": "{n} doména",
+    "few": "{n} domény",
+    "many": "{n} domény",
+    "other": "{n} domén"
+  }
+}

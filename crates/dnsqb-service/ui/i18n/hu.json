@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Nyelv",
+  "fieldHelp.providers": "Minden engedélyezett szolgáltató önállóan ellenőrzi a domaint; ha akár csak egy is azt mondja, „block”, a kvórum blokkol (VAGY logika). Több szolgáltató szélesebb lefedettséget jelent, de több harmadik fél is látja a lekérdezéseidet.",
+  "fieldHelp.timeoutMode": "Hogyan bánjunk egy szolgáltatóval, amely nem válaszolt időben. „fail_open” (alapértelmezett) — átengedés, biztonságosként kezelve; „fail_closed” — blokkolás; „degraded” — mint a fail_open, de a naplóban kifejezetten hiányosnak jelöli a döntést.",
+  "fieldHelp.cache": "A gyorsítótár-bejegyzés min./max. élettartama (korlátozza a szolgáltató saját TTL-jét), meddig őrzi meg a „blokkolva” ítéletet, és hány bejegyzést tart egyszerre a gyorsítótár, mielőtt elkezdi eltávolítani a legrégebbieket.",
+  "fieldHelp.overrides": "Saját kivételeid a kvórum felett: az engedélyezőlista mindig enged, a tiltólista mindig blokkol, függetlenül attól, mit mondanak a szolgáltatók. A két lista közötti ütközés esetén az engedélyezőlista nyer.",
+  "fieldHelp.logFilters": "A keresés és a szűrők csak az aktuális naplóablakon belül működnek — az utolsó ~1000 lekérdezés vagy 24 óra; a régebbi bejegyzéseket már nem őrzi meg.",
+  "hero.SERVICE_UNREACHABLE.state": "Nincs védve",
+  "hero.SERVICE_UNREACHABLE.detail": "A szűrőszolgáltatás nem válaszol. Ellenőrizd, hogy fut-e.",
+  "hero.WATCHDOG_GAVE_UP.state": "A szolgáltatás leállt",
+  "hero.WATCHDOG_GAVE_UP.detail": "Az automatikus újraindítás sikertelen volt. Indítsd újra manuálisan az alkalmazást.",
+  "hero.WATCHDOG_RESTARTING.state": "Helyreállítás…",
+  "hero.WATCHDOG_RESTARTING.detail": "A szűrőszolgáltatás újraindul. Kérjük, várj néhány másodpercet.",
+  "hero.OFFLINE.state": "Nincs internetkapcsolat",
+  "hero.OFFLINE.detail": "A névfeloldás szüneteltetve van, amíg a kapcsolat helyre nem áll.",
+  "hero.PAUSED.state": "Szűrés szüneteltetve",
+  "hero.PAUSED.detail": "A DNS működik, de szűrő nélkül: a kvórum és a GeoIP ki van kapcsolva. A saját tiltó-/engedélyezőlistáid továbbra is érvényesek. Folytatás a tálca ikonjának menüjéből.",
+  "hero.NO_PROVIDERS.state": "Nincs védve",
+  "hero.NO_PROVIDERS.detail": "A szűrés ki van kapcsolva — egyetlen szolgáltató sem aktív.",
+  "hero.CERT_NOT_TRUSTED.state": "A tanúsítvány nincs telepítve",
+  "hero.CERT_NOT_TRUSTED.detail": "A helyi tanúsítvány nincs hozzáadva a megbízható gyökértanúsítványokhoz. Enélkül a böngésző nem fog megbízni a beállítások oldalban.",
+  "hero.CERT_UNKNOWN.state": "A tanúsítvány nincs ellenőrizve",
+  "hero.CERT_UNKNOWN.detail": "Nem sikerült ellenőrizni a helyi tanúsítvány állapotát.",
+  "hero.PROTECTED.state": "Védve",
+  "hero.PROTECTED.detail": "A szűrés aktív.",
+  "hero.PROTECTED.detailWithBlocked": "A szűrés aktív. {blocked} blokkolva az aktuális naplóban.",
+  "zoneDomainCount": {
+    "one": "{n} domain",
+    "other": "{n} domain"
+  }
+}

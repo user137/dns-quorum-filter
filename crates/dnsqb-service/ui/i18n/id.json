@@ -1,0 +1,30 @@
+{
+  "localeSwitcher.label": "Bahasa",
+  "fieldHelp.providers": "Setiap penyedia yang diaktifkan memeriksa domain secara independen; jika bahkan satu saja mengatakan «block», kuorum memblokir (logika OR). Lebih banyak penyedia berarti cakupan lebih luas, tetapi lebih banyak pihak ketiga melihat kueri Anda.",
+  "fieldHelp.timeoutMode": "Cara memperlakukan penyedia yang tidak merespons tepat waktu. «fail_open» (default) — teruskan, memperlakukannya sebagai aman; «fail_closed» — blokir; «degraded» — seperti fail_open, tetapi secara eksplisit menandai keputusan sebagai tidak lengkap di log.",
+  "fieldHelp.cache": "Umur min./maks. entri cache (membatasi TTL milik penyedia sendiri), berapa lama menyimpan putusan «diblokir», dan berapa banyak entri yang ditampung cache sekaligus sebelum mulai menghapus yang tertua.",
+  "fieldHelp.overrides": "Pengecualian Anda sendiri di atas kuorum: allowlist selalu mengizinkan, blocklist selalu memblokir, terlepas dari apa yang dikatakan penyedia. Jika terjadi konflik antara kedua daftar, allowlist menang.",
+  "fieldHelp.logFilters": "Pencarian dan filter hanya berlaku dalam jendela log saat ini — ~1000 kueri terakhir atau 24 jam; entri yang lebih lama tidak lagi disimpan.",
+  "hero.SERVICE_UNREACHABLE.state": "Tidak terlindungi",
+  "hero.SERVICE_UNREACHABLE.detail": "Layanan pemfilteran tidak merespons. Periksa apakah layanan berjalan.",
+  "hero.WATCHDOG_GAVE_UP.state": "Layanan berhenti",
+  "hero.WATCHDOG_GAVE_UP.detail": "Mulai ulang otomatis gagal. Mulai ulang aplikasi secara manual.",
+  "hero.WATCHDOG_RESTARTING.state": "Memulihkan…",
+  "hero.WATCHDOG_RESTARTING.detail": "Layanan pemfilteran sedang dimulai ulang. Harap tunggu beberapa detik.",
+  "hero.OFFLINE.state": "Tidak ada koneksi internet",
+  "hero.OFFLINE.detail": "Resolusi dijeda hingga koneksi pulih.",
+  "hero.PAUSED.state": "Pemfilteran dijeda",
+  "hero.PAUSED.detail": "DNS berfungsi, tetapi tanpa filter: kuorum dan GeoIP dinonaktifkan. Daftar blokir/izin Anda sendiri masih berlaku. Lanjutkan dari menu ikon baki sistem.",
+  "hero.NO_PROVIDERS.state": "Tidak terlindungi",
+  "hero.NO_PROVIDERS.detail": "Pemfilteran dinonaktifkan — tidak ada penyedia yang aktif.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifikat belum terpasang",
+  "hero.CERT_NOT_TRUSTED.detail": "Sertifikat lokal belum ditambahkan ke sertifikat root tepercaya. Tanpa itu, browser tidak akan memercayai halaman pengaturan.",
+  "hero.CERT_UNKNOWN.state": "Sertifikat belum diperiksa",
+  "hero.CERT_UNKNOWN.detail": "Tidak dapat memverifikasi status sertifikat lokal.",
+  "hero.PROTECTED.state": "Terlindungi",
+  "hero.PROTECTED.detail": "Pemfilteran aktif.",
+  "hero.PROTECTED.detailWithBlocked": "Pemfilteran aktif. {blocked} diblokir dalam log saat ini.",
+  "zoneDomainCount": {
+    "other": "{n} domain"
+  }
+}

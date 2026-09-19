@@ -1,0 +1,30 @@
+{
+  "localeSwitcher.label": "Ngôn ngữ",
+  "fieldHelp.providers": "Mỗi nhà cung cấp được bật sẽ kiểm tra tên miền một cách độc lập; nếu chỉ một cũng nói «block», quorum sẽ chặn (logic OR). Nhiều nhà cung cấp hơn nghĩa là phạm vi bao phủ rộng hơn, nhưng cũng có nhiều bên thứ ba hơn nhìn thấy các truy vấn của bạn.",
+  "fieldHelp.timeoutMode": "Cách xử lý nhà cung cấp không phản hồi kịp thời. «fail_open» (mặc định) — cho qua, coi là an toàn; «fail_closed» — chặn; «degraded» — giống fail_open, nhưng đánh dấu rõ ràng quyết định là chưa hoàn chỉnh trong nhật ký.",
+  "fieldHelp.cache": "Thời gian tồn tại tối thiểu/tối đa của một mục trong bộ nhớ đệm (giới hạn TTL riêng của nhà cung cấp), thời gian giữ phán quyết «đã chặn», và số mục bộ nhớ đệm giữ cùng lúc trước khi bắt đầu loại bỏ mục cũ nhất.",
+  "fieldHelp.overrides": "Các ngoại lệ riêng của bạn nằm trên quorum: danh sách cho phép luôn cho phép, danh sách chặn luôn chặn, bất kể các nhà cung cấp nói gì. Khi có xung đột giữa hai danh sách, danh sách cho phép thắng.",
+  "fieldHelp.logFilters": "Tìm kiếm và bộ lọc chỉ hoạt động trong cửa sổ nhật ký hiện tại — khoảng 1000 truy vấn gần nhất hoặc 24 giờ; các mục cũ hơn không còn được lưu giữ.",
+  "hero.SERVICE_UNREACHABLE.state": "Chưa được bảo vệ",
+  "hero.SERVICE_UNREACHABLE.detail": "Dịch vụ lọc không phản hồi. Kiểm tra xem nó có đang chạy không.",
+  "hero.WATCHDOG_GAVE_UP.state": "Dịch vụ đã dừng",
+  "hero.WATCHDOG_GAVE_UP.detail": "Khởi động lại tự động không thành công. Hãy khởi động lại ứng dụng theo cách thủ công.",
+  "hero.WATCHDOG_RESTARTING.state": "Đang khôi phục…",
+  "hero.WATCHDOG_RESTARTING.detail": "Dịch vụ lọc đang được khởi động lại. Vui lòng đợi vài giây.",
+  "hero.OFFLINE.state": "Không có kết nối internet",
+  "hero.OFFLINE.detail": "Phân giải tên đang tạm dừng cho đến khi kết nối được khôi phục.",
+  "hero.PAUSED.state": "Lọc đã tạm dừng",
+  "hero.PAUSED.detail": "DNS vẫn hoạt động, nhưng không có bộ lọc: quorum và GeoIP đã tắt. Danh sách chặn/cho phép của riêng bạn vẫn được áp dụng. Tiếp tục từ menu biểu tượng khay hệ thống.",
+  "hero.NO_PROVIDERS.state": "Chưa được bảo vệ",
+  "hero.NO_PROVIDERS.detail": "Tính năng lọc đã tắt — không có nhà cung cấp nào đang hoạt động.",
+  "hero.CERT_NOT_TRUSTED.state": "Chứng chỉ chưa được cài đặt",
+  "hero.CERT_NOT_TRUSTED.detail": "Chứng chỉ cục bộ chưa được thêm vào chứng chỉ gốc đáng tin cậy. Nếu không có nó, trình duyệt sẽ không tin tưởng trang cài đặt.",
+  "hero.CERT_UNKNOWN.state": "Chứng chỉ chưa được kiểm tra",
+  "hero.CERT_UNKNOWN.detail": "Không thể xác minh trạng thái của chứng chỉ cục bộ.",
+  "hero.PROTECTED.state": "Đã được bảo vệ",
+  "hero.PROTECTED.detail": "Tính năng lọc đang hoạt động.",
+  "hero.PROTECTED.detailWithBlocked": "Tính năng lọc đang hoạt động. {blocked} đã bị chặn trong nhật ký hiện tại.",
+  "zoneDomainCount": {
+    "other": "{n} tên miền"
+  }
+}

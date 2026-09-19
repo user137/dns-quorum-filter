@@ -6700,3 +6700,104 @@ locale пережив `F5` (localStorage); жодних консольних п�
 `cargo test --test admin_client -p dnsqb-service --locked` (7/7), `cargo test --workspace --doc
 --locked` (9/9), `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 --document-private-items --locked` — усі зелені.
+
+---
+
+**T-236 — мовний `<select>` розширено з uk+en до 37 локалей, той самий день, той самий коміт-ланцюг
+(2026-09-19), plan-mode + advisor (один раунд advisor-catch перед затвердженням).** Запит
+користувача, поза нумерованим 7-батчевим порядком Фази 5: повний переклад на інші мови, "з
+солідною підготовкою під кожну мову" — глосарій термінів **і** рев'ю-прохід (уточнено
+`AskUserQuestion`).
+
+**Джерело списку мов — знайдено, не вигадано.** Користувач послався на "список 36 мов", уже
+раз фіксований — grep по репозиторію дав лише запис у DECISIONS.md, що сам відхилив цю деталь як
+таку, що суперечила собі й не мала опори в коді (Батч 5.2, вище). Уточнено з користувачем
+(`AskUserQuestion` ×2): список — реальний, з іншого локального проєкту,
+`C:\Users\Pa\Projects\windows-archiver-wrapper\src\Archiver.Shell\Resources\
+PasswordMessages.*.resx` — рівно 36 локалізованих культур + нейтральний (англійський) ресурс.
+Зведено до базових IANA-підтегів: `ar, bg, cs, da, de, el, es, et, fi, fr, he, hi, hr, hu, id, it,
+ja, ko, lt, lv, nb, nl, pl, pt, ro, sk, sl, sr-Latn, sv, sw, th, tr, uk, ur, vi, zh` (+ `en`, уже
+наявний) = 37 `SUPPORTED_LOCALES`. `sr` навмисно НЕ bare-код (джерело — `sr-Latn-RS`, латиниця;
+`Intl.PluralRules`/`Intl.DisplayNames` для голого `sr` дефолтять на кирилицю в ICU — усічення дало
+б розбіжність зі скриптом контенту). Джерело не містить `ru` — зафіксовано як свідомо
+успадкований вибір, не недогляд.
+
+**Обсяг — лише вісь локалей, не вісь ключів.** Той самий pilot-набір ~26 ключів з Батчу 5.2
+(`localeSwitcher.label`, 5× `fieldHelp.*`, 9× `hero.<KEY>.state/.detail` +
+`hero.PROTECTED.detailWithBlocked`, `zoneDomainCount`) перекладено на 35 нових локалей (uk/en уже
+мали словники). Розширення набору ключів лишається Батчем 5.4 — дві осі свідомо не змішані.
+
+**Технічна частина — уникнення 37-разового дублювання коду (advisor-catch'і на плані):**
+1. **`admin_ui::I18N_DICTS`** — один `macro_rules!` (`i18n_dicts!`), літеральний список кодів →
+   `&[(&str, &str)]`, кожен `include_str!(concat!("../ui/i18n/", code, ".json"))`. Замінив
+   `serve_i18n_uk`/`serve_i18n_en`/`UK_I18N`/`EN_I18N` однією `serve_i18n(method, locale)` +
+   `i18n_dict(locale) -> Option<&str>`.
+2. **`dispatch::I18N_ROUTES`** — **не** сплайнено в наявний `ROUTES` (Rust-макрос не може вставити
+   N згенерованих елементів у вже написаний літерал масиву — лише повністю побудувати власний
+   вузол; спроба `&[Method::GET][..]` дала `E0658`, виправлено на `&[Method::GET] as &[Method]`,
+   без reslice). Окрема таблиця, той самий макро-підхід (`i18n_routes!`), список кодів
+   продубльовано ще раз (свідомо — щоб два виклики лишались незалежно рев'юованими). Кожен
+   споживач "усіх маршрутів" (`serve()`'s membership-перевірка, `fuzzable_routes()`,
+   `every_json_post_route_rejects_a_missing_or_wrong_content_type`) тепер `ROUTES.iter().chain
+   (I18N_ROUTES.iter())`.
+3. **Матчинг лишається точно рядковим, без парсингу шляху в рантаймі** — одна guard-гілка в
+   `serve()`'s `match path { ... }` (`p if I18N_ROUTES.iter().any(...)`) делегує в **вкладений**
+   `match p { ... }`, побудований своїм `macro_rules!` (`i18n_dispatch!`) з тим самим списком
+   кодів — увесь codegen компайл-таймовий, жодного `strip_prefix`/`strip_suffix` над `path`.
+4. **`EXPECTED_I18N_ROUTES` НЕ макрогенерується** (advisor-catch) — лишається ручним дзеркалом,
+   як і наявний `EXPECTED_ADMIN_ROUTES`, щоб тест не став тавтологією. Третій, справді незалежний
+   оракул — новий `every_i18n_json_file_is_registered_and_vice_versa`: читає реальну файлову
+   систему `ui/i18n/` (`read_dir`, фільтр на `*.json`, `GLOSSARY.md` відкинуто) і звіряє з обома
+   `I18N_DICTS`/`I18N_ROUTES` — ловить саме "файл додано, ніде не зареєстровано", чого жоден
+   ручний список не ловить структурно.
+5. **`admin_ui.rs`'s тести** — з 8 per-locale (`serve_i18n_uk_*`/`serve_i18n_en_*`/`uk_i18n_*`/
+   `en_i18n_*`) на 6 циклових по `I18N_DICTS` (валідність JSON, набір ключів == `en`'s,
+   200+`application/json` на GET, 405 на не-GET, 404 на незареєстрований код,
+   `EXPECTED_PLURAL_CATEGORIES`-таблиця з 37 рядків). `every_hero_presentation_key_has_state_and_
+   detail_in_both_locales` → `..._in_every_locale`, той самий цикл. Новий `i18n_dict(code)`-
+   акцесор тримає точкові твердження (`hero.PAUSED.state` українською) живими після рефактору
+   таблиці.
+
+**Категорії плюралізації — виміряні, не пригадані (advisor-catch на плані).** Власний recall щодо
+`es`/`fr`/`it`/`pt`'s `many`, `he`'s категорій тощо був непевний. Один `evaluate_script` у
+реальному Chrome (`chrome-devtools-mcp`): `Object.fromEntries(CODES.map(c => [c, new
+Intl.PluralRules(c).resolvedOptions().pluralCategories]))` для всіх 37 кодів — результат
+вставлено в новий `crates/dnsqb-service/ui/i18n/GLOSSARY.md` як таблиця, і саме він продиктував
+форму кожного `zoneDomainCount`-об'єкта (напр. `ar` — усі 6 категорій, `sl` — `one/two/few/other`,
+`ja`/`ko`/`th`/`vi`/`zh`/`id` — лише `other`).
+
+**Глосарій (`ui/i18n/GLOSSARY.md`, новий файл)** — не таблиця "термін × 37 мов" (дублювала б сам
+переклад), а правила: які терміни лишаються нелереведеними буквальними ідентифікаторами
+(`fail_open`/`fail_closed`/`degraded`, уже так у uk/en; `DNS`/`DoH`/`ccTLD`/`GeoIP`/`TTL`); які
+мають когнат у більшості мов (`quorum`) і як перекладати там, де когната нема; виміряна таблиця
+плюралізації вище; і **чесний дисклеймер** (Три Б) — усі 35 нових словників перекладено мовною
+моделлю, без рев'ю носія мови, із власним рев'ю-проходом, що перевірив структурну коректність
+(термінологію за глосарієм, валідність JSON, форму плюралізації), не ідіоматичність.
+
+**RTL (`ar`/`he`/`ur`).** У проєкті раніше не було жодної RTL-обробки. Обсяг цього батчу:
+`document.documentElement.dir` виставляється в `"rtl"`/`"ltr"` (нова `applyTextDirection()`,
+викликається і з bootstrap, і з `setLocale()`) — коректний напрям тексту й вирівнювання за
+замовчуванням браузера. Дзеркалення flex/grid-розкладки (перемикач мови, картки, кнопки) свідомо
+поза обсягом — окремий, набагато більший фронт роботи з CSS logical properties; зафіксовано як
+пункт у `KNOWN-LIMITATIONS.md`, не замовчено.
+
+**UX-деталь:** 37 опцій у порядку вставки нечитабельні — `populateLocaleSelect()` тепер сортує
+`SUPPORTED_LOCALES` за локалізованою назвою мови (`Intl.DisplayNames`) **поточною** локаллю
+(`localeCompare` з тим самим `CURRENT_LOCALE`), не фіксованим порядком для всіх користувачів.
+
+**Межа коміту (advisor-catch на плані) — два окремі комміти, не один.** Коміт 1: уся технічна
+частина (пункти 1-5 вище) + рівно дві нові тестові локалі (`de` — базовий `one/other`, `pl` —
+складніший `one/few/many/other`) як smoke-пара, підтверджуюча макро-підхід перед масштабуванням
+контенту. Зелений `cargo build`/`test`/`clippy`/`fmt` + усі 4 CI-parity гейти → закомічено окремо
+(`74f0649`). Коміт 2: решта 33 перекладів + `GLOSSARY.md` (з виміряною таблицею) + `main.js`
+(сортування `<select>`, RTL) + вся документація нижче.
+
+**Верифікація (обидва комміти):** `cargo build -p dnsqb-service --lib`, `cargo test -p
+dnsqb-service --lib` (усі i18n/admin_ui/dispatch-тести, включно з `every_locale_has_the_same_
+top_level_key_set_as_en`/`every_locale_zone_domain_count_has_its_measured_plural_categories`/
+`every_hero_presentation_key_has_state_and_detail_in_every_locale` по всіх 37 локалях), `cargo test
+--workspace --lib --bins` (944, без змін у кількості — 9 старих per-locale тестів замінено на 9
+циклових), `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`,
+`cargo test --test conformance -p dnsqb-service` (18/18), `cargo test --test admin_client -p
+dnsqb-service` (7/7), `cargo test --workspace --doc --locked` (9/9), `RUSTDOCFLAGS="-D warnings"
+cargo doc --workspace --no-deps --document-private-items` — усі зелені, без правок коду.

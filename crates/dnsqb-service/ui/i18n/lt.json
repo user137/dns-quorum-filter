@@ -1,0 +1,33 @@
+{
+  "localeSwitcher.label": "Kalba",
+  "fieldHelp.providers": "Kiekvienas įjungtas teikėjas tikrina domeną nepriklausomai; jei nors vienas sako „block“, kvorumas blokuoja (ARBA logika). Daugiau teikėjų reiškia platesnę aprėptį, bet ir daugiau trečiųjų šalių mato jūsų užklausas.",
+  "fieldHelp.timeoutMode": "Kaip elgtis su teikėju, kuris neatsakė laiku. „fail_open“ (numatytasis) — praleisti, laikant saugiu; „fail_closed“ — blokuoti; „degraded“ — kaip fail_open, bet žurnale sprendimas aiškiai pažymimas kaip neišsamus.",
+  "fieldHelp.cache": "Mažiausia/didžiausia talpyklos įrašo gyvavimo trukmė (apriboja paties teikėjo TTL), kiek laiko saugomas „blokuota“ sprendimas, ir kiek įrašų talpykla laiko vienu metu, kol pradeda šalinti seniausius.",
+  "fieldHelp.overrides": "Jūsų pačių išimtys virš kvorumo: leidžiamų sąrašas visada leidžia, blokuojamų sąrašas visada blokuoja, nepaisant to, ką sako teikėjai. Kilus konfliktui tarp dviejų sąrašų, laimi leidžiamų sąrašas.",
+  "fieldHelp.logFilters": "Paieška ir filtrai veikia tik dabartiniame žurnalo lange — pastarosiose ~1000 užklausų arba per 24 valandas; senesni įrašai nebesaugomi.",
+  "hero.SERVICE_UNREACHABLE.state": "Neapsaugota",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtravimo paslauga neatsako. Patikrinkite, ar ji veikia.",
+  "hero.WATCHDOG_GAVE_UP.state": "Paslauga sustabdyta",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatinis paleidimas iš naujo nepavyko. Paleiskite programą iš naujo rankiniu būdu.",
+  "hero.WATCHDOG_RESTARTING.state": "Atkuriama…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtravimo paslauga paleidžiama iš naujo. Palaukite kelias sekundes.",
+  "hero.OFFLINE.state": "Nėra interneto ryšio",
+  "hero.OFFLINE.detail": "Vardų skyra pristabdyta, kol ryšys bus atkurtas.",
+  "hero.PAUSED.state": "Filtravimas pristabdytas",
+  "hero.PAUSED.detail": "DNS veikia, bet be filtro: kvorumas ir GeoIP išjungti. Jūsų pačių blokavimo/leidimo sąrašai vis dar galioja. Tęskite iš dėklo piktogramos meniu.",
+  "hero.NO_PROVIDERS.state": "Neapsaugota",
+  "hero.NO_PROVIDERS.detail": "Filtravimas išjungtas — nėra aktyvaus teikėjo.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifikatas neįdiegtas",
+  "hero.CERT_NOT_TRUSTED.detail": "Vietinis sertifikatas nepridėtas prie patikimų šakninių sertifikatų. Be jo naršyklė nepasitikės nustatymų puslapiu.",
+  "hero.CERT_UNKNOWN.state": "Sertifikatas nepatikrintas",
+  "hero.CERT_UNKNOWN.detail": "Nepavyko patikrinti vietinio sertifikato būsenos.",
+  "hero.PROTECTED.state": "Apsaugota",
+  "hero.PROTECTED.detail": "Filtravimas aktyvus.",
+  "hero.PROTECTED.detailWithBlocked": "Filtravimas aktyvus. Dabartiniame žurnale užblokuota {blocked}.",
+  "zoneDomainCount": {
+    "one": "{n} domenas",
+    "few": "{n} domenai",
+    "many": "{n} domeno",
+    "other": "{n} domenų"
+  }
+}

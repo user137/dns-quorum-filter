@@ -8,8 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Батч 5.1 (ccTLD-block backend: pure core, `[cctld_block]` config, `POST /admin/cctld-block`,
 pipeline step 3, `DecisionSource::CctldBlock`) shipped 2026-09-19. Батч 5.2 (i18n infra: flat
 per-locale JSON dictionaries, `t()`/`tPlural()`, `/admin/ui/i18n/{uk,en}.json`, pilot-migrated
-FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19; T-118 (ccTLD UI) now
-unblocked, next per the agreed 7-batch order (`TASKS.md`). Фаза 7 (T-218, public blocklist bundles)
+FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19. T-236 (same day, user
+request — grew the locale switcher from uk+en to the full 37-locale set a real sibling project's
+`.resx` culture list supplies; same pilot key set, not a new one — see `ui/i18n/GLOSSARY.md` and
+DECISIONS.md) shipped 2026-09-19; T-118 (ccTLD UI) now unblocked, next per the agreed 7-batch order
+(`TASKS.md`). Фаза 7 (T-218, public blocklist bundles)
 fully closed 2026-09-17 — full `AppState`/pipeline/admin-route/DTO/`/admin/ui` stack shipped
 across Батчі 7.1-7.4 (part 3 being the `#blocklist-bundles-body` card render, mockup's own open
 questions on Артборд F resolved by taking the mockup itself as the approved design). Фаза 4
@@ -137,9 +140,11 @@ collapses to `UNKNOWN` on the wire), a cache kept warm by the detached `cert_wat
 `certutil` per call → **not** in `FUZZ_EXCLUDED_ROUTES`) + `POST /admin/install-cert`
 (`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
 `CurrentUser\Root` like `/admin/uninstall-local-state`; **stays** in `FUZZ_EXCLUDED_ROUTES` — mutating);
-`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/i18n/uk.json`,
-`/admin/ui/i18n/en.json` (T-151 Батч 5.2 — two literal routes, not one parameterized, mirroring
-`main.js`/`style.css`'s own shape). Also on the same listener but
+`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/i18n/<locale>.json` for 37
+supported locales (T-151 Батч 5.2 shipped uk+en as two literal routes; T-236 grew the same
+macro-generated table to the full list — `admin_ui::I18N_DICTS`/`dispatch::I18N_ROUTES`,
+`ui/i18n/GLOSSARY.md` — still exact-string matching, never path-parameterized). Also on the same
+listener but
 **not** an admin route: `GET /health` (watchdog channel 3 — no CSRF gate, read-only,
 `HealthResponse { active_providers, geoip }`; the 200 itself is the health signal). The MaxMind
 creds are their own OS secret-store entry with a single writer (that one POST route), not part of
@@ -488,6 +493,7 @@ entry there, not here, on the same trigger CLAUDE.md's own maintenance rule alre
 | `CLAUDE.md` | agent-facing summary: commands, architecture at a glance | architecture/commands change |
 | `RUST-GOTCHAS.md` | non-obvious Rust/tooling gotchas learned by doing — split out of `CLAUDE.md` once it became that file's single largest section | a new empirically-verified gotcha is worth not re-deriving next time |
 | `KNOWN-LIMITATIONS.md` | live limitations in shipped code, no task number unless noted — split out of `CLAUDE.md`'s `Project state` once it became the fastest-growing section | a finished task leaves a live limitation behind (narrative still goes to `TASKS-DONE.md`) |
+| `crates/dnsqb-service/ui/i18n/GLOSSARY.md` | i18n translation rules for the pilot key set: untranslated terms, per-locale term conventions, the measured `Intl.PluralRules` category table, the `sr`-vs-`sr-Latn` rationale | a new locale is added, or a translation convention changes |
 | `TASKS.md` | open backlog — status only, no reasoning | a task starts or gets added |
 | `TASKS-DONE.md` | completed tasks, moved out of `TASKS.md` on finish, same format + a one-line implementation note per task | a task finishes |
 | `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |

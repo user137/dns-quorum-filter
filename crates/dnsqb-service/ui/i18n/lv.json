@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "Valoda",
+  "fieldHelp.providers": "Katrs iespējotais nodrošinātājs pārbauda domēnu neatkarīgi; ja kaut viens saka „block“, kvorums bloķē (VAI loģika). Vairāk nodrošinātāju nozīmē plašāku pārklājumu, bet arī vairāk trešo pušu redz jūsu vaicājumus.",
+  "fieldHelp.timeoutMode": "Kā izturēties pret nodrošinātāju, kas neatbildēja laikā. „fail_open“ (noklusējums) — ļaut cauri, uzskatot par drošu; „fail_closed“ — bloķēt; „degraded“ — tāpat kā fail_open, bet žurnālā lēmums tiek skaidri atzīmēts kā nepilnīgs.",
+  "fieldHelp.cache": "Kešatmiņas ieraksta min./maks. dzīves ilgums (ierobežo paša nodrošinātāja TTL), cik ilgi tiek saglabāts „bloķēts“ vērdikts, un cik ierakstu kešatmiņa vienlaikus tur, pirms sāk izņemt vecākos.",
+  "fieldHelp.overrides": "Jūsu pašu izņēmumi virs kvoruma: atļauju saraksts vienmēr atļauj, bloķēšanas saraksts vienmēr bloķē, neatkarīgi no tā, ko saka nodrošinātāji. Konflikta gadījumā starp abiem sarakstiem uzvar atļauju saraksts.",
+  "fieldHelp.logFilters": "Meklēšana un filtri darbojas tikai pašreizējā žurnāla logā — pēdējie ~1000 vaicājumi vai 24 stundas; vecāki ieraksti vairs netiek saglabāti.",
+  "hero.SERVICE_UNREACHABLE.state": "Neaizsargāts",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtrēšanas pakalpojums neatbild. Pārbaudiet, vai tas darbojas.",
+  "hero.WATCHDOG_GAVE_UP.state": "Pakalpojums apturēts",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automātiskā restartēšana neizdevās. Restartējiet lietotni manuāli.",
+  "hero.WATCHDOG_RESTARTING.state": "Atjauno…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtrēšanas pakalpojums tiek restartēts. Lūdzu, uzgaidiet dažas sekundes.",
+  "hero.OFFLINE.state": "Nav interneta savienojuma",
+  "hero.OFFLINE.detail": "Vārdu izšķirtspēja ir pauzēta, līdz tiks atjaunots savienojums.",
+  "hero.PAUSED.state": "Filtrēšana pauzēta",
+  "hero.PAUSED.detail": "DNS darbojas, bet bez filtra: kvorums un GeoIP ir izslēgti. Jūsu pašu bloķēšanas/atļauju saraksti joprojām ir spēkā. Atsāciet no ikonjoslas ikonas izvēlnes.",
+  "hero.NO_PROVIDERS.state": "Neaizsargāts",
+  "hero.NO_PROVIDERS.detail": "Filtrēšana ir izslēgta — neviens nodrošinātājs nav aktīvs.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifikāts nav instalēts",
+  "hero.CERT_NOT_TRUSTED.detail": "Vietējais sertifikāts nav pievienots uzticamo saknes sertifikātu sarakstam. Bez tā pārlūks neuzticēsies iestatījumu lapai.",
+  "hero.CERT_UNKNOWN.state": "Sertifikāts nav pārbaudīts",
+  "hero.CERT_UNKNOWN.detail": "Neizdevās pārbaudīt vietējā sertifikāta statusu.",
+  "hero.PROTECTED.state": "Aizsargāts",
+  "hero.PROTECTED.detail": "Filtrēšana ir aktīva.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrēšana ir aktīva. Pašreizējā žurnālā bloķēti {blocked}.",
+  "zoneDomainCount": {
+    "zero": "nav domēnu",
+    "one": "{n} domēns",
+    "other": "{n} domēni"
+  }
+}

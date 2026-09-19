@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "Jezik",
+  "fieldHelp.providers": "Svaki uključeni provajder proverava domen nezavisno; ako makar jedan kaže „block“, kvorum blokira (ILI logika). Više provajdera znači širu pokrivenost, ali i više trećih strana vidi vaše upite.",
+  "fieldHelp.timeoutMode": "Kako se tretira provajder koji nije odgovorio na vreme. „fail_open“ (podrazumevano) — propustiti, tretirajući ga kao bezbednog; „fail_closed“ — blokirati; „degraded“ — kao fail_open, ali izričito označava odluku kao nepotpunu u dnevniku.",
+  "fieldHelp.cache": "Min./maks. vek trajanja unosa u kešu (ograničava sopstveni TTL provajdera), koliko dugo se čuva presuda „blokirano“, i koliko unosa keš drži istovremeno pre nego što počne da uklanja najstarije.",
+  "fieldHelp.overrides": "Vaši sopstveni izuzeci iznad kvoruma: lista dozvoljenih uvek dozvoljava, lista blokiranih uvek blokira, bez obzira šta kažu provajderi. Kod sukoba između dve liste, pobeđuje lista dozvoljenih.",
+  "fieldHelp.logFilters": "Pretraga i filteri deluju samo unutar trenutnog prozora dnevnika — poslednjih ~1000 upita ili 24 sata; stariji unosi se više ne čuvaju.",
+  "hero.SERVICE_UNREACHABLE.state": "Nezaštićeno",
+  "hero.SERVICE_UNREACHABLE.detail": "Usluga filtriranja ne odgovara. Proverite da li je pokrenuta.",
+  "hero.WATCHDOG_GAVE_UP.state": "Usluga zaustavljena",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatsko ponovno pokretanje nije uspelo. Ručno ponovo pokrenite aplikaciju.",
+  "hero.WATCHDOG_RESTARTING.state": "Oporavak…",
+  "hero.WATCHDOG_RESTARTING.detail": "Usluga filtriranja se ponovo pokreće. Sačekajte nekoliko sekundi.",
+  "hero.OFFLINE.state": "Nema internet veze",
+  "hero.OFFLINE.detail": "Razrešavanje je pauzirano dok se veza ne uspostavi.",
+  "hero.PAUSED.state": "Filtriranje pauzirano",
+  "hero.PAUSED.detail": "DNS radi, ali bez filtera: kvorum i GeoIP su isključeni. Vaše sopstvene liste blokiranja/dozvoljavanja i dalje važe. Nastavite iz menija ikone u sistemskoj traci.",
+  "hero.NO_PROVIDERS.state": "Nezaštićeno",
+  "hero.NO_PROVIDERS.detail": "Filtriranje je isključeno — nijedan provajder nije aktivan.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifikat nije instaliran",
+  "hero.CERT_NOT_TRUSTED.detail": "Lokalni sertifikat nije dodat u pouzdane korenske sertifikate. Bez njega pregledač neće verovati stranici podešavanja.",
+  "hero.CERT_UNKNOWN.state": "Sertifikat nije proveren",
+  "hero.CERT_UNKNOWN.detail": "Status lokalnog sertifikata nije bilo moguće proveriti.",
+  "hero.PROTECTED.state": "Zaštićeno",
+  "hero.PROTECTED.detail": "Filtriranje je aktivno.",
+  "hero.PROTECTED.detailWithBlocked": "Filtriranje je aktivno. {blocked} blokirano u trenutnom dnevniku.",
+  "zoneDomainCount": {
+    "one": "{n} domen",
+    "few": "{n} domena",
+    "other": "{n} domena"
+  }
+}

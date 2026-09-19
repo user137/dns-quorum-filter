@@ -1,0 +1,30 @@
+{
+  "localeSwitcher.label": "언어",
+  "fieldHelp.providers": "활성화된 각 제공자가 독립적으로 도메인을 확인합니다. 단 하나라도 「block」이라고 하면 쿼럼이 차단합니다(OR 논리). 제공자가 많을수록 범위는 넓어지지만, 더 많은 제3자가 쿼리를 보게 됩니다.",
+  "fieldHelp.timeoutMode": "제시간에 응답하지 않은 제공자를 처리하는 방법. 「fail_open」(기본값) — 통과시키고 안전한 것으로 간주; 「fail_closed」— 차단; 「degraded」— fail_open과 같지만 로그에서 결정을 명시적으로 불완전한 것으로 표시함.",
+  "fieldHelp.cache": "캐시 항목의 최소/최대 수명(제공자 자체 TTL을 제한함), 「차단됨」 판정을 얼마나 유지할지, 그리고 가장 오래된 항목을 제거하기 시작하기 전에 캐시가 한 번에 보유하는 항목 수.",
+  "fieldHelp.overrides": "쿼럼 위에 있는 자체 예외: 허용 목록은 항상 허용하고, 차단 목록은 제공자의 판정과 관계없이 항상 차단합니다. 두 목록이 충돌할 경우 허용 목록이 우선합니다.",
+  "fieldHelp.logFilters": "검색과 필터는 현재 로그 창 내에서만 작동합니다 — 최근 약 1000개의 쿼리 또는 24시간; 이전 항목은 더 이상 보관되지 않습니다.",
+  "hero.SERVICE_UNREACHABLE.state": "보호되지 않음",
+  "hero.SERVICE_UNREACHABLE.detail": "필터링 서비스가 응답하지 않습니다. 실행 중인지 확인하세요.",
+  "hero.WATCHDOG_GAVE_UP.state": "서비스가 중지됨",
+  "hero.WATCHDOG_GAVE_UP.detail": "자동 재시작이 실패했습니다. 애플리케이션을 수동으로 재시작하세요.",
+  "hero.WATCHDOG_RESTARTING.state": "복구 중…",
+  "hero.WATCHDOG_RESTARTING.detail": "필터링 서비스를 재시작하는 중입니다. 몇 초만 기다려 주세요.",
+  "hero.OFFLINE.state": "인터넷 연결 없음",
+  "hero.OFFLINE.detail": "연결이 복원될 때까지 이름 확인이 일시 중지됩니다.",
+  "hero.PAUSED.state": "필터링 일시 중지됨",
+  "hero.PAUSED.detail": "DNS는 작동하지만 필터는 없습니다: 쿼럼과 GeoIP가 꺼져 있습니다. 자체 차단/허용 목록은 계속 적용됩니다. 트레이 아이콘 메뉴에서 재개하세요.",
+  "hero.NO_PROVIDERS.state": "보호되지 않음",
+  "hero.NO_PROVIDERS.detail": "필터링이 꺼져 있습니다 — 활성 제공자가 없습니다.",
+  "hero.CERT_NOT_TRUSTED.state": "인증서가 설치되지 않음",
+  "hero.CERT_NOT_TRUSTED.detail": "로컬 인증서가 신뢰할 수 있는 루트 인증서에 추가되지 않았습니다. 이것이 없으면 브라우저가 설정 페이지를 신뢰하지 않습니다.",
+  "hero.CERT_UNKNOWN.state": "인증서가 확인되지 않음",
+  "hero.CERT_UNKNOWN.detail": "로컬 인증서의 상태를 확인할 수 없습니다.",
+  "hero.PROTECTED.state": "보호됨",
+  "hero.PROTECTED.detail": "필터링이 활성 상태입니다.",
+  "hero.PROTECTED.detailWithBlocked": "필터링이 활성 상태입니다. 현재 로그에서 {blocked}건이 차단되었습니다.",
+  "zoneDomainCount": {
+    "other": "도메인 {n}개"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "localeSwitcher.label": "Jazyk",
+  "fieldHelp.providers": "Každý zapnutý poskytovateľ kontroluje doménu nezávisle; ak aspoň jeden povie „block“, kvórum blokuje (logika ALEBO). Viac poskytovateľov znamená širšie pokrytie, ale aj viac tretích strán vidí vaše dotazy.",
+  "fieldHelp.timeoutMode": "Ako zaobchádzať s poskytovateľom, ktorý neodpovedal včas. „fail_open“ (predvolené) — prepustiť, považovať za bezpečné; „fail_closed“ — blokovať; „degraded“ — ako fail_open, ale v denníku výslovne označí rozhodnutie ako neúplné.",
+  "fieldHelp.cache": "Min./max. životnosť položky vyrovnávacej pamäte (obmedzuje vlastný TTL poskytovateľa), ako dlho sa uchováva verdikt „blokované“, a koľko položiek vyrovnávacia pamäť drží naraz, kým nezačne odstraňovať najstaršie.",
+  "fieldHelp.overrides": "Vlastné výnimky nad rámec kvóra: zoznam povolených vždy povolí, zoznam blokovaných vždy zablokuje, bez ohľadu na to, čo hovoria poskytovatelia. Pri konflikte medzi oboma zoznamami vyhráva zoznam povolených.",
+  "fieldHelp.logFilters": "Vyhľadávanie a filtre fungujú iba v rámci aktuálneho okna denníka — posledných ~1000 dotazov alebo 24 hodín; staršie záznamy sa už neuchovávajú.",
+  "hero.SERVICE_UNREACHABLE.state": "Nechránené",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtrovacia služba neodpovedá. Skontrolujte, či beží.",
+  "hero.WATCHDOG_GAVE_UP.state": "Služba zastavená",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatický reštart zlyhal. Reštartujte aplikáciu manuálne.",
+  "hero.WATCHDOG_RESTARTING.state": "Obnovuje sa…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtrovacia služba sa reštartuje. Počkajte prosím niekoľko sekúnd.",
+  "hero.OFFLINE.state": "Bez pripojenia na internet",
+  "hero.OFFLINE.detail": "Preklad názvov je pozastavený, kým sa pripojenie neobnoví.",
+  "hero.PAUSED.state": "Filtrovanie pozastavené",
+  "hero.PAUSED.detail": "DNS funguje, ale bez filtra: kvórum a GeoIP sú vypnuté. Vaše vlastné zoznamy blokovania/povolenia stále platia. Obnovte z ponuky ikony v systémovej lište.",
+  "hero.NO_PROVIDERS.state": "Nechránené",
+  "hero.NO_PROVIDERS.detail": "Filtrovanie je vypnuté — žiadny poskytovateľ nie je aktívny.",
+  "hero.CERT_NOT_TRUSTED.state": "Certifikát nie je nainštalovaný",
+  "hero.CERT_NOT_TRUSTED.detail": "Lokálny certifikát nebol pridaný medzi dôveryhodné koreňové certifikáty. Bez neho prehliadač nebude dôverovať stránke nastavení.",
+  "hero.CERT_UNKNOWN.state": "Certifikát neskontrolovaný",
+  "hero.CERT_UNKNOWN.detail": "Stav lokálneho certifikátu sa nepodarilo overiť.",
+  "hero.PROTECTED.state": "Chránené",
+  "hero.PROTECTED.detail": "Filtrovanie je aktívne.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrovanie je aktívne. V aktuálnom denníku zablokovaných {blocked}.",
+  "zoneDomainCount": {
+    "one": "{n} doména",
+    "few": "{n} domény",
+    "many": "{n} domény",
+    "other": "{n} domén"
+  }
+}

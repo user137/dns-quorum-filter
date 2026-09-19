@@ -1,0 +1,30 @@
+{
+  "localeSwitcher.label": "言語",
+  "fieldHelp.providers": "有効な各プロバイダーが独立してドメインを確認します。1つでも「block」と判定すれば、クォーラムはブロックします(OR論理)。プロバイダーが多いほどカバー範囲は広がりますが、より多くの第三者にクエリが見られることになります。",
+  "fieldHelp.timeoutMode": "時間内に応答しなかったプロバイダーの扱い方。「fail_open」(既定) — 通過させ、安全とみなす。「fail_closed」— ブロックする。「degraded」— fail_openと同様だが、ログ上で判定を明示的に不完全として記録する。",
+  "fieldHelp.cache": "キャッシュエントリの最小/最大保持時間(プロバイダー自身のTTLを上限とする)、「ブロック」判定をどれだけ保持するか、そして最も古いものから削除を始める前にキャッシュが一度に保持するエントリ数。",
+  "fieldHelp.overrides": "クォーラムに優先する独自の例外: 許可リストは常に許可し、ブロックリストは常にブロックします(プロバイダーの判定に関係なく)。2つのリストが競合する場合は許可リストが優先されます。",
+  "fieldHelp.logFilters": "検索とフィルターは現在のログウィンドウ内(直近約1000件のクエリまたは24時間)でのみ機能します。それより古いエントリは保持されません。",
+  "hero.SERVICE_UNREACHABLE.state": "保護されていません",
+  "hero.SERVICE_UNREACHABLE.detail": "フィルタリングサービスが応答していません。実行中か確認してください。",
+  "hero.WATCHDOG_GAVE_UP.state": "サービスが停止しました",
+  "hero.WATCHDOG_GAVE_UP.detail": "自動再起動に失敗しました。アプリケーションを手動で再起動してください。",
+  "hero.WATCHDOG_RESTARTING.state": "復旧中…",
+  "hero.WATCHDOG_RESTARTING.detail": "フィルタリングサービスを再起動しています。数秒お待ちください。",
+  "hero.OFFLINE.state": "インターネット接続がありません",
+  "hero.OFFLINE.detail": "接続が復旧するまで名前解決は一時停止しています。",
+  "hero.PAUSED.state": "フィルタリングが一時停止中",
+  "hero.PAUSED.detail": "DNSは動作していますが、フィルターなしです: クォーラムとGeoIPは無効になっています。独自のブロック/許可リストは引き続き適用されます。トレイアイコンのメニューから再開してください。",
+  "hero.NO_PROVIDERS.state": "保護されていません",
+  "hero.NO_PROVIDERS.detail": "フィルタリングは無効です — 有効なプロバイダーがありません。",
+  "hero.CERT_NOT_TRUSTED.state": "証明書が未インストールです",
+  "hero.CERT_NOT_TRUSTED.detail": "ローカル証明書が信頼されたルート証明書に追加されていません。これがないと、ブラウザは設定ページを信頼しません。",
+  "hero.CERT_UNKNOWN.state": "証明書が未確認です",
+  "hero.CERT_UNKNOWN.detail": "ローカル証明書の状態を確認できませんでした。",
+  "hero.PROTECTED.state": "保護されています",
+  "hero.PROTECTED.detail": "フィルタリングが有効です。",
+  "hero.PROTECTED.detailWithBlocked": "フィルタリングが有効です。現在のログで{blocked}件ブロックされました。",
+  "zoneDomainCount": {
+    "other": "{n} 件のドメイン"
+  }
+}

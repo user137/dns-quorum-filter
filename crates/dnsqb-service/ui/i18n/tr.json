@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Dil",
+  "fieldHelp.providers": "Etkinleştirilen her sağlayıcı alan adını bağımsız olarak kontrol eder; en az biri «block» derse, kuorum engeller (VEYA mantığı). Daha fazla sağlayıcı daha geniş kapsam anlamına gelir, ancak sorgularınızı daha fazla üçüncü taraf görür.",
+  "fieldHelp.timeoutMode": "Zamanında yanıt vermeyen bir sağlayıcıya nasıl davranılacağı. «fail_open» (varsayılan) — geçirin, güvenli olarak kabul edin; «fail_closed» — engelleyin; «degraded» — fail_open gibi, ancak kararı günlükte açıkça eksik olarak işaretler.",
+  "fieldHelp.cache": "Bir önbellek girişinin min./maks. yaşam süresi (sağlayıcının kendi TTL'sini sınırlar), «engellendi» kararının ne kadar süre tutulacağı ve önbelleğin en eskilerini kaldırmaya başlamadan önce aynı anda kaç giriş tutacağı.",
+  "fieldHelp.overrides": "Kuorumun üzerinde kendi istisnalarınız: izin listesi her zaman izin verir, engelleme listesi her zaman engeller, sağlayıcıların ne dediğine bakılmaksızın. İki liste arasında çakışma olursa izin listesi kazanır.",
+  "fieldHelp.logFilters": "Arama ve filtreler yalnızca geçerli günlük penceresi içinde çalışır — son ~1000 sorgu veya 24 saat; daha eski girişler artık tutulmaz.",
+  "hero.SERVICE_UNREACHABLE.state": "Korunmuyor",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtreleme hizmeti yanıt vermiyor. Çalışıp çalışmadığını kontrol edin.",
+  "hero.WATCHDOG_GAVE_UP.state": "Hizmet durdu",
+  "hero.WATCHDOG_GAVE_UP.detail": "Otomatik yeniden başlatma başarısız oldu. Uygulamayı manuel olarak yeniden başlatın.",
+  "hero.WATCHDOG_RESTARTING.state": "Kurtarılıyor…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtreleme hizmeti yeniden başlatılıyor. Lütfen birkaç saniye bekleyin.",
+  "hero.OFFLINE.state": "İnternet bağlantısı yok",
+  "hero.OFFLINE.detail": "Bağlantı geri yüklenene kadar çözümleme duraklatıldı.",
+  "hero.PAUSED.state": "Filtreleme duraklatıldı",
+  "hero.PAUSED.detail": "DNS çalışıyor, ancak filtre olmadan: kuorum ve GeoIP kapalı. Kendi engelleme/izin listeleriniz hâlâ geçerli. Sistem tepsisi simgesi menüsünden devam edin.",
+  "hero.NO_PROVIDERS.state": "Korunmuyor",
+  "hero.NO_PROVIDERS.detail": "Filtreleme kapalı — etkin sağlayıcı yok.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifika kurulu değil",
+  "hero.CERT_NOT_TRUSTED.detail": "Yerel sertifika güvenilir kök sertifikalara eklenmemiş. Bu olmadan, tarayıcı ayarlar sayfasına güvenmeyecektir.",
+  "hero.CERT_UNKNOWN.state": "Sertifika kontrol edilmedi",
+  "hero.CERT_UNKNOWN.detail": "Yerel sertifikanın durumu doğrulanamadı.",
+  "hero.PROTECTED.state": "Korunuyor",
+  "hero.PROTECTED.detail": "Filtreleme etkin.",
+  "hero.PROTECTED.detailWithBlocked": "Filtreleme etkin. Geçerli günlükte {blocked} engellendi.",
+  "zoneDomainCount": {
+    "one": "{n} alan adı",
+    "other": "{n} alan adı"
+  }
+}

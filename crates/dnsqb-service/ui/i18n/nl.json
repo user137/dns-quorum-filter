@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Taal",
+  "fieldHelp.providers": "Elke ingeschakelde provider controleert het domein onafhankelijk; als zelfs maar één «block» zegt, blokkeert het quorum (OF-logica). Meer providers betekent bredere dekking, maar ook dat meer derde partijen je query's zien.",
+  "fieldHelp.timeoutMode": "Hoe om te gaan met een provider die niet op tijd antwoordde. «fail_open» (standaard) — doorlaten, als veilig beschouwen; «fail_closed» — blokkeren; «degraded» — zoals fail_open, maar markeert de beslissing expliciet als onvolledig in het logboek.",
+  "fieldHelp.cache": "Min./max. levensduur van een cache-item (beperkt de eigen TTL van de provider), hoe lang een «geblokkeerd»-oordeel wordt bewaard, en hoeveel items de cache tegelijk bevat voordat de oudste worden verwijderd.",
+  "fieldHelp.overrides": "Je eigen uitzonderingen boven op het quorum: de allowlist staat altijd toe, de blocklist blokkeert altijd, ongeacht wat de providers zeggen. Bij een conflict tussen de twee lijsten wint de allowlist.",
+  "fieldHelp.logFilters": "Zoeken en filters werken alleen binnen het huidige logvenster — de laatste ~1000 query's of 24 uur; oudere items worden niet meer bewaard.",
+  "hero.SERVICE_UNREACHABLE.state": "Niet beschermd",
+  "hero.SERVICE_UNREACHABLE.detail": "De filterservice reageert niet. Controleer of deze actief is.",
+  "hero.WATCHDOG_GAVE_UP.state": "Service gestopt",
+  "hero.WATCHDOG_GAVE_UP.detail": "De automatische herstart is mislukt. Herstart de toepassing handmatig.",
+  "hero.WATCHDOG_RESTARTING.state": "Wordt hersteld…",
+  "hero.WATCHDOG_RESTARTING.detail": "De filterservice wordt opnieuw gestart. Wacht enkele seconden.",
+  "hero.OFFLINE.state": "Geen internetverbinding",
+  "hero.OFFLINE.detail": "De naamresolutie is gepauzeerd totdat de verbinding is hersteld.",
+  "hero.PAUSED.state": "Filtering gepauzeerd",
+  "hero.PAUSED.detail": "DNS werkt, maar zonder het filter: quorum en GeoIP zijn uitgeschakeld. Je eigen blokkerings-/toestemmingslijsten blijven van toepassing. Hervat via het menu van het systeemvakpictogram.",
+  "hero.NO_PROVIDERS.state": "Niet beschermd",
+  "hero.NO_PROVIDERS.detail": "Filtering is uitgeschakeld — geen enkele provider is actief.",
+  "hero.CERT_NOT_TRUSTED.state": "Certificaat niet geïnstalleerd",
+  "hero.CERT_NOT_TRUSTED.detail": "Het lokale certificaat is niet toegevoegd aan de vertrouwde basiscertificaten. Zonder dit zal de browser de instellingenpagina niet vertrouwen.",
+  "hero.CERT_UNKNOWN.state": "Certificaat niet gecontroleerd",
+  "hero.CERT_UNKNOWN.detail": "De status van het lokale certificaat kon niet worden geverifieerd.",
+  "hero.PROTECTED.state": "Beschermd",
+  "hero.PROTECTED.detail": "Filtering is actief.",
+  "hero.PROTECTED.detailWithBlocked": "Filtering is actief. {blocked} geblokkeerd in het huidige logboek.",
+  "zoneDomainCount": {
+    "one": "{n} domein",
+    "other": "{n} domeinen"
+  }
+}

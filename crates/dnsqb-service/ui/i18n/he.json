@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "שפה",
+  "fieldHelp.providers": "כל ספק מופעל בודק את הדומיין באופן עצמאי; אם אפילו אחד אומר «block», הקוורום חוסם (לוגיקת OR). יותר ספקים משמעם כיסוי רחב יותר, אך גם יותר צדדים שלישיים רואים את השאילתות שלך.",
+  "fieldHelp.timeoutMode": "כיצד להתייחס לספק שלא הגיב בזמן. «fail_open» (ברירת מחדל) — לאפשר מעבר, בהתייחסות כבטוח; «fail_closed» — לחסום; «degraded» — כמו fail_open, אך מסמן במפורש את ההחלטה כלא שלמה ביומן.",
+  "fieldHelp.cache": "אורך חיים מינימלי/מרבי של רשומת מטמון (מגביל את ה-TTL של הספק עצמו), כמה זמן לשמור פסק דין «חסום», וכמה רשומות המטמון מחזיק בו-זמנית לפני שמתחיל לפנות את הישנות ביותר.",
+  "fieldHelp.overrides": "חריגים משלך מעל הקוורום: רשימת ההיתרים תמיד מתירה, רשימת החסימות תמיד חוסמת, ללא קשר למה שהספקים אומרים. בעת התנגשות בין שתי הרשימות, רשימת ההיתרים מנצחת.",
+  "fieldHelp.logFilters": "חיפוש וסינון פועלים רק בתוך חלון היומן הנוכחי — כ-1000 השאילתות האחרונות או 24 השעות האחרונות; רשומות ישנות יותר כבר אינן נשמרות.",
+  "hero.SERVICE_UNREACHABLE.state": "לא מוגן",
+  "hero.SERVICE_UNREACHABLE.detail": "שירות הסינון אינו מגיב. בדוק שהוא פועל.",
+  "hero.WATCHDOG_GAVE_UP.state": "השירות נעצר",
+  "hero.WATCHDOG_GAVE_UP.detail": "האתחול האוטומטי נכשל. הפעל מחדש את היישום ידנית.",
+  "hero.WATCHDOG_RESTARTING.state": "משחזר…",
+  "hero.WATCHDOG_RESTARTING.detail": "שירות הסינון מופעל מחדש. אנא המתן מספר שניות.",
+  "hero.OFFLINE.state": "אין חיבור לאינטרנט",
+  "hero.OFFLINE.detail": "פתרון השמות מושהה עד לשחזור החיבור.",
+  "hero.PAUSED.state": "הסינון מושהה",
+  "hero.PAUSED.detail": "ה-DNS פועל, אך ללא המסנן: הקוורום ו-GeoIP כבויים. רשימות החסימה/ההיתר שלך עדיין חלות. חדש מתפריט סמל מגש המערכת.",
+  "hero.NO_PROVIDERS.state": "לא מוגן",
+  "hero.NO_PROVIDERS.detail": "הסינון כבוי — אין ספק פעיל.",
+  "hero.CERT_NOT_TRUSTED.state": "האישור אינו מותקן",
+  "hero.CERT_NOT_TRUSTED.detail": "האישור המקומי לא נוסף לאישורי השורש המהימנים. בלעדיו, הדפדפן לא יבטח בדף ההגדרות.",
+  "hero.CERT_UNKNOWN.state": "האישור לא נבדק",
+  "hero.CERT_UNKNOWN.detail": "לא ניתן היה לאמת את מצב האישור המקומי.",
+  "hero.PROTECTED.state": "מוגן",
+  "hero.PROTECTED.detail": "הסינון פעיל.",
+  "hero.PROTECTED.detailWithBlocked": "הסינון פעיל. {blocked} נחסמו ביומן הנוכחי.",
+  "zoneDomainCount": {
+    "one": "דומיין אחד",
+    "two": "שני דומיינים",
+    "other": "{n} דומיינים"
+  }
+}

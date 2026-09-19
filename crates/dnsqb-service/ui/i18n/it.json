@@ -1,0 +1,32 @@
+{
+  "localeSwitcher.label": "Lingua",
+  "fieldHelp.providers": "Ogni provider abilitato controlla il dominio in modo indipendente; se anche uno solo dice «block», il quorum blocca (logica OR). Più provider significa una copertura più ampia, ma anche che più terze parti vedono le tue query.",
+  "fieldHelp.timeoutMode": "Come trattare un provider che non ha risposto in tempo. «fail_open» (predefinito) — lasciar passare, considerandolo sicuro; «fail_closed» — bloccare; «degraded» — come fail_open, ma contrassegna esplicitamente la decisione come incompleta nel log.",
+  "fieldHelp.cache": "Durata min./max. di una voce della cache (limita il TTL proprio del provider), per quanto tempo mantenere un verdetto «bloccato», e quante voci la cache mantiene contemporaneamente prima di iniziare a rimuovere le più vecchie.",
+  "fieldHelp.overrides": "Le tue eccezioni personali oltre il quorum: la allowlist consente sempre, la blocklist blocca sempre, indipendentemente da ciò che dicono i provider. In caso di conflitto tra le due liste, vince la allowlist.",
+  "fieldHelp.logFilters": "La ricerca e i filtri agiscono solo entro la finestra di log corrente — le ultime ~1000 query o 24 ore; le voci più vecchie non vengono più conservate.",
+  "hero.SERVICE_UNREACHABLE.state": "Non protetto",
+  "hero.SERVICE_UNREACHABLE.detail": "Il servizio di filtraggio non risponde. Verifica che sia in esecuzione.",
+  "hero.WATCHDOG_GAVE_UP.state": "Servizio arrestato",
+  "hero.WATCHDOG_GAVE_UP.detail": "Il riavvio automatico non è riuscito. Riavvia manualmente l'applicazione.",
+  "hero.WATCHDOG_RESTARTING.state": "Ripristino…",
+  "hero.WATCHDOG_RESTARTING.detail": "Il servizio di filtraggio è in fase di riavvio. Attendi qualche secondo.",
+  "hero.OFFLINE.state": "Nessuna connessione internet",
+  "hero.OFFLINE.detail": "La risoluzione è in pausa finché la connessione non viene ripristinata.",
+  "hero.PAUSED.state": "Filtraggio in pausa",
+  "hero.PAUSED.detail": "Il DNS funziona, ma senza il filtro: il quorum e GeoIP sono disattivati. Le tue liste di blocco/consenti continuano ad applicarsi. Riprendi dal menu dell'icona nella barra delle applicazioni.",
+  "hero.NO_PROVIDERS.state": "Non protetto",
+  "hero.NO_PROVIDERS.detail": "Il filtraggio è disattivato — nessun provider è attivo.",
+  "hero.CERT_NOT_TRUSTED.state": "Certificato non installato",
+  "hero.CERT_NOT_TRUSTED.detail": "Il certificato locale non è stato aggiunto ai certificati radice attendibili. Senza di esso, il browser non si fiderà della pagina delle impostazioni.",
+  "hero.CERT_UNKNOWN.state": "Certificato non verificato",
+  "hero.CERT_UNKNOWN.detail": "Non è stato possibile verificare lo stato del certificato locale.",
+  "hero.PROTECTED.state": "Protetto",
+  "hero.PROTECTED.detail": "Il filtraggio è attivo.",
+  "hero.PROTECTED.detailWithBlocked": "Il filtraggio è attivo. Bloccati nel log corrente: {blocked}.",
+  "zoneDomainCount": {
+    "one": "{n} dominio",
+    "many": "{n} di domini",
+    "other": "{n} domini"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Keel",
+  "fieldHelp.providers": "Iga lubatud pakkuja kontrollib domeeni sõltumatult; kui kas või üks ütleb „block“, blokeerib kvoorum (VÕI-loogika). Rohkem pakkujaid tähendab laiemat katvust, kuid ka rohkem kolmandaid osapooli näeb sinu päringuid.",
+  "fieldHelp.timeoutMode": "Kuidas kohelda pakkujat, kes ei vastanud õigeaegselt. „fail_open“ (vaikimisi) — lasta läbi, käsitledes turvalisena; „fail_closed“ — blokeerida; „degraded“ — nagu fail_open, kuid märgib otsuse logis selgelt puudulikuks.",
+  "fieldHelp.cache": "Vahemälu kirje min/maks eluiga (piirab pakkuja enda TTL-i), kui kaua säilitatakse „blokeeritud“ otsust, ja mitu kirjet vahemälu korraga hoiab, enne kui hakkab vanimaid eemaldama.",
+  "fieldHelp.overrides": "Sinu enda erandid kvoorumi kõrval: lubatute loend lubab alati, blokeeritute loend blokeerib alati, sõltumata pakkujate vastusest. Kahe loendi vahelise vastuolu korral võidab lubatute loend.",
+  "fieldHelp.logFilters": "Otsing ja filtrid toimivad ainult praeguse logiakna piires — viimased ~1000 päringut või 24 tundi; vanemaid kirjeid enam ei säilitata.",
+  "hero.SERVICE_UNREACHABLE.state": "Kaitsmata",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtriteenus ei vasta. Kontrolli, kas see töötab.",
+  "hero.WATCHDOG_GAVE_UP.state": "Teenus peatatud",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automaatne taaskäivitus ebaõnnestus. Käivita rakendus käsitsi uuesti.",
+  "hero.WATCHDOG_RESTARTING.state": "Taastamine…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtriteenust käivitatakse uuesti. Palun oota mõni sekund.",
+  "hero.OFFLINE.state": "Interneti-ühendus puudub",
+  "hero.OFFLINE.detail": "Nimede lahendamine on peatatud, kuni ühendus taastub.",
+  "hero.PAUSED.state": "Filtreerimine peatatud",
+  "hero.PAUSED.detail": "DNS töötab, kuid ilma filtrita: kvoorum ja GeoIP on välja lülitatud. Sinu enda blokeerimis-/lubamisloendid kehtivad endiselt. Jätka rakendust salve ikooni menüüst.",
+  "hero.NO_PROVIDERS.state": "Kaitsmata",
+  "hero.NO_PROVIDERS.detail": "Filtreerimine on välja lülitatud — ükski pakkuja pole aktiivne.",
+  "hero.CERT_NOT_TRUSTED.state": "Sertifikaat pole installitud",
+  "hero.CERT_NOT_TRUSTED.detail": "Kohalikku sertifikaati pole lisatud usaldusväärsete juursertifikaatide hulka. Ilma selleta ei usalda brauser seadete lehte.",
+  "hero.CERT_UNKNOWN.state": "Sertifikaat kontrollimata",
+  "hero.CERT_UNKNOWN.detail": "Kohaliku sertifikaadi olekut ei õnnestunud kontrollida.",
+  "hero.PROTECTED.state": "Kaitstud",
+  "hero.PROTECTED.detail": "Filtreerimine on aktiivne.",
+  "hero.PROTECTED.detailWithBlocked": "Filtreerimine on aktiivne. {blocked} blokeeritud praeguses logis.",
+  "zoneDomainCount": {
+    "one": "{n} domeen",
+    "other": "{n} domeeni"
+  }
+}

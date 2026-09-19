@@ -1,0 +1,31 @@
+{
+  "localeSwitcher.label": "Språk",
+  "fieldHelp.providers": "Varje aktiverad leverantör kontrollerar domänen oberoende; om ens en säger „block“ blockerar kvorumet (ELLER-logik). Fler leverantörer innebär bredare täckning, men också att fler tredje parter ser dina förfrågningar.",
+  "fieldHelp.timeoutMode": "Hur en leverantör som inte svarade i tid ska behandlas. „fail_open“ (standard) — släpp igenom, behandla som säker; „fail_closed“ — blockera; „degraded“ — som fail_open, men markerar beslutet uttryckligen som ofullständigt i loggen.",
+  "fieldHelp.cache": "Min./max. livslängd för en cachepost (begränsar leverantörens egen TTL), hur länge ett „blockerad“-utslag behålls, och hur många poster cachen håller samtidigt innan den börjar ta bort de äldsta.",
+  "fieldHelp.overrides": "Dina egna undantag utöver kvorumet: tillåtelselistan tillåter alltid, blockeringslistan blockerar alltid, oavsett vad leverantörerna säger. Vid konflikt mellan de två listorna vinner tillåtelselistan.",
+  "fieldHelp.logFilters": "Sökning och filter verkar bara inom det aktuella loggfönstret — de senaste ~1000 förfrågningarna eller 24 timmarna; äldre poster sparas inte längre.",
+  "hero.SERVICE_UNREACHABLE.state": "Inte skyddad",
+  "hero.SERVICE_UNREACHABLE.detail": "Filtreringstjänsten svarar inte. Kontrollera att den körs.",
+  "hero.WATCHDOG_GAVE_UP.state": "Tjänsten stoppades",
+  "hero.WATCHDOG_GAVE_UP.detail": "Automatisk omstart misslyckades. Starta om programmet manuellt.",
+  "hero.WATCHDOG_RESTARTING.state": "Återställer…",
+  "hero.WATCHDOG_RESTARTING.detail": "Filtreringstjänsten startas om. Vänta några sekunder.",
+  "hero.OFFLINE.state": "Ingen internetanslutning",
+  "hero.OFFLINE.detail": "Namnuppslagning är pausad tills anslutningen återställs.",
+  "hero.PAUSED.state": "Filtrering pausad",
+  "hero.PAUSED.detail": "DNS fungerar, men utan filtret: kvorum och GeoIP är avstängda. Dina egna blockerings-/tillåtelselistor gäller fortfarande. Återuppta från fältikonens meny.",
+  "hero.NO_PROVIDERS.state": "Inte skyddad",
+  "hero.NO_PROVIDERS.detail": "Filtrering är avstängd — ingen leverantör är aktiv.",
+  "hero.CERT_NOT_TRUSTED.state": "Certifikat ej installerat",
+  "hero.CERT_NOT_TRUSTED.detail": "Det lokala certifikatet har inte lagts till bland betrodda rotcertifikat. Utan det litar inte webbläsaren på inställningssidan.",
+  "hero.CERT_UNKNOWN.state": "Certifikat ej kontrollerat",
+  "hero.CERT_UNKNOWN.detail": "Det lokala certifikatets status kunde inte verifieras.",
+  "hero.PROTECTED.state": "Skyddad",
+  "hero.PROTECTED.detail": "Filtrering är aktiv.",
+  "hero.PROTECTED.detailWithBlocked": "Filtrering är aktiv. {blocked} blockerade i den aktuella loggen.",
+  "zoneDomainCount": {
+    "one": "{n} domän",
+    "other": "{n} domäner"
+  }
+}
