@@ -7109,3 +7109,27 @@ MaxMind), тож збіг із зовнішнім сервісом корисн�
 коментарі й `regionLabel()`-роздільник `—`). Server-side перевірка через scratch-інстанс (порт
 8443): `.../admin/ui/i18n/pt.json` повернув усі нові ключі коректною португальською (99 ключів,
 збіг з `en`).
+
+---
+
+**Батч 5.4, коміт 7 — `#log-body` (T-151), 2026-09-20.** Сьомий комміт, найбільший дотепер.
+Мігрує `DECISION_LABELS`/`DECISION_SOURCE_LABELS`/`QTYPE_LABELS`/`VOTER_STATUS_LABELS` (усі чотири
+— з const-об'єктів на функції `decisionLabel()`/`decisionSourceLabel()`/`qtypeLabel()`/
+`voterStatusLabel()`, та сама const→функція трансформація, що `databaseSourceLabel()`;
+`Allowlist`/`Blocklist`/`Quorum`/`GeoIP` лишаються брендовими рядками), `voterDetailList()`,
+`logItem()`, `buildLogFilterRow()`, `renderLog()`/`renderLogError()`, `syncLogVoterOptions()`.
+34 нових ключі × 37 локалей.
+
+**Усунено дублювання, яке Explore-звіт зафіксував перед стартом Батчу 5.4:**
+`buildLogFilterRow()`'s `decisionSelect` мав власний, незалежно підтримуваний літеральний масив
+`[["", "Усі рішення"], ["ALLOWED", "Дозволено"], ...]`, що дублював текст `DECISION_LABELS` без
+жодного зв'язку між ними. Тепер обидва місця читають той самий `decisionLabel(code).text` — один
+i18n-ключ на статус, не два незалежні джерела правди. Так само `"Усі voter'и"` (продубльований у
+`buildLogFilterRow()` і `syncLogVoterOptions()`) тепер один спільний ключ
+`log.allVotersOption`.
+
+**Перевірка:** `cargo test --workspace --lib --bins` (954, без регресій), `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` — усі зелені. Грепом
+підтверджено відсутність кириличних літералів (лише коментарі). Server-side перевірка через
+scratch-інстанс (порт 8443): `.../admin/ui/i18n/de.json` повернув усі нові ключі коректною
+німецькою (133 ключі, збіг з `en`).

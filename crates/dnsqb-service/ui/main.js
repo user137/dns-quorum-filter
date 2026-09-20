@@ -182,8 +182,10 @@ function applyDocumentLanguage() {
 // fetch/render cycle, T-228) and was missing from this list before Батч 5.4
 // gave its render path t() calls too (advisor-caught while planning that
 // batch: the card would have stayed in the previous language after a live
-// locale switch). refreshLog()/initBrowserSetup() still render no
-// FIELD_HELP/HERO/region-name/t() text and are deliberately left out.
+// locale switch). refreshLog() (with buildLogFilterRow() right before it -
+// see its own comment on why order matters) also calls t() since Батч 5.4;
+// initBrowserSetup() still renders no FIELD_HELP/HERO/region-name/t() text
+// and stays deliberately left out below.
 function renderTranslatedCards() {
   refresh();
   refreshRatingFilter();
@@ -1923,35 +1925,81 @@ async function clearLog() {
   }
 }
 
-const DECISION_LABELS = {
-  ALLOWED: { text: "Дозволено", cls: "good" },
-  BLOCKED: { text: "Заблоковано", cls: "bad" },
-  FAILED: { text: "Не вдалося", cls: "warn" },
-};
-const DECISION_SOURCE_LABELS = {
-  ALLOWLIST: "Allowlist",
-  BLOCKLIST: "Blocklist",
-  BLOCKLIST_BUNDLE: "Блок-лист-бандл",
-  CACHE: "Кеш",
-  QUORUM: "Quorum",
-  CCTLD_BLOCK: "ccTLD-блок",
-  RATING_FILTER: "Рейтинговий фільтр",
-  GEOIP: "GeoIP",
-};
-const QTYPE_LABELS = { A: "A", AAAA: "AAAA", HTTPS_SVCB: "HTTPS/SVCB", OTHER: "Інше" };
+// DECISION_LABELS/DECISION_SOURCE_LABELS/QTYPE_LABELS/VOTER_STATUS_LABELS
+// (below) were plain string lookups before Батч 5.4 - now functions, same
+// reasoning as databaseSourceLabel()/cctldOverBlockingWarning(): the text
+// must come from t() fresh at render time, not be frozen at module-parse
+// time before the dictionary is ready. `cls` stays structural, unaffected.
+function decisionLabel(decision) {
+  switch (decision) {
+    case "ALLOWED":
+      return { text: t("log.decision.allowed"), cls: "good" };
+    case "BLOCKED":
+      return { text: t("log.decision.blocked"), cls: "bad" };
+    case "FAILED":
+      return { text: t("log.decision.failed"), cls: "warn" };
+    default:
+      return { text: decision, cls: "" };
+  }
+}
+// ALLOWLIST/BLOCKLIST/QUORUM/GEOIP are product/technical names, kept as-is
+// in every locale (same convention as PROVIDER_LABELS below).
+function decisionSourceLabel(source) {
+  switch (source) {
+    case "ALLOWLIST":
+      return "Allowlist";
+    case "BLOCKLIST":
+      return "Blocklist";
+    case "BLOCKLIST_BUNDLE":
+      return t("log.source.blocklistBundle");
+    case "CACHE":
+      return t("log.source.cache");
+    case "QUORUM":
+      return "Quorum";
+    case "CCTLD_BLOCK":
+      return t("log.source.cctldBlock");
+    case "RATING_FILTER":
+      return t("log.source.ratingFilter");
+    case "GEOIP":
+      return "GeoIP";
+    default:
+      return source;
+  }
+}
+// A/AAAA/HTTPS_SVCB are technical abbreviations, kept as-is (GLOSSARY.md).
+function qtypeLabel(qtype) {
+  if (qtype === "A" || qtype === "AAAA" || qtype === "HTTPS_SVCB") {
+    return qtype;
+  }
+  if (qtype === "OTHER") {
+    return t("log.qtype.other");
+  }
+  return qtype;
+}
 // VoterVerdictView's seven wire values (admin.rs) - PENDING is declared on
 // the DTO but structurally never produced by this read-only route (reserved
 // for a future live-updating log view that doesn't exist yet), kept here
 // anyway so an unrecognized status never renders as literally nothing.
-const VOTER_STATUS_LABELS = {
-  PENDING: "очікується",
-  BLOCK: "заблокував",
-  ALLOW: "дозволив",
-  TIMEOUT: "не відповів",
-  ERROR: "помилка",
-  CANCELED: "скасовано",
-  DISABLED: "вимкнено",
-};
+function voterStatusLabel(status) {
+  switch (status) {
+    case "PENDING":
+      return t("log.voterStatus.pending");
+    case "BLOCK":
+      return t("log.voterStatus.block");
+    case "ALLOW":
+      return t("log.voterStatus.allow");
+    case "TIMEOUT":
+      return t("log.voterStatus.timeout");
+    case "ERROR":
+      return t("log.voterStatus.error");
+    case "CANCELED":
+      return t("log.voterStatus.canceled");
+    case "DISABLED":
+      return t("log.voterStatus.disabled");
+    default:
+      return status;
+  }
+}
 // Pretty names for the two Phase-1 provider ids; any other id (a preset
 // toggled on, or a custom entry) falls through to its raw wire id, which is
 // already human-readable enough (e.g. "cloudflare-family").
@@ -1973,11 +2021,11 @@ function voterDetailList(voters) {
     provider.textContent = PROVIDER_LABELS[voter.provider_name] || voter.provider_name;
     li.appendChild(provider);
     const status = document.createElement("span");
-    let text = VOTER_STATUS_LABELS[voter.status.status] || voter.status.status;
+    let text = voterStatusLabel(voter.status.status);
     if (voter.status.status === "ALLOW") {
-      text += ` (${voter.status.ip_count} IP)`;
+      text += ` ${t("log.voterIpCountTemplate", { count: voter.status.ip_count })}`;
     } else if (voter.status.status === "ERROR") {
-      text += `: ${voter.status.message}`;
+      text += t("log.voterErrorMessageTemplate", { message: voter.status.message });
     }
     status.textContent = text;
     li.appendChild(status);
@@ -2005,7 +2053,7 @@ function logItem(entry) {
 
   const qtype = document.createElement("span");
   qtype.className = "log-item-badge";
-  qtype.textContent = QTYPE_LABELS[entry.qtype] || entry.qtype;
+  qtype.textContent = qtypeLabel(entry.qtype);
   row.appendChild(qtype);
 
   // T-161: informational country of the first resolved IP - deliberately
@@ -2017,12 +2065,12 @@ function logItem(entry) {
   if (entry.resolved_ip_country != null && entry.decision_source !== "GEOIP") {
     const geoBadge = document.createElement("span");
     geoBadge.className = "log-item-badge";
-    geoBadge.title = "Країна першої резолвленої IP-адреси";
+    geoBadge.title = t("log.resolvedIpCountryTitle");
     geoBadge.textContent = entry.resolved_ip_country;
     row.appendChild(geoBadge);
   }
 
-  const decision = DECISION_LABELS[entry.decision] || { text: entry.decision, cls: "" };
+  const decision = decisionLabel(entry.decision);
   const decisionBadge = document.createElement("span");
   decisionBadge.className = `log-item-badge log-item-decision ${decision.cls}`;
   decisionBadge.textContent = decision.text;
@@ -2030,12 +2078,12 @@ function logItem(entry) {
 
   const source = document.createElement("span");
   source.className = "log-item-source";
-  source.textContent = DECISION_SOURCE_LABELS[entry.decision_source] || entry.decision_source;
+  source.textContent = decisionSourceLabel(entry.decision_source);
   row.appendChild(source);
 
   const latency = document.createElement("span");
   latency.className = "log-item-latency";
-  latency.textContent = `${entry.latency_ms} мс`;
+  latency.textContent = t("log.latencyTemplate", { ms: entry.latency_ms });
   row.appendChild(latency);
 
   li.appendChild(row);
@@ -2049,12 +2097,15 @@ function logItem(entry) {
   ["allowlist", "blocklist"].forEach((list) => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = list === "allowlist" ? "В allowlist" : "В blocklist";
+    btn.textContent =
+      list === "allowlist"
+        ? t("log.addToAllowlistButton")
+        : t("log.addToBlocklistButton");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       try {
         await addOverride(entry.domain, list);
-        btn.textContent = "✓ Додано";
+        btn.textContent = t("log.addedConfirmation");
         // Deliberately re-renders #overrides-body (unlike the unrelated 2s
         // status poll T-47's own comment guards against) - the user just
         // caused this exact mutation from this row, so showing the new
@@ -2064,7 +2115,9 @@ function logItem(entry) {
         await refreshOverrides();
       } catch (err) {
         btn.disabled = false;
-        btn.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+        btn.textContent = t("error.generic", {
+          message: (err && err.message) || String(err),
+        });
       }
     });
     actions.appendChild(btn);
@@ -2073,12 +2126,14 @@ function logItem(entry) {
   if (entry.voters.length > 0) {
     const detailBtn = document.createElement("button");
     detailBtn.type = "button";
-    detailBtn.textContent = "Деталі";
+    detailBtn.textContent = t("log.detailsButton");
     const detail = voterDetailList(entry.voters);
     detail.hidden = true;
     detailBtn.addEventListener("click", () => {
       detail.hidden = !detail.hidden;
-      detailBtn.textContent = detail.hidden ? "Деталі" : "Сховати деталі";
+      detailBtn.textContent = detail.hidden
+        ? t("log.detailsButton")
+        : t("log.hideDetailsButton");
     });
     actions.appendChild(detailBtn);
     li.appendChild(actions);
@@ -2125,7 +2180,7 @@ const logResults = document.createElement("div");
 function buildLogFilterRow() {
   logBody.textContent = "";
 
-  logBody.appendChild(cardHeading("Лог запитів", "logFilters"));
+  logBody.appendChild(cardHeading(t("log.heading"), "logFilters"));
 
   const filterRow = document.createElement("div");
   filterRow.className = "log-filter-row";
@@ -2133,7 +2188,7 @@ function buildLogFilterRow() {
   const search = document.createElement("input");
   search.type = "text";
   search.id = "log-search";
-  search.placeholder = "Пошук за доменом";
+  search.placeholder = t("log.searchPlaceholder");
   search.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       refreshLog();
@@ -2143,15 +2198,18 @@ function buildLogFilterRow() {
 
   const decisionSelect = document.createElement("select");
   decisionSelect.id = "log-decision";
-  [
-    ["", "Усі рішення"],
-    ["ALLOWED", "Дозволено"],
-    ["BLOCKED", "Заблоковано"],
-    ["FAILED", "Не вдалося"],
-  ].forEach(([value, text]) => {
+  // Батч 5.4: options now read through the same decisionLabel() keys as
+  // logItem()'s badges (log.decision.*), not a second, independently
+  // maintained literal array - Explore's own survey flagged this exact
+  // duplication before the migration.
+  const allDecisionsOpt = document.createElement("option");
+  allDecisionsOpt.value = "";
+  allDecisionsOpt.textContent = t("log.allDecisionsOption");
+  decisionSelect.appendChild(allDecisionsOpt);
+  ["ALLOWED", "BLOCKED", "FAILED"].forEach((value) => {
     const opt = document.createElement("option");
     opt.value = value;
-    opt.textContent = text;
+    opt.textContent = decisionLabel(value).text;
     decisionSelect.appendChild(opt);
   });
   decisionSelect.addEventListener("change", refreshLog);
@@ -2166,20 +2224,20 @@ function buildLogFilterRow() {
   // even before the providers fetch resolves.
   const allVoters = document.createElement("option");
   allVoters.value = "";
-  allVoters.textContent = "Усі voter'и";
+  allVoters.textContent = t("log.allVotersOption");
   voterSelect.appendChild(allVoters);
   voterSelect.addEventListener("change", refreshLog);
   filterRow.appendChild(voterSelect);
 
   const searchBtn = document.createElement("button");
   searchBtn.type = "button";
-  searchBtn.textContent = "Пошук";
+  searchBtn.textContent = t("log.searchButton");
   searchBtn.addEventListener("click", refreshLog);
   filterRow.appendChild(searchBtn);
 
   const refreshBtn = document.createElement("button");
   refreshBtn.type = "button";
-  refreshBtn.textContent = "Оновити";
+  refreshBtn.textContent = t("log.refreshButton");
   refreshBtn.addEventListener("click", refreshLog);
   filterRow.appendChild(refreshBtn);
 
@@ -2189,16 +2247,16 @@ function buildLogFilterRow() {
   // actions - dnsqb-tray's "Зупинити фільтрацію" - already do).
   const clearBtn = document.createElement("button");
   clearBtn.type = "button";
-  clearBtn.textContent = "Очистити лог";
+  clearBtn.textContent = t("log.clearLogButton");
   let confirming = false;
   clearBtn.addEventListener("click", async () => {
     if (!confirming) {
       confirming = true;
-      clearBtn.textContent = "Точно очистити?";
+      clearBtn.textContent = t("log.confirmClearLogButton");
       setTimeout(() => {
         if (confirming) {
           confirming = false;
-          clearBtn.textContent = "Очистити лог";
+          clearBtn.textContent = t("log.clearLogButton");
         }
       }, 4000);
       return;
@@ -2214,7 +2272,7 @@ function buildLogFilterRow() {
       // permanently reading "Точно очистити?" - misleadingly implying a
       // confirmation was still pending even though the action already
       // completed.
-      clearBtn.textContent = "Очистити лог";
+      clearBtn.textContent = t("log.clearLogButton");
     }
   });
   filterRow.appendChild(clearBtn);
@@ -2229,7 +2287,7 @@ function renderLog(data) {
   if (data.entries.length === 0) {
     const empty = document.createElement("p");
     empty.className = "log-empty";
-    empty.textContent = "Записів не знайдено.";
+    empty.textContent = t("log.emptyResults");
     logResults.appendChild(empty);
     return;
   }
@@ -2237,8 +2295,7 @@ function renderLog(data) {
   if (data.truncated) {
     const truncatedNotice = document.createElement("div");
     truncatedNotice.className = "notice warn";
-    truncatedNotice.textContent =
-      "Показано лише найновіші записи, що відповідають фільтру - звузьте пошук, щоб побачити решту.";
+    truncatedNotice.textContent = t("log.truncatedNotice");
     logResults.appendChild(truncatedNotice);
   }
 
@@ -2254,7 +2311,9 @@ function renderLogError(err) {
   logResults.textContent = "";
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   logResults.appendChild(panel);
 }
 
@@ -2355,7 +2414,7 @@ function syncLogVoterOptions(data) {
   select.textContent = "";
   const all = document.createElement("option");
   all.value = "";
-  all.textContent = "Усі voter'и";
+  all.textContent = t("log.allVotersOption");
   select.appendChild(all);
 
   const seen = new Set();
