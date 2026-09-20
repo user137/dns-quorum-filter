@@ -50,6 +50,16 @@
   "overrides.conflictNote": "ขัดแย้ง: โดเมนอยู่ในทั้งรายการอนุญาตและรายการบล็อก - รายการอนุญาตมีสิทธิ์เหนือกว่า",
   "overrides.allowlistHeading": "โดเมนที่อนุญาต",
   "overrides.blocklistHeading": "โดเมนที่ถูกบล็อก",
+  "cacheConfig.heading": "แคช",
+  "cacheConfig.field.clampMin": "TTL ต้นทางต่ำสุด (วิ)",
+  "cacheConfig.field.clampMax": "TTL ต้นทางสูงสุด (วิ)",
+  "cacheConfig.field.blockVerdictTtl": "TTL สำหรับคำตัดสิน BLOCK (วิ)",
+  "cacheConfig.field.staleGrace": "หน้าต่าง stale-if-error (วิ)",
+  "cacheConfig.field.maxCapacity": "จำนวนรายการสูงสุดในแคช",
+  "cacheConfig.flushNotice": "การใช้ค่าเหล่านี้จะรีเซ็ตแคชคำตัดสินปัจจุบันทั้งหมด",
+  "cacheConfig.applyButton": "นำไปใช้",
+  "cacheConfig.minMaxError": "TTL ต้นทางต่ำสุดต้องไม่เกิน TTL สูงสุด",
+  "cacheConfig.applyFailedTemplate": "การนำไปใช้ล้มเหลว: {message}",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

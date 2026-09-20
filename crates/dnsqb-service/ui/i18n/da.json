@@ -50,6 +50,16 @@
   "overrides.conflictNote": "konflikt: domænet findes i både allowlist og blocklist - allowlist vinder",
   "overrides.allowlistHeading": "Tilladte domæner",
   "overrides.blocklistHeading": "Blokerede domæner",
+  "cacheConfig.heading": "Cache",
+  "cacheConfig.field.clampMin": "Min. upstream-TTL (sek.)",
+  "cacheConfig.field.clampMax": "Maks. upstream-TTL (sek.)",
+  "cacheConfig.field.blockVerdictTtl": "TTL for en BLOCK-afgørelse (sek.)",
+  "cacheConfig.field.staleGrace": "Stale-if-error-vindue (sek.)",
+  "cacheConfig.field.maxCapacity": "Maksimalt antal cacheposter",
+  "cacheConfig.flushNotice": "Anvendelse af disse værdier nulstiller helt den aktuelle afgørelsescache.",
+  "cacheConfig.applyButton": "Anvend",
+  "cacheConfig.minMaxError": "Min. upstream-TTL kan ikke overstige maks. upstream-TTL.",
+  "cacheConfig.applyFailedTemplate": "Kunne ikke anvende: {message}",
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"

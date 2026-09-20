@@ -50,6 +50,16 @@
   "overrides.conflictNote": "конфликт: домейнът е и в списъка с разрешени, и в списъка с блокирани - списъкът с разрешени печели",
   "overrides.allowlistHeading": "Разрешени домейни",
   "overrides.blocklistHeading": "Блокирани домейни",
+  "cacheConfig.heading": "Кеш",
+  "cacheConfig.field.clampMin": "Мин. TTL на upstream (сек)",
+  "cacheConfig.field.clampMax": "Макс. TTL на upstream (сек)",
+  "cacheConfig.field.blockVerdictTtl": "TTL за BLOCK присъда (сек)",
+  "cacheConfig.field.staleGrace": "Прозорец stale-if-error (сек)",
+  "cacheConfig.field.maxCapacity": "Максимален брой записи в кеша",
+  "cacheConfig.flushNotice": "Прилагането на тези стойности напълно нулира текущия кеш на присъдите.",
+  "cacheConfig.applyButton": "Приложи",
+  "cacheConfig.minMaxError": "Мин. TTL на upstream не може да надвишава макс. TTL.",
+  "cacheConfig.applyFailedTemplate": "Неуспешно прилагане: {message}",
   "zoneDomainCount": {
     "one": "{n} домейн",
     "other": "{n} домейна"

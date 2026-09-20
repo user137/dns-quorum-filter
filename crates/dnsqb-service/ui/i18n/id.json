@@ -50,6 +50,16 @@
   "overrides.conflictNote": "konflik: domain ada di allowlist dan blocklist - allowlist menang",
   "overrides.allowlistHeading": "Domain yang diizinkan",
   "overrides.blocklistHeading": "Domain yang diblokir",
+  "cacheConfig.heading": "Cache",
+  "cacheConfig.field.clampMin": "TTL upstream min. (dtk)",
+  "cacheConfig.field.clampMax": "TTL upstream maks. (dtk)",
+  "cacheConfig.field.blockVerdictTtl": "TTL untuk putusan BLOCK (dtk)",
+  "cacheConfig.field.staleGrace": "Jendela stale-if-error (dtk)",
+  "cacheConfig.field.maxCapacity": "Jumlah entri cache maksimum",
+  "cacheConfig.flushNotice": "Menerapkan nilai ini akan sepenuhnya mengatur ulang cache putusan saat ini.",
+  "cacheConfig.applyButton": "Terapkan",
+  "cacheConfig.minMaxError": "TTL upstream min. tidak boleh melebihi TTL upstream maks.",
+  "cacheConfig.applyFailedTemplate": "Gagal menerapkan: {message}",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

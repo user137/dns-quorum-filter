@@ -50,6 +50,16 @@
   "overrides.conflictNote": "충돌: 도메인이 허용 목록과 차단 목록에 모두 있습니다 - 허용 목록이 우선합니다",
   "overrides.allowlistHeading": "허용된 도메인",
   "overrides.blocklistHeading": "차단된 도메인",
+  "cacheConfig.heading": "캐시",
+  "cacheConfig.field.clampMin": "최소 업스트림 TTL(초)",
+  "cacheConfig.field.clampMax": "최대 업스트림 TTL(초)",
+  "cacheConfig.field.blockVerdictTtl": "BLOCK 판정 TTL(초)",
+  "cacheConfig.field.staleGrace": "stale-if-error 기간(초)",
+  "cacheConfig.field.maxCapacity": "캐시 최대 항목 수",
+  "cacheConfig.flushNotice": "이 값을 적용하면 현재 판정 캐시가 완전히 재설정됩니다.",
+  "cacheConfig.applyButton": "적용",
+  "cacheConfig.minMaxError": "최소 업스트림 TTL은 최대 TTL을 초과할 수 없습니다.",
+  "cacheConfig.applyFailedTemplate": "적용 실패: {message}",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

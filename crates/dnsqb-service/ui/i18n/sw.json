@@ -50,6 +50,16 @@
   "overrides.conflictNote": "mgongano: kikoa kiko kwenye orodha ya kuruhusu na orodha ya kuzuia - orodha ya kuruhusu inashinda",
   "overrides.allowlistHeading": "Vikoa vilivyoruhusiwa",
   "overrides.blocklistHeading": "Vikoa vilivyozuiwa",
+  "cacheConfig.heading": "Kache",
+  "cacheConfig.field.clampMin": "TTL ya chini ya upstream (s)",
+  "cacheConfig.field.clampMax": "TTL ya juu ya upstream (s)",
+  "cacheConfig.field.blockVerdictTtl": "TTL kwa uamuzi wa BLOCK (s)",
+  "cacheConfig.field.staleGrace": "Dirisha la stale-if-error (s)",
+  "cacheConfig.field.maxCapacity": "Idadi kubwa zaidi ya rekodi kwenye kache",
+  "cacheConfig.flushNotice": "Kutumia thamani hizi kunaweka upya kabisa kache ya sasa ya maamuzi.",
+  "cacheConfig.applyButton": "Tumia",
+  "cacheConfig.minMaxError": "TTL ya chini ya upstream haiwezi kuzidi ya juu.",
+  "cacheConfig.applyFailedTemplate": "Kutumia kumeshindwa: {message}",
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

@@ -50,6 +50,16 @@
   "overrides.conflictNote": "conflict: the domain is in both the allowlist and the blocklist - the allowlist wins",
   "overrides.allowlistHeading": "Allowlist",
   "overrides.blocklistHeading": "Blocklist",
+  "cacheConfig.heading": "Cache",
+  "cacheConfig.field.clampMin": "Min upstream TTL (s)",
+  "cacheConfig.field.clampMax": "Max upstream TTL (s)",
+  "cacheConfig.field.blockVerdictTtl": "TTL for a BLOCK verdict (s)",
+  "cacheConfig.field.staleGrace": "Stale-if-error window (s)",
+  "cacheConfig.field.maxCapacity": "Maximum cache entries",
+  "cacheConfig.flushNotice": "Applying these values fully resets the current verdict cache.",
+  "cacheConfig.applyButton": "Apply",
+  "cacheConfig.minMaxError": "Min upstream TTL cannot exceed max upstream TTL.",
+  "cacheConfig.applyFailedTemplate": "Failed to apply: {message}",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

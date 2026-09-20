@@ -50,6 +50,16 @@
   "overrides.conflictNote": "टकराव: डोमेन अनुमति सूची और अवरोध सूची दोनों में है - अनुमति सूची प्राथमिकता लेती है",
   "overrides.allowlistHeading": "अनुमत डोमेन",
   "overrides.blocklistHeading": "अवरोधित डोमेन",
+  "cacheConfig.heading": "कैश",
+  "cacheConfig.field.clampMin": "न्यूनतम अपस्ट्रीम TTL (से.)",
+  "cacheConfig.field.clampMax": "अधिकतम अपस्ट्रीम TTL (से.)",
+  "cacheConfig.field.blockVerdictTtl": "BLOCK निर्णय के लिए TTL (से.)",
+  "cacheConfig.field.staleGrace": "Stale-if-error विंडो (से.)",
+  "cacheConfig.field.maxCapacity": "कैश में अधिकतम प्रविष्टियाँ",
+  "cacheConfig.flushNotice": "इन मानों को लागू करने से वर्तमान निर्णय कैश पूरी तरह रीसेट हो जाता है।",
+  "cacheConfig.applyButton": "लागू करें",
+  "cacheConfig.minMaxError": "न्यूनतम अपस्ट्रीम TTL अधिकतम से अधिक नहीं हो सकता।",
+  "cacheConfig.applyFailedTemplate": "लागू करना विफल: {message}",
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

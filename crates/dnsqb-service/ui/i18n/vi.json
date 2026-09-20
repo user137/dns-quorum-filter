@@ -50,6 +50,16 @@
   "overrides.conflictNote": "xung đột: miền có trong cả danh sách cho phép và danh sách chặn - danh sách cho phép được ưu tiên",
   "overrides.allowlistHeading": "Miền được cho phép",
   "overrides.blocklistHeading": "Miền bị chặn",
+  "cacheConfig.heading": "Bộ nhớ đệm",
+  "cacheConfig.field.clampMin": "TTL upstream tối thiểu (giây)",
+  "cacheConfig.field.clampMax": "TTL upstream tối đa (giây)",
+  "cacheConfig.field.blockVerdictTtl": "TTL cho phán quyết BLOCK (giây)",
+  "cacheConfig.field.staleGrace": "Cửa sổ stale-if-error (giây)",
+  "cacheConfig.field.maxCapacity": "Số mục tối đa trong bộ nhớ đệm",
+  "cacheConfig.flushNotice": "Áp dụng các giá trị này sẽ đặt lại hoàn toàn bộ nhớ đệm phán quyết hiện tại.",
+  "cacheConfig.applyButton": "Áp dụng",
+  "cacheConfig.minMaxError": "TTL upstream tối thiểu không được vượt quá TTL tối đa.",
+  "cacheConfig.applyFailedTemplate": "Áp dụng thất bại: {message}",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

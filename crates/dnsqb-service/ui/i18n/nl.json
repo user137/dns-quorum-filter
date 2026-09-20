@@ -50,6 +50,16 @@
   "overrides.conflictNote": "conflict: het domein staat zowel op de allowlist als op de blocklist - de allowlist wint",
   "overrides.allowlistHeading": "Toegestane domeinen",
   "overrides.blocklistHeading": "Geblokkeerde domeinen",
+  "cacheConfig.heading": "Cache",
+  "cacheConfig.field.clampMin": "Min. upstream-TTL (s)",
+  "cacheConfig.field.clampMax": "Max. upstream-TTL (s)",
+  "cacheConfig.field.blockVerdictTtl": "TTL voor een BLOCK-oordeel (s)",
+  "cacheConfig.field.staleGrace": "Stale-if-error-venster (s)",
+  "cacheConfig.field.maxCapacity": "Maximaal aantal cache-items",
+  "cacheConfig.flushNotice": "Het toepassen van deze waarden reset de huidige oordeel-cache volledig.",
+  "cacheConfig.applyButton": "Toepassen",
+  "cacheConfig.minMaxError": "Min. upstream-TTL mag max. upstream-TTL niet overschrijden.",
+  "cacheConfig.applyFailedTemplate": "Toepassen mislukt: {message}",
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

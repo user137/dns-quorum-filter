@@ -50,6 +50,16 @@
   "overrides.conflictNote": "konflikt: domenet finnes både på tillatelseslisten og blokkeringslisten - tillatelseslisten vinner",
   "overrides.allowlistHeading": "Tillatte domener",
   "overrides.blocklistHeading": "Blokkerte domener",
+  "cacheConfig.heading": "Buffer",
+  "cacheConfig.field.clampMin": "Min. upstream-TTL (sek.)",
+  "cacheConfig.field.clampMax": "Maks. upstream-TTL (sek.)",
+  "cacheConfig.field.blockVerdictTtl": "TTL for en BLOCK-avgjørelse (sek.)",
+  "cacheConfig.field.staleGrace": "Stale-if-error-vindu (sek.)",
+  "cacheConfig.field.maxCapacity": "Maks. antall bufferoppføringer",
+  "cacheConfig.flushNotice": "Å bruke disse verdiene nullstiller hele den nåværende avgjørelsesbufferen.",
+  "cacheConfig.applyButton": "Bruk",
+  "cacheConfig.minMaxError": "Min. upstream-TTL kan ikke overstige maks. TTL.",
+  "cacheConfig.applyFailedTemplate": "Kunne ikke bruke: {message}",
   "zoneDomainCount": {
     "one": "{n} domene",
     "other": "{n} domener"

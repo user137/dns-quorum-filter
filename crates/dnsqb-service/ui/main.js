@@ -814,17 +814,17 @@ async function applyCacheConfig(update) {
 }
 
 const CACHE_CONFIG_FIELDS = [
-  { key: "clamp_min_secs", label: "Мін. TTL апстріму (с)" },
-  { key: "clamp_max_secs", label: "Макс. TTL апстріму (с)" },
-  { key: "block_verdict_ttl_secs", label: "TTL для BLOCK-вердикту (с)" },
-  { key: "stale_grace_secs", label: "Вікно stale-if-error (с)" },
-  { key: "max_capacity", label: "Максимум записів у кеші" },
+  { key: "clamp_min_secs", labelKey: "cacheConfig.field.clampMin" },
+  { key: "clamp_max_secs", labelKey: "cacheConfig.field.clampMax" },
+  { key: "block_verdict_ttl_secs", labelKey: "cacheConfig.field.blockVerdictTtl" },
+  { key: "stale_grace_secs", labelKey: "cacheConfig.field.staleGrace" },
+  { key: "max_capacity", labelKey: "cacheConfig.field.maxCapacity" },
 ];
 
 function renderCacheConfig(data) {
   cacheConfigBody.textContent = "";
 
-  cacheConfigBody.appendChild(cardHeading("Кеш", "cache"));
+  cacheConfigBody.appendChild(cardHeading(t("cacheConfig.heading"), "cache"));
 
   // Same "silent data loss" concern as #overrides-body's own persisted
   // warning (T-47) - a live-applied change that failed to persist must be
@@ -832,8 +832,7 @@ function renderCacheConfig(data) {
   if (!data.persisted) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     cacheConfigBody.appendChild(notPersisted);
   }
 
@@ -842,18 +841,17 @@ function renderCacheConfig(data) {
   // explanation of why) - shown here so "Застосувати" isn't a surprise.
   const flushNotice = document.createElement("p");
   flushNotice.className = "cache-config-flush-notice";
-  flushNotice.textContent =
-    "Застосування цих значень повністю скидає поточний кеш вердиктів.";
+  flushNotice.textContent = t("cacheConfig.flushNotice");
   cacheConfigBody.appendChild(flushNotice);
 
   const inputs = {};
   const form = document.createElement("div");
   form.className = "cache-config-form";
-  CACHE_CONFIG_FIELDS.forEach(({ key, label }) => {
+  CACHE_CONFIG_FIELDS.forEach(({ key, labelKey }) => {
     const row = document.createElement("label");
     row.className = "cache-config-row";
     const span = document.createElement("span");
-    span.textContent = label;
+    span.textContent = t(labelKey);
     const input = document.createElement("input");
     input.type = "number";
     input.min = "0";
@@ -872,7 +870,7 @@ function renderCacheConfig(data) {
   const applyBtn = document.createElement("button");
   applyBtn.type = "button";
   applyBtn.className = "cache-config-apply";
-  applyBtn.textContent = "Застосувати";
+  applyBtn.textContent = t("cacheConfig.applyButton");
   applyBtn.addEventListener("click", async () => {
     const update = {};
     CACHE_CONFIG_FIELDS.forEach(({ key }) => {
@@ -882,15 +880,16 @@ function renderCacheConfig(data) {
     // suspenders, not a replacement for it (the server still rejects an
     // inverted range independently).
     if (update.clamp_min_secs > update.clamp_max_secs) {
-      errorLine.textContent =
-        "Мін. TTL апстріму не може перевищувати макс. TTL апстріму.";
+      errorLine.textContent = t("cacheConfig.minMaxError");
       return;
     }
     try {
       errorLine.textContent = "";
       renderCacheConfig(await applyCacheConfig(update));
     } catch (err) {
-      errorLine.textContent = `Не вдалося застосувати: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("cacheConfig.applyFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
   cacheConfigBody.appendChild(applyBtn);
@@ -900,11 +899,13 @@ function renderCacheConfig(data) {
 function renderCacheConfigError(err) {
   cacheConfigBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Кеш";
+  heading.textContent = t("cacheConfig.heading");
   cacheConfigBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   cacheConfigBody.appendChild(panel);
 }
 

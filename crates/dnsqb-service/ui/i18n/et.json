@@ -50,6 +50,16 @@
   "overrides.conflictNote": "konflikt: domeen on nii lubatud kui ka blokeeritud loendis - lubatud loend võidab",
   "overrides.allowlistHeading": "Lubatud domeenid",
   "overrides.blocklistHeading": "Blokeeritud domeenid",
+  "cacheConfig.heading": "Vahemälu",
+  "cacheConfig.field.clampMin": "Min upstream TTL (s)",
+  "cacheConfig.field.clampMax": "Maks upstream TTL (s)",
+  "cacheConfig.field.blockVerdictTtl": "TTL BLOCK-otsuse jaoks (s)",
+  "cacheConfig.field.staleGrace": "Stale-if-error aken (s)",
+  "cacheConfig.field.maxCapacity": "Vahemälu maksimaalne kirjete arv",
+  "cacheConfig.flushNotice": "Nende väärtuste rakendamine lähtestab täielikult praeguse otsuste vahemälu.",
+  "cacheConfig.applyButton": "Rakenda",
+  "cacheConfig.minMaxError": "Min upstream TTL ei tohi ületada maks upstream TTL-i.",
+  "cacheConfig.applyFailedTemplate": "Rakendamine ebaõnnestus: {message}",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

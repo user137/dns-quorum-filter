@@ -50,6 +50,16 @@
   "overrides.conflictNote": "ütközés: a domain szerepel mind az engedélyezési, mind a tiltólistán - az engedélyezési lista élvez elsőbbséget",
   "overrides.allowlistHeading": "Engedélyezett domainek",
   "overrides.blocklistHeading": "Blokkolt domainek",
+  "cacheConfig.heading": "Gyorsítótár",
+  "cacheConfig.field.clampMin": "Min. upstream TTL (mp)",
+  "cacheConfig.field.clampMax": "Max. upstream TTL (mp)",
+  "cacheConfig.field.blockVerdictTtl": "TTL a BLOCK döntéshez (mp)",
+  "cacheConfig.field.staleGrace": "Stale-if-error ablak (mp)",
+  "cacheConfig.field.maxCapacity": "Gyorsítótár maximális bejegyzésszáma",
+  "cacheConfig.flushNotice": "Ezen értékek alkalmazása teljesen visszaállítja az aktuális döntés-gyorsítótárat.",
+  "cacheConfig.applyButton": "Alkalmaz",
+  "cacheConfig.minMaxError": "A min. upstream TTL nem haladhatja meg a max. TTL-t.",
+  "cacheConfig.applyFailedTemplate": "Alkalmazás sikertelen: {message}",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

@@ -50,6 +50,16 @@
   "overrides.conflictNote": "ristiriita: verkkotunnus on sekä sallittujen että estettyjen listalla - sallittujen lista voittaa",
   "overrides.allowlistHeading": "Sallitut verkkotunnukset",
   "overrides.blocklistHeading": "Estetyt verkkotunnukset",
+  "cacheConfig.heading": "Välimuisti",
+  "cacheConfig.field.clampMin": "Vähimmäis-TTL (s)",
+  "cacheConfig.field.clampMax": "Enimmäis-TTL (s)",
+  "cacheConfig.field.blockVerdictTtl": "TTL BLOCK-päätökselle (s)",
+  "cacheConfig.field.staleGrace": "Stale-if-error-ikkuna (s)",
+  "cacheConfig.field.maxCapacity": "Välimuistin enimmäismerkintämäärä",
+  "cacheConfig.flushNotice": "Näiden arvojen käyttöönotto nollaa nykyisen päätösvälimuistin kokonaan.",
+  "cacheConfig.applyButton": "Käytä",
+  "cacheConfig.minMaxError": "Vähimmäis-TTL ei voi olla suurempi kuin enimmäis-TTL.",
+  "cacheConfig.applyFailedTemplate": "Käyttöönotto epäonnistui: {message}",
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

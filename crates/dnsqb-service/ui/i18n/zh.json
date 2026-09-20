@@ -50,6 +50,16 @@
   "overrides.conflictNote": "冲突：该域名同时存在于允许列表和阻止列表中 - 允许列表优先",
   "overrides.allowlistHeading": "允许的域名",
   "overrides.blocklistHeading": "被阻止的域名",
+  "cacheConfig.heading": "缓存",
+  "cacheConfig.field.clampMin": "上游最小 TTL(秒)",
+  "cacheConfig.field.clampMax": "上游最大 TTL(秒)",
+  "cacheConfig.field.blockVerdictTtl": "BLOCK 判定的 TTL(秒)",
+  "cacheConfig.field.staleGrace": "stale-if-error 窗口(秒)",
+  "cacheConfig.field.maxCapacity": "缓存最大条目数",
+  "cacheConfig.flushNotice": "应用这些值将完全重置当前的判定缓存。",
+  "cacheConfig.applyButton": "应用",
+  "cacheConfig.minMaxError": "上游最小 TTL 不能超过最大 TTL。",
+  "cacheConfig.applyFailedTemplate": "应用失败：{message}",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

@@ -50,6 +50,16 @@
   "overrides.conflictNote": "çakışma: alan adı hem izin listesinde hem de engelleme listesinde - izin listesi kazanır",
   "overrides.allowlistHeading": "İzin verilen alan adları",
   "overrides.blocklistHeading": "Engellenen alan adları",
+  "cacheConfig.heading": "Önbellek",
+  "cacheConfig.field.clampMin": "Min. üst akış TTL'si (sn)",
+  "cacheConfig.field.clampMax": "Maks. üst akış TTL'si (sn)",
+  "cacheConfig.field.blockVerdictTtl": "BLOCK kararı için TTL (sn)",
+  "cacheConfig.field.staleGrace": "Stale-if-error penceresi (sn)",
+  "cacheConfig.field.maxCapacity": "Önbellekteki maksimum kayıt sayısı",
+  "cacheConfig.flushNotice": "Bu değerleri uygulamak mevcut karar önbelleğini tamamen sıfırlar.",
+  "cacheConfig.applyButton": "Uygula",
+  "cacheConfig.minMaxError": "Min. üst akış TTL'si, maks. TTL'yi aşamaz.",
+  "cacheConfig.applyFailedTemplate": "Uygulama başarısız oldu: {message}",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

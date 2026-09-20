@@ -50,6 +50,16 @@
   "overrides.conflictNote": "競合: このドメインは許可リストとブロックリストの両方にあります — 許可リストが優先されます",
   "overrides.allowlistHeading": "許可されたドメイン",
   "overrides.blocklistHeading": "ブロックされたドメイン",
+  "cacheConfig.heading": "キャッシュ",
+  "cacheConfig.field.clampMin": "アップストリーム最小TTL(秒)",
+  "cacheConfig.field.clampMax": "アップストリーム最大TTL(秒)",
+  "cacheConfig.field.blockVerdictTtl": "BLOCK判定のTTL(秒)",
+  "cacheConfig.field.staleGrace": "stale-if-errorウィンドウ(秒)",
+  "cacheConfig.field.maxCapacity": "キャッシュの最大エントリ数",
+  "cacheConfig.flushNotice": "これらの値を適用すると、現在の判定キャッシュが完全にリセットされます。",
+  "cacheConfig.applyButton": "適用",
+  "cacheConfig.minMaxError": "最小TTLは最大TTLを超えることはできません。",
+  "cacheConfig.applyFailedTemplate": "適用に失敗しました: {message}",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

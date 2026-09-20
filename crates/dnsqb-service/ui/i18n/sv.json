@@ -50,6 +50,16 @@
   "overrides.conflictNote": "konflikt: domänen finns både i allowlist och blocklist - allowlist vinner",
   "overrides.allowlistHeading": "Tillåtna domäner",
   "overrides.blocklistHeading": "Blockerade domäner",
+  "cacheConfig.heading": "Cache",
+  "cacheConfig.field.clampMin": "Min. upstream-TTL (s)",
+  "cacheConfig.field.clampMax": "Max. upstream-TTL (s)",
+  "cacheConfig.field.blockVerdictTtl": "TTL för ett BLOCK-utslag (s)",
+  "cacheConfig.field.staleGrace": "Stale-if-error-fönster (s)",
+  "cacheConfig.field.maxCapacity": "Max antal cacheposter",
+  "cacheConfig.flushNotice": "Att tillämpa dessa värden återställer helt den nuvarande utslagscachen.",
+  "cacheConfig.applyButton": "Tillämpa",
+  "cacheConfig.minMaxError": "Min. upstream-TTL får inte överstiga max. TTL.",
+  "cacheConfig.applyFailedTemplate": "Det gick inte att tillämpa: {message}",
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

@@ -50,6 +50,16 @@
   "overrides.conflictNote": "تنازعہ: ڈومین اجازت کی فہرست اور مسدود فہرست دونوں میں ہے - اجازت کی فہرست کو ترجیح حاصل ہے",
   "overrides.allowlistHeading": "اجازت شدہ ڈومینز",
   "overrides.blocklistHeading": "مسدود ڈومینز",
+  "cacheConfig.heading": "کیش",
+  "cacheConfig.field.clampMin": "کم از کم اپ اسٹریم TTL (سیکنڈ)",
+  "cacheConfig.field.clampMax": "زیادہ سے زیادہ اپ اسٹریم TTL (سیکنڈ)",
+  "cacheConfig.field.blockVerdictTtl": "BLOCK فیصلے کے لیے TTL (سیکنڈ)",
+  "cacheConfig.field.staleGrace": "Stale-if-error ونڈو (سیکنڈ)",
+  "cacheConfig.field.maxCapacity": "کیش میں زیادہ سے زیادہ اندراجات",
+  "cacheConfig.flushNotice": "یہ اقدار لاگو کرنے سے موجودہ فیصلہ کیش مکمل طور پر ری سیٹ ہو جاتا ہے۔",
+  "cacheConfig.applyButton": "لاگو کریں",
+  "cacheConfig.minMaxError": "کم از کم اپ اسٹریم TTL زیادہ سے زیادہ سے تجاوز نہیں کر سکتا۔",
+  "cacheConfig.applyFailedTemplate": "لاگو کرنا ناکام: {message}",
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"
