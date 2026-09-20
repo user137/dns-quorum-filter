@@ -178,15 +178,19 @@ function applyDocumentLanguage() {
 // changes. #overrides-body/#cache-config-body/#providers-body/#log-body's
 // filter row are each their own fetch/render cycle, off the 2s poll, same
 // reasoning as #rating-filter-body (CLAUDE.md) - none of them are otherwise
-// reachable from refresh(). refreshMaxmind()/refreshLog()/
-// initBrowserSetup() render no FIELD_HELP/HERO/region-name text and are
-// deliberately left out.
+// reachable from refresh(). #geoip-maxmind-body is the same shape (own
+// fetch/render cycle, T-228) and was missing from this list before Батч 5.4
+// gave its render path t() calls too (advisor-caught while planning that
+// batch: the card would have stayed in the previous language after a live
+// locale switch). refreshLog()/initBrowserSetup() still render no
+// FIELD_HELP/HERO/region-name/t() text and are deliberately left out.
 function renderTranslatedCards() {
   refresh();
   refreshRatingFilter();
   refreshBlocklistBundles();
   refreshOverrides();
   refreshCacheConfig();
+  refreshMaxmind();
   refreshProviders();
   refreshGeoip();
   refreshCctldBlock();
@@ -1442,13 +1446,24 @@ async function removeGeoipCountry(country) {
   return response.json();
 }
 
-// T-162/T-226(б): `DatabaseSource` wire strings → human labels.
-const DATABASE_SOURCE_LABELS = {
-  DB_IP_LITE: "DB-IP Lite",
-  USER_COUNTRY: "user-country (дані реєстрів IP-адрес)",
-  GEO_LITE2: "MaxMind GeoLite2",
-  OTHER: "інше джерело",
-};
+// T-162/T-226(б): `DatabaseSource` wire strings → human labels. DB-IP Lite
+// and MaxMind GeoLite2 are brand names, kept as-is in every locale; the
+// other two are plain prose, resolved through t() at call time (not a
+// module-level const - see cctldOverBlockingWarning()'s own comment on why).
+function databaseSourceLabel(source) {
+  switch (source) {
+    case "DB_IP_LITE":
+      return "DB-IP Lite";
+    case "USER_COUNTRY":
+      return t("geoip.sourceLabel.userCountry");
+    case "GEO_LITE2":
+      return "MaxMind GeoLite2";
+    case "OTHER":
+      return t("geoip.sourceLabel.other");
+    default:
+      return source;
+  }
+}
 
 
 // One <datalist>, shared by every renderGeoip() call - native browser
@@ -1474,16 +1489,6 @@ function populateGeoipCountryDatalist() {
     });
 }
 
-// SPEC.md §3.5's own wording, translated - large CDNs hand out anycast IPs
-// whose apparent country changes between requests/points of presence, so
-// blocking a country is expected, typical over-blocking risk for any site
-// behind one, not a hypothetical edge case.
-const GEOIP_OVER_BLOCKING_WARNING =
-  "Великі CDN (Cloudflare, Google, Amazon) роздають anycast-адреси, чия " +
-  "географія змінюється між запитами - блокування країни ризикує " +
-  "заблокувати легітимні сайти, які просто фізично проходять через " +
-  "дата-центр у цій країні, не маючи стосунку до її юрисдикції.";
-
 function geoipListItem(code) {
   const li = document.createElement("li");
   li.className = "override-item";
@@ -1493,7 +1498,7 @@ function geoipListItem(code) {
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
   removeBtn.className = "override-remove";
-  removeBtn.textContent = "Видалити";
+  removeBtn.textContent = t("common.delete");
   removeBtn.addEventListener("click", async () => {
     try {
       // Renders the POST response directly (same as renderCacheConfig
@@ -1514,7 +1519,7 @@ function renderGeoip(data) {
   populateGeoipCountryDatalist();
 
   const heading = document.createElement("h3");
-  heading.textContent = "GeoIP-блокування";
+  heading.textContent = t("geoip.heading");
   geoipBody.appendChild(heading);
 
   // T-78: three distinct, always-visible lines - not a banner - for three
@@ -1528,17 +1533,16 @@ function renderGeoip(data) {
   const databaseStatus = document.createElement("p");
   databaseStatus.className = "geoip-database-status";
   if (!data.database_loaded) {
-    databaseStatus.textContent =
-      "База GeoIP ще не завантажена - фільтрація за країною зараз не діє, незалежно від списку нижче.";
+    databaseStatus.textContent = t("geoip.noDatabaseStatus");
   } else if (data.database_built_at_ms == null) {
-    databaseStatus.textContent = "База GeoIP завантажена, дата збірки невідома.";
+    databaseStatus.textContent = t("geoip.unknownBuildDateStatus");
   } else {
     // Source-neutral date line - `database_source` (below) carries which
     // publisher's database this actually is (T-162); before that field
     // existed a hardcoded "(DB-IP)" here was wrong once T-80 landed.
-    databaseStatus.textContent = `Дата збірки бази GeoIP: ${new Date(
-      data.database_built_at_ms,
-    ).toLocaleString()}`;
+    databaseStatus.textContent = t("geoip.buildDateTemplate", {
+      date: new Date(data.database_built_at_ms).toLocaleString(),
+    });
   }
   geoipBody.appendChild(databaseStatus);
 
@@ -1550,9 +1554,9 @@ function renderGeoip(data) {
   if (data.database_source) {
     const sourceLine = document.createElement("p");
     sourceLine.className = "geoip-database-status";
-    sourceLine.textContent = `Активне джерело: ${
-      DATABASE_SOURCE_LABELS[data.database_source] || data.database_source
-    }`;
+    sourceLine.textContent = t("geoip.activeSourceTemplate", {
+      source: databaseSourceLabel(data.database_source),
+    });
     geoipBody.appendChild(sourceLine);
   }
 
@@ -1561,8 +1565,7 @@ function renderGeoip(data) {
   if (!data.persisted) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     geoipBody.appendChild(notPersisted);
   }
 
@@ -1584,17 +1587,17 @@ function renderGeoip(data) {
   input.setAttribute("list", geoipCountryDatalist.id);
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.textContent = "Додати";
+  addBtn.textContent = t("overrides.addButton");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
-  cancelBtn.textContent = "Скасувати";
+  cancelBtn.textContent = t("common.cancel");
   cancelBtn.hidden = true;
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
   const warningLine = document.createElement("div");
   warningLine.className = "notice warn";
   warningLine.hidden = true;
-  warningLine.textContent = GEOIP_OVER_BLOCKING_WARNING;
+  warningLine.textContent = t("geoip.overBlockingWarning");
 
   // Local to this one render's closure, not module state - a fresh
   // renderGeoip() call (after a successful add/remove) always starts
@@ -1607,7 +1610,7 @@ function renderGeoip(data) {
     armedCode = null;
     warningLine.hidden = true;
     cancelBtn.hidden = true;
-    addBtn.textContent = "Додати";
+    addBtn.textContent = t("overrides.addButton");
   }
   cancelBtn.addEventListener("click", resetArming);
   input.addEventListener("input", resetArming);
@@ -1621,7 +1624,7 @@ function renderGeoip(data) {
     // belt and suspenders, not a replacement (the server still rejects an
     // invalid code independently).
     if (!/^[A-Z]{2}$/.test(code)) {
-      errorLine.textContent = `"${code}" не є дійсним дволітерним кодом країни (ISO 3166-1 alpha-2).`;
+      errorLine.textContent = t("geoip.invalidCodeTemplate", { code });
       return;
     }
     errorLine.textContent = "";
@@ -1629,7 +1632,7 @@ function renderGeoip(data) {
       armedCode = code;
       warningLine.hidden = false;
       cancelBtn.hidden = false;
-      addBtn.textContent = "Підтвердити додавання";
+      addBtn.textContent = t("geoip.confirmAddButton");
       return;
     }
     try {
@@ -1638,7 +1641,10 @@ function renderGeoip(data) {
       // failed save.
       renderGeoip(await addGeoipCountry(code));
     } catch (err) {
-      errorLine.textContent = `Не вдалося додати "${code}": ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("geoip.addFailedTemplate", {
+        code,
+        message: (err && err.message) || String(err),
+      });
     }
   }
   addBtn.addEventListener("click", submitAdd);
@@ -1665,11 +1671,13 @@ function renderGeoip(data) {
 function renderGeoipError(err) {
   geoipBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "GeoIP-блокування";
+  heading.textContent = t("geoip.heading");
   geoipBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   geoipBody.appendChild(panel);
 }
 
@@ -1699,16 +1707,13 @@ async function refreshGeoip() {
 // 24h background refresh (a key can be revoked after it was accepted). A
 // credentials change takes effect immediately - no dnsqb-service restart.
 
+// Structural (cls) vs. textual (t() key) split - same reasoning as
+// HERO_PRESENTATION (Батч 5.2): the object stays a plain lookup, the text
+// itself is resolved fresh from the dictionary at call time.
 const MAXMIND_CHECK_MESSAGES = {
-  VERIFIED: { cls: "notice ok", text: "MaxMind підтвердив ці креденшели." },
-  REJECTED: {
-    cls: "notice warn",
-    text: "MaxMind відхилив креденшели (401/403) - перевірте account ID та ліцензійний ключ.",
-  },
-  UNVERIFIED: {
-    cls: "notice warn",
-    text: "Не вдалося перевірити креденшели зараз (мережа?) - креденшели збережено, перевірка відбудеться при наступному оновленні бази.",
-  },
+  VERIFIED: { cls: "notice ok", key: "maxmind.check.verified" },
+  REJECTED: { cls: "notice warn", key: "maxmind.check.rejected" },
+  UNVERIFIED: { cls: "notice warn", key: "maxmind.check.unverified" },
 };
 
 async function getMaxmind() {
@@ -1747,29 +1752,31 @@ function renderMaxmind(data) {
   geoipMaxmindBody.textContent = "";
 
   const heading = document.createElement("h3");
-  heading.textContent = "Джерело GeoIP: MaxMind GeoLite2";
+  heading.textContent = t("maxmind.heading");
   geoipMaxmindBody.appendChild(heading);
 
   const state = document.createElement("p");
   state.className = "geoip-database-status";
   state.textContent = data.configured
-    ? `Налаштовано. Account ID: ${data.account_id}. Діє одразу.`
-    : "Не налаштовано - використовується DB-IP Lite (за замовчуванням).";
+    ? t("maxmind.configuredStatusTemplate", { accountId: data.account_id })
+    : t("maxmind.notConfiguredStatus");
   geoipMaxmindBody.appendChild(state);
 
   if (!data.persisted) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну НЕ збережено - вона не переживе перезапуск сервісу.";
+    // Батч 5.4: this card used to have its own, slightly different "not
+    // persisted" wording (missing "застосовано") - reconciled onto the
+    // shared key like every other card, not kept as a second source of
+    // truth for the same notice.
+    notPersisted.textContent = t("warning.notPersisted");
     geoipMaxmindBody.appendChild(notPersisted);
   }
 
   if (data.refresh_health === "AUTH_REJECTED") {
     const brokenLater = document.createElement("div");
     brokenLater.className = "notice warn";
-    brokenLater.textContent =
-      "MaxMind більше не приймає збережені креденшели на плановому оновленні бази - перезбережіть account ID та ліцензійний ключ.";
+    brokenLater.textContent = t("maxmind.authRejectedWarning");
     geoipMaxmindBody.appendChild(brokenLater);
   }
 
@@ -1777,7 +1784,7 @@ function renderMaxmind(data) {
   if (check) {
     const line = document.createElement("div");
     line.className = check.cls;
-    line.textContent = check.text;
+    line.textContent = t(check.key);
     geoipMaxmindBody.appendChild(line);
   }
 
@@ -1786,15 +1793,18 @@ function renderMaxmind(data) {
 
   const accountInput = document.createElement("input");
   accountInput.type = "text";
+  // Not translated (Батч 5.4): "account ID" is MaxMind's own dashboard field
+  // name, in English on every locale of their own site - matching it here
+  // is more useful to the operator than a translated paraphrase.
   accountInput.placeholder = "account ID";
   const keyInput = document.createElement("input");
   keyInput.type = "password";
-  keyInput.placeholder = "ліцензійний ключ";
+  keyInput.placeholder = t("maxmind.licenseKeyPlaceholder");
   keyInput.autocomplete = "off";
 
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
-  saveBtn.textContent = "Зберегти";
+  saveBtn.textContent = t("common.save");
   // T-228: saving runs a save-time probe against MaxMind (SERVICES.md/
   // dispatch.rs's own doc: "POST stores then runs a save-time probe -
   // check") - offline, that probe just times out and the existing
@@ -1804,25 +1814,26 @@ function renderMaxmind(data) {
   // showing a wrong diagnosis after a doomed fetch.
   if (lastNetworkStatus === "OFFLINE") {
     saveBtn.disabled = true;
-    saveBtn.title = "Немає з'єднання з інтернетом - перевірку ключа неможливо виконати.";
+    saveBtn.title = t("maxmind.offlineMessage");
   }
   saveBtn.addEventListener("click", async () => {
     if (lastNetworkStatus === "OFFLINE") {
-      errorLine.textContent =
-        "Немає з'єднання з інтернетом - перевірку ключа неможливо виконати.";
+      errorLine.textContent = t("maxmind.offlineMessage");
       return;
     }
     const accountId = accountInput.value.trim();
     const licenseKey = keyInput.value.trim();
     if (!accountId || !licenseKey) {
-      errorLine.textContent = "Обидва поля обов'язкові.";
+      errorLine.textContent = t("maxmind.bothFieldsRequired");
       return;
     }
     errorLine.textContent = "";
     try {
       renderMaxmind(await setMaxmind(accountId, licenseKey));
     } catch (err) {
-      errorLine.textContent = `Не вдалося зберегти: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("maxmind.saveFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
 
@@ -1836,17 +1847,19 @@ function renderMaxmind(data) {
     let armed = false;
     const clearBtn = document.createElement("button");
     clearBtn.type = "button";
-    clearBtn.textContent = "Очистити";
+    clearBtn.textContent = t("maxmind.clearButton");
     clearBtn.addEventListener("click", async () => {
       if (!armed) {
         armed = true;
-        clearBtn.textContent = "Підтвердити очищення";
+        clearBtn.textContent = t("maxmind.confirmClearButton");
         return;
       }
       try {
         renderMaxmind(await clearMaxmind());
       } catch (err) {
-        errorLine.textContent = `Не вдалося очистити: ${(err && err.message) || String(err)}`;
+        errorLine.textContent = t("maxmind.clearFailedTemplate", {
+          message: (err && err.message) || String(err),
+        });
       }
     });
     addRow.appendChild(clearBtn);
@@ -1859,11 +1872,13 @@ function renderMaxmind(data) {
 function renderMaxmindError(err) {
   geoipMaxmindBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Джерело GeoIP: MaxMind GeoLite2";
+  heading.textContent = t("maxmind.heading");
   geoipMaxmindBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   geoipMaxmindBody.appendChild(panel);
 }
 
@@ -1875,7 +1890,11 @@ async function refreshMaxmind() {
   }
 }
 
-refreshMaxmind();
+// Батч 5.4: no eager module-scope call here any more (there used to be
+// one) - renderMaxmind() now calls t(), so this card joined
+// renderTranslatedCards() above instead, same "only reachable from
+// renderTranslatedCards()" shape Батч 5.3 already established for
+// refreshGeoip()/refreshCctldBlock(). Calling both would double-fetch.
 
 // T-46/T-54: query log screen. Same isolation reasoning as the two sections
 // above (#log-body, own fetch/render cycle, not on the 2s poll) - but unlike

@@ -1143,9 +1143,18 @@ mod tests {
              datalist labels have the same CURRENT_LOCALE dependency since \
              the COUNTRY_NAMES -> Intl.DisplayNames migration"
         );
+        // Батч 5.4: renderMaxmind() gained t() calls, same reasoning as
+        // refreshGeoip()/refreshCctldBlock() above - the advisor caught this
+        // one missing from the list while planning the batch.
+        assert!(
+            body.contains("refreshMaxmind()"),
+            "renderTranslatedCards() must call refreshMaxmind() too - its \
+             render path calls t() since Батч 5.4"
+        );
         // Батч 5.3 removed the old unconditional module-scope `refreshGeoip();`
         // call - calling both it and renderTranslatedCards()'s copy on first
-        // load would double-fetch /admin/geoip.
+        // load would double-fetch /admin/geoip. Батч 5.4 removed the same
+        // shape for refreshMaxmind().
         assert!(
             !MAIN_JS.contains("\nrefreshGeoip();\n"),
             "must not also fire eagerly at module scope any more - that \
@@ -1155,6 +1164,11 @@ mod tests {
             !MAIN_JS.contains("\nrefreshCctldBlock();\n"),
             "must never gain an eager module-scope call either - same \
              double-fetch risk as refreshGeoip() above"
+        );
+        assert!(
+            !MAIN_JS.contains("\nrefreshMaxmind();\n"),
+            "must not also fire eagerly at module scope any more - same \
+             double-fetch risk, fixed in Батч 5.4"
         );
     }
 

@@ -7073,3 +7073,39 @@ confirmBlockButton` у `MAIN_JS`; другий шукає ключ `cctldBlock.s
 усі зелені. Грепом підтверджено відсутність кириличних літералів (лише коментарі й символи
 `—`/`×`/`✓`). Server-side перевірка через scratch-інстанс (порт 8443): `.../admin/ui/i18n/tr.json`
 повернув усі нові ключі коректною турецькою (74 ключі, збіг з `en`).
+
+---
+
+**Батч 5.4, коміт 6 — `#geoip-body` + `#geoip-maxmind-body` (T-151), 2026-09-20.** Шостий комміт.
+Мігрує `DATABASE_SOURCE_LABELS` (перетворено на функцію `databaseSourceLabel()` — та сама причина,
+що `cctldOverBlockingWarning()`: DB-IP Lite/MaxMind GeoLite2 лишаються брендовими рядками, дві
+інші гілки читають `t()`), `geoipListItem()`, `renderGeoip()`/`renderGeoipError()`,
+`GEOIP_OVER_BLOCKING_WARNING` (та сама const→функція трансформація), `MAXMIND_CHECK_MESSAGES`
+(cls/key-розділення замість cls/text), `renderMaxmind()`/`renderMaxmindError()`. 25 нових ключів
+× 37 локалей.
+
+**Реальний баг, спійманий саме зараз (не advisor, не окремий тест) — той самий клас, що коміт 5
+відкрив для `#geoip-maxmind-body`:** картка мала власний безумовний виклик `refreshMaxmind();` на
+рівні модуля (незалежно від `DICTIONARY_READY`) **і** тепер також викликається з
+`renderTranslatedCards()` — точнісінько подвійний-фетч патерн, який Батч 5.3 вже виправляв для
+`refreshGeoip()`/`refreshCctldBlock()`. Прибрано зайвий виклик на рівні модуля; новий тест
+`cctld_block_and_geoip_are_reachable_only_from_render_translated_cards` (розширений, не
+перейменований — той самий клас regression) тепер асертує і `refreshMaxmind()` у
+`renderTranslatedCards()`, і відсутність окремого eager-виклику.
+
+**Реконсиляція розбіжного формулювання (advisor-catch на плані, п.2, застосовано зараз):**
+`renderMaxmind()`'s власний "не збережено"-рядок ("Зміну НЕ збережено...", без слова
+"застосовано") замінено на спільний `warning.notPersisted` — уніфікує формулювання з рештою 8
+карток, реальна зміна видимого тексту, не no-op рефакторинг.
+
+**Свідоме рішення не перекладати:** `accountInput.placeholder = "account ID"` лишається
+англійською в кожній локалі — це власна назва поля на дашборді MaxMind (не перекладена і на самому
+MaxMind), тож збіг із зовнішнім сервісом корисніший за переклад-парафраз.
+
+**Перевірка:** `cargo test --workspace --lib --bins` (954, без змін кількості — тест
+`cctld_block_and_geoip_are_reachable_only_from_render_translated_cards` розширено новими
+асерціями на `refreshMaxmind()`, не заведено окремим `#[test]`), `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --all -- --check` — усі зелені. Грепом підтверджено відсутність кириличних літералів (лише
+коментарі й `regionLabel()`-роздільник `—`). Server-side перевірка через scratch-інстанс (порт
+8443): `.../admin/ui/i18n/pt.json` повернув усі нові ключі коректною португальською (99 ключів,
+збіг з `en`).
