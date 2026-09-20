@@ -7133,3 +7133,17 @@ i18n-ключ на статус, не два незалежні джерела �
 підтверджено відсутність кириличних літералів (лише коментарі). Server-side перевірка через
 scratch-інстанс (порт 8443): `.../admin/ui/i18n/de.json` повернув усі нові ключі коректною
 німецькою (133 ключі, збіг з `en`).
+
+---
+
+**Батч 5.4, коміт 8 — `#providers-body` (T-151), 2026-09-20.** Восьмий комміт. Мігрує
+`PROVIDER_CATEGORY_LABELS`/`BLOCK_SIGNATURE_LABELS` (const → функції `providerCategoryLabel()`/
+`blockSignatureLabel()`, та сама трансформація, що `databaseSourceLabel()`), `providerRow()`,
+`customProviderForm()`, `renderProviders()`/`renderProvidersError()`. 18 нових ключів × 37 локалей
+(`NXDOMAIN`, `0.0.0.0`, `https://`, приклад URL `nextdns.io` лишені технічними літералами).
+
+**Перевірка:** `cargo test --workspace --lib --bins` (954, без регресій), `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` — усі зелені. Грепом
+підтверджено відсутність кириличних літералів (лише коментарі). Server-side перевірка через
+scratch-інстанс (порт 8443): `.../admin/ui/i18n/sw.json` повернув усі нові ключі коректною
+суахілі (151 ключ, збіг з `en`).

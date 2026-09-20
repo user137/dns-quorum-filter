@@ -2343,17 +2343,34 @@ async function refreshLog() {
 // failed disk save shows up as persisted:false instead of being hidden by a
 // fresh GET's always-true value.
 
-const PROVIDER_CATEGORY_LABELS = {
-  SECURITY: "Безпека (шкідливе, фішинг)",
-  ADS_TRACKERS: "Реклама і трекери",
-  ADULT_CONTENT: "Дорослий контент",
-};
+// Const -> function, same reasoning as databaseSourceLabel()/decisionLabel()
+// above (Батч 5.4): resolved from t() at call time, not frozen at parse
+// time before the dictionary is ready.
+function providerCategoryLabel(category) {
+  switch (category) {
+    case "SECURITY":
+      return t("providers.category.security");
+    case "ADS_TRACKERS":
+      return t("providers.category.adsTrackers");
+    case "ADULT_CONTENT":
+      return t("providers.category.adultContent");
+    default:
+      return category;
+  }
+}
 const PROVIDER_CATEGORY_ORDER = ["SECURITY", "ADS_TRACKERS", "ADULT_CONTENT"];
-const BLOCK_SIGNATURE_LABELS = {
-  NULL_IP: "0.0.0.0 у відповіді",
-  NXDOMAIN_VS_BASELINE: "NXDOMAIN проти baseline",
-  NULL_IP_OR_NXDOMAIN: "0.0.0.0 або NXDOMAIN",
-};
+function blockSignatureLabel(signature) {
+  switch (signature) {
+    case "NULL_IP":
+      return t("providers.signature.nullIp");
+    case "NXDOMAIN_VS_BASELINE":
+      return t("providers.signature.nxdomainVsBaseline");
+    case "NULL_IP_OR_NXDOMAIN":
+      return t("providers.signature.nullIpOrNxdomain");
+    default:
+      return signature;
+  }
+}
 
 async function getProviders() {
   const response = await fetch("/admin/providers");
@@ -2454,14 +2471,14 @@ function providerRow(entry) {
 
   const sig = document.createElement("span");
   sig.className = "log-item-badge";
-  sig.title = "Як quorum читає блок-відповідь цього провайдера";
-  sig.textContent = BLOCK_SIGNATURE_LABELS[entry.block_signature] || entry.block_signature;
+  sig.title = t("providers.signatureTitle");
+  sig.textContent = blockSignatureLabel(entry.block_signature);
   li.appendChild(sig);
 
   if (!entry.is_builtin) {
     const custom = document.createElement("span");
     custom.className = "log-item-badge";
-    custom.textContent = "власний";
+    custom.textContent = t("providers.customBadge");
     li.appendChild(custom);
   }
 
@@ -2492,11 +2509,11 @@ function providerRow(entry) {
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "override-remove";
-    removeBtn.textContent = "Видалити";
+    removeBtn.textContent = t("common.delete");
     removeBtn.addEventListener("click", async () => {
       if (!armed) {
         armed = true;
-        removeBtn.textContent = "Підтвердити видалення";
+        removeBtn.textContent = t("providers.confirmRemoveButton");
         return;
       }
       try {
@@ -2541,7 +2558,7 @@ function customProviderForm() {
   const wrap = document.createElement("div");
 
   const heading = document.createElement("h4");
-  heading.textContent = "Додати власний DoH-провайдер";
+  heading.textContent = t("providers.customFormHeading");
   wrap.appendChild(heading);
 
   const row = document.createElement("div");
@@ -2549,22 +2566,23 @@ function customProviderForm() {
 
   const idInput = document.createElement("input");
   idInput.type = "text";
-  idInput.placeholder = "ідентифікатор (a-z, 0-9, -)";
+  idInput.placeholder = t("providers.idPlaceholder");
   idInput.maxLength = 64;
 
   const urlInput = document.createElement("input");
   urlInput.type = "text";
+  // Not translated: a literal example URL, not prose.
   urlInput.placeholder = "https://xxxx.dns.nextdns.io/dns-query";
 
   const nameInput = document.createElement("input");
   nameInput.type = "text";
-  nameInput.placeholder = "показова назва";
+  nameInput.placeholder = t("providers.displayNamePlaceholder");
 
   const catSelect = document.createElement("select");
   PROVIDER_CATEGORY_ORDER.forEach((cat) => {
     const opt = document.createElement("option");
     opt.value = cat;
-    opt.textContent = PROVIDER_CATEGORY_LABELS[cat];
+    opt.textContent = providerCategoryLabel(cat);
     catSelect.appendChild(opt);
   });
 
@@ -2575,13 +2593,13 @@ function customProviderForm() {
   ["NULL_IP_OR_NXDOMAIN", "NULL_IP", "NXDOMAIN_VS_BASELINE"].forEach((sigValue) => {
     const opt = document.createElement("option");
     opt.value = sigValue;
-    opt.textContent = BLOCK_SIGNATURE_LABELS[sigValue];
+    opt.textContent = blockSignatureLabel(sigValue);
     sigSelect.appendChild(opt);
   });
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.textContent = "Додати";
+  addBtn.textContent = t("overrides.addButton");
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
@@ -2595,16 +2613,15 @@ function customProviderForm() {
     // validate_provider_url checks - belt and suspenders, the server still
     // rejects independently and stays payload-free.
     if (!/^[a-z0-9-]{1,64}$/.test(id)) {
-      errorLine.textContent =
-        "Ідентифікатор: лише малі латинські літери, цифри та дефіс (1-64 символи).";
+      errorLine.textContent = t("providers.idValidationError");
       return;
     }
     if (!/^https:\/\//i.test(url)) {
-      errorLine.textContent = "URL має починатися з https://";
+      errorLine.textContent = t("providers.urlValidationError");
       return;
     }
     if (!displayName) {
-      errorLine.textContent = "Вкажіть показову назву.";
+      errorLine.textContent = t("providers.displayNameRequiredError");
       return;
     }
     try {
@@ -2618,7 +2635,9 @@ function customProviderForm() {
         }),
       );
     } catch (err) {
-      errorLine.textContent = `Не вдалося додати: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("providers.addFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
 
@@ -2637,7 +2656,7 @@ function customProviderForm() {
 function renderProviders(data) {
   providersBody.textContent = "";
 
-  providersBody.appendChild(cardHeading("Провайдери-voter'и", "providers"));
+  providersBody.appendChild(cardHeading(t("providers.heading"), "providers"));
 
   // T-176: this same ProvidersResponse also drives the basic-view master +
   // category toggles, the fan-out privacy line and the pass-through warning
@@ -2649,8 +2668,7 @@ function renderProviders(data) {
   if (!data.persisted) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     providersBody.appendChild(notPersisted);
   }
 
@@ -2660,7 +2678,7 @@ function renderProviders(data) {
       return;
     }
     const catHeading = document.createElement("h4");
-    catHeading.textContent = PROVIDER_CATEGORY_LABELS[cat] || cat;
+    catHeading.textContent = providerCategoryLabel(cat);
     providersBody.appendChild(catHeading);
     const list = document.createElement("ul");
     list.className = "override-list";
@@ -2672,7 +2690,7 @@ function renderProviders(data) {
   const addable = data.available_presets.filter((preset) => !activeIds.has(preset.id));
   if (addable.length > 0) {
     const addHeading = document.createElement("h4");
-    addHeading.textContent = "Додати пресет";
+    addHeading.textContent = t("providers.addPresetHeading");
     providersBody.appendChild(addHeading);
     const list = document.createElement("ul");
     list.className = "override-list";
@@ -2684,12 +2702,12 @@ function renderProviders(data) {
       li.appendChild(label);
       const catBadge = document.createElement("span");
       catBadge.className = "log-item-badge";
-      catBadge.textContent = PROVIDER_CATEGORY_LABELS[preset.category] || preset.category;
+      catBadge.textContent = providerCategoryLabel(preset.category);
       li.appendChild(catBadge);
       const addBtn = document.createElement("button");
       addBtn.type = "button";
       addBtn.className = "override-remove";
-      addBtn.textContent = "Додати";
+      addBtn.textContent = t("overrides.addButton");
       addBtn.addEventListener("click", async () => {
         try {
           renderProviders(await addProvider({ id: preset.id }));
@@ -2709,10 +2727,12 @@ function renderProviders(data) {
 }
 
 function renderProvidersError(err) {
-  const message = `Помилка: ${(err && err.message) || String(err)}`;
+  const message = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   providersBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Провайдери-voter'и";
+  heading.textContent = t("providers.heading");
   providersBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
