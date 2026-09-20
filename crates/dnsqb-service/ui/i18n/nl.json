@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Help",
   "timeoutConfig.heading": "Gedrag bij storing",
   "timeoutConfig.baselineFallbackLabel": "Raadpleeg de baseline-resolver wanneer geen enkel filter heeft geantwoord (onafhankelijk van de time-outmodus; standaard uit - de query wordt dan in dit smalle geval eenvoudigweg niet gefilterd)",
+  "common.delete": "Verwijderen",
+  "overrides.heading": "Uitzonderingslijsten",
+  "overrides.inputPlaceholder": "example.com of *.example.com",
+  "overrides.allowOption": "Toestaan",
+  "overrides.blockOption": "Blokkeren",
+  "overrides.addButton": "Toevoegen",
+  "overrides.addFailedTemplate": "Kan \"{pattern}\" niet toevoegen: {message}",
+  "overrides.conflictNote": "conflict: het domein staat zowel op de allowlist als op de blocklist - de allowlist wint",
+  "overrides.allowlistHeading": "Toegestane domeinen",
+  "overrides.blocklistHeading": "Geblokkeerde domeinen",
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

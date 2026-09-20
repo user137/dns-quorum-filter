@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Hilfe",
   "timeoutConfig.heading": "Verhalten bei Fehlern",
   "timeoutConfig.baselineFallbackLabel": "Den Baseline-Resolver konsultieren, wenn kein Filter geantwortet hat (unabhängig vom Timeout-Modus; standardmäßig aus - die Anfrage wird dann in diesem engen Fall einfach nicht gefiltert)",
+  "common.delete": "Löschen",
+  "overrides.heading": "Ausnahmelisten",
+  "overrides.inputPlaceholder": "example.com oder *.example.com",
+  "overrides.allowOption": "Erlauben",
+  "overrides.blockOption": "Blockieren",
+  "overrides.addButton": "Hinzufügen",
+  "overrides.addFailedTemplate": "„{pattern}\" konnte nicht hinzugefügt werden: {message}",
+  "overrides.conflictNote": "Konflikt: Die Domain steht sowohl auf der Allowlist als auch auf der Blocklist - die Allowlist gewinnt",
+  "overrides.allowlistHeading": "Erlaubte Domains",
+  "overrides.blocklistHeading": "Blockierte Domains",
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

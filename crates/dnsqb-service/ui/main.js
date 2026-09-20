@@ -646,13 +646,13 @@ function overrideListItem(entry, list, conflicts) {
     // SPEC.md §5: allowlist wins on conflict - the UI must show this, not
     // silently apply it. Shown on both the allowlist and blocklist entry
     // for the same domain, not just one side.
-    note.textContent = "конфлікт: домен є і в allowlist, і в blocklist — allowlist має пріоритет";
+    note.textContent = t("overrides.conflictNote");
     li.appendChild(note);
   }
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
   removeBtn.className = "override-remove";
-  removeBtn.textContent = "Видалити";
+  removeBtn.textContent = t("common.delete");
   removeBtn.addEventListener("click", async () => {
     try {
       await removeOverride(entry.domain, entry.is_wildcard, list);
@@ -677,7 +677,7 @@ function overrideListItem(entry, list, conflicts) {
 function renderOverrides(data) {
   overridesBody.textContent = "";
 
-  overridesBody.appendChild(cardHeading("Списки виключень", "overrides"));
+  overridesBody.appendChild(cardHeading(t("overrides.heading"), "overrides"));
 
   // T-47, advisor-caught: an add/remove that live-applies but fails to
   // persist must be visible, not just silently reflected in the response -
@@ -687,8 +687,7 @@ function renderOverrides(data) {
   if (!data.persisted) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск - вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     overridesBody.appendChild(notPersisted);
   }
 
@@ -696,19 +695,19 @@ function renderOverrides(data) {
   addRow.className = "override-add-row";
   const input = document.createElement("input");
   input.type = "text";
-  input.placeholder = "example.com або *.example.com";
+  input.placeholder = t("overrides.inputPlaceholder");
   const select = document.createElement("select");
   const allowOpt = document.createElement("option");
   allowOpt.value = "allowlist";
-  allowOpt.textContent = "Дозволити";
+  allowOpt.textContent = t("overrides.allowOption");
   const blockOpt = document.createElement("option");
   blockOpt.value = "blocklist";
-  blockOpt.textContent = "Блокувати";
+  blockOpt.textContent = t("overrides.blockOption");
   select.appendChild(allowOpt);
   select.appendChild(blockOpt);
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.textContent = "Додати";
+  addBtn.textContent = t("overrides.addButton");
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
 
@@ -722,7 +721,10 @@ function renderOverrides(data) {
       await addOverride(pattern, select.value);
       await refreshOverrides();
     } catch (err) {
-      errorLine.textContent = `Не вдалося додати "${pattern}": ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("overrides.addFailedTemplate", {
+        pattern,
+        message: (err && err.message) || String(err),
+      });
     }
   }
   addBtn.addEventListener("click", submitAdd);
@@ -739,7 +741,7 @@ function renderOverrides(data) {
   overridesBody.appendChild(errorLine);
 
   const allowHeading = document.createElement("h4");
-  allowHeading.textContent = "Allowlist";
+  allowHeading.textContent = t("overrides.allowlistHeading");
   overridesBody.appendChild(allowHeading);
   const allowList = document.createElement("ul");
   allowList.className = "override-list";
@@ -749,7 +751,7 @@ function renderOverrides(data) {
   overridesBody.appendChild(allowList);
 
   const blockHeading = document.createElement("h4");
-  blockHeading.textContent = "Blocklist";
+  blockHeading.textContent = t("overrides.blocklistHeading");
   overridesBody.appendChild(blockHeading);
   const blockList = document.createElement("ul");
   blockList.className = "override-list";
@@ -762,11 +764,13 @@ function renderOverrides(data) {
 function renderOverridesError(err) {
   overridesBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Списки виключень";
+  heading.textContent = t("overrides.heading");
   overridesBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   overridesBody.appendChild(panel);
 }
 

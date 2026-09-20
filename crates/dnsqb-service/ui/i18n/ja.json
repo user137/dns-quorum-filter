@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "ヘルプ",
   "timeoutConfig.heading": "失敗時の動作",
   "timeoutConfig.baselineFallbackLabel": "どのフィルターも応答しなかった場合にベースラインリゾルバーに問い合わせる(タイムアウトモードとは無関係;デフォルトでは無効 — この狭いケースではクエリは単にフィルタリングされません)",
+  "common.delete": "削除",
+  "overrides.heading": "例外リスト",
+  "overrides.inputPlaceholder": "example.com または *.example.com",
+  "overrides.allowOption": "許可",
+  "overrides.blockOption": "ブロック",
+  "overrides.addButton": "追加",
+  "overrides.addFailedTemplate": "\"{pattern}\" の追加に失敗しました: {message}",
+  "overrides.conflictNote": "競合: このドメインは許可リストとブロックリストの両方にあります — 許可リストが優先されます",
+  "overrides.allowlistHeading": "許可されたドメイン",
+  "overrides.blocklistHeading": "ブロックされたドメイン",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

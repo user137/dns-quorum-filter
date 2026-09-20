@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Βοήθεια",
   "timeoutConfig.heading": "Συμπεριφορά σε αποτυχία",
   "timeoutConfig.baselineFallbackLabel": "Συμβουλευτείτε τον βασικό επιλυτή όταν κανένα φίλτρο δεν απάντησε (ανεξάρτητα από τη λειτουργία λήξης χρόνου· απενεργοποιημένο από προεπιλογή - το ερώτημα τότε απλώς δεν φιλτράρεται σε αυτή τη στενή περίπτωση)",
+  "common.delete": "Διαγραφή",
+  "overrides.heading": "Λίστες εξαιρέσεων",
+  "overrides.inputPlaceholder": "example.com ή *.example.com",
+  "overrides.allowOption": "Αποδοχή",
+  "overrides.blockOption": "Αποκλεισμός",
+  "overrides.addButton": "Προσθήκη",
+  "overrides.addFailedTemplate": "Αποτυχία προσθήκης \"{pattern}\": {message}",
+  "overrides.conflictNote": "σύγκρουση: ο τομέας βρίσκεται τόσο στη λίστα επιτρεπόμενων όσο και στη λίστα αποκλεισμένων - η λίστα επιτρεπόμενων υπερισχύει",
+  "overrides.allowlistHeading": "Επιτρεπόμενοι τομείς",
+  "overrides.blocklistHeading": "Αποκλεισμένοι τομείς",
   "zoneDomainCount": {
     "one": "{n} τομέας",
     "other": "{n} τομείς"

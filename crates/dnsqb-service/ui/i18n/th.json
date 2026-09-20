@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "ช่วยเหลือ",
   "timeoutConfig.heading": "พฤติกรรมเมื่อล้มเหลว",
   "timeoutConfig.baselineFallbackLabel": "ปรึกษาตัวแก้ไขพื้นฐานเมื่อไม่มีตัวกรองใดตอบสนอง (ไม่ขึ้นกับโหมดหมดเวลา; ปิดโดยค่าเริ่มต้น - การสืบค้นจะไม่ถูกกรองในกรณีที่แคบนี้)",
+  "common.delete": "ลบ",
+  "overrides.heading": "รายการข้อยกเว้น",
+  "overrides.inputPlaceholder": "example.com หรือ *.example.com",
+  "overrides.allowOption": "อนุญาต",
+  "overrides.blockOption": "บล็อก",
+  "overrides.addButton": "เพิ่ม",
+  "overrides.addFailedTemplate": "ไม่สามารถเพิ่ม \"{pattern}\": {message}",
+  "overrides.conflictNote": "ขัดแย้ง: โดเมนอยู่ในทั้งรายการอนุญาตและรายการบล็อก - รายการอนุญาตมีสิทธิ์เหนือกว่า",
+  "overrides.allowlistHeading": "โดเมนที่อนุญาต",
+  "overrides.blocklistHeading": "โดเมนที่ถูกบล็อก",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Abi",
   "timeoutConfig.heading": "Käitumine tõrke korral",
   "timeoutConfig.baselineFallbackLabel": "Konsulteeri baasresolveriga, kui ükski filter ei vastanud (sõltumata ajalõpurežiimist; vaikimisi väljas - päringut siis lihtsalt ei filtreerita selles kitsas juhul)",
+  "common.delete": "Kustuta",
+  "overrides.heading": "Erandite loendid",
+  "overrides.inputPlaceholder": "example.com või *.example.com",
+  "overrides.allowOption": "Luba",
+  "overrides.blockOption": "Blokeeri",
+  "overrides.addButton": "Lisa",
+  "overrides.addFailedTemplate": "\"{pattern}\" lisamine ebaõnnestus: {message}",
+  "overrides.conflictNote": "konflikt: domeen on nii lubatud kui ka blokeeritud loendis - lubatud loend võidab",
+  "overrides.allowlistHeading": "Lubatud domeenid",
+  "overrides.blocklistHeading": "Blokeeritud domeenid",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

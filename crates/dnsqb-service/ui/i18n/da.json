@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Hjælp",
   "timeoutConfig.heading": "Adfærd ved fejl",
   "timeoutConfig.baselineFallbackLabel": "Konsulter baseline-resolveren, når ingen filtre svarede (uafhængigt af timeout-tilstanden; slået fra som standard - forespørgslen filtreres da simpelthen ikke i dette snævre tilfælde)",
+  "common.delete": "Slet",
+  "overrides.heading": "Undtagelseslister",
+  "overrides.inputPlaceholder": "example.com eller *.example.com",
+  "overrides.allowOption": "Tillad",
+  "overrides.blockOption": "Bloker",
+  "overrides.addButton": "Tilføj",
+  "overrides.addFailedTemplate": "Kunne ikke tilføje \"{pattern}\": {message}",
+  "overrides.conflictNote": "konflikt: domænet findes i både allowlist og blocklist - allowlist vinder",
+  "overrides.allowlistHeading": "Tilladte domæner",
+  "overrides.blocklistHeading": "Blokerede domæner",
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"

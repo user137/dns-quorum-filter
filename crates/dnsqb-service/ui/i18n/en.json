@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Help",
   "timeoutConfig.heading": "Failure behavior",
   "timeoutConfig.baselineFallbackLabel": "Consult the baseline resolver when no filter answered (independent of the timeout mode; off by default - the query is then simply not filtered in this narrow case)",
+  "common.delete": "Delete",
+  "overrides.heading": "Exception lists",
+  "overrides.inputPlaceholder": "example.com or *.example.com",
+  "overrides.allowOption": "Allow",
+  "overrides.blockOption": "Block",
+  "overrides.addButton": "Add",
+  "overrides.addFailedTemplate": "Failed to add \"{pattern}\": {message}",
+  "overrides.conflictNote": "conflict: the domain is in both the allowlist and the blocklist - the allowlist wins",
+  "overrides.allowlistHeading": "Allowlist",
+  "overrides.blocklistHeading": "Blocklist",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

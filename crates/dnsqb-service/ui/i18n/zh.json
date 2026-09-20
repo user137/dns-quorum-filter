@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "帮助",
   "timeoutConfig.heading": "失败时的行为",
   "timeoutConfig.baselineFallbackLabel": "当没有过滤器响应时咨询基线解析器(与超时模式无关;默认关闭 - 在这种狭窄情况下查询将不会被过滤)",
+  "common.delete": "删除",
+  "overrides.heading": "例外列表",
+  "overrides.inputPlaceholder": "example.com 或 *.example.com",
+  "overrides.allowOption": "允许",
+  "overrides.blockOption": "阻止",
+  "overrides.addButton": "添加",
+  "overrides.addFailedTemplate": "添加 \"{pattern}\" 失败：{message}",
+  "overrides.conflictNote": "冲突：该域名同时存在于允许列表和阻止列表中 - 允许列表优先",
+  "overrides.allowlistHeading": "允许的域名",
+  "overrides.blocklistHeading": "被阻止的域名",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

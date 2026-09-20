@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Bantuan",
   "timeoutConfig.heading": "Perilaku saat gagal",
   "timeoutConfig.baselineFallbackLabel": "Berkonsultasi dengan resolver dasar ketika tidak ada filter yang merespons (terlepas dari mode waktu habis; nonaktif secara default - kueri kemudian tidak difilter dalam kasus sempit ini)",
+  "common.delete": "Hapus",
+  "overrides.heading": "Daftar pengecualian",
+  "overrides.inputPlaceholder": "example.com atau *.example.com",
+  "overrides.allowOption": "Izinkan",
+  "overrides.blockOption": "Blokir",
+  "overrides.addButton": "Tambah",
+  "overrides.addFailedTemplate": "Gagal menambahkan \"{pattern}\": {message}",
+  "overrides.conflictNote": "konflik: domain ada di allowlist dan blocklist - allowlist menang",
+  "overrides.allowlistHeading": "Domain yang diizinkan",
+  "overrides.blocklistHeading": "Domain yang diblokir",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

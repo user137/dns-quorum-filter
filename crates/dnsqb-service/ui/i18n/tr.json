@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Yardım",
   "timeoutConfig.heading": "Hata durumunda davranış",
   "timeoutConfig.baselineFallbackLabel": "Hiçbir filtre yanıt vermediğinde temel çözümleyiciye danışın (zaman aşımı modundan bağımsız olarak; varsayılan olarak kapalı - bu dar durumda sorgu basitçe filtrelenmez)",
+  "common.delete": "Sil",
+  "overrides.heading": "İstisna listeleri",
+  "overrides.inputPlaceholder": "example.com veya *.example.com",
+  "overrides.allowOption": "İzin ver",
+  "overrides.blockOption": "Engelle",
+  "overrides.addButton": "Ekle",
+  "overrides.addFailedTemplate": "\"{pattern}\" eklenemedi: {message}",
+  "overrides.conflictNote": "çakışma: alan adı hem izin listesinde hem de engelleme listesinde - izin listesi kazanır",
+  "overrides.allowlistHeading": "İzin verilen alan adları",
+  "overrides.blocklistHeading": "Engellenen alan adları",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

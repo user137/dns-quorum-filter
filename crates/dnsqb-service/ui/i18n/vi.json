@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Trợ giúp",
   "timeoutConfig.heading": "Hành vi khi gặp lỗi",
   "timeoutConfig.baselineFallbackLabel": "Tham khảo bộ phân giải cơ sở khi không có bộ lọc nào phản hồi (bất kể chế độ hết thời gian chờ; mặc định tắt - truy vấn khi đó đơn giản là không được lọc trong trường hợp hẹp này)",
+  "common.delete": "Xóa",
+  "overrides.heading": "Danh sách ngoại lệ",
+  "overrides.inputPlaceholder": "example.com hoặc *.example.com",
+  "overrides.allowOption": "Cho phép",
+  "overrides.blockOption": "Chặn",
+  "overrides.addButton": "Thêm",
+  "overrides.addFailedTemplate": "Không thể thêm \"{pattern}\": {message}",
+  "overrides.conflictNote": "xung đột: miền có trong cả danh sách cho phép và danh sách chặn - danh sách cho phép được ưu tiên",
+  "overrides.allowlistHeading": "Miền được cho phép",
+  "overrides.blocklistHeading": "Miền bị chặn",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

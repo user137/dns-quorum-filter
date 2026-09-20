@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Hjälp",
   "timeoutConfig.heading": "Beteende vid fel",
   "timeoutConfig.baselineFallbackLabel": "Rådfråga baslinjeupplösaren när inget filter svarade (oberoende av timeout-läge; avstängt som standard - frågan filtreras då helt enkelt inte i detta smala fall)",
+  "common.delete": "Ta bort",
+  "overrides.heading": "Undantagslistor",
+  "overrides.inputPlaceholder": "example.com eller *.example.com",
+  "overrides.allowOption": "Tillåt",
+  "overrides.blockOption": "Blockera",
+  "overrides.addButton": "Lägg till",
+  "overrides.addFailedTemplate": "Det gick inte att lägga till \"{pattern}\": {message}",
+  "overrides.conflictNote": "konflikt: domänen finns både i allowlist och blocklist - allowlist vinner",
+  "overrides.allowlistHeading": "Tillåtna domäner",
+  "overrides.blocklistHeading": "Blockerade domäner",
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

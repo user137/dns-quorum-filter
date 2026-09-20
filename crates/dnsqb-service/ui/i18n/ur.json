@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "مدد",
   "timeoutConfig.heading": "ناکامی کے وقت رویہ",
   "timeoutConfig.baselineFallbackLabel": "جب کوئی فلٹر جواب نہ دے تو بیس لائن ریزالور سے مشورہ کریں (ٹائم آؤٹ موڈ سے قطع نظر؛ پہلے سے طے شدہ طور پر بند - اس تنگ صورت میں استفسار محض فلٹر نہیں ہوتا)",
+  "common.delete": "حذف کریں",
+  "overrides.heading": "مستثنیٰ فہرستیں",
+  "overrides.inputPlaceholder": "example.com یا *.example.com",
+  "overrides.allowOption": "اجازت دیں",
+  "overrides.blockOption": "مسدود کریں",
+  "overrides.addButton": "شامل کریں",
+  "overrides.addFailedTemplate": "\"{pattern}\" شامل کرنے میں ناکام: {message}",
+  "overrides.conflictNote": "تنازعہ: ڈومین اجازت کی فہرست اور مسدود فہرست دونوں میں ہے - اجازت کی فہرست کو ترجیح حاصل ہے",
+  "overrides.allowlistHeading": "اجازت شدہ ڈومینز",
+  "overrides.blocklistHeading": "مسدود ڈومینز",
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"

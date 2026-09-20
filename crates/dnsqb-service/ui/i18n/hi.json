@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "मदद",
   "timeoutConfig.heading": "विफलता पर व्यवहार",
   "timeoutConfig.baselineFallbackLabel": "जब कोई फ़िल्टर जवाब नहीं देता तो बेसलाइन रिज़ॉल्वर से परामर्श करें (टाइमआउट मोड से स्वतंत्र; डिफ़ॉल्ट रूप से बंद - इस संकीर्ण मामले में क्वेरी बस फ़िल्टर नहीं होती है)",
+  "common.delete": "हटाएं",
+  "overrides.heading": "अपवाद सूचियाँ",
+  "overrides.inputPlaceholder": "example.com या *.example.com",
+  "overrides.allowOption": "अनुमति दें",
+  "overrides.blockOption": "अवरोधित करें",
+  "overrides.addButton": "जोड़ें",
+  "overrides.addFailedTemplate": "\"{pattern}\" जोड़ने में विफल: {message}",
+  "overrides.conflictNote": "टकराव: डोमेन अनुमति सूची और अवरोध सूची दोनों में है - अनुमति सूची प्राथमिकता लेती है",
+  "overrides.allowlistHeading": "अनुमत डोमेन",
+  "overrides.blocklistHeading": "अवरोधित डोमेन",
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

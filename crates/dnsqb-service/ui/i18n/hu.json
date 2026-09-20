@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "Súgó",
   "timeoutConfig.heading": "Viselkedés hiba esetén",
   "timeoutConfig.baselineFallbackLabel": "Konzultáljon az alap feloldóval, ha egyik szűrő sem válaszolt (a időtúllépési módtól függetlenül; alapértelmezés szerint kikapcsolva - a lekérdezés ekkor egyszerűen nincs szűrve ebben a szűk esetben)",
+  "common.delete": "Törlés",
+  "overrides.heading": "Kivétellisták",
+  "overrides.inputPlaceholder": "example.com vagy *.example.com",
+  "overrides.allowOption": "Engedélyezés",
+  "overrides.blockOption": "Blokkolás",
+  "overrides.addButton": "Hozzáadás",
+  "overrides.addFailedTemplate": "Nem sikerült hozzáadni: \"{pattern}\": {message}",
+  "overrides.conflictNote": "ütközés: a domain szerepel mind az engedélyezési, mind a tiltólistán - az engedélyezési lista élvez elsőbbséget",
+  "overrides.allowlistHeading": "Engedélyezett domainek",
+  "overrides.blocklistHeading": "Blokkolt domainek",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

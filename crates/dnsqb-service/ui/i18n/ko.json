@@ -40,6 +40,16 @@
   "common.helpAriaLabel": "도움말",
   "timeoutConfig.heading": "실패 시 동작",
   "timeoutConfig.baselineFallbackLabel": "필터가 응답하지 않을 때 기준 리졸버에 문의(타임아웃 모드와 무관; 기본적으로 꺼짐 - 이 좁은 경우 쿼리는 단순히 필터링되지 않음)",
+  "common.delete": "삭제",
+  "overrides.heading": "예외 목록",
+  "overrides.inputPlaceholder": "example.com 또는 *.example.com",
+  "overrides.allowOption": "허용",
+  "overrides.blockOption": "차단",
+  "overrides.addButton": "추가",
+  "overrides.addFailedTemplate": "\"{pattern}\" 추가 실패: {message}",
+  "overrides.conflictNote": "충돌: 도메인이 허용 목록과 차단 목록에 모두 있습니다 - 허용 목록이 우선합니다",
+  "overrides.allowlistHeading": "허용된 도메인",
+  "overrides.blocklistHeading": "차단된 도메인",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }
