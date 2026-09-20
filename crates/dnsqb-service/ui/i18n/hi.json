@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "क्वेरी लॉग एन्क्रिप्टेड फ़ाइल (query-log.enc) में डिस्क पर सहेजा जाता है - यह पुनरारंभ के बीच ब्राउज़िंग इतिहास बनाए रखता है। अक्षम करने के लिए: resolver_config.toml में <code>persist_query_log = false</code>.",
   "app.cachePersistWarning": "निर्णय कैश एन्क्रिप्टेड फ़ाइल (cache.enc) में डिस्क पर सहेजा जाता है - कौन से डोमेन हल किए गए यह पुनरारंभ के बीच बना रहता है। अक्षम करने के लिए: resolver_config.toml में <code>persist_cache = false</code>.",
   "app.personalZonePersistWarning": "रेटिंग फ़िल्टर का व्यक्तिगत सीखा हुआ क्षेत्र एन्क्रिप्टेड फ़ाइल (personal-zone.enc) में डिस्क पर सहेजा जाता है - यह याद रखता है कि आप कौन सी साइटें अक्सर/नियमित रूप से देखते हैं। अक्षम करने के लिए: resolver_config.toml में <code>[personal_zone] enabled = false</code>.",
+  "warning.notPersisted": "परिवर्तन लागू हो गया लेकिन डिस्क पर सहेजा नहीं गया - यह सेवा पुनरारंभ होने पर बना नहीं रहेगा।",
+  "common.helpAriaLabel": "मदद",
+  "timeoutConfig.heading": "विफलता पर व्यवहार",
+  "timeoutConfig.baselineFallbackLabel": "जब कोई फ़िल्टर जवाब नहीं देता तो बेसलाइन रिज़ॉल्वर से परामर्श करें (टाइमआउट मोड से स्वतंत्र; डिफ़ॉल्ट रूप से बंद - इस संकीर्ण मामले में क्वेरी बस फ़िल्टर नहीं होती है)",
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

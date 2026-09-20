@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "บันทึกการสืบค้นจะถูกบันทึกลงดิสก์ในไฟล์ที่เข้ารหัส (query-log.enc) - สิ่งนี้จะเก็บประวัติการท่องเว็บไว้ข้ามการรีสตาร์ท หากต้องการปิดใช้งาน: <code>persist_query_log = false</code> ใน resolver_config.toml",
   "app.cachePersistWarning": "แคชคำตัดสินจะถูกบันทึกลงดิสก์ในไฟล์ที่เข้ารหัส (cache.enc) - โดเมนใดที่ได้รับการแก้ไขจะถูกเก็บไว้ข้ามการรีสตาร์ท หากต้องการปิดใช้งาน: <code>persist_cache = false</code> ใน resolver_config.toml",
   "app.personalZonePersistWarning": "โซนที่เรียนรู้ส่วนบุคคลของตัวกรองการให้คะแนนจะถูกบันทึกลงดิสก์ในไฟล์ที่เข้ารหัส (personal-zone.enc) - สิ่งนี้จะจดจำไซต์ที่คุณเข้าชมบ่อย/เป็นประจำ หากต้องการปิดใช้งาน: <code>[personal_zone] enabled = false</code> ใน resolver_config.toml",
+  "warning.notPersisted": "การเปลี่ยนแปลงถูกนำไปใช้แล้วแต่ไม่ได้บันทึกลงดิสก์ - จะไม่คงอยู่หากรีสตาร์ทบริการ",
+  "common.helpAriaLabel": "ช่วยเหลือ",
+  "timeoutConfig.heading": "พฤติกรรมเมื่อล้มเหลว",
+  "timeoutConfig.baselineFallbackLabel": "ปรึกษาตัวแก้ไขพื้นฐานเมื่อไม่มีตัวกรองใดตอบสนอง (ไม่ขึ้นกับโหมดหมดเวลา; ปิดโดยค่าเริ่มต้น - การสืบค้นจะไม่ถูกกรองในกรณีที่แคบนี้)",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

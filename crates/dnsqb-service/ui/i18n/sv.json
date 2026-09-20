@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Frågeloggen sparas på disk i en krypterad fil (query-log.enc) - detta bevarar webbhistoriken mellan omstarter. Inaktivera: <code>persist_query_log = false</code> i resolver_config.toml.",
   "app.cachePersistWarning": "Utslagscachen sparas på disk i en krypterad fil (cache.enc) - vilka domäner som slogs upp bevaras mellan omstarter. Inaktivera: <code>persist_cache = false</code> i resolver_config.toml.",
   "app.personalZonePersistWarning": "Betygsfiltrets personliga inlärda zon sparas på disk i en krypterad fil (personal-zone.enc) - detta kommer ihåg vilka webbplatser du besöker ofta/regelbundet. Inaktivera: <code>[personal_zone] enabled = false</code> i resolver_config.toml.",
+  "warning.notPersisted": "Ändringen tillämpades men sparades INTE på disk - den överlever inte en omstart av tjänsten.",
+  "common.helpAriaLabel": "Hjälp",
+  "timeoutConfig.heading": "Beteende vid fel",
+  "timeoutConfig.baselineFallbackLabel": "Rådfråga baslinjeupplösaren när inget filter svarade (oberoende av timeout-läge; avstängt som standard - frågan filtreras då helt enkelt inte i detta smala fall)",
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

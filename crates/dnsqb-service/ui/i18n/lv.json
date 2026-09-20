@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Vaicājumu žurnāls tiek saglabāts diskā šifrētā failā (query-log.enc) - tas saglabā pārlūkošanas vēsturi starp restartēšanām. Lai atspējotu: <code>persist_query_log = false</code> failā resolver_config.toml.",
   "app.cachePersistWarning": "Lēmumu kešatmiņa tiek saglabāta diskā šifrētā failā (cache.enc) - kuri domēni tika atrisināti, saglabājas starp restartēšanām. Lai atspējotu: <code>persist_cache = false</code> failā resolver_config.toml.",
   "app.personalZonePersistWarning": "Vērtējuma filtra personīgā apgūtā zona tiek saglabāta diskā šifrētā failā (personal-zone.enc) - tas atceras, kuras vietnes apmeklējat bieži/regulāri. Lai atspējotu: <code>[personal_zone] enabled = false</code> failā resolver_config.toml.",
+  "warning.notPersisted": "Izmaiņas tika piemērotas, bet NETIKA saglabātas diskā - tās nepārdzīvos pakalpojuma restartēšanu.",
+  "common.helpAriaLabel": "Palīdzība",
+  "timeoutConfig.heading": "Uzvedība kļūdas gadījumā",
+  "timeoutConfig.baselineFallbackLabel": "Konsultēties ar bāzes risinātāju, ja neviens filtrs neatbildēja (neatkarīgi no noildzes režīma; pēc noklusējuma izslēgts - vaicājums tad vienkārši netiek filtrēts šajā šaurajā gadījumā)",
   "zoneDomainCount": {
     "zero": "nav domēnu",
     "one": "{n} domēns",

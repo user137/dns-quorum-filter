@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "쿼리 로그는 암호화된 파일(query-log.enc)로 디스크에 저장됩니다 - 이는 재시작 간에 검색 기록을 유지합니다. 비활성화하려면: resolver_config.toml에서 <code>persist_query_log = false</code>.",
   "app.cachePersistWarning": "판정 캐시는 암호화된 파일(cache.enc)로 디스크에 저장됩니다 - 어떤 도메인이 확인되었는지가 재시작 간에 유지됩니다. 비활성화하려면: resolver_config.toml에서 <code>persist_cache = false</code>.",
   "app.personalZonePersistWarning": "평가 필터의 개인 학습 구역은 암호화된 파일(personal-zone.enc)로 디스크에 저장됩니다 - 이는 자주/정기적으로 방문하는 사이트를 기억합니다. 비활성화하려면: resolver_config.toml에서 <code>[personal_zone] enabled = false</code>.",
+  "warning.notPersisted": "변경 사항이 적용되었지만 디스크에 저장되지 않았습니다 - 서비스 재시작 시 유지되지 않습니다.",
+  "common.helpAriaLabel": "도움말",
+  "timeoutConfig.heading": "실패 시 동작",
+  "timeoutConfig.baselineFallbackLabel": "필터가 응답하지 않을 때 기준 리졸버에 문의(타임아웃 모드와 무관; 기본적으로 꺼짐 - 이 좁은 경우 쿼리는 단순히 필터링되지 않음)",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

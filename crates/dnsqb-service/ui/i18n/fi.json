@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Kyselyloki tallennetaan levylle salattuun tiedostoon (query-log.enc) - tämä säilyttää selaushistorian uudelleenkäynnistysten välillä. Poista käytöstä: <code>persist_query_log = false</code> tiedostossa resolver_config.toml.",
   "app.cachePersistWarning": "Päätösvälimuisti tallennetaan levylle salattuun tiedostoon (cache.enc) - mitkä verkkotunnukset ratkaistiin, säilyy uudelleenkäynnistysten välillä. Poista käytöstä: <code>persist_cache = false</code> tiedostossa resolver_config.toml.",
   "app.personalZonePersistWarning": "Arviointisuodattimen henkilökohtainen opittu vyöhyke tallennetaan levylle salattuun tiedostoon (personal-zone.enc) - tämä muistaa, millä sivustoilla käyt usein/säännöllisesti. Poista käytöstä: <code>[personal_zone] enabled = false</code> tiedostossa resolver_config.toml.",
+  "warning.notPersisted": "Muutos otettiin käyttöön, mutta sitä EI tallennettu levylle - se ei säily palvelun uudelleenkäynnistyksen yli.",
+  "common.helpAriaLabel": "Ohje",
+  "timeoutConfig.heading": "Toiminta virhetilanteessa",
+  "timeoutConfig.baselineFallbackLabel": "Kysy perusresolverilta, kun mikään suodatin ei vastannut (aikakatkaisutilasta riippumatta; oletuksena pois päältä - kyselyä ei tässä suppeassa tapauksessa silloin yksinkertaisesti suodateta)",
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

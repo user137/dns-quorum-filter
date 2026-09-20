@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "クエリログは暗号化ファイル(query-log.enc)としてディスクに保存されます - これにより再起動をまたいで閲覧履歴が保持されます。無効にするには: resolver_config.tomlで<code>persist_query_log = false</code>。",
   "app.cachePersistWarning": "判定キャッシュは暗号化ファイル(cache.enc)としてディスクに保存されます - どのドメインが解決されたかが再起動をまたいで保持されます。無効にするには: resolver_config.tomlで<code>persist_cache = false</code>。",
   "app.personalZonePersistWarning": "レーティングフィルターの個人学習ゾーンは暗号化ファイル(personal-zone.enc)としてディスクに保存されます - これにより、頻繁に/定期的に訪問するサイトが記憶されます。無効にするには: resolver_config.tomlで<code>[personal_zone] enabled = false</code>。",
+  "warning.notPersisted": "変更は適用されましたが、ディスクには保存されていません — サービスの再起動後は保持されません。",
+  "common.helpAriaLabel": "ヘルプ",
+  "timeoutConfig.heading": "失敗時の動作",
+  "timeoutConfig.baselineFallbackLabel": "どのフィルターも応答しなかった場合にベースラインリゾルバーに問い合わせる(タイムアウトモードとは無関係;デフォルトでは無効 — この狭いケースではクエリは単にフィルタリングされません)",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

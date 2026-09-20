@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Forespørgselsloggen gemmes på disken i en krypteret fil (query-log.enc) - dette bevarer browserhistorikken på tværs af genstarter. Deaktiver: <code>persist_query_log = false</code> i resolver_config.toml.",
   "app.cachePersistWarning": "Verdikt-cachen gemmes på disken i en krypteret fil (cache.enc) - hvilke domæner der blev slået op, bevares på tværs af genstarter. Deaktiver: <code>persist_cache = false</code> i resolver_config.toml.",
   "app.personalZonePersistWarning": "Vurderingsfiltrets personlige indlærte zone gemmes på disken i en krypteret fil (personal-zone.enc) - dette husker hvilke websteder du besøger ofte/regelmæssigt. Deaktiver: <code>[personal_zone] enabled = false</code> i resolver_config.toml.",
+  "warning.notPersisted": "Ændringen blev anvendt, men blev IKKE gemt på disken - den overlever ikke en genstart af tjenesten.",
+  "common.helpAriaLabel": "Hjælp",
+  "timeoutConfig.heading": "Adfærd ved fejl",
+  "timeoutConfig.baselineFallbackLabel": "Konsulter baseline-resolveren, når ingen filtre svarede (uafhængigt af timeout-tilstanden; slået fra som standard - forespørgslen filtreres da simpelthen ikke i dette snævre tilfælde)",
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"

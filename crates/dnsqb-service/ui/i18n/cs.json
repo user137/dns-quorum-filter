@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Protokol dotazů se ukládá na disk do šifrovaného souboru (query-log.enc) - to uchovává historii prohlížení mezi restarty. Vypnutí: <code>persist_query_log = false</code> v resolver_config.toml.",
   "app.cachePersistWarning": "Mezipaměť verdiktů se ukládá na disk do šifrovaného souboru (cache.enc) - které domény byly přeloženy se uchovává mezi restarty. Vypnutí: <code>persist_cache = false</code> v resolver_config.toml.",
   "app.personalZonePersistWarning": "Osobní naučená zóna hodnoticího filtru se ukládá na disk do šifrovaného souboru (personal-zone.enc) - pamatuje si, které stránky navštěvujete často/pravidelně. Vypnutí: <code>[personal_zone] enabled = false</code> v resolver_config.toml.",
+  "warning.notPersisted": "Změna byla použita, ale NEBYLA uložena na disk - nepřežije restart služby.",
+  "common.helpAriaLabel": "Nápověda",
+  "timeoutConfig.heading": "Chování při selhání",
+  "timeoutConfig.baselineFallbackLabel": "Konzultovat základní resolver, když žádný filtr neodpověděl (nezávisle na režimu časového limitu; ve výchozím nastavení vypnuto - dotaz pak v tomto úzkém případě jednoduše není filtrován)",
   "zoneDomainCount": {
     "one": "{n} doména",
     "few": "{n} domény",

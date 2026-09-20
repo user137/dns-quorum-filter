@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Nhật ký truy vấn được lưu vào đĩa trong một tệp được mã hóa (query-log.enc) - điều này giữ lại lịch sử duyệt web qua các lần khởi động lại. Để tắt: <code>persist_query_log = false</code> trong resolver_config.toml.",
   "app.cachePersistWarning": "Bộ đệm phán quyết được lưu vào đĩa trong một tệp được mã hóa (cache.enc) - miền nào đã được phân giải được giữ lại qua các lần khởi động lại. Để tắt: <code>persist_cache = false</code> trong resolver_config.toml.",
   "app.personalZonePersistWarning": "Vùng học riêng của bộ lọc xếp hạng được lưu vào đĩa trong một tệp được mã hóa (personal-zone.enc) - điều này ghi nhớ những trang web bạn truy cập thường xuyên/đều đặn. Để tắt: <code>[personal_zone] enabled = false</code> trong resolver_config.toml.",
+  "warning.notPersisted": "Thay đổi đã được áp dụng nhưng KHÔNG được lưu vào đĩa - nó sẽ không tồn tại sau khi khởi động lại dịch vụ.",
+  "common.helpAriaLabel": "Trợ giúp",
+  "timeoutConfig.heading": "Hành vi khi gặp lỗi",
+  "timeoutConfig.baselineFallbackLabel": "Tham khảo bộ phân giải cơ sở khi không có bộ lọc nào phản hồi (bất kể chế độ hết thời gian chờ; mặc định tắt - truy vấn khi đó đơn giản là không được lọc trong trường hợp hẹp này)",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

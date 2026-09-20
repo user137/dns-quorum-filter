@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Le journal des requêtes est enregistré sur le disque dans un fichier chiffré (query-log.enc) - cela conserve l'historique de navigation entre les redémarrages. Pour désactiver : <code>persist_query_log = false</code> dans resolver_config.toml.",
   "app.cachePersistWarning": "Le cache des verdicts est enregistré sur le disque dans un fichier chiffré (cache.enc) - les domaines résolus sont conservés entre les redémarrages. Pour désactiver : <code>persist_cache = false</code> dans resolver_config.toml.",
   "app.personalZonePersistWarning": "La zone personnelle apprise du filtre de notation est enregistrée sur le disque dans un fichier chiffré (personal-zone.enc) - cela mémorise les sites que vous visitez souvent/régulièrement. Pour désactiver : <code>[personal_zone] enabled = false</code> dans resolver_config.toml.",
+  "warning.notPersisted": "La modification a été appliquée mais N'A PAS été enregistrée sur le disque - elle ne survivra pas à un redémarrage du service.",
+  "common.helpAriaLabel": "Aide",
+  "timeoutConfig.heading": "Comportement en cas d'échec",
+  "timeoutConfig.baselineFallbackLabel": "Consulter le résolveur de référence quand aucun filtre n'a répondu (indépendamment du mode de délai d'attente ; désactivé par défaut - la requête n'est alors simplement pas filtrée dans ce cas restreint)",
   "zoneDomainCount": {
     "one": "{n} domaine",
     "many": "{n} de domaines",

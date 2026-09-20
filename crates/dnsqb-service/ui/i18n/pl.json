@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Dziennik zapytań jest zapisywany na dysku w zaszyfrowanym pliku (query-log.enc) - zachowuje to historię przeglądania między ponownymi uruchomieniami. Aby wyłączyć: <code>persist_query_log = false</code> w resolver_config.toml.",
   "app.cachePersistWarning": "Pamięć podręczna werdyktów jest zapisywana na dysku w zaszyfrowanym pliku (cache.enc) - to, które domeny zostały rozwiązane, jest zachowywane między ponownymi uruchomieniami. Aby wyłączyć: <code>persist_cache = false</code> w resolver_config.toml.",
   "app.personalZonePersistWarning": "Osobista wyuczona strefa filtra ocen jest zapisywana na dysku w zaszyfrowanym pliku (personal-zone.enc) - zapamiętuje to, które witryny odwiedzasz często/regularnie. Aby wyłączyć: <code>[personal_zone] enabled = false</code> w resolver_config.toml.",
+  "warning.notPersisted": "Zmiana została zastosowana, ale NIE została zapisana na dysku - nie przetrwa ponownego uruchomienia usługi.",
+  "common.helpAriaLabel": "Pomoc",
+  "timeoutConfig.heading": "Zachowanie w przypadku awarii",
+  "timeoutConfig.baselineFallbackLabel": "Skonsultuj się z resolverem podstawowym, gdy żaden filtr nie odpowiedział (niezależnie od trybu limitu czasu; domyślnie wyłączone - zapytanie po prostu nie jest wtedy filtrowane w tym wąskim przypadku)",
   "zoneDomainCount": {
     "one": "{n} domena",
     "few": "{n} domeny",

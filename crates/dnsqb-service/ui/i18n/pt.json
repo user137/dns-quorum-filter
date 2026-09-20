@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "O registro de consultas é salvo no disco em um arquivo criptografado (query-log.enc) - isso mantém o histórico de navegação entre reinicializações. Para desativar: <code>persist_query_log = false</code> em resolver_config.toml.",
   "app.cachePersistWarning": "O cache de veredictos é salvo no disco em um arquivo criptografado (cache.enc) - quais domínios foram resolvidos é mantido entre reinicializações. Para desativar: <code>persist_cache = false</code> em resolver_config.toml.",
   "app.personalZonePersistWarning": "A zona pessoal aprendida do filtro de classificação é salva no disco em um arquivo criptografado (personal-zone.enc) - isso lembra quais sites você visita com frequência/regularmente. Para desativar: <code>[personal_zone] enabled = false</code> em resolver_config.toml.",
+  "warning.notPersisted": "A alteração foi aplicada, mas NÃO foi salva no disco - ela não sobreviverá a uma reinicialização do serviço.",
+  "common.helpAriaLabel": "Ajuda",
+  "timeoutConfig.heading": "Comportamento em caso de falha",
+  "timeoutConfig.baselineFallbackLabel": "Consultar o resolvedor de linha de base quando nenhum filtro respondeu (independentemente do modo de tempo limite; desativado por padrão - a consulta simplesmente não é filtrada neste caso restrito)",
   "zoneDomainCount": {
     "one": "{n} domínio",
     "many": "{n} de domínios",

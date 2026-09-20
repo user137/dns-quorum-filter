@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Zapisnik upita sprema se na disk u šifriranu datoteku (query-log.enc) - to čuva povijest pregledavanja između ponovnih pokretanja. Za onemogućavanje: <code>persist_query_log = false</code> u resolver_config.toml.",
   "app.cachePersistWarning": "Predmemorija presuda sprema se na disk u šifriranu datoteku (cache.enc) - koje su domene razriješene čuva se između ponovnih pokretanja. Za onemogućavanje: <code>persist_cache = false</code> u resolver_config.toml.",
   "app.personalZonePersistWarning": "Osobna naučena zona filtra ocjenjivanja sprema se na disk u šifriranu datoteku (personal-zone.enc) - ovo pamti koje stranice često/redovito posjećujete. Za onemogućavanje: <code>[personal_zone] enabled = false</code> u resolver_config.toml.",
+  "warning.notPersisted": "Promjena je primijenjena, ali NIJE spremljena na disk - neće preživjeti ponovno pokretanje usluge.",
+  "common.helpAriaLabel": "Pomoć",
+  "timeoutConfig.heading": "Ponašanje pri kvaru",
+  "timeoutConfig.baselineFallbackLabel": "Konzultirati osnovni razrješavač kada nijedan filtar nije odgovorio (neovisno o načinu vremenskog ograničenja; prema zadanim postavkama isključeno - upit se tada jednostavno ne filtrira u ovom uskom slučaju)",
   "zoneDomainCount": {
     "one": "{n} domena",
     "few": "{n} domene",

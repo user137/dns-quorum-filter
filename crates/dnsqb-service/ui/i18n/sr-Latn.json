@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Dnevnik upita se čuva na disku u šifrovanoj datoteci (query-log.enc) - ovo čuva istoriju pregledanja između ponovnih pokretanja. Za onemogućavanje: <code>persist_query_log = false</code> u resolver_config.toml.",
   "app.cachePersistWarning": "Keš presuda se čuva na disku u šifrovanoj datoteci (cache.enc) - koji su domeni razrešeni čuva se između ponovnih pokretanja. Za onemogućavanje: <code>persist_cache = false</code> u resolver_config.toml.",
   "app.personalZonePersistWarning": "Lična naučena zona filtera ocenjivanja se čuva na disku u šifrovanoj datoteci (personal-zone.enc) - ovo pamti koje sajtove posećujete često/redovno. Za onemogućavanje: <code>[personal_zone] enabled = false</code> u resolver_config.toml.",
+  "warning.notPersisted": "Izmena je primenjena, ali NIJE sačuvana na disku - neće preživeti ponovno pokretanje usluge.",
+  "common.helpAriaLabel": "Pomoć",
+  "timeoutConfig.heading": "Ponašanje pri otkazu",
+  "timeoutConfig.baselineFallbackLabel": "Konsultovati osnovni razrešavač kada nijedan filter nije odgovorio (nezavisno od režima vremenskog ograničenja; podrazumevano isključeno - upit se tada jednostavno ne filtrira u ovom uskom slučaju)",
   "zoneDomainCount": {
     "one": "{n} domen",
     "few": "{n} domena",

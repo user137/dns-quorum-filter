@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "יומן השאילתות נשמר בדיסק בקובץ מוצפן (query-log.enc) - זה שומר את היסטוריית הגלישה בין הפעלות מחדש. לביטול: <code>persist_query_log = false</code> בקובץ resolver_config.toml.",
   "app.cachePersistWarning": "מטמון הפסיקות נשמר בדיסק בקובץ מוצפן (cache.enc) - אילו דומיינים נפתרו נשמר בין הפעלות מחדש. לביטול: <code>persist_cache = false</code> בקובץ resolver_config.toml.",
   "app.personalZonePersistWarning": "האזור האישי הנלמד של מסנן הדירוג נשמר בדיסק בקובץ מוצפן (personal-zone.enc) - זה זוכר אילו אתרים אתם מבקרים בהם לעתים קרובות/באופן קבוע. לביטול: <code>[personal_zone] enabled = false</code> בקובץ resolver_config.toml.",
+  "warning.notPersisted": "השינוי הוחל אך לא נשמר בדיסק - הוא לא ישרוד הפעלה מחדש של השירות.",
+  "common.helpAriaLabel": "עזרה",
+  "timeoutConfig.heading": "התנהגות בעת כשל",
+  "timeoutConfig.baselineFallbackLabel": "להתייעץ עם הפותר הבסיסי כאשר אף מסנן לא הגיב (ללא תלות במצב תפוגת הזמן; כבוי כברירת מחדל - השאילתה פשוט לא מסוננת במקרה הצר הזה)",
   "zoneDomainCount": {
     "one": "דומיין אחד",
     "two": "שני דומיינים",

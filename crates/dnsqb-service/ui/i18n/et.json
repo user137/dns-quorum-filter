@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Päringulogi salvestatakse kettale krüpteeritud failina (query-log.enc) - see säilitab sirvimisajaloo taaskäivituste vahel. Väljalülitamiseks: <code>persist_query_log = false</code> failis resolver_config.toml.",
   "app.cachePersistWarning": "Otsuste vahemälu salvestatakse kettale krüpteeritud failina (cache.enc) - milliseid domeene lahendati, säilib taaskäivituste vahel. Väljalülitamiseks: <code>persist_cache = false</code> failis resolver_config.toml.",
   "app.personalZonePersistWarning": "Hindamisfiltri isiklik õpitud tsoon salvestatakse kettale krüpteeritud failina (personal-zone.enc) - see jätab meelde, milliseid saite külastate sageli/regulaarselt. Väljalülitamiseks: <code>[personal_zone] enabled = false</code> failis resolver_config.toml.",
+  "warning.notPersisted": "Muudatus rakendati, kuid seda EI salvestatud kettale - see ei jää alles teenuse taaskäivitamisel.",
+  "common.helpAriaLabel": "Abi",
+  "timeoutConfig.heading": "Käitumine tõrke korral",
+  "timeoutConfig.baselineFallbackLabel": "Konsulteeri baasresolveriga, kui ükski filter ei vastanud (sõltumata ajalõpurežiimist; vaikimisi väljas - päringut siis lihtsalt ei filtreerita selles kitsas juhul)",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

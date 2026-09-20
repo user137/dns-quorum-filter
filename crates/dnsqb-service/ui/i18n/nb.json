@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Spørringsloggen lagres på disk i en kryptert fil (query-log.enc) - dette bevarer nettleserhistorikken på tvers av omstarter. For å deaktivere: <code>persist_query_log = false</code> i resolver_config.toml.",
   "app.cachePersistWarning": "Avgjørelsescachen lagres på disk i en kryptert fil (cache.enc) - hvilke domener som ble slått opp bevares på tvers av omstarter. For å deaktivere: <code>persist_cache = false</code> i resolver_config.toml.",
   "app.personalZonePersistWarning": "Vurderingsfilterets personlige lærte sone lagres på disk i en kryptert fil (personal-zone.enc) - dette husker hvilke nettsteder du besøker ofte/regelmessig. For å deaktivere: <code>[personal_zone] enabled = false</code> i resolver_config.toml.",
+  "warning.notPersisted": "Endringen ble brukt, men ble IKKE lagret til disk - den overlever ikke en omstart av tjenesten.",
+  "common.helpAriaLabel": "Hjelp",
+  "timeoutConfig.heading": "Oppførsel ved feil",
+  "timeoutConfig.baselineFallbackLabel": "Rådspør baseline-resolveren når ingen filtre svarte (uavhengig av tidsavbruddsmodus; av som standard - spørringen filtreres da rett og slett ikke i dette smale tilfellet)",
   "zoneDomainCount": {
     "one": "{n} domene",
     "other": "{n} domener"

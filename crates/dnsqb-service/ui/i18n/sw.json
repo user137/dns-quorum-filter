@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Kumbukumbu ya maswali huhifadhiwa kwenye diski katika faili lililosimbwa (query-log.enc) - hii huhifadhi historia ya kuvinjari kati ya kuanzisha upya. Kuzima: <code>persist_query_log = false</code> katika resolver_config.toml.",
   "app.cachePersistWarning": "Akiba ya maamuzi huhifadhiwa kwenye diski katika faili lililosimbwa (cache.enc) - ni vikoa gani vilivyotatuliwa huhifadhiwa kati ya kuanzisha upya. Kuzima: <code>persist_cache = false</code> katika resolver_config.toml.",
   "app.personalZonePersistWarning": "Eneo la kibinafsi lililojifunza la kichujio cha ukadiriaji huhifadhiwa kwenye diski katika faili lililosimbwa (personal-zone.enc) - hii inakumbuka tovuti unazotembelea mara kwa mara/kawaida. Kuzima: <code>[personal_zone] enabled = false</code> katika resolver_config.toml.",
+  "warning.notPersisted": "Mabadiliko yametumika lakini HAYAJAhifadhiwa kwenye diski - hayataishi baada ya kuanzisha upya huduma.",
+  "common.helpAriaLabel": "Msaada",
+  "timeoutConfig.heading": "Tabia wakati wa kushindwa",
+  "timeoutConfig.baselineFallbackLabel": "Kushauriana na kitatuzi cha msingi wakati hakuna kichujio kilichojibu (bila kujali hali ya muda wa kikomo; imezimwa kwa chaguo-msingi - hoja basi haichujwi tu katika kesi hii finyu)",
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

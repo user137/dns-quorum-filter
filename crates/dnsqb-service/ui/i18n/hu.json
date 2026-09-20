@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "A lekérdezési napló titkosított fájlban kerül lemezre mentésre (query-log.enc) - ez megőrzi a böngészési előzményeket az újraindítások között. Letiltás: <code>persist_query_log = false</code> a resolver_config.toml fájlban.",
   "app.cachePersistWarning": "A verdikt-gyorsítótár titkosított fájlban kerül lemezre mentésre (cache.enc) - hogy mely domainek lettek feloldva, megmarad az újraindítások között. Letiltás: <code>persist_cache = false</code> a resolver_config.toml fájlban.",
   "app.personalZonePersistWarning": "Az értékelési szűrő személyes megtanult zónája titkosított fájlban kerül lemezre mentésre (personal-zone.enc) - ez megjegyzi, mely oldalakat látogatja gyakran/rendszeresen. Letiltás: <code>[personal_zone] enabled = false</code> a resolver_config.toml fájlban.",
+  "warning.notPersisted": "A módosítás alkalmazva lett, de NEM lett elmentve a lemezre - nem éli túl a szolgáltatás újraindítását.",
+  "common.helpAriaLabel": "Súgó",
+  "timeoutConfig.heading": "Viselkedés hiba esetén",
+  "timeoutConfig.baselineFallbackLabel": "Konzultáljon az alap feloldóval, ha egyik szűrő sem válaszolt (a időtúllépési módtól függetlenül; alapértelmezés szerint kikapcsolva - a lekérdezés ekkor egyszerűen nincs szűrve ebben a szűk esetben)",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "查询日志以加密文件(query-log.enc)的形式保存到磁盘 - 这会在重启之间保留浏览历史记录。要禁用：在 resolver_config.toml 中设置 <code>persist_query_log = false</code>。",
   "app.cachePersistWarning": "判定缓存以加密文件(cache.enc)的形式保存到磁盘 - 哪些域名已被解析会在重启之间保留。要禁用：在 resolver_config.toml 中设置 <code>persist_cache = false</code>。",
   "app.personalZonePersistWarning": "评级过滤器的个人学习区域以加密文件(personal-zone.enc)的形式保存到磁盘 - 这会记住您经常/定期访问的网站。要禁用：在 resolver_config.toml 中设置 <code>[personal_zone] enabled = false</code>。",
+  "warning.notPersisted": "更改已应用但未保存到磁盘 - 服务重启后将不会保留。",
+  "common.helpAriaLabel": "帮助",
+  "timeoutConfig.heading": "失败时的行为",
+  "timeoutConfig.baselineFallbackLabel": "当没有过滤器响应时咨询基线解析器(与超时模式无关;默认关闭 - 在这种狭窄情况下查询将不会被过滤)",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

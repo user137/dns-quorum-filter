@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Il registro delle query viene salvato su disco in un file crittografato (query-log.enc) - questo conserva la cronologia di navigazione tra i riavvii. Per disabilitare: <code>persist_query_log = false</code> in resolver_config.toml.",
   "app.cachePersistWarning": "La cache dei verdetti viene salvata su disco in un file crittografato (cache.enc) - quali domini sono stati risolti viene conservato tra i riavvii. Per disabilitare: <code>persist_cache = false</code> in resolver_config.toml.",
   "app.personalZonePersistWarning": "La zona personale appresa del filtro di valutazione viene salvata su disco in un file crittografato (personal-zone.enc) - questo ricorda quali siti visiti spesso/regolarmente. Per disabilitare: <code>[personal_zone] enabled = false</code> in resolver_config.toml.",
+  "warning.notPersisted": "La modifica è stata applicata ma NON è stata salvata su disco - non sopravviverà a un riavvio del servizio.",
+  "common.helpAriaLabel": "Guida",
+  "timeoutConfig.heading": "Comportamento in caso di errore",
+  "timeoutConfig.baselineFallbackLabel": "Consultare il resolver di base quando nessun filtro ha risposto (indipendentemente dalla modalità di timeout; disattivato per impostazione predefinita - la query non viene quindi filtrata in questo caso ristretto)",
   "zoneDomainCount": {
     "one": "{n} dominio",
     "many": "{n} di domini",

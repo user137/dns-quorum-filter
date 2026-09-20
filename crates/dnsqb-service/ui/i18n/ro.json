@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Jurnalul de interogări este salvat pe disc într-un fișier criptat (query-log.enc) - acest lucru păstrează istoricul de navigare între reporniri. Pentru a dezactiva: <code>persist_query_log = false</code> în resolver_config.toml.",
   "app.cachePersistWarning": "Cache-ul de verdicte este salvat pe disc într-un fișier criptat (cache.enc) - ce domenii au fost rezolvate se păstrează între reporniri. Pentru a dezactiva: <code>persist_cache = false</code> în resolver_config.toml.",
   "app.personalZonePersistWarning": "Zona personală învățată a filtrului de evaluare este salvată pe disc într-un fișier criptat (personal-zone.enc) - aceasta reține ce site-uri vizitați des/regulat. Pentru a dezactiva: <code>[personal_zone] enabled = false</code> în resolver_config.toml.",
+  "warning.notPersisted": "Modificarea a fost aplicată, dar NU a fost salvată pe disc - nu va supraviețui unei reporniri a serviciului.",
+  "common.helpAriaLabel": "Ajutor",
+  "timeoutConfig.heading": "Comportament în caz de eșec",
+  "timeoutConfig.baselineFallbackLabel": "Consultați resolverul de bază atunci când niciun filtru nu a răspuns (independent de modul de timeout; dezactivat implicit - interogarea nu este atunci pur și simplu filtrată în acest caz restrâns)",
   "zoneDomainCount": {
     "one": "{n} domeniu",
     "few": "{n} domenii",

@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "يُحفظ سجل الاستعلامات على القرص في ملف مشفر (query-log.enc) - هذا يحتفظ بسجل التصفح عبر عمليات إعادة التشغيل. للتعطيل: <code>persist_query_log = false</code> في resolver_config.toml.",
   "app.cachePersistWarning": "تُحفظ ذاكرة التخزين المؤقت للأحكام على القرص في ملف مشفر (cache.enc) - يتم الاحتفاظ بالنطاقات التي تم حلها عبر عمليات إعادة التشغيل. للتعطيل: <code>persist_cache = false</code> في resolver_config.toml.",
   "app.personalZonePersistWarning": "تُحفظ المنطقة الشخصية المتعلمة لمرشح التصنيف على القرص في ملف مشفر (personal-zone.enc) - يتذكر هذا المواقع التي تزورها كثيرًا/بانتظام. للتعطيل: <code>[personal_zone] enabled = false</code> في resolver_config.toml.",
+  "warning.notPersisted": "تم تطبيق التغيير ولكن لم يتم حفظه على القرص - لن ينجو من إعادة تشغيل الخدمة.",
+  "common.helpAriaLabel": "مساعدة",
+  "timeoutConfig.heading": "سلوك عند الفشل",
+  "timeoutConfig.baselineFallbackLabel": "استشارة المحلل الأساسي عندما لا يستجيب أي مرشح (بغض النظر عن وضع المهلة؛ معطل افتراضيًا - عندها لا تتم تصفية الاستعلام ببساطة في هذه الحالة الضيقة)",
   "zoneDomainCount": {
     "zero": "لا نطاقات",
     "one": "نطاق واحد",

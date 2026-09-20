@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Sorgu günlüğü diske şifrelenmiş bir dosyada kaydedilir (query-log.enc) - bu, yeniden başlatmalar arasında tarama geçmişini korur. Devre dışı bırakmak için: resolver_config.toml içinde <code>persist_query_log = false</code>.",
   "app.cachePersistWarning": "Karar önbelleği diske şifrelenmiş bir dosyada kaydedilir (cache.enc) - hangi alan adlarının çözümlendiği yeniden başlatmalar arasında korunur. Devre dışı bırakmak için: resolver_config.toml içinde <code>persist_cache = false</code>.",
   "app.personalZonePersistWarning": "Derecelendirme filtresinin kişisel öğrenilmiş bölgesi diske şifrelenmiş bir dosyada kaydedilir (personal-zone.enc) - bu, sık/düzenli olarak ziyaret ettiğiniz siteleri hatırlar. Devre dışı bırakmak için: resolver_config.toml içinde <code>[personal_zone] enabled = false</code>.",
+  "warning.notPersisted": "Değişiklik uygulandı ancak diske KAYDEDİLMEDİ - hizmet yeniden başlatıldığında kaybolacak.",
+  "common.helpAriaLabel": "Yardım",
+  "timeoutConfig.heading": "Hata durumunda davranış",
+  "timeoutConfig.baselineFallbackLabel": "Hiçbir filtre yanıt vermediğinde temel çözümleyiciye danışın (zaman aşımı modundan bağımsız olarak; varsayılan olarak kapalı - bu dar durumda sorgu basitçe filtrelenmez)",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

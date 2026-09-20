@@ -36,6 +36,10 @@
   "app.queryLogPersistWarning": "Het querylogboek wordt versleuteld op schijf opgeslagen (query-log.enc) - dit bewaart de browsegeschiedenis tussen herstarts. Uitschakelen: <code>persist_query_log = false</code> in resolver_config.toml.",
   "app.cachePersistWarning": "De verdict-cache wordt versleuteld op schijf opgeslagen (cache.enc) - welke domeinen zijn opgelost blijft bewaard tussen herstarts. Uitschakelen: <code>persist_cache = false</code> in resolver_config.toml.",
   "app.personalZonePersistWarning": "De persoonlijke geleerde zone van het beoordelingsfilter wordt versleuteld op schijf opgeslagen (personal-zone.enc) - dit onthoudt welke sites u vaak/regelmatig bezoekt. Uitschakelen: <code>[personal_zone] enabled = false</code> in resolver_config.toml.",
+  "warning.notPersisted": "De wijziging is toegepast, maar NIET op schijf opgeslagen - deze overleeft een herstart van de service niet.",
+  "common.helpAriaLabel": "Help",
+  "timeoutConfig.heading": "Gedrag bij storing",
+  "timeoutConfig.baselineFallbackLabel": "Raadpleeg de baseline-resolver wanneer geen enkel filter heeft geantwoord (onafhankelijk van de time-outmodus; standaard uit - de query wordt dan in dit smalle geval eenvoudigweg niet gefilterd)",
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

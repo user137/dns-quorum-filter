@@ -229,7 +229,7 @@ function helpDetails(key) {
   details.className = "field-help";
   const summary = document.createElement("summary");
   summary.textContent = "?";
-  summary.setAttribute("aria-label", "Довідка");
+  summary.setAttribute("aria-label", t("common.helpAriaLabel"));
   const text = document.createElement("p");
   text.textContent = t(`fieldHelp.${key}`);
   details.appendChild(summary);
@@ -431,10 +431,10 @@ function blockedPercentLabel(stats) {
 function renderTimeoutConfig(status) {
   const configWarning =
     configPersistFailed || status.persisted === false
-      ? `<div class="notice warn">Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.</div>`
+      ? `<div class="notice warn">${t("warning.notPersisted")}</div>`
       : "";
   timeoutConfigBody.innerHTML = `
-    <div class="card-heading-row"><h3>Поведінка при збої</h3><details class="field-help"><summary aria-label="Довідка">?</summary><p>${t("fieldHelp.timeoutMode")}</p></details></div>
+    <div class="card-heading-row"><h3>${t("timeoutConfig.heading")}</h3><details class="field-help"><summary aria-label="${t("common.helpAriaLabel")}">?</summary><p>${t("fieldHelp.timeoutMode")}</p></details></div>
     ${configWarning}
     <div class="radio-group">
       ${["fail_open", "fail_closed", "degraded"]
@@ -449,7 +449,7 @@ function renderTimeoutConfig(status) {
     </div>
     <label class="radio-opt baseline-fallback-opt">
       <input type="checkbox" id="baseline-fallback-toggle" ${status.serve_baseline_when_filters_unreachable ? "checked" : ""} />
-      <span>Консультувати baseline-резолвер, коли жоден фільтр не відповів (незалежно від режиму таймауту; типово вимкнено — тоді запит просто не фільтрується у цьому вузькому випадку)</span>
+      <span>${t("timeoutConfig.baselineFallbackLabel")}</span>
     </label>
   `;
   document
