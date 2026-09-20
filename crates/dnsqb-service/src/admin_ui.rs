@@ -172,49 +172,64 @@ mod tests {
     }
 
     // T-96: the passive query-log-persistence warning is rendered only when
-    // the flag is true, and it names the file and how to turn it off (a
-    // config-file edit - there is no toggle in the UI by design).
+    // the flag is true. Батч 5.4 moved the warning's own text (the filename
+    // and how to turn it off) into the i18n dictionary - `en.json` is the
+    // content check now, `MAIN_JS` only proves the gate and the t() call.
     #[test]
     fn main_js_shows_the_persistence_warning_gated_on_the_status_flag() {
         assert!(
             MAIN_JS.contains("status.encrypted_persistence.query_log"),
             "the warning must be gated on the status flag, not always shown"
         );
-        assert!(MAIN_JS.contains("query-log.enc"));
+        assert!(MAIN_JS.contains("app.queryLogPersistWarning"));
+        let Some(en) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        assert!(en.contains("query-log.enc"));
         assert!(
-            MAIN_JS.contains("persist_query_log = false"),
+            en.contains("persist_query_log = false"),
             "the warning must tell the operator how to disable persistence"
         );
     }
 
     // T-97: the cache-persistence warning is the same shape - gated on its own
     // `encrypted_persistence.cache` flag, names `cache.enc`, and tells the
-    // operator the config-file edit that turns it off.
+    // operator the config-file edit that turns it off (text lives in
+    // en.json since Батч 5.4, see the note above).
     #[test]
     fn main_js_shows_the_cache_persistence_warning_gated_on_the_status_flag() {
         assert!(
             MAIN_JS.contains("status.encrypted_persistence.cache"),
             "the warning must be gated on the status flag, not always shown"
         );
-        assert!(MAIN_JS.contains("cache.enc"));
+        assert!(MAIN_JS.contains("app.cachePersistWarning"));
+        let Some(en) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        assert!(en.contains("cache.enc"));
         assert!(
-            MAIN_JS.contains("persist_cache = false"),
+            en.contains("persist_cache = false"),
             "the warning must tell the operator how to disable persistence"
         );
     }
 
     // T-138 (Батч 4.5): the personal-zone warning is the same shape - gated
     // on `rating_filter.personal_zone_enabled`, names `personal-zone.enc`,
-    // and tells the operator the config-file edit that turns it off.
+    // and tells the operator the config-file edit that turns it off (text
+    // lives in en.json since Батч 5.4, see the note above).
     #[test]
     fn main_js_shows_the_personal_zone_warning_gated_on_the_status_flag() {
         assert!(
             MAIN_JS.contains("status.rating_filter.personal_zone_enabled"),
             "the warning must be gated on the status flag, not always shown"
         );
-        assert!(MAIN_JS.contains("personal-zone.enc"));
+        assert!(MAIN_JS.contains("app.personalZonePersistWarning"));
+        let Some(en) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        assert!(en.contains("personal-zone.enc"));
         assert!(
-            MAIN_JS.contains("[personal_zone] enabled = false"),
+            en.contains("[personal_zone] enabled = false"),
             "the warning must tell the operator how to disable it"
         );
     }

@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "सुरक्षित",
   "hero.PROTECTED.detail": "फ़िल्टरिंग सक्रिय है।",
   "hero.PROTECTED.detailWithBlocked": "फ़िल्टरिंग सक्रिय है। वर्तमान लॉग में {blocked} ब्लॉक किए गए।",
+  "hero.installCertButton": "प्रमाणपत्र इंस्टॉल करें",
+  "hero.installingLabel": "इंस्टॉल हो रहा है…",
+  "hero.installFailedLabel": "विफल — इसके बजाय ट्रे आइकन मेनू का उपयोग करें",
+  "error.generic": "त्रुटि: {message}",
+  "app.statsHeading": "आँकड़े (वर्तमान लॉग विंडो)",
+  "app.statBlocked": "अवरोधित",
+  "app.statTotal": "कुल संसाधित",
+  "app.statInFlight": "अभी संसाधित हो रहा है",
+  "app.statBlockedPercent": "अवरोधित हिस्सा",
+  "app.queryLogPersistWarning": "क्वेरी लॉग एन्क्रिप्टेड फ़ाइल (query-log.enc) में डिस्क पर सहेजा जाता है - यह पुनरारंभ के बीच ब्राउज़िंग इतिहास बनाए रखता है। अक्षम करने के लिए: resolver_config.toml में <code>persist_query_log = false</code>.",
+  "app.cachePersistWarning": "निर्णय कैश एन्क्रिप्टेड फ़ाइल (cache.enc) में डिस्क पर सहेजा जाता है - कौन से डोमेन हल किए गए यह पुनरारंभ के बीच बना रहता है। अक्षम करने के लिए: resolver_config.toml में <code>persist_cache = false</code>.",
+  "app.personalZonePersistWarning": "रेटिंग फ़िल्टर का व्यक्तिगत सीखा हुआ क्षेत्र एन्क्रिप्टेड फ़ाइल (personal-zone.enc) में डिस्क पर सहेजा जाता है - यह याद रखता है कि आप कौन सी साइटें अक्सर/नियमित रूप से देखते हैं। अक्षम करने के लिए: resolver_config.toml में <code>[personal_zone] enabled = false</code>.",
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

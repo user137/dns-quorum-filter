@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Terlindungi",
   "hero.PROTECTED.detail": "Pemfilteran aktif.",
   "hero.PROTECTED.detailWithBlocked": "Pemfilteran aktif. {blocked} diblokir dalam log saat ini.",
+  "hero.installCertButton": "Instal sertifikat",
+  "hero.installingLabel": "Menginstal…",
+  "hero.installFailedLabel": "Gagal — gunakan menu ikon baki sebagai gantinya",
+  "error.generic": "Kesalahan: {message}",
+  "app.statsHeading": "Statistik (jendela log saat ini)",
+  "app.statBlocked": "diblokir",
+  "app.statTotal": "total diproses",
+  "app.statInFlight": "sedang diproses",
+  "app.statBlockedPercent": "persentase diblokir",
+  "app.queryLogPersistWarning": "Log kueri disimpan ke disk dalam file terenkripsi (query-log.enc) - ini menyimpan riwayat penjelajahan antar mulai ulang. Untuk menonaktifkan: <code>persist_query_log = false</code> di resolver_config.toml.",
+  "app.cachePersistWarning": "Cache putusan disimpan ke disk dalam file terenkripsi (cache.enc) - domain mana yang diselesaikan disimpan antar mulai ulang. Untuk menonaktifkan: <code>persist_cache = false</code> di resolver_config.toml.",
+  "app.personalZonePersistWarning": "Zona pribadi yang dipelajari dari filter peringkat disimpan ke disk dalam file terenkripsi (personal-zone.enc) - ini mengingat situs mana yang sering/rutin Anda kunjungi. Untuk menonaktifkan: <code>[personal_zone] enabled = false</code> di resolver_config.toml.",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

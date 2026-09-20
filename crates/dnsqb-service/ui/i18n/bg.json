@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Защитено",
   "hero.PROTECTED.detail": "Филтрирането е активно.",
   "hero.PROTECTED.detailWithBlocked": "Филтрирането е активно. {blocked} блокирани в текущия журнал.",
+  "hero.installCertButton": "Инсталиране на сертификат",
+  "hero.installingLabel": "Инсталиране…",
+  "hero.installFailedLabel": "Неуспешно — използвайте менюто на иконата в системния трей",
+  "error.generic": "Грешка: {message}",
+  "app.statsHeading": "Статистика (текущия прозорец на журнала)",
+  "app.statBlocked": "блокирани",
+  "app.statTotal": "общо обработени",
+  "app.statInFlight": "в момента се обработват",
+  "app.statBlockedPercent": "дял на блокираните",
+  "app.queryLogPersistWarning": "Журналът на заявките се запазва на диска в криптиран файл (query-log.enc) - това запазва историята на сърфиране между рестартирания. За да изключите: <code>persist_query_log = false</code> в resolver_config.toml.",
+  "app.cachePersistWarning": "Кешът на присъдите се запазва на диска в криптиран файл (cache.enc) - кои домейни са били разрешени се запазва между рестартирания. За да изключите: <code>persist_cache = false</code> в resolver_config.toml.",
+  "app.personalZonePersistWarning": "Личната научена зона на рейтинговия филтър се запазва на диска в криптиран файл (personal-zone.enc) - това запомня кои сайтове посещавате често/редовно. За да изключите: <code>[personal_zone] enabled = false</code> в resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} домейн",
     "other": "{n} домейна"

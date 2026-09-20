@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Đã được bảo vệ",
   "hero.PROTECTED.detail": "Tính năng lọc đang hoạt động.",
   "hero.PROTECTED.detailWithBlocked": "Tính năng lọc đang hoạt động. {blocked} đã bị chặn trong nhật ký hiện tại.",
+  "hero.installCertButton": "Cài đặt chứng chỉ",
+  "hero.installingLabel": "Đang cài đặt…",
+  "hero.installFailedLabel": "Thất bại — hãy dùng menu biểu tượng khay hệ thống thay thế",
+  "error.generic": "Lỗi: {message}",
+  "app.statsHeading": "Thống kê (cửa sổ nhật ký hiện tại)",
+  "app.statBlocked": "đã chặn",
+  "app.statTotal": "tổng số đã xử lý",
+  "app.statInFlight": "đang xử lý",
+  "app.statBlockedPercent": "tỷ lệ bị chặn",
+  "app.queryLogPersistWarning": "Nhật ký truy vấn được lưu vào đĩa trong một tệp được mã hóa (query-log.enc) - điều này giữ lại lịch sử duyệt web qua các lần khởi động lại. Để tắt: <code>persist_query_log = false</code> trong resolver_config.toml.",
+  "app.cachePersistWarning": "Bộ đệm phán quyết được lưu vào đĩa trong một tệp được mã hóa (cache.enc) - miền nào đã được phân giải được giữ lại qua các lần khởi động lại. Để tắt: <code>persist_cache = false</code> trong resolver_config.toml.",
+  "app.personalZonePersistWarning": "Vùng học riêng của bộ lọc xếp hạng được lưu vào đĩa trong một tệp được mã hóa (personal-zone.enc) - điều này ghi nhớ những trang web bạn truy cập thường xuyên/đều đặn. Để tắt: <code>[personal_zone] enabled = false</code> trong resolver_config.toml.",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

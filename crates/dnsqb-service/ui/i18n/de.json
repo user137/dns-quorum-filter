@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Geschützt",
   "hero.PROTECTED.detail": "Die Filterung ist aktiv.",
   "hero.PROTECTED.detailWithBlocked": "Die Filterung ist aktiv. {blocked} im aktuellen Protokoll blockiert.",
+  "hero.installCertButton": "Zertifikat installieren",
+  "hero.installingLabel": "Wird installiert…",
+  "hero.installFailedLabel": "Fehlgeschlagen — verwenden Sie stattdessen das Menü des Tray-Symbols",
+  "error.generic": "Fehler: {message}",
+  "app.statsHeading": "Statistik (aktuelles Protokollfenster)",
+  "app.statBlocked": "blockiert",
+  "app.statTotal": "insgesamt verarbeitet",
+  "app.statInFlight": "wird gerade verarbeitet",
+  "app.statBlockedPercent": "Anteil blockiert",
+  "app.queryLogPersistWarning": "Das Abfrageprotokoll wird verschlüsselt auf der Festplatte gespeichert (query-log.enc) - dies bewahrt den Browserverlauf über Neustarts hinweg. Deaktivieren: <code>persist_query_log = false</code> in resolver_config.toml.",
+  "app.cachePersistWarning": "Der Urteils-Cache wird verschlüsselt auf der Festplatte gespeichert (cache.enc) - welche Domains aufgelöst wurden, bleibt über Neustarts hinweg erhalten. Deaktivieren: <code>persist_cache = false</code> in resolver_config.toml.",
+  "app.personalZonePersistWarning": "Die persönliche gelernte Zone des Bewertungsfilters wird verschlüsselt auf der Festplatte gespeichert (personal-zone.enc) - dies merkt sich, welche Seiten Sie häufig/regelmäßig besuchen. Deaktivieren: <code>[personal_zone] enabled = false</code> in resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "已受保护",
   "hero.PROTECTED.detail": "过滤已启用。",
   "hero.PROTECTED.detailWithBlocked": "过滤已启用。当前日志中已阻止 {blocked} 个。",
+  "hero.installCertButton": "安装证书",
+  "hero.installingLabel": "正在安装…",
+  "hero.installFailedLabel": "失败 — 请改用系统托盘图标菜单",
+  "error.generic": "错误：{message}",
+  "app.statsHeading": "统计信息(当前日志窗口)",
+  "app.statBlocked": "已阻止",
+  "app.statTotal": "总处理数",
+  "app.statInFlight": "正在处理",
+  "app.statBlockedPercent": "阻止比例",
+  "app.queryLogPersistWarning": "查询日志以加密文件(query-log.enc)的形式保存到磁盘 - 这会在重启之间保留浏览历史记录。要禁用：在 resolver_config.toml 中设置 <code>persist_query_log = false</code>。",
+  "app.cachePersistWarning": "判定缓存以加密文件(cache.enc)的形式保存到磁盘 - 哪些域名已被解析会在重启之间保留。要禁用：在 resolver_config.toml 中设置 <code>persist_cache = false</code>。",
+  "app.personalZonePersistWarning": "评级过滤器的个人学习区域以加密文件(personal-zone.enc)的形式保存到磁盘 - 这会记住您经常/定期访问的网站。要禁用：在 resolver_config.toml 中设置 <code>[personal_zone] enabled = false</code>。",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

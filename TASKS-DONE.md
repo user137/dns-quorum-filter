@@ -6933,3 +6933,51 @@ code.toLowerCase()).concat([...])` — ccTLD-суфікс пишеться ни�
 conformance -p dnsqb-service --locked` (18/18), `cargo test --test admin_client -p dnsqb-service
 --locked` (7/7), `cargo test --workspace --doc --locked` (9/9), `RUSTDOCFLAGS="-D warnings" cargo
 doc --workspace --no-deps --document-private-items --locked` — усі зелені.
+
+---
+
+**Батч 5.4, коміт 1 — `#app-body` + hero-хвіст (T-151, частина 2 з 7 узгоджених батчів
+Фази 5), 2026-09-20, plan-mode + advisor (Explore-агент обстежив увесь `main.js`/`index.html`,
+advisor знайшов 3 реальні дірки в плані до коду).** Перший з ~14 запланованих коммітів Батчу 5.4
+(«решта сайту», TASKS.md) — мігрує `render()`/`renderError()`/`renderProtectionHero()`/
+`installCertFromHero()` на `t()`, заводить два спільні ключі (`error.generic`,
+використовується наступними коммітами; `warning.notPersisted` — заведення відкладено до коміту 2,
+де він уже реально потрібен), 12 нових ключів × 37 локалей.
+
+**Реальний баг, спійманий саме мігруючи цю функцію, не окремим ревʼю:** `renderError()`
+викликав `renderProtectionHero(HERO_PRESENTATION.SERVICE_UNREACHABLE)` напряму — цей об'єкт із
+Батчу 5.2 тримає лише `{cls}` (текст переїхав у i18n), тож при падінні самого `/admin/status`
+fetch (єдиний hero-стан, який сервер не може самозвітувати, T-204) заголовок/деталь hero
+рендерились порожніми відтоді, як Батч 5.2 переїхав текст. Виправлено викликом через
+`heroPresentation("SERVICE_UNREACHABLE")` (та сама функція, що й звичайний polling-шлях).
+
+**Advisor-catch'і на плані (три, усі застосовані до коду/тестів):**
+1. Тест плюрал-форм (`admin_ui.rs::every_locale_zone_domain_count_has_its_measured_plural_
+   categories`) звертається до `zoneDomainCount` за іменем ключа, не ітерує всі object-valued
+   ключі — новий плюрал-ключ (заплановано в коммітах 9/13) пройшов би повз нього з неправильною
+   формою категорій. Узгоджено виправити в коміті, що додає перший новий плюрал-ключ (комміт 9),
+   не тут — але задокументовано зараз, поки контекст свіжий.
+2. `renderTranslatedCards()` не викликає `refreshMaxmind()` — картка `#geoip-maxmind-body` має
+   власний fetch/render-цикл поза 2с-поллом і лишиться в старій мові після живого перемикання
+   локалі, доки цей виклик не додати в коміті 6. Зафіксовано як чекліст-пункт на кожен майбутній
+   комміт, не одноразова правка.
+3. GLOSSARY.md обмежував себе pilot-набором і називав Батч 5.4 майбутнім розширенням — оновлено
+   в цьому-таки коміті (розділ "Батч 5.4 additions to the rules above"), не відкладено до
+   останнього коміту батчу.
+
+**Живий тест зламався неочікувано (не advisor, не план) — 3 Rust-тести `admin_ui.rs`
+(`main_js_shows_the_{persistence,cache_persistence,personal_zone}_warning_gated_on_the_status_
+flag`) асертували `MAIN_JS.contains("query-log.enc")`/`"cache.enc"`/`"personal-zone.enc"` —
+рядки, які цей комміт свідомо переніс із `main.js` у `en.json`. Виправлено: гейт (`status.
+encrypted_persistence.*`) і виклик `t()`-ключа лишаються асертованими проти `MAIN_JS`, вміст
+попередження (назва файлу, як вимкнути) тепер асертується проти `i18n_dict("en")`.**
+
+**Перевірка:** `cargo test --workspace --lib --bins` (954, без змін кількості — три асерції
+перероблено на новий джерельний рядок, не додано нових тестів), `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --all -- --check` — усі зелені. Живий Chrome-смок недоступний цього разу (розширення не підключене в цій
+сесії) — замінено на server-side перевірку через запущений scratch-інстанс (`%LOCALAPPDATA%` у
+тимчасовій теці, порт 8443): `curl -sk .../admin/ui/i18n/ja.json` повернув нові ключі коректною
+японською (38 ключів, збіг з `en`), `curl -sk .../admin/ui/main.js` підтвердив відсутність старих
+українських літералів у мігрованому діапазоні й наявність нових `t()`-викликів. **Не жива
+перевірка перемикання мови в реальному DOM** — залишається пробіл до наступної сесії з
+робочим розширенням Chrome.

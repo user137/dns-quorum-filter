@@ -1,9 +1,40 @@
-# i18n glossary and translation rules (T-236)
+# i18n glossary and translation rules (T-236, extended by Батч 5.4/T-151)
 
-Governs the pilot key set shipped in `ui/i18n/*.json` (`localeSwitcher.label`, `fieldHelp.*`,
-`hero.*`, `zoneDomainCount`) — the *rule*, not a duplicate of the translated strings themselves
-(those live in the JSON files, one source of truth per Documentation map convention). Expanding
-the *key set* (the rest of `main.js`'s hardcoded text) is Батч 5.4, out of scope here.
+Governs every key shipped in `ui/i18n/*.json` — the *rule*, not a duplicate of the translated
+strings themselves (those live in the JSON files, one source of truth per Documentation map
+convention). Originally scoped to the T-236 pilot key set (`localeSwitcher.label`, `fieldHelp.*`,
+`hero.*`, `zoneDomainCount`); Батч 5.4 (2026-09-20-, one card/section per commit) extends the key
+set to the rest of `main.js` and `index.html` under the same rules, plus the additions below.
+
+## Батч 5.4 additions to the rules above
+
+- **Every new key ships translated into all 37 locales in the same commit that adds it** — not
+  uk+en first with the rest backfilled later (a deliberate user choice, since the latter would
+  make untouched cards show raw key names in 35 locales until the whole batch finishes; see
+  TASKS-DONE.md's Батч 5.4 entries for the discussion).
+- **Static HTML vs. JS-rendered text**: if a DOM node is overwritten synchronously during
+  bootstrap (before a user could read the hardcoded-Ukrainian placeholder), the HTML placeholder
+  stays hardcoded and only the JS-rendered replacement gets a `t()` key. A node JS never touches
+  (long-form prose: browser-setup instructions, the danger-zone warning, the footer attributions)
+  is translated via `data-i18n="<key>"` (`textContent`) or `data-i18n-html="<key>"` (`innerHTML`,
+  for a string whose translated value legitimately contains inline markup like `<a>`/`<strong>` —
+  first-party `include_str!` dictionaries are not an injection surface here), applied by
+  `applyStaticTranslations()` and re-applied by `renderTranslatedCards()` on a live locale switch.
+- **Shared keys over duplicated ones**: several patterns repeat verbatim (or near-verbatim, with
+  the inconsistencies fixed as part of adopting the shared key) across many render functions —
+  `error.generic` (`` `Помилка: ${msg}` ``, ~15 sites), `warning.notPersisted` (the "not saved to
+  disk" notice, ~9 sites), a shared delete-button label, a shared offline-network message. The
+  first commit that touches each pattern defines the key; later commits reuse it rather than
+  minting a second key for the same sentence.
+- **Two hand-rolled Ukrainian-only pluralizers** (`pluralUk()`, `blocklistRelativeTime()`) are
+  being retired in favor of `tPlural()` with dedicated keys, one `{n}` slot per key (`tPlural()`
+  substitutes only the first occurrence — `.replace`, not `.replaceAll`). Any new plural-shaped
+  key must be added to `admin_ui.rs`'s plural-shape test alongside the measured category table
+  above (that test originally checked only `zoneDomainCount` by name and was generalized to walk
+  every object-valued top-level key once Батч 5.4 introduced a second one).
+- **Brand/product names and technical scheme identifiers stay untranslated**, same principle as
+  `fail_open`/`DNS`/`ccTLD` above: `Quad9`, `AdGuard`, `DB-IP Lite`, `MaxMind GeoLite2`, blocklist
+  source names (HaGeZi, 1Hosts, …), and `chrome://`/`edge://`/`brave://`/`opera://` URL schemes.
 
 ## Terms that stay untranslated
 

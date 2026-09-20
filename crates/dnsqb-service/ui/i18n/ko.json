@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "보호됨",
   "hero.PROTECTED.detail": "필터링이 활성 상태입니다.",
   "hero.PROTECTED.detailWithBlocked": "필터링이 활성 상태입니다. 현재 로그에서 {blocked}건이 차단되었습니다.",
+  "hero.installCertButton": "인증서 설치",
+  "hero.installingLabel": "설치 중…",
+  "hero.installFailedLabel": "실패 — 대신 트레이 아이콘 메뉴를 사용하세요",
+  "error.generic": "오류: {message}",
+  "app.statsHeading": "통계(현재 로그 창)",
+  "app.statBlocked": "차단됨",
+  "app.statTotal": "총 처리됨",
+  "app.statInFlight": "현재 처리 중",
+  "app.statBlockedPercent": "차단 비율",
+  "app.queryLogPersistWarning": "쿼리 로그는 암호화된 파일(query-log.enc)로 디스크에 저장됩니다 - 이는 재시작 간에 검색 기록을 유지합니다. 비활성화하려면: resolver_config.toml에서 <code>persist_query_log = false</code>.",
+  "app.cachePersistWarning": "판정 캐시는 암호화된 파일(cache.enc)로 디스크에 저장됩니다 - 어떤 도메인이 확인되었는지가 재시작 간에 유지됩니다. 비활성화하려면: resolver_config.toml에서 <code>persist_cache = false</code>.",
+  "app.personalZonePersistWarning": "평가 필터의 개인 학습 구역은 암호화된 파일(personal-zone.enc)로 디스크에 저장됩니다 - 이는 자주/정기적으로 방문하는 사이트를 기억합니다. 비활성화하려면: resolver_config.toml에서 <code>[personal_zone] enabled = false</code>.",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

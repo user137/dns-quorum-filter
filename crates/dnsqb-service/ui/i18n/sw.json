@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Imelindwa",
   "hero.PROTECTED.detail": "Uchujaji unafanya kazi.",
   "hero.PROTECTED.detailWithBlocked": "Uchujaji unafanya kazi. {blocked} zimezuiwa kwenye kumbukumbu ya sasa.",
+  "hero.installCertButton": "Sakinisha cheti",
+  "hero.installingLabel": "Inasakinisha…",
+  "hero.installFailedLabel": "Imeshindwa — tumia menyu ya aikoni ya tray badala yake",
+  "error.generic": "Hitilafu: {message}",
+  "app.statsHeading": "Takwimu (dirisha la sasa la kumbukumbu)",
+  "app.statBlocked": "zimezuiwa",
+  "app.statTotal": "jumla zilizochakatwa",
+  "app.statInFlight": "zinachakatwa sasa",
+  "app.statBlockedPercent": "asilimia iliyozuiwa",
+  "app.queryLogPersistWarning": "Kumbukumbu ya maswali huhifadhiwa kwenye diski katika faili lililosimbwa (query-log.enc) - hii huhifadhi historia ya kuvinjari kati ya kuanzisha upya. Kuzima: <code>persist_query_log = false</code> katika resolver_config.toml.",
+  "app.cachePersistWarning": "Akiba ya maamuzi huhifadhiwa kwenye diski katika faili lililosimbwa (cache.enc) - ni vikoa gani vilivyotatuliwa huhifadhiwa kati ya kuanzisha upya. Kuzima: <code>persist_cache = false</code> katika resolver_config.toml.",
+  "app.personalZonePersistWarning": "Eneo la kibinafsi lililojifunza la kichujio cha ukadiriaji huhifadhiwa kwenye diski katika faili lililosimbwa (personal-zone.enc) - hii inakumbuka tovuti unazotembelea mara kwa mara/kawaida. Kuzima: <code>[personal_zone] enabled = false</code> katika resolver_config.toml.",
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

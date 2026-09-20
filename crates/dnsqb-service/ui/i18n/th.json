@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "ได้รับการป้องกัน",
   "hero.PROTECTED.detail": "การกรองกำลังทำงานอยู่",
   "hero.PROTECTED.detailWithBlocked": "การกรองกำลังทำงานอยู่ บล็อกไปแล้ว {blocked} รายการในบันทึกปัจจุบัน",
+  "hero.installCertButton": "ติดตั้งใบรับรอง",
+  "hero.installingLabel": "กำลังติดตั้ง…",
+  "hero.installFailedLabel": "ล้มเหลว — ใช้เมนูไอคอนถาดระบบแทน",
+  "error.generic": "ข้อผิดพลาด: {message}",
+  "app.statsHeading": "สถิติ (หน้าต่างบันทึกปัจจุบัน)",
+  "app.statBlocked": "ถูกบล็อก",
+  "app.statTotal": "ประมวลผลทั้งหมด",
+  "app.statInFlight": "กำลังประมวลผลอยู่",
+  "app.statBlockedPercent": "สัดส่วนที่ถูกบล็อก",
+  "app.queryLogPersistWarning": "บันทึกการสืบค้นจะถูกบันทึกลงดิสก์ในไฟล์ที่เข้ารหัส (query-log.enc) - สิ่งนี้จะเก็บประวัติการท่องเว็บไว้ข้ามการรีสตาร์ท หากต้องการปิดใช้งาน: <code>persist_query_log = false</code> ใน resolver_config.toml",
+  "app.cachePersistWarning": "แคชคำตัดสินจะถูกบันทึกลงดิสก์ในไฟล์ที่เข้ารหัส (cache.enc) - โดเมนใดที่ได้รับการแก้ไขจะถูกเก็บไว้ข้ามการรีสตาร์ท หากต้องการปิดใช้งาน: <code>persist_cache = false</code> ใน resolver_config.toml",
+  "app.personalZonePersistWarning": "โซนที่เรียนรู้ส่วนบุคคลของตัวกรองการให้คะแนนจะถูกบันทึกลงดิสก์ในไฟล์ที่เข้ารหัส (personal-zone.enc) - สิ่งนี้จะจดจำไซต์ที่คุณเข้าชมบ่อย/เป็นประจำ หากต้องการปิดใช้งาน: <code>[personal_zone] enabled = false</code> ใน resolver_config.toml",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

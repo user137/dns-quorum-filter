@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Védve",
   "hero.PROTECTED.detail": "A szűrés aktív.",
   "hero.PROTECTED.detailWithBlocked": "A szűrés aktív. {blocked} blokkolva az aktuális naplóban.",
+  "hero.installCertButton": "Tanúsítvány telepítése",
+  "hero.installingLabel": "Telepítés…",
+  "hero.installFailedLabel": "Sikertelen — használja helyette a tálcaikon menüjét",
+  "error.generic": "Hiba: {message}",
+  "app.statsHeading": "Statisztika (jelenlegi naplóablak)",
+  "app.statBlocked": "blokkolva",
+  "app.statTotal": "összesen feldolgozva",
+  "app.statInFlight": "jelenleg feldolgozás alatt",
+  "app.statBlockedPercent": "blokkolt arány",
+  "app.queryLogPersistWarning": "A lekérdezési napló titkosított fájlban kerül lemezre mentésre (query-log.enc) - ez megőrzi a böngészési előzményeket az újraindítások között. Letiltás: <code>persist_query_log = false</code> a resolver_config.toml fájlban.",
+  "app.cachePersistWarning": "A verdikt-gyorsítótár titkosított fájlban kerül lemezre mentésre (cache.enc) - hogy mely domainek lettek feloldva, megmarad az újraindítások között. Letiltás: <code>persist_cache = false</code> a resolver_config.toml fájlban.",
+  "app.personalZonePersistWarning": "Az értékelési szűrő személyes megtanult zónája titkosított fájlban kerül lemezre mentésre (personal-zone.enc) - ez megjegyzi, mely oldalakat látogatja gyakran/rendszeresen. Letiltás: <code>[personal_zone] enabled = false</code> a resolver_config.toml fájlban.",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

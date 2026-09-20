@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "محفوظ",
   "hero.PROTECTED.detail": "فلٹرنگ فعال ہے۔",
   "hero.PROTECTED.detailWithBlocked": "فلٹرنگ فعال ہے۔ موجودہ لاگ میں {blocked} بلاک کیے گئے۔",
+  "hero.installCertButton": "سرٹیفکیٹ انسٹال کریں",
+  "hero.installingLabel": "انسٹال ہو رہا ہے…",
+  "hero.installFailedLabel": "ناکام — اس کے بجائے ٹرے آئیکن مینو استعمال کریں",
+  "error.generic": "خرابی: {message}",
+  "app.statsHeading": "اعداد و شمار (موجودہ لاگ ونڈو)",
+  "app.statBlocked": "مسدود",
+  "app.statTotal": "کل پروسیس شدہ",
+  "app.statInFlight": "اس وقت پروسیس ہو رہا ہے",
+  "app.statBlockedPercent": "مسدود حصہ",
+  "app.queryLogPersistWarning": "کوئری لاگ ڈسک پر ایک خفیہ کردہ فائل (query-log.enc) میں محفوظ ہوتا ہے - یہ ری اسٹارٹس کے درمیان براؤزنگ ہسٹری کو برقرار رکھتا ہے۔ غیر فعال کرنے کے لیے: resolver_config.toml میں <code>persist_query_log = false</code>۔",
+  "app.cachePersistWarning": "فیصلہ کیش ڈسک پر ایک خفیہ کردہ فائل (cache.enc) میں محفوظ ہوتا ہے - کون سے ڈومینز حل ہوئے یہ ری اسٹارٹس کے درمیان برقرار رہتا ہے۔ غیر فعال کرنے کے لیے: resolver_config.toml میں <code>persist_cache = false</code>۔",
+  "app.personalZonePersistWarning": "ریٹنگ فلٹر کا ذاتی سیکھا ہوا زون ڈسک پر ایک خفیہ کردہ فائل (personal-zone.enc) میں محفوظ ہوتا ہے - یہ یاد رکھتا ہے کہ آپ کون سی سائٹس اکثر/باقاعدگی سے دیکھتے ہیں۔ غیر فعال کرنے کے لیے: resolver_config.toml میں <code>[personal_zone] enabled = false</code>۔",
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"

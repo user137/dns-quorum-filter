@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Korunuyor",
   "hero.PROTECTED.detail": "Filtreleme etkin.",
   "hero.PROTECTED.detailWithBlocked": "Filtreleme etkin. Geçerli günlükte {blocked} engellendi.",
+  "hero.installCertButton": "Sertifikayı yükle",
+  "hero.installingLabel": "Yükleniyor…",
+  "hero.installFailedLabel": "Başarısız — bunun yerine tepsi simgesi menüsünü kullanın",
+  "error.generic": "Hata: {message}",
+  "app.statsHeading": "İstatistikler (mevcut günlük penceresi)",
+  "app.statBlocked": "engellendi",
+  "app.statTotal": "toplam işlendi",
+  "app.statInFlight": "şu anda işleniyor",
+  "app.statBlockedPercent": "engellenen oran",
+  "app.queryLogPersistWarning": "Sorgu günlüğü diske şifrelenmiş bir dosyada kaydedilir (query-log.enc) - bu, yeniden başlatmalar arasında tarama geçmişini korur. Devre dışı bırakmak için: resolver_config.toml içinde <code>persist_query_log = false</code>.",
+  "app.cachePersistWarning": "Karar önbelleği diske şifrelenmiş bir dosyada kaydedilir (cache.enc) - hangi alan adlarının çözümlendiği yeniden başlatmalar arasında korunur. Devre dışı bırakmak için: resolver_config.toml içinde <code>persist_cache = false</code>.",
+  "app.personalZonePersistWarning": "Derecelendirme filtresinin kişisel öğrenilmiş bölgesi diske şifrelenmiş bir dosyada kaydedilir (personal-zone.enc) - bu, sık/düzenli olarak ziyaret ettiğiniz siteleri hatırlar. Devre dışı bırakmak için: resolver_config.toml içinde <code>[personal_zone] enabled = false</code>.",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

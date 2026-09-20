@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Suojattu",
   "hero.PROTECTED.detail": "Suodatus on käytössä.",
   "hero.PROTECTED.detailWithBlocked": "Suodatus on käytössä. {blocked} estetty nykyisessä lokissa.",
+  "hero.installCertButton": "Asenna varmenne",
+  "hero.installingLabel": "Asennetaan…",
+  "hero.installFailedLabel": "Epäonnistui — käytä sen sijaan ilmaisinalueen kuvakkeen valikkoa",
+  "error.generic": "Virhe: {message}",
+  "app.statsHeading": "Tilastot (nykyinen lokiaikaikkuna)",
+  "app.statBlocked": "estetty",
+  "app.statTotal": "käsitelty yhteensä",
+  "app.statInFlight": "käsitellään parhaillaan",
+  "app.statBlockedPercent": "estetty osuus",
+  "app.queryLogPersistWarning": "Kyselyloki tallennetaan levylle salattuun tiedostoon (query-log.enc) - tämä säilyttää selaushistorian uudelleenkäynnistysten välillä. Poista käytöstä: <code>persist_query_log = false</code> tiedostossa resolver_config.toml.",
+  "app.cachePersistWarning": "Päätösvälimuisti tallennetaan levylle salattuun tiedostoon (cache.enc) - mitkä verkkotunnukset ratkaistiin, säilyy uudelleenkäynnistysten välillä. Poista käytöstä: <code>persist_cache = false</code> tiedostossa resolver_config.toml.",
+  "app.personalZonePersistWarning": "Arviointisuodattimen henkilökohtainen opittu vyöhyke tallennetaan levylle salattuun tiedostoon (personal-zone.enc) - tämä muistaa, millä sivustoilla käyt usein/säännöllisesti. Poista käytöstä: <code>[personal_zone] enabled = false</code> tiedostossa resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

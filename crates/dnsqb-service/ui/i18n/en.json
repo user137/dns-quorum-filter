@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Protected",
   "hero.PROTECTED.detail": "Filtering is active.",
   "hero.PROTECTED.detailWithBlocked": "Filtering is active. {blocked} blocked in the current log.",
+  "hero.installCertButton": "Install certificate",
+  "hero.installingLabel": "Installing…",
+  "hero.installFailedLabel": "Failed — use the tray icon menu instead",
+  "error.generic": "Error: {message}",
+  "app.statsHeading": "Statistics (current log window)",
+  "app.statBlocked": "blocked",
+  "app.statTotal": "total processed",
+  "app.statInFlight": "in flight now",
+  "app.statBlockedPercent": "blocked share",
+  "app.queryLogPersistWarning": "The query log is saved to disk in an encrypted file (query-log.enc) - this keeps browsing history across restarts. To disable: <code>persist_query_log = false</code> in resolver_config.toml.",
+  "app.cachePersistWarning": "The verdict cache is saved to disk in an encrypted file (cache.enc) - which domains were resolved is kept across restarts. To disable: <code>persist_cache = false</code> in resolver_config.toml.",
+  "app.personalZonePersistWarning": "The rating filter's personal learned zone is saved to disk in an encrypted file (personal-zone.enc) - this remembers which sites you visit often/regularly. To disable: <code>[personal_zone] enabled = false</code> in resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

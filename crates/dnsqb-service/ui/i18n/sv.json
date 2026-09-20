@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Skyddad",
   "hero.PROTECTED.detail": "Filtrering är aktiv.",
   "hero.PROTECTED.detailWithBlocked": "Filtrering är aktiv. {blocked} blockerade i den aktuella loggen.",
+  "hero.installCertButton": "Installera certifikat",
+  "hero.installingLabel": "Installerar…",
+  "hero.installFailedLabel": "Misslyckades — använd fackikonens meny istället",
+  "error.generic": "Fel: {message}",
+  "app.statsHeading": "Statistik (nuvarande loggfönster)",
+  "app.statBlocked": "blockerade",
+  "app.statTotal": "totalt behandlade",
+  "app.statInFlight": "behandlas just nu",
+  "app.statBlockedPercent": "andel blockerade",
+  "app.queryLogPersistWarning": "Frågeloggen sparas på disk i en krypterad fil (query-log.enc) - detta bevarar webbhistoriken mellan omstarter. Inaktivera: <code>persist_query_log = false</code> i resolver_config.toml.",
+  "app.cachePersistWarning": "Utslagscachen sparas på disk i en krypterad fil (cache.enc) - vilka domäner som slogs upp bevaras mellan omstarter. Inaktivera: <code>persist_cache = false</code> i resolver_config.toml.",
+  "app.personalZonePersistWarning": "Betygsfiltrets personliga inlärda zon sparas på disk i en krypterad fil (personal-zone.enc) - detta kommer ihåg vilka webbplatser du besöker ofta/regelbundet. Inaktivera: <code>[personal_zone] enabled = false</code> i resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

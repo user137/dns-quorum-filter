@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Beschermd",
   "hero.PROTECTED.detail": "Filtering is actief.",
   "hero.PROTECTED.detailWithBlocked": "Filtering is actief. {blocked} geblokkeerd in het huidige logboek.",
+  "hero.installCertButton": "Certificaat installeren",
+  "hero.installingLabel": "Installeren…",
+  "hero.installFailedLabel": "Mislukt — gebruik in plaats daarvan het menu van het systeemvakpictogram",
+  "error.generic": "Fout: {message}",
+  "app.statsHeading": "Statistieken (huidig logvenster)",
+  "app.statBlocked": "geblokkeerd",
+  "app.statTotal": "totaal verwerkt",
+  "app.statInFlight": "wordt nu verwerkt",
+  "app.statBlockedPercent": "aandeel geblokkeerd",
+  "app.queryLogPersistWarning": "Het querylogboek wordt versleuteld op schijf opgeslagen (query-log.enc) - dit bewaart de browsegeschiedenis tussen herstarts. Uitschakelen: <code>persist_query_log = false</code> in resolver_config.toml.",
+  "app.cachePersistWarning": "De verdict-cache wordt versleuteld op schijf opgeslagen (cache.enc) - welke domeinen zijn opgelost blijft bewaard tussen herstarts. Uitschakelen: <code>persist_cache = false</code> in resolver_config.toml.",
+  "app.personalZonePersistWarning": "De persoonlijke geleerde zone van het beoordelingsfilter wordt versleuteld op schijf opgeslagen (personal-zone.enc) - dit onthoudt welke sites u vaak/regelmatig bezoekt. Uitschakelen: <code>[personal_zone] enabled = false</code> in resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

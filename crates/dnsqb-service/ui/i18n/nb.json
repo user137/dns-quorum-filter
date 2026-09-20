@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Beskyttet",
   "hero.PROTECTED.detail": "Filtrering er aktiv.",
   "hero.PROTECTED.detailWithBlocked": "Filtrering er aktiv. {blocked} blokkert i den gjeldende loggen.",
+  "hero.installCertButton": "Installer sertifikat",
+  "hero.installingLabel": "Installerer…",
+  "hero.installFailedLabel": "Mislyktes — bruk menyen til systemstatusikonet i stedet",
+  "error.generic": "Feil: {message}",
+  "app.statsHeading": "Statistikk (nåværende loggvindu)",
+  "app.statBlocked": "blokkert",
+  "app.statTotal": "totalt behandlet",
+  "app.statInFlight": "behandles nå",
+  "app.statBlockedPercent": "andel blokkert",
+  "app.queryLogPersistWarning": "Spørringsloggen lagres på disk i en kryptert fil (query-log.enc) - dette bevarer nettleserhistorikken på tvers av omstarter. For å deaktivere: <code>persist_query_log = false</code> i resolver_config.toml.",
+  "app.cachePersistWarning": "Avgjørelsescachen lagres på disk i en kryptert fil (cache.enc) - hvilke domener som ble slått opp bevares på tvers av omstarter. For å deaktivere: <code>persist_cache = false</code> i resolver_config.toml.",
+  "app.personalZonePersistWarning": "Vurderingsfilterets personlige lærte sone lagres på disk i en kryptert fil (personal-zone.enc) - dette husker hvilke nettsteder du besøker ofte/regelmessig. For å deaktivere: <code>[personal_zone] enabled = false</code> i resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} domene",
     "other": "{n} domener"

@@ -24,6 +24,18 @@
   "hero.PROTECTED.state": "Kaitstud",
   "hero.PROTECTED.detail": "Filtreerimine on aktiivne.",
   "hero.PROTECTED.detailWithBlocked": "Filtreerimine on aktiivne. {blocked} blokeeritud praeguses logis.",
+  "hero.installCertButton": "Paigalda sertifikaat",
+  "hero.installingLabel": "Paigaldamine…",
+  "hero.installFailedLabel": "Ebaõnnestus — kasutage selle asemel salvealuse ikooni menüüd",
+  "error.generic": "Viga: {message}",
+  "app.statsHeading": "Statistika (praegune logiaken)",
+  "app.statBlocked": "blokeeritud",
+  "app.statTotal": "kokku töödeldud",
+  "app.statInFlight": "praegu töötlemisel",
+  "app.statBlockedPercent": "blokeeritud osakaal",
+  "app.queryLogPersistWarning": "Päringulogi salvestatakse kettale krüpteeritud failina (query-log.enc) - see säilitab sirvimisajaloo taaskäivituste vahel. Väljalülitamiseks: <code>persist_query_log = false</code> failis resolver_config.toml.",
+  "app.cachePersistWarning": "Otsuste vahemälu salvestatakse kettale krüpteeritud failina (cache.enc) - milliseid domeene lahendati, säilib taaskäivituste vahel. Väljalülitamiseks: <code>persist_cache = false</code> failis resolver_config.toml.",
+  "app.personalZonePersistWarning": "Hindamisfiltri isiklik õpitud tsoon salvestatakse kettale krüpteeritud failina (personal-zone.enc) - see jätab meelde, milliseid saite külastate sageli/regulaarselt. Väljalülitamiseks: <code>[personal_zone] enabled = false</code> failis resolver_config.toml.",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

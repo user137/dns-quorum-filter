@@ -317,7 +317,7 @@ function renderProtectionHero(state) {
     const action = document.createElement("button");
     action.type = "button";
     action.className = "hero-action";
-    action.textContent = "Встановити сертифікат";
+    action.textContent = t("hero.installCertButton");
     action.addEventListener("click", () => installCertFromHero(action));
     box.appendChild(action);
   }
@@ -332,7 +332,7 @@ function renderProtectionHero(state) {
 async function installCertFromHero(button) {
   button.disabled = true;
   const original = button.textContent;
-  button.textContent = "Встановлення…";
+  button.textContent = t("hero.installingLabel");
   try {
     const response = await fetch("/admin/install-cert", {
       method: "POST",
@@ -345,7 +345,7 @@ async function installCertFromHero(button) {
     await refresh();
   } catch (_err) {
     button.disabled = false;
-    button.textContent = "Не вдалося — скористайтеся пунктом трея";
+    button.textContent = t("hero.installFailedLabel");
     setTimeout(() => {
       button.textContent = original;
     }, 4000);
@@ -479,12 +479,12 @@ function render(status) {
   // by design (no toggle here), so this is a plain always-visible line, not a
   // per-event confirm.
   const persistWarning = status.encrypted_persistence.query_log
-    ? `<div class="notice warn">Журнал запитів зберігається на диск у зашифрованому файлі (query-log.enc) — це зберігає історію переглядів між перезапусками. Вимкнути: <code>persist_query_log = false</code> у resolver_config.toml.</div>`
+    ? `<div class="notice warn">${t("app.queryLogPersistWarning")}</div>`
     : "";
   // T-97: the same kind of passive, hand-edit-only indicator for the
   // quorum-verdict cache. Independent flag, its own file, its own line.
   const cachePersistWarning = status.encrypted_persistence.cache
-    ? `<div class="notice warn">Кеш вердиктів зберігається на диск у зашифрованому файлі (cache.enc) — між перезапусками зберігається, які домени резолвилися. Вимкнути: <code>persist_cache = false</code> у resolver_config.toml.</div>`
+    ? `<div class="notice warn">${t("app.cachePersistWarning")}</div>`
     : "";
   // T-138 (Батч 4.5): same passive, hand-edit-only indicator for the
   // personal learned rating-filter zone — a higher privacy tier than
@@ -492,30 +492,30 @@ function render(status) {
   // visit often/regularly), so it gets the same always-visible treatment,
   // not buried inside the collapsed #rating-filter-body card.
   const personalZoneWarning = status.rating_filter.personal_zone_enabled
-    ? `<div class="notice warn">Особиста навчена зона рейтинг-фільтра зберігається на диск у зашифрованому файлі (personal-zone.enc) — це запам'ятовує, які сайти ви часто/регулярно відвідуєте. Вимкнути: <code>[personal_zone] enabled = false</code> у resolver_config.toml.</div>`
+    ? `<div class="notice warn">${t("app.personalZonePersistWarning")}</div>`
     : "";
   appBody.innerHTML = `
     ${persistWarning}
     ${cachePersistWarning}
     ${personalZoneWarning}
     <div class="card">
-      <h3>Статистика (у поточному вікні логу)</h3>
+      <h3>${t("app.statsHeading")}</h3>
       <div class="stat-row">
         <div>
           <div class="stat">${status.stats.blocked}</div>
-          <div class="stat-sub">заблоковано</div>
+          <div class="stat-sub">${t("app.statBlocked")}</div>
         </div>
         <div>
           <div class="stat">${status.stats.total}</div>
-          <div class="stat-sub">усього оброблено</div>
+          <div class="stat-sub">${t("app.statTotal")}</div>
         </div>
         <div>
           <div class="stat">${status.stats.in_flight}</div>
-          <div class="stat-sub">зараз обробляється</div>
+          <div class="stat-sub">${t("app.statInFlight")}</div>
         </div>
         <div>
           <div class="stat">${blockedPercentLabel(status.stats)}</div>
-          <div class="stat-sub">частка заблокованих</div>
+          <div class="stat-sub">${t("app.statBlockedPercent")}</div>
         </div>
       </div>
     </div>
@@ -524,12 +524,19 @@ function render(status) {
 
 function renderError(err) {
   // The /admin/status fetch failed - the one hero state the server can't
-  // report about itself (T-204).
-  renderProtectionHero(HERO_PRESENTATION.SERVICE_UNREACHABLE);
+  // report about itself (T-204). Route through heroPresentation() (not the
+  // bare HERO_PRESENTATION.SERVICE_UNREACHABLE object) so state/detail are
+  // actually populated - that object only carries `cls`/`action` since
+  // Батч 5.2 moved the text into i18n. Batch 5.4 fix: the bare-object call
+  // shipped with Батч 5.2 rendered a blank hero headline/detail on a fetch
+  // failure.
+  renderProtectionHero(heroPresentation("SERVICE_UNREACHABLE"));
   appBody.textContent = "";
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   appBody.appendChild(panel);
 }
 
