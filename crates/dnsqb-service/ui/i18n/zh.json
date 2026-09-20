@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "应用",
   "cacheConfig.minMaxError": "上游最小 TTL 不能超过最大 TTL。",
   "cacheConfig.applyFailedTemplate": "应用失败：{message}",
+  "common.cancel": "取消",
+  "common.save": "保存",
+  "common.removeAriaLabelTemplate": "移除：{code}",
+  "cctldBlock.heading": "按 ccTLD 阻止",
+  "cctldBlock.description": "如果域名以所选的 TLD 代码结尾(例如 .ru)，则阻止整个域名。",
+  "cctldBlock.overBlockingWarning": "按 ccTLD 阻止会捕获该后缀下的每个域名 - 无论实际运营该站点的是谁，或其内容托管在何处。许多合法网站出于与此无关的原因，注册在与其自身司法管辖区不符的 TLD(例如 .io/.co)下。",
+  "cctldBlock.confirmBlockButton": "确认阻止",
+  "cctldBlock.searchAriaLabel": "搜索 ccTLD 代码",
+  "cctldBlock.inputPlaceholder": "添加代码 - 国家或代码(例如 ru)…",
+  "cctldBlock.emptyLine": "没有被阻止的代码。",
+  "cctldBlock.sovietUnionLabel": "前苏联(与 .ru 分开的命名空间)",
+  "cctldBlock.saveFailedTemplate": "保存失败：{message}",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

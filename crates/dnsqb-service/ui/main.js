@@ -989,11 +989,9 @@ function regionLabel(code) {
 // with the sponsoring territory, for instance) - not a GeoIP-style anycast
 // routing quirk, but the same class of "the signal is real but coarse"
 // warning T-118 asked for alongside the picker itself.
-const CCTLD_OVER_BLOCKING_WARNING =
-  "Блокування за ccTLD ловить кожен домен під цим суфіксом - незалежно від " +
-  "того, хто фактично керує сайтом чи де розміщений його контент. Багато " +
-  "легітимних сайтів реєструються під нетиповим для себе доменом " +
-  "(наприклад .io/.co) з причин, що не мають стосунку до юрисдикції.";
+function cctldOverBlockingWarning() {
+  return t("cctldBlock.overBlockingWarning");
+}
 
 // ccTLD codes that aren't ISO 3166-1 alpha-2 (so aren't in
 // GEOIP_COUNTRY_CODES) but are real, delegated ccTLDs - the three TASKS.md
@@ -1037,7 +1035,7 @@ const CCTLD_CODES = GEOIP_COUNTRY_CODES.map((code) => code.toLowerCase()).concat
 // wording, not a code/label mismatch to "fix" later.
 function cctldLabel(code) {
   if (code.toLowerCase() === "su") {
-    return "Колишній СРСР (окремий простір від .ru)";
+    return t("cctldBlock.sovietUnionLabel");
   }
   return regionLabel(code);
 }
@@ -1059,13 +1057,12 @@ function renderCctldBlock(status) {
   cctldBlockBody.textContent = "";
 
   const heading = document.createElement("h3");
-  heading.textContent = "Блокування за ccTLD";
+  heading.textContent = t("cctldBlock.heading");
   cctldBlockBody.appendChild(heading);
 
   const desc = document.createElement("p");
   desc.className = "rf-desc";
-  desc.textContent =
-    "Блокує весь домен, якщо він закінчується на обраний код TLD (наприклад .ru).";
+  desc.textContent = t("cctldBlock.description");
   cctldBlockBody.appendChild(desc);
 
   // Same "silent data loss" concern as #overrides-body/#geoip-body/
@@ -1076,8 +1073,7 @@ function renderCctldBlock(status) {
   if (status.persisted === false) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     cctldBlockBody.appendChild(notPersisted);
   }
 
@@ -1091,7 +1087,7 @@ function renderCctldBlock(status) {
   const confirmNotice = document.createElement("div");
   confirmNotice.className = "notice warn";
   confirmNotice.hidden = true;
-  confirmNotice.textContent = CCTLD_OVER_BLOCKING_WARNING;
+  confirmNotice.textContent = cctldOverBlockingWarning();
   card.appendChild(confirmNotice);
 
   const confirmRow = document.createElement("div");
@@ -1099,11 +1095,11 @@ function renderCctldBlock(status) {
   confirmRow.hidden = true;
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
-  cancelBtn.textContent = "Скасувати";
+  cancelBtn.textContent = t("common.cancel");
   const confirmBtn = document.createElement("button");
   confirmBtn.type = "button";
   confirmBtn.className = "rf-confirm cc-confirm";
-  confirmBtn.textContent = "Підтвердити блокування";
+  confirmBtn.textContent = t("cctldBlock.confirmBlockButton");
   confirmRow.appendChild(cancelBtn);
   confirmRow.appendChild(confirmBtn);
   card.appendChild(confirmRow);
@@ -1125,8 +1121,8 @@ function renderCctldBlock(status) {
   input.setAttribute("aria-expanded", "false");
   input.setAttribute("aria-controls", "cc-code-menu");
   input.setAttribute("aria-autocomplete", "list");
-  input.setAttribute("aria-label", "Пошук коду ccTLD");
-  input.placeholder = "Додати код — країна або код (наприклад ru)…";
+  input.setAttribute("aria-label", t("cctldBlock.searchAriaLabel"));
+  input.placeholder = t("cctldBlock.inputPlaceholder");
   const menu = document.createElement("ul");
   menu.className = "rf-menu cc-menu";
   menu.id = "cc-code-menu";
@@ -1142,13 +1138,13 @@ function renderCctldBlock(status) {
 
   const emptyLine = document.createElement("p");
   emptyLine.className = "rf-empty cc-empty";
-  emptyLine.textContent = "Жодного коду не заблоковано.";
+  emptyLine.textContent = t("cctldBlock.emptyLine");
   card.appendChild(emptyLine);
 
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "rf-save cc-save";
-  saveBtn.textContent = "Зберегти";
+  saveBtn.textContent = t("common.save");
   saveBtn.hidden = true;
   card.appendChild(saveBtn);
 
@@ -1192,7 +1188,7 @@ function renderCctldBlock(status) {
       removeBtn.type = "button";
       removeBtn.className = "rf-x cc-x";
       removeBtn.textContent = "×";
-      removeBtn.setAttribute("aria-label", `Прибрати: ${code}`);
+      removeBtn.setAttribute("aria-label", t("common.removeAriaLabelTemplate", { code }));
       removeBtn.addEventListener("click", () => {
         picked.delete(code);
         renderPicked();
@@ -1356,7 +1352,9 @@ function renderCctldBlock(status) {
     try {
       renderCctldBlock(await setCctldBlock([...picked]));
     } catch (err) {
-      errorLine.textContent = `Не вдалося зберегти: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("cctldBlock.saveFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
   cancelBtn.addEventListener("click", resetArming);
@@ -1364,7 +1362,9 @@ function renderCctldBlock(status) {
     try {
       renderCctldBlock(await setCctldBlock([...picked]));
     } catch (err) {
-      errorLine.textContent = `Не вдалося зберегти: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("cctldBlock.saveFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
 
@@ -1376,11 +1376,13 @@ function renderCctldBlock(status) {
 function renderCctldBlockError(err) {
   cctldBlockBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Блокування за ccTLD";
+  heading.textContent = t("cctldBlock.heading");
   cctldBlockBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   cctldBlockBody.appendChild(panel);
 }
 

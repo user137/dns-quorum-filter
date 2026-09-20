@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Εφαρμογή",
   "cacheConfig.minMaxError": "Το ελάχ. TTL upstream δεν μπορεί να υπερβαίνει το μέγ. TTL.",
   "cacheConfig.applyFailedTemplate": "Αποτυχία εφαρμογής: {message}",
+  "common.cancel": "Άκυρο",
+  "common.save": "Αποθήκευση",
+  "common.removeAriaLabelTemplate": "Αφαίρεση: {code}",
+  "cctldBlock.heading": "Αποκλεισμός κατά ccTLD",
+  "cctldBlock.description": "Αποκλείει ολόκληρο τον τομέα αν λήγει στον επιλεγμένο κωδικό TLD (π.χ. .ru).",
+  "cctldBlock.overBlockingWarning": "Ο αποκλεισμός κατά ccTLD πιάνει κάθε τομέα κάτω από αυτό το επίθημα - ανεξάρτητα από το ποιος πραγματικά διαχειρίζεται τον ιστότοπο ή πού φιλοξενείται το περιεχόμενό του. Πολλοί νόμιμοι ιστότοποι καταχωρούνται σε TLD που δεν ταιριάζει με τη δική τους δικαιοδοσία (π.χ. .io/.co) για λόγους άσχετους με αυτό.",
+  "cctldBlock.confirmBlockButton": "Επιβεβαίωση αποκλεισμού",
+  "cctldBlock.searchAriaLabel": "Αναζήτηση κωδικού ccTLD",
+  "cctldBlock.inputPlaceholder": "Προσθήκη κωδικού - χώρα ή κωδικός (π.χ. ru)…",
+  "cctldBlock.emptyLine": "Δεν έχει αποκλειστεί κανένας κωδικός.",
+  "cctldBlock.sovietUnionLabel": "Πρώην ΕΣΣΔ (ξεχωριστός χώρος από το .ru)",
+  "cctldBlock.saveFailedTemplate": "Αποτυχία αποθήκευσης: {message}",
   "zoneDomainCount": {
     "one": "{n} τομέας",
     "other": "{n} τομείς"

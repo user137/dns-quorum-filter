@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "적용",
   "cacheConfig.minMaxError": "최소 업스트림 TTL은 최대 TTL을 초과할 수 없습니다.",
   "cacheConfig.applyFailedTemplate": "적용 실패: {message}",
+  "common.cancel": "취소",
+  "common.save": "저장",
+  "common.removeAriaLabelTemplate": "제거: {code}",
+  "cctldBlock.heading": "ccTLD별 차단",
+  "cctldBlock.description": "선택한 TLD 코드(예: .ru)로 끝나면 전체 도메인을 차단합니다.",
+  "cctldBlock.overBlockingWarning": "ccTLD별 차단은 실제로 사이트를 운영하는 사람이나 콘텐츠가 호스팅되는 위치와 관계없이 해당 접미사 아래의 모든 도메인을 잡아냅니다. 많은 합법적인 사이트가 이와 무관한 이유로 자신의 관할권과 일치하지 않는 TLD(예: .io/.co) 아래 등록되어 있습니다.",
+  "cctldBlock.confirmBlockButton": "차단 확인",
+  "cctldBlock.searchAriaLabel": "ccTLD 코드 검색",
+  "cctldBlock.inputPlaceholder": "코드 추가 - 국가 또는 코드(예: ru)…",
+  "cctldBlock.emptyLine": "차단된 코드가 없습니다.",
+  "cctldBlock.sovietUnionLabel": "구 소련(.ru와 별개인 네임스페이스)",
+  "cctldBlock.saveFailedTemplate": "저장 실패: {message}",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "นำไปใช้",
   "cacheConfig.minMaxError": "TTL ต้นทางต่ำสุดต้องไม่เกิน TTL สูงสุด",
   "cacheConfig.applyFailedTemplate": "การนำไปใช้ล้มเหลว: {message}",
+  "common.cancel": "ยกเลิก",
+  "common.save": "บันทึก",
+  "common.removeAriaLabelTemplate": "ลบ: {code}",
+  "cctldBlock.heading": "การบล็อกตาม ccTLD",
+  "cctldBlock.description": "บล็อกทั้งโดเมนหากลงท้ายด้วยรหัส TLD ที่เลือก (เช่น .ru)",
+  "cctldBlock.overBlockingWarning": "การบล็อกตาม ccTLD จะจับโดเมนทุกโดเมนภายใต้ส่วนต่อท้ายนั้น - ไม่ว่าใครจะเป็นผู้ดำเนินการเว็บไซต์จริง หรือเนื้อหาโฮสต์อยู่ที่ใด เว็บไซต์ที่ถูกกฎหมายหลายแห่งลงทะเบียนภายใต้ TLD ที่ไม่ตรงกับเขตอำนาจศาลของตนเอง (เช่น .io/.co) ด้วยเหตุผลที่ไม่เกี่ยวข้องกับเรื่องนี้",
+  "cctldBlock.confirmBlockButton": "ยืนยันการบล็อก",
+  "cctldBlock.searchAriaLabel": "ค้นหารหัส ccTLD",
+  "cctldBlock.inputPlaceholder": "เพิ่มรหัส - ประเทศหรือรหัส (เช่น ru)…",
+  "cctldBlock.emptyLine": "ไม่มีรหัสถูกบล็อก",
+  "cctldBlock.sovietUnionLabel": "อดีตสหภาพโซเวียต (พื้นที่ชื่อแยกจาก .ru)",
+  "cctldBlock.saveFailedTemplate": "บันทึกล้มเหลว: {message}",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

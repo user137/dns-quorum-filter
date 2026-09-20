@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Anvend",
   "cacheConfig.minMaxError": "Min. upstream-TTL kan ikke overstige maks. upstream-TTL.",
   "cacheConfig.applyFailedTemplate": "Kunne ikke anvende: {message}",
+  "common.cancel": "Annuller",
+  "common.save": "Gem",
+  "common.removeAriaLabelTemplate": "Fjern: {code}",
+  "cctldBlock.heading": "Blokering efter ccTLD",
+  "cctldBlock.description": "Blokerer hele domænet, hvis det ender på den valgte TLD-kode (f.eks. .ru).",
+  "cctldBlock.overBlockingWarning": "Blokering efter ccTLD rammer alle domæner under den endelse - uanset hvem der faktisk driver siden, eller hvor dens indhold er hostet. Mange legitime sider registreres under en TLD, der ikke matcher deres egen jurisdiktion (f.eks. .io/.co) af årsager, der intet har med det at gøre.",
+  "cctldBlock.confirmBlockButton": "Bekræft blokering",
+  "cctldBlock.searchAriaLabel": "Søg efter en ccTLD-kode",
+  "cctldBlock.inputPlaceholder": "Tilføj en kode - land eller kode (f.eks. ru)…",
+  "cctldBlock.emptyLine": "Ingen kode er blokeret.",
+  "cctldBlock.sovietUnionLabel": "Tidligere Sovjetunionen (et separat navnerum fra .ru)",
+  "cctldBlock.saveFailedTemplate": "Kunne ikke gemme: {message}",
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"

@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "適用",
   "cacheConfig.minMaxError": "最小TTLは最大TTLを超えることはできません。",
   "cacheConfig.applyFailedTemplate": "適用に失敗しました: {message}",
+  "common.cancel": "キャンセル",
+  "common.save": "保存",
+  "common.removeAriaLabelTemplate": "削除: {code}",
+  "cctldBlock.heading": "ccTLDによるブロック",
+  "cctldBlock.description": "選択したTLDコード(例: .ru)で終わる場合、ドメイン全体をブロックします。",
+  "cctldBlock.overBlockingWarning": "ccTLDによるブロックは、このサフィックスの下にあるすべてのドメインを捕捉します — 実際にサイトを運営しているのが誰か、コンテンツがどこでホストされているかに関係なく。多くの正当なサイトは、それと無関係な理由で自身の管轄と一致しないTLD(例: .io/.co)の下に登録されています。",
+  "cctldBlock.confirmBlockButton": "ブロックを確認",
+  "cctldBlock.searchAriaLabel": "ccTLDコードを検索",
+  "cctldBlock.inputPlaceholder": "コードを追加 - 国またはコード(例: ru)…",
+  "cctldBlock.emptyLine": "ブロックされているコードはありません。",
+  "cctldBlock.sovietUnionLabel": "旧ソ連(.ruとは別の名前空間)",
+  "cctldBlock.saveFailedTemplate": "保存に失敗しました: {message}",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Uygula",
   "cacheConfig.minMaxError": "Min. üst akış TTL'si, maks. TTL'yi aşamaz.",
   "cacheConfig.applyFailedTemplate": "Uygulama başarısız oldu: {message}",
+  "common.cancel": "İptal",
+  "common.save": "Kaydet",
+  "common.removeAriaLabelTemplate": "Kaldır: {code}",
+  "cctldBlock.heading": "ccTLD'ye göre engelleme",
+  "cctldBlock.description": "Seçilen TLD koduyla (örn. .ru) bitiyorsa tüm alan adını engeller.",
+  "cctldBlock.overBlockingWarning": "ccTLD'ye göre engelleme, siteyi kimin gerçekten işlettiğinden veya içeriğinin nerede barındırıldığından bağımsız olarak bu son ek altındaki her alan adını yakalar. Birçok meşru site, bununla ilgisi olmayan nedenlerle kendi yargı bölgesiyle eşleşmeyen bir TLD (örn. .io/.co) altında kayıtlıdır.",
+  "cctldBlock.confirmBlockButton": "Engellemeyi onayla",
+  "cctldBlock.searchAriaLabel": "ccTLD kodu ara",
+  "cctldBlock.inputPlaceholder": "Kod ekle - ülke veya kod (örn. ru)…",
+  "cctldBlock.emptyLine": "Hiçbir kod engellenmedi.",
+  "cctldBlock.sovietUnionLabel": "Eski SSCB (.ru'dan ayrı bir ad alanı)",
+  "cctldBlock.saveFailedTemplate": "Kaydetme başarısız oldu: {message}",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

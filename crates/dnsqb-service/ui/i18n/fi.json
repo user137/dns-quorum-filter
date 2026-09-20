@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Käytä",
   "cacheConfig.minMaxError": "Vähimmäis-TTL ei voi olla suurempi kuin enimmäis-TTL.",
   "cacheConfig.applyFailedTemplate": "Käyttöönotto epäonnistui: {message}",
+  "common.cancel": "Peruuta",
+  "common.save": "Tallenna",
+  "common.removeAriaLabelTemplate": "Poista: {code}",
+  "cctldBlock.heading": "Estäminen ccTLD:n mukaan",
+  "cctldBlock.description": "Estää koko verkkotunnuksen, jos se päättyy valittuun TLD-koodiin (esim. .ru).",
+  "cctldBlock.overBlockingWarning": "Estäminen ccTLD:n mukaan kattaa jokaisen verkkotunnuksen tämän päätteen alla - riippumatta siitä, kuka sivustoa todella ylläpitää tai missä sen sisältö on isännöity. Monet lailliset sivustot rekisteröityvät TLD:n alle, joka ei vastaa niiden omaa lainkäyttöaluetta (esim. .io/.co) syistä, joilla ei ole tekemistä sen kanssa.",
+  "cctldBlock.confirmBlockButton": "Vahvista esto",
+  "cctldBlock.searchAriaLabel": "Hae ccTLD-koodia",
+  "cctldBlock.inputPlaceholder": "Lisää koodi - maa tai koodi (esim. ru)…",
+  "cctldBlock.emptyLine": "Yhtäkään koodia ei ole estetty.",
+  "cctldBlock.sovietUnionLabel": "Entinen Neuvostoliitto (erillinen nimiavaruus .ru:sta)",
+  "cctldBlock.saveFailedTemplate": "Tallennus epäonnistui: {message}",
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Alkalmaz",
   "cacheConfig.minMaxError": "A min. upstream TTL nem haladhatja meg a max. TTL-t.",
   "cacheConfig.applyFailedTemplate": "Alkalmazás sikertelen: {message}",
+  "common.cancel": "Mégse",
+  "common.save": "Mentés",
+  "common.removeAriaLabelTemplate": "Eltávolítás: {code}",
+  "cctldBlock.heading": "Blokkolás ccTLD szerint",
+  "cctldBlock.description": "Az egész domaint blokkolja, ha a kiválasztott TLD kódra végződik (pl. .ru).",
+  "cctldBlock.overBlockingWarning": "A ccTLD szerinti blokkolás minden domaint elkap ez alatt a végződés alatt - függetlenül attól, hogy ki üzemelteti valójában az oldalt, vagy hol van hosztolva a tartalma. Sok legitim oldal olyan TLD alatt regisztrál, amely nem egyezik a saját joghatóságával (pl. .io/.co) ezzel nem összefüggő okokból.",
+  "cctldBlock.confirmBlockButton": "Blokkolás megerősítése",
+  "cctldBlock.searchAriaLabel": "ccTLD kód keresése",
+  "cctldBlock.inputPlaceholder": "Kód hozzáadása - ország vagy kód (pl. ru)…",
+  "cctldBlock.emptyLine": "Egyetlen kód sincs blokkolva.",
+  "cctldBlock.sovietUnionLabel": "Egykori Szovjetunió (a .ru-tól elkülönülő névtér)",
+  "cctldBlock.saveFailedTemplate": "Mentés sikertelen: {message}",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

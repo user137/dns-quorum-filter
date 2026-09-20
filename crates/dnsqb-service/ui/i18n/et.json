@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Rakenda",
   "cacheConfig.minMaxError": "Min upstream TTL ei tohi ületada maks upstream TTL-i.",
   "cacheConfig.applyFailedTemplate": "Rakendamine ebaõnnestus: {message}",
+  "common.cancel": "Tühista",
+  "common.save": "Salvesta",
+  "common.removeAriaLabelTemplate": "Eemalda: {code}",
+  "cctldBlock.heading": "Blokeerimine ccTLD järgi",
+  "cctldBlock.description": "Blokeerib kogu domeeni, kui see lõpeb valitud TLD-koodiga (nt .ru).",
+  "cctldBlock.overBlockingWarning": "Blokeerimine ccTLD järgi tabab iga domeeni selle sufiksi all - sõltumata sellest, kes saiti tegelikult haldab või kus selle sisu majutatakse. Paljud õiguspärased saidid registreerivad end TLD-i all, mis ei vasta nende enda jurisdiktsioonile (nt .io/.co) sellega mitteseotud põhjustel.",
+  "cctldBlock.confirmBlockButton": "Kinnita blokeerimine",
+  "cctldBlock.searchAriaLabel": "Otsi ccTLD koodi",
+  "cctldBlock.inputPlaceholder": "Lisa kood - riik või kood (nt ru)…",
+  "cctldBlock.emptyLine": "Ühtegi koodi pole blokeeritud.",
+  "cctldBlock.sovietUnionLabel": "Endine NSVL (eraldi nimeruum .ru-st)",
+  "cctldBlock.saveFailedTemplate": "Salvestamine ebaõnnestus: {message}",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

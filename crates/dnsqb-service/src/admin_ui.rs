@@ -1177,7 +1177,7 @@ mod tests {
             "save must distinguish \"adds a code\" from \"only removes\""
         );
         assert!(
-            MAIN_JS.contains("Підтвердити блокування"),
+            MAIN_JS.contains("cctldBlock.confirmBlockButton"),
             "the armed confirm step's own label must exist"
         );
         assert!(
@@ -1246,11 +1246,18 @@ mod tests {
              the .tp exclusion rationale documented in main.js"
         );
         assert!(
-            MAIN_JS.contains("Колишній СРСР"),
+            MAIN_JS.contains("cctldBlock.sovietUnionLabel"),
             "su must carry an explicit override label - Intl.DisplayNames' \
              own CLDR data resolves SU to \"Russia\", which is misleading \
              for a block-list UI where .su is a separate, still-live \
              namespace from .ru"
+        );
+        let Some(uk) = i18n_dict("uk") else {
+            panic!("uk.json must be registered");
+        };
+        assert!(
+            uk.contains("Колишній СРСР"),
+            "the override label's actual text lives in uk.json since Батч 5.4"
         );
     }
 }

@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "लागू करें",
   "cacheConfig.minMaxError": "न्यूनतम अपस्ट्रीम TTL अधिकतम से अधिक नहीं हो सकता।",
   "cacheConfig.applyFailedTemplate": "लागू करना विफल: {message}",
+  "common.cancel": "रद्द करें",
+  "common.save": "सहेजें",
+  "common.removeAriaLabelTemplate": "हटाएं: {code}",
+  "cctldBlock.heading": "ccTLD के अनुसार अवरोधन",
+  "cctldBlock.description": "यदि डोमेन चुने गए TLD कोड (जैसे .ru) पर समाप्त होता है तो पूरे डोमेन को अवरोधित करता है।",
+  "cctldBlock.overBlockingWarning": "ccTLD के अनुसार अवरोधन इस प्रत्यय के तहत हर डोमेन को पकड़ता है - चाहे साइट वास्तव में कौन चलाता हो या इसकी सामग्री कहीं भी होस्ट हो। कई वैध साइटें ऐसे TLD के तहत पंजीकृत होती हैं जो उनके अपने क्षेत्राधिकार से मेल नहीं खाता (जैसे .io/.co) उससे असंबंधित कारणों से।",
+  "cctldBlock.confirmBlockButton": "अवरोधन की पुष्टि करें",
+  "cctldBlock.searchAriaLabel": "ccTLD कोड खोजें",
+  "cctldBlock.inputPlaceholder": "कोड जोड़ें - देश या कोड (जैसे ru)…",
+  "cctldBlock.emptyLine": "कोई कोड अवरोधित नहीं है।",
+  "cctldBlock.sovietUnionLabel": "पूर्व USSR (.ru से अलग नेमस्पेस)",
+  "cctldBlock.saveFailedTemplate": "सहेजना विफल: {message}",
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

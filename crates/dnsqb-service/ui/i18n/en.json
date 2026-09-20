@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Apply",
   "cacheConfig.minMaxError": "Min upstream TTL cannot exceed max upstream TTL.",
   "cacheConfig.applyFailedTemplate": "Failed to apply: {message}",
+  "common.cancel": "Cancel",
+  "common.save": "Save",
+  "common.removeAriaLabelTemplate": "Remove: {code}",
+  "cctldBlock.heading": "ccTLD block",
+  "cctldBlock.description": "Blocks the whole domain if it ends in the chosen TLD code (e.g. .ru).",
+  "cctldBlock.overBlockingWarning": "Blocking by ccTLD catches every domain under that suffix - regardless of who actually runs the site or where its content is hosted. Many legitimate sites register under a TLD that doesn't match their own jurisdiction (e.g. .io/.co) for reasons unrelated to it.",
+  "cctldBlock.confirmBlockButton": "Confirm block",
+  "cctldBlock.searchAriaLabel": "Search for a ccTLD code",
+  "cctldBlock.inputPlaceholder": "Add a code - country or code (e.g. ru)…",
+  "cctldBlock.emptyLine": "No code is blocked.",
+  "cctldBlock.sovietUnionLabel": "Former USSR (a separate namespace from .ru)",
+  "cctldBlock.saveFailedTemplate": "Failed to save: {message}",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

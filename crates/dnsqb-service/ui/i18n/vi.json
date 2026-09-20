@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Áp dụng",
   "cacheConfig.minMaxError": "TTL upstream tối thiểu không được vượt quá TTL tối đa.",
   "cacheConfig.applyFailedTemplate": "Áp dụng thất bại: {message}",
+  "common.cancel": "Hủy",
+  "common.save": "Lưu",
+  "common.removeAriaLabelTemplate": "Xóa: {code}",
+  "cctldBlock.heading": "Chặn theo ccTLD",
+  "cctldBlock.description": "Chặn toàn bộ miền nếu nó kết thúc bằng mã TLD đã chọn (ví dụ: .ru).",
+  "cctldBlock.overBlockingWarning": "Chặn theo ccTLD bắt tất cả các miền dưới hậu tố đó - bất kể ai thực sự điều hành trang web hoặc nội dung của nó được lưu trữ ở đâu. Nhiều trang web hợp pháp đăng ký dưới một TLD không khớp với thẩm quyền của chính họ (ví dụ: .io/.co) vì những lý do không liên quan đến điều đó.",
+  "cctldBlock.confirmBlockButton": "Xác nhận chặn",
+  "cctldBlock.searchAriaLabel": "Tìm mã ccTLD",
+  "cctldBlock.inputPlaceholder": "Thêm mã - quốc gia hoặc mã (ví dụ: ru)…",
+  "cctldBlock.emptyLine": "Không có mã nào bị chặn.",
+  "cctldBlock.sovietUnionLabel": "Liên Xô cũ (một không gian tên riêng biệt với .ru)",
+  "cctldBlock.saveFailedTemplate": "Lưu thất bại: {message}",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

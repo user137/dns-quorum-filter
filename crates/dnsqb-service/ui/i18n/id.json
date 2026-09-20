@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Terapkan",
   "cacheConfig.minMaxError": "TTL upstream min. tidak boleh melebihi TTL upstream maks.",
   "cacheConfig.applyFailedTemplate": "Gagal menerapkan: {message}",
+  "common.cancel": "Batal",
+  "common.save": "Simpan",
+  "common.removeAriaLabelTemplate": "Hapus: {code}",
+  "cctldBlock.heading": "Pemblokiran berdasarkan ccTLD",
+  "cctldBlock.description": "Memblokir seluruh domain jika berakhiran dengan kode TLD yang dipilih (mis. .ru).",
+  "cctldBlock.overBlockingWarning": "Pemblokiran berdasarkan ccTLD menangkap setiap domain di bawah akhiran tersebut - terlepas dari siapa yang sebenarnya menjalankan situs atau di mana kontennya dihosting. Banyak situs sah terdaftar di bawah TLD yang tidak sesuai dengan yurisdiksinya sendiri (mis. .io/.co) karena alasan yang tidak terkait dengan hal itu.",
+  "cctldBlock.confirmBlockButton": "Konfirmasi pemblokiran",
+  "cctldBlock.searchAriaLabel": "Cari kode ccTLD",
+  "cctldBlock.inputPlaceholder": "Tambahkan kode - negara atau kode (mis. ru)…",
+  "cctldBlock.emptyLine": "Tidak ada kode yang diblokir.",
+  "cctldBlock.sovietUnionLabel": "Bekas Uni Soviet (namespace terpisah dari .ru)",
+  "cctldBlock.saveFailedTemplate": "Gagal menyimpan: {message}",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

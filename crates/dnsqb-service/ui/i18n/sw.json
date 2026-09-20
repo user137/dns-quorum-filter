@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Tumia",
   "cacheConfig.minMaxError": "TTL ya chini ya upstream haiwezi kuzidi ya juu.",
   "cacheConfig.applyFailedTemplate": "Kutumia kumeshindwa: {message}",
+  "common.cancel": "Ghairi",
+  "common.save": "Hifadhi",
+  "common.removeAriaLabelTemplate": "Ondoa: {code}",
+  "cctldBlock.heading": "Kuzuia kwa ccTLD",
+  "cctldBlock.description": "Huzuia kikoa kizima ikiwa kinaishia na msimbo wa TLD uliochaguliwa (mf. .ru).",
+  "cctldBlock.overBlockingWarning": "Kuzuia kwa ccTLD hukamata kila kikoa chini ya kiambishi hicho - bila kujali ni nani anayeendesha tovuti au maudhui yake yamehifadhiwa wapi. Tovuti nyingi halali husajiliwa chini ya TLD isiyolingana na mamlaka yao wenyewe (mf. .io/.co) kwa sababu zisizohusiana na hilo.",
+  "cctldBlock.confirmBlockButton": "Thibitisha kuzuia",
+  "cctldBlock.searchAriaLabel": "Tafuta msimbo wa ccTLD",
+  "cctldBlock.inputPlaceholder": "Ongeza msimbo - nchi au msimbo (mf. ru)…",
+  "cctldBlock.emptyLine": "Hakuna msimbo uliozuiwa.",
+  "cctldBlock.sovietUnionLabel": "Umoja wa Kisovyeti wa zamani (nafasi tofauti na .ru)",
+  "cctldBlock.saveFailedTemplate": "Kuhifadhi kumeshindwa: {message}",
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

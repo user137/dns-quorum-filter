@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "لاگو کریں",
   "cacheConfig.minMaxError": "کم از کم اپ اسٹریم TTL زیادہ سے زیادہ سے تجاوز نہیں کر سکتا۔",
   "cacheConfig.applyFailedTemplate": "لاگو کرنا ناکام: {message}",
+  "common.cancel": "منسوخ کریں",
+  "common.save": "محفوظ کریں",
+  "common.removeAriaLabelTemplate": "ہٹائیں: {code}",
+  "cctldBlock.heading": "ccTLD کے مطابق بلاک کرنا",
+  "cctldBlock.description": "اگر ڈومین منتخب کردہ TLD کوڈ (مثلاً .ru) پر ختم ہوتا ہے تو پورا ڈومین بلاک کر دیتا ہے۔",
+  "cctldBlock.overBlockingWarning": "ccTLD کے مطابق بلاک کرنا اس لاحقے کے تحت ہر ڈومین کو پکڑ لیتا ہے - چاہے سائٹ کو دراصل کون چلاتا ہو یا اس کا مواد کہاں ہوسٹ کیا گیا ہو۔ بہت سی جائز سائٹس ایسے TLD کے تحت رجسٹرڈ ہوتی ہیں جو ان کے اپنے دائرہ اختیار سے میل نہیں کھاتا (مثلاً .io/.co) اس سے غیر متعلق وجوہات کی بنا پر۔",
+  "cctldBlock.confirmBlockButton": "بلاکنگ کی تصدیق کریں",
+  "cctldBlock.searchAriaLabel": "ccTLD کوڈ تلاش کریں",
+  "cctldBlock.inputPlaceholder": "کوڈ شامل کریں - ملک یا کوڈ (مثلاً ru)…",
+  "cctldBlock.emptyLine": "کوئی کوڈ بلاک نہیں ہے۔",
+  "cctldBlock.sovietUnionLabel": "سابقہ سوویت یونین (.ru سے الگ نیم اسپیس)",
+  "cctldBlock.saveFailedTemplate": "محفوظ کرنا ناکام: {message}",
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"

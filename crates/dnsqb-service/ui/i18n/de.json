@@ -60,6 +60,18 @@
   "cacheConfig.applyButton": "Anwenden",
   "cacheConfig.minMaxError": "Min. Upstream-TTL darf max. Upstream-TTL nicht überschreiten.",
   "cacheConfig.applyFailedTemplate": "Anwenden fehlgeschlagen: {message}",
+  "common.cancel": "Abbrechen",
+  "common.save": "Speichern",
+  "common.removeAriaLabelTemplate": "Entfernen: {code}",
+  "cctldBlock.heading": "Sperrung nach ccTLD",
+  "cctldBlock.description": "Sperrt die gesamte Domain, wenn sie auf den gewählten TLD-Code endet (z. B. .ru).",
+  "cctldBlock.overBlockingWarning": "Eine Sperrung nach ccTLD erfasst jede Domain unter diesem Suffix - unabhängig davon, wer die Website tatsächlich betreibt oder wo ihr Inhalt gehostet wird. Viele legitime Websites registrieren sich unter einer TLD, die nicht zu ihrer eigenen Jurisdiktion passt (z. B. .io/.co), aus Gründen, die damit nichts zu tun haben.",
+  "cctldBlock.confirmBlockButton": "Sperrung bestätigen",
+  "cctldBlock.searchAriaLabel": "Nach einem ccTLD-Code suchen",
+  "cctldBlock.inputPlaceholder": "Code hinzufügen - Land oder Code (z. B. ru)…",
+  "cctldBlock.emptyLine": "Kein Code ist gesperrt.",
+  "cctldBlock.sovietUnionLabel": "Ehemalige UdSSR (ein eigener Namensraum, getrennt von .ru)",
+  "cctldBlock.saveFailedTemplate": "Speichern fehlgeschlagen: {message}",
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

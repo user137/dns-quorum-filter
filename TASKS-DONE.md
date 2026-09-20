@@ -7047,3 +7047,29 @@ scratch-інстанс (порт 8443): `.../admin/ui/i18n/zh.json` поверн
 Єдині залишкові українські/англійські літерали в `main.js` — `DECISION_SOURCE_LABELS.{CACHE,
 ALLOWLIST,BLOCKLIST}` (комміт 7, `#log-body`, ще не змігровано) — очікувано, поза межами цього
 коміту.
+
+---
+
+**Батч 5.4, коміт 5 — `#cctld-block-body` (T-151), 2026-09-20.** П'ятий комміт. Мігрує
+`renderCctldBlock()` (+ вкладені `renderPicked`/`renderMenu`), `renderCctldBlockError()`,
+`cctldLabel()`'s окремий виняток для `su`, і перетворює `CCTLD_OVER_BLOCKING_WARNING` з
+модульного `const` на функцію `cctldOverBlockingWarning()` — рядок обчислювався один раз при
+парсингу модуля (до готовності словника), тепер читає `t()` щоразу при виклику, як і решта
+динамічного тексту картки. Заводить `common.cancel`, `common.save`,
+`common.removeAriaLabelTemplate` (той самий `` `Прибрати: ${x}` `` патерн, що Explore-звіт
+знайшов продубльованим і в `renderRatingFilter`'s власному комбобоксі — комміт 12 його
+перевикористає). 12 нових ключів × 37 локалей.
+
+**Два admin_ui.rs-тести зламались очікувано (не advisor, не жива перевірка) — той самий клас, що
+й коміт 1's persistence-warning тести:** `cctld_block_save_arms_only_when_the_picked_set_adds_a_
+code` асертував `MAIN_JS.contains("Підтвердити блокування")`, `cctld_codes_reconcile_the_
+documented_deltas_from_geoip` асертував `MAIN_JS.contains("Колишній СРСР")` — обидва рядки
+переїхали в `uk.json`/`en.json`. Виправлено: перший тепер шукає ключ `cctldBlock.
+confirmBlockButton` у `MAIN_JS`; другий шукає ключ `cctldBlock.sovietUnionLabel` у `MAIN_JS` **і**
+окремо перевіряє сам текст "Колишній СРСР" у `i18n_dict("uk")`.
+
+**Перевірка:** `cargo test --workspace --lib --bins` (954, без регресій — 2 тести перероблено, не
+додано), `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check` —
+усі зелені. Грепом підтверджено відсутність кириличних літералів (лише коментарі й символи
+`—`/`×`/`✓`). Server-side перевірка через scratch-інстанс (порт 8443): `.../admin/ui/i18n/tr.json`
+повернув усі нові ключі коректною турецькою (74 ключі, збіг з `en`).
