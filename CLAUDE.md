@@ -8,14 +8,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Батч 5.1 (ccTLD-block backend: pure core, `[cctld_block]` config, `POST /admin/cctld-block`,
 pipeline step 3, `DecisionSource::CctldBlock`) shipped 2026-09-19. Батч 5.2 (i18n infra: flat
 per-locale JSON dictionaries, `t()`/`tPlural()`, `/admin/ui/i18n/{uk,en}.json`, pilot-migrated
-FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19. T-236 (same day, user
-request — grew the locale switcher from uk+en to the full 37-locale set a real sibling project's
-`.resx` culture list supplies; same pilot key set, not a new one — see `ui/i18n/GLOSSARY.md` and
-DECISIONS.md) shipped 2026-09-19; T-118 (ccTLD UI) now unblocked, next per the agreed 7-batch order
-(`TASKS.md`). Фаза 7 (T-218, public blocklist bundles)
-fully closed 2026-09-17 — full `AppState`/pipeline/admin-route/DTO/`/admin/ui` stack shipped
-across Батчі 7.1-7.4 (part 3 being the `#blocklist-bundles-body` card render, mockup's own open
-questions on Артборд F resolved by taking the mockup itself as the approved design). Фаза 4
+FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19. T-236 (same day, user request — full 37-locale switcher, see `ui/i18n/GLOSSARY.md` and
+DECISIONS.md) shipped 2026-09-19; Батч 5.3 (ccTLD UI, T-118) shipped 2026-09-19; Батч 5.4 (the rest
+of `/admin/ui` i18n, T-151 — ~330 keys × 37 locales) shipped 2026-09-22, **not yet verified in a real
+browser** (`KNOWN-LIMITATIONS.md`); next per `TASKS.md`: Батч 5.5 (tray), 5.6 (CLI `--help`), 5.7
+(`nudge_popup`). Фаза 7 (T-218, public blocklist bundles) fully closed 2026-09-17 (Батчі 7.1-7.4,
+full stack). Фаза 4
 (rating filter «bubble», per-country top-N zone infra, personal learned zone) fully closed
 2026-09-11 — tag `v0.4.0` published as GitHub `latest` 2026-09-12 (moved once mid-smoke-test to
 include the T-219 MSIX cert-trust fix, Батч 4.7.A, before publishing). Фаза 3 (production
