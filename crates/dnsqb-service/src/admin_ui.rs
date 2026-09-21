@@ -1140,10 +1140,34 @@ mod tests {
         let Some(fn_start) = MAIN_JS.find("function renderTranslatedCards() {") else {
             panic!("renderTranslatedCards must exist");
         };
-        let Some(fn_end) = MAIN_JS[fn_start..].find('}') else {
+        // A closing brace at column 0, not the first `}` - the first one would
+        // silently truncate the body the day the function gains a nested block.
+        let Some(fn_end) = MAIN_JS[fn_start..].find("\n}") else {
             panic!("renderTranslatedCards must be closed");
         };
         let body = &MAIN_JS[fn_start..fn_start + fn_end];
+        // After Батч 5.4 every card's text depends on this list: a card left
+        // out keeps the previous language after a live locale switch and
+        // nothing else fails (hit once during the batch: refreshMaxmind()).
+        for call in [
+            "applyStaticTranslations()",
+            "refresh()",
+            "refreshRatingFilter()",
+            "refreshBlocklistBundles()",
+            "refreshOverrides()",
+            "refreshCacheConfig()",
+            "refreshMaxmind()",
+            "refreshProviders()",
+            "refreshGeoip()",
+            "refreshCctldBlock()",
+            "buildLogFilterRow()",
+            "refreshLog()",
+        ] {
+            assert!(
+                body.contains(call),
+                "renderTranslatedCards() must call {call}"
+            );
+        }
         assert!(
             body.contains("refreshCctldBlock()"),
             "renderTranslatedCards() must call refreshCctldBlock() - its \
