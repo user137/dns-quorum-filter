@@ -220,7 +220,7 @@ TASKS-DONE.md, never here.
   See T-233 in `TASKS-DONE.md` (closed 2026-09-18, all three planned parts shipped) for the full
   threat-model writeup; the one remaining structural gap (small-domain injection) is tracked as
   T-234 in `TASKS.md`'s backlog.
-- **i18n locale dictionaries (T-236) — 35 of 37 are machine-translated, not natively reviewed.**
+- **i18n locale dictionaries (T-236, Батч 5.4) — 35 of 37 are machine-translated, not natively reviewed; the whole `/admin/ui` key set (~330 keys after Батч 5.4), not just the T-236 pilot.**
   `uk`/`en` predate T-236 (Батч 5.2) and were reviewed then; the other 35 `ui/i18n/*.json` files
   were translated by Claude with a self-review pass covering structural correctness only (glossary
   consistency, JSON validity, the measured `Intl.PluralRules` category shape) — not idiomatic
@@ -229,4 +229,10 @@ TASKS-DONE.md, never here.
   flex/grid layout — text reads right-to-left correctly, but component layout (the locale
   switcher, cards, buttons) stays left-to-right-oriented; full RTL mirroring via CSS logical
   properties is unscoped future work.
+  **Батч 5.4 was never verified in a real browser** (the Chrome extension was unavailable for every
+  session of the batch): the checks are server-side dictionary fetches, structural Rust tests
+  (key existence, `{token}` parity, plural-category shape, footer link tokens), and a `node vm` smoke
+  of every render function against all 37 dictionaries with a stubbed DOM. Live locale switching, the
+  first-visit browser-setup auto-open label, and real `n` values through `Intl.PluralRules` are
+  unexercised. Translated browser-menu labels in `browserSetup.*` are quoted in English on purpose.
 
