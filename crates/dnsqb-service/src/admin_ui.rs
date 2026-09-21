@@ -1373,6 +1373,96 @@ mod tests {
         );
     }
 
+    /// `{ident}` placeholder names in `text`, sorted and deduplicated.
+    fn placeholder_tokens(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(open) = rest.find('{') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('}') else {
+                break;
+            };
+            let ident = &after[..close];
+            if !ident.is_empty() && ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                out.push(ident.to_owned());
+            }
+            rest = &after[close + 1..];
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    // Батч 5.4 (advisor, closing review): t() substitutes `{name}` tokens with
+    // replaceAll per supplied var, so a translation that misspells or drops a
+    // token renders a literal "{message}" (or an error notice with the error
+    // missing) on screen - and ~30 templated keys were machine-translated into
+    // 35 locales with no guard beyond the footer's own. en.json is the
+    // reference: a string key must carry the identical token set in every
+    // locale; a plural (object) key may only use `{n}`, at most once per form
+    // (tPlural() uses .replace, not .replaceAll - a second `{n}` would render
+    // literally). Presence of `{n}` is deliberately NOT required: he/ar
+    // one/two forms legitimately spell the number out.
+    #[test]
+    fn every_locale_keeps_the_placeholder_tokens_of_the_reference_string() {
+        let Some(en_json) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(en_json)
+        else {
+            panic!("en.json must be a JSON object");
+        };
+        let mut string_keys_with_tokens = 0;
+        for &(code, json) in I18N_DICTS {
+            let Ok(serde_json::Value::Object(dict)) =
+                serde_json::from_str::<serde_json::Value>(json)
+            else {
+                panic!("{code}.json must be a JSON object");
+            };
+            for (key, reference) in &en {
+                let Some(value) = dict.get(key) else {
+                    continue;
+                };
+                match (reference, value) {
+                    (serde_json::Value::String(want), serde_json::Value::String(got)) => {
+                        let expected = placeholder_tokens(want);
+                        if code == "en" && !expected.is_empty() {
+                            string_keys_with_tokens += 1;
+                        }
+                        assert_eq!(
+                            placeholder_tokens(got),
+                            expected,
+                            "{code}.{key} must carry exactly the placeholder tokens en.json does"
+                        );
+                    }
+                    (serde_json::Value::Object(_), serde_json::Value::Object(forms)) => {
+                        for (form, text) in forms {
+                            let Some(text) = text.as_str() else {
+                                panic!("{code}.{key}.{form} must be a string");
+                            };
+                            let tokens = placeholder_tokens(text);
+                            assert!(
+                                tokens.iter().all(|t| t == "n"),
+                                "{code}.{key}.{form} may only use the {{n}} placeholder, saw {tokens:?}"
+                            );
+                            assert!(
+                                text.matches("{n}").count() <= 1,
+                                "{code}.{key}.{form} has more than one {{n}} - tPlural() only substitutes the first"
+                            );
+                        }
+                    }
+                    _ => panic!(
+                        "{code}.{key} must have the same JSON shape (string/object) as en.json"
+                    ),
+                }
+            }
+        }
+        assert!(
+            string_keys_with_tokens > 20,
+            "expected well over 20 templated keys, saw {string_keys_with_tokens}"
+        );
+    }
+
     // Батч 5.4 (footer): the licence links reach the translated sentence
     // through `{name}` tokens. A locale that dropped one would silently lose
     // a legally-required attribution (CC BY 4.0: DB-IP and CrUX) with no
