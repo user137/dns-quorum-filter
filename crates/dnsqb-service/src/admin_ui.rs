@@ -1305,6 +1305,74 @@ mod tests {
         assert!(checked > 0, "expected at least one data-i18n reference");
     }
 
+    // Батч 5.4: `t()` echoes a missing key as the raw key string, so a typo'd
+    // or never-added key in main.js shows up on screen as e.g.
+    // "overrides.addBtn" with no failing test - the Ukrainian text that used
+    // to be there is gone. Every string literal in main.js that starts with
+    // one of the dictionary's own namespaces must be a real key in en.json.
+    // Dynamic keys (`hero.${key}.state`) contain `${` and are skipped - they
+    // are covered by the per-family tests above.
+    #[test]
+    fn every_dictionary_key_literal_in_main_js_exists_in_the_dictionary() {
+        const NAMESPACES: &[&str] = &[
+            "hero.",
+            "error.",
+            "app.",
+            "warning.",
+            "common.",
+            "timeoutConfig.",
+            "overrides.",
+            "cacheConfig.",
+            "cctldBlock.",
+            "geoip.",
+            "maxmind.",
+            "log.",
+            "providers.",
+            "filterControls.",
+            "browserSetup.",
+            "advanced.",
+            "danger.",
+            "rating.",
+            "blocklist.",
+            "footer.",
+            "fieldHelp.",
+            "localeSwitcher.",
+        ];
+        let Some(en_json) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(en_json)
+        else {
+            panic!("en.json must be a JSON object");
+        };
+        let mut checked = 0;
+        for (at, _) in MAIN_JS.match_indices('"') {
+            let rest = &MAIN_JS[at + 1..];
+            let Some(end) = rest.find('"') else {
+                continue;
+            };
+            let lit = &rest[..end];
+            // "maxmind.com" is the footer link's anchor text (FOOTER_LINK_VARS),
+            // not a dictionary key - it only collides with the `maxmind.` namespace.
+            if !NAMESPACES.iter().any(|ns| lit.starts_with(ns))
+                || lit == "maxmind.com"
+                || lit.contains("${")
+                || lit.contains(char::is_whitespace)
+            {
+                continue;
+            }
+            assert!(
+                en.contains_key(lit),
+                "main.js references dictionary key {lit:?} that en.json doesn't define"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 100,
+            "expected well over 100 key literals, saw {checked}"
+        );
+    }
+
     // Батч 5.4 (footer): the licence links reach the translated sentence
     // through `{name}` tokens. A locale that dropped one would silently lose
     // a legally-required attribution (CC BY 4.0: DB-IP and CrUX) with no
