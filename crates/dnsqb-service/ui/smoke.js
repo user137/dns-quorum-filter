@@ -1,5 +1,4 @@
-// Behavioural smoke for /admin/ui i18n (Батч 5.4, T-151) - run manually:
-//   node crates/dnsqb-service/ui/smoke.js        (exit 0 = clean)
+// Behavioural smoke for /admin/ui i18n (Батч 5.4, T-151); exit 0 = clean.
 // Executes main.js in a node `vm` against a Proxy DOM stub, once per locale
 // dictionary, and calls every render function on sample data. It collects every
 // string assigned to the stub (textContent/innerHTML/title/placeholder/attributes)
@@ -12,9 +11,7 @@
 // stubbed to fail everything except the dictionaries), real layout/CSS, real
 // Intl.PluralRules values for n, and event handlers. It is not a substitute for
 // a live browser check - that gap is recorded in KNOWN-LIMITATIONS.md.
-// Manual-only by decision (2026-09-22): not wired into ci.yml (changing the
-// pipeline is the maintainer's call); node is preinstalled on windows-latest,
-// so `node crates/dnsqb-service/ui/smoke.js` is a one-line CI step if wanted.
+// Runs in CI as the `ui-smoke` job in .github/workflows/ci.yml; locally: node crates/dnsqb-service/ui/smoke.js
 const fs = require("fs");
 const vm = require("vm");
 const path = require("path");

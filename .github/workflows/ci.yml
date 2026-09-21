@@ -51,6 +51,16 @@ jobs:
       # real TLS) is named explicitly here.
       - run: cargo test --test admin_client -p dnsqb-service --locked
 
+  # T-151 Батч 5.4: behavioural smoke of /admin/ui's render functions against all
+  # locale dictionaries (node vm + stubbed DOM, no browser). Catches what no Rust
+  # test can - it found an unguarded Intl.DisplayNames throw. node ships on
+  # windows-latest; the script's own header states what it does not cover.
+  ui-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node crates/dnsqb-service/ui/smoke.js
+
   lint:
     runs-on: windows-latest
     steps:
