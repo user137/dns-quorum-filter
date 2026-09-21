@@ -163,12 +163,12 @@
   "filterControls.categoryFlipFailedTemplate": "Neizdevās mainīt kategoriju: {message}",
   "filterControls.categoriesFailedTemplate": "Neizdevās pārslēgt: {list}. Mēģiniet vēlreiz.",
   "filterControls.fanoutPartiesClause": {
-    "zero": "neredz nevienu pusi",
+    "zero": "redz {n} pušu",
     "one": "redz {n} pusi",
     "other": "redz {n} puses"
   },
   "filterControls.fanoutChecksClause": {
-    "zero": "nav ieslēgtu pārbaužu",
+    "zero": "{n} ieslēgtu pārbaužu",
     "one": "{n} ieslēgta pārbaude",
     "other": "{n} ieslēgtas pārbaudes"
   },
@@ -270,7 +270,7 @@
   "footer.geoipAttribution": "GeoIP dati (noklusējuma avots): {sapics} („user-country“, veidots no reģionālo IP adrešu reģistru (RIR) un maršrutēšanas arhīvu atvērtajiem datiem), licence {pddl} (publiskais īpašums). Iepriekšējais noklusējuma avots, kura dati var tikt izmantoti līdz pirmajam datubāzes atjauninājumam: {dbip} - datubāze „IP to Country Lite“, licence {ccby}. Papildu režīmā (jūsu pašu MaxMind atslēga) tiek izmantoti MaxMind izveidotie GeoLite2 dati, pieejami no {maxmind}.",
   "footer.cruxAttribution": "Vietņu popularitātes dati (vērtējuma filtrs „burbulis“): {crux}, © Google, licence {ccby} - normalizēti līdz reģistrējamiem domēniem. Reģistrējamo domēnu nosaka ar {psl} (licence {mpl}).",
   "zoneDomainCount": {
-    "zero": "nav domēnu",
+    "zero": "{n} domēnu",
     "one": "{n} domēns",
     "other": "{n} domēni"
   }

@@ -1449,6 +1449,17 @@ mod tests {
     // one/two forms legitimately spell the number out.
     #[test]
     fn every_locale_keeps_the_placeholder_tokens_of_the_reference_string() {
+        // CLDR categories that are exactly one integer, so a form may spell the
+        // number out instead of using `{n}` (lv `zero` is NOT one: it covers 0, 10,
+        // 20, 11-19, ... - "no domains" there would show for 10 domains; found in lv
+        // `zoneDomainCount` from T-236 and in Батч 5.4's lv forms).
+        const EXACT_INTEGER_FORMS: &[(&str, &str)] = &[
+            ("ar", "zero"),
+            ("ar", "one"),
+            ("ar", "two"),
+            ("he", "one"),
+            ("he", "two"),
+        ];
         let Some(en_json) = i18n_dict("en") else {
             panic!("en.json must be registered");
         };
@@ -1506,6 +1517,12 @@ mod tests {
                             assert!(
                                 text.matches("{n}").count() <= 1,
                                 "{code}.{key}.{form} has more than one {{n}} - tPlural() only substitutes the first"
+                            );
+                            // No `{n}` only where the category is one exact integer.
+                            assert!(
+                                text.contains("{n}")
+                                    || EXACT_INTEGER_FORMS.contains(&(code, form.as_str())),
+                                "{code}.{key}.{form} has no {{n}}, but that category is not a single exact integer"
                             );
                         }
                     }
