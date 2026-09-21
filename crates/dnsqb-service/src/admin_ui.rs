@@ -1586,7 +1586,9 @@ mod tests {
     fn cctld_codes_reconcile_the_documented_deltas_from_geoip() {
         assert!(
             MAIN_JS.contains("GEOIP_COUNTRY_CODES.map((code) => code.toLowerCase()).concat([")
-                && MAIN_JS.contains("\"uk\",\n  \"eu\",\n  \"su\","),
+                && MAIN_JS
+                    .replace("\r\n", "\n")
+                    .contains("\"uk\",\n  \"eu\",\n  \"su\","),
             "must add the three real ccTLDs TASKS.md named that aren't ISO \
              3166-1 codes (uk/eu/su) - and no others, without re-litigating \
              the .tp exclusion rationale documented in main.js"
