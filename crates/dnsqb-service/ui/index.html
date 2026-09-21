@@ -59,14 +59,14 @@
        navigator.userAgent (+ navigator.brave), so the section is useful
        even before the script runs and needs no CSP change. -->
   <div id="browser-setup-body" class="card">
-    <h3>Підключення браузера</h3>
-    <p class="setup-intro">
+    <h3 data-i18n="browserSetup.heading">Підключення браузера</h3>
+    <p class="setup-intro" data-i18n="browserSetup.intro">
       Вкажіть цю адресу як «власний DNS-провайдер» у налаштуваннях браузера:
     </p>
     <div class="setup-url-row">
       <input type="text" id="doh-url" readonly value="https://127.0.0.1/dns-query"
-             aria-label="Адреса локального DoH" />
-      <button type="button" id="doh-url-copy">Копіювати</button>
+             aria-label="Адреса локального DoH" data-i18n-attr="aria-label:browserSetup.dohUrlAriaLabel" />
+      <button type="button" id="doh-url-copy" data-i18n="browserSetup.copyButton">Копіювати</button>
     </div>
     <button type="button" id="browser-setup-toggle" class="link-button" aria-expanded="false">
       Показати покрокову інструкцію
@@ -76,38 +76,38 @@
            #chromium-settings-url to the right scheme and unhides this block. -->
       <ol id="browser-steps-chromium" class="setup-steps" hidden>
         <li>
-          Відкрийте новий таб і вставте в адресний рядок (посилання на
-          <code>chrome://</code>-сторінки з веб-сторінки не працюють — тільки вручну):
+          <span data-i18n-html="browserSetup.chromium.step1">Відкрийте новий таб і вставте в адресний рядок (посилання на
+          <code>chrome://</code>-сторінки з веб-сторінки не працюють — тільки вручну):</span>
           <span class="setup-copy-row">
             <code id="chromium-settings-url">chrome://settings/security</code>
-            <button type="button" id="chromium-settings-copy" class="link-button">Копіювати</button>
+            <button type="button" id="chromium-settings-copy" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
           </span>
         </li>
-        <li>«Використовувати безпечний DNS» → «Власний» → вставте адресу зверху.</li>
+        <li data-i18n="browserSetup.chromium.step2">«Використовувати безпечний DNS» → «Власний» → вставте адресу зверху.</li>
       </ol>
       <!-- T-189: Firefox. -->
       <ol id="browser-steps-firefox" class="setup-steps" hidden>
         <li>
-          Відкрийте новий таб і вставте в адресний рядок:
+          <span data-i18n="browserSetup.firefox.step1">Відкрийте новий таб і вставте в адресний рядок:</span>
           <span class="setup-copy-row">
             <code id="firefox-settings-url">about:preferences#privacy</code>
-            <button type="button" id="firefox-settings-copy" class="link-button">Копіювати</button>
+            <button type="button" id="firefox-settings-copy" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
           </span>
         </li>
-        <li>
+        <li data-i18n="browserSetup.firefox.step2">
           Розділ «DNS через HTTPS» → «Максимальний захист» → «Обрати постачальника» →
           «Власний» → вставте адресу зверху.
         </li>
       </ol>
       <!-- T-189: unknown / other browser. -->
       <ol id="browser-steps-other" class="setup-steps" hidden>
-        <li>
+        <li data-i18n="browserSetup.other.step1">
           У налаштуваннях браузера знайдіть «DNS через HTTPS» / «Secure DNS» /
           «Custom DNS provider».
         </li>
-        <li>Оберіть режим «Власний» / «Custom» і вставте адресу зверху.</li>
+        <li data-i18n="browserSetup.other.step2">Оберіть режим «Власний» / «Custom» і вставте адресу зверху.</li>
       </ol>
-      <p class="setup-verify">
+      <p class="setup-verify" data-i18n-html="browserSetup.verify">
         Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок
         <code>ALLOWED</code>. Що браузер справді резолвить саме через цю службу —
         перевіряється окремо: заблокуйте домен і відкрийте його, має бути
@@ -161,8 +161,8 @@
        position or visibility. -->
   <details id="advanced-settings">
     <summary>
-      <span class="summary-label">Розширені налаштування</span>
-      <span class="summary-hint">для досвідчених користувачів</span>
+      <span class="summary-label" data-i18n="advanced.summaryLabel">Розширені налаштування</span>
+      <span class="summary-hint" data-i18n="advanced.summaryHint">для досвідчених користувачів</span>
       <span class="summary-chevron" aria-hidden="true">›</span>
     </summary>
     <div class="advanced-inner">

@@ -170,6 +170,23 @@
     "one": "{n} lubatud kontroll",
     "other": "{n} lubatud kontrolli"
   },
+  "browserSetup.heading": "Brauseri ühendamine",
+  "browserSetup.intro": "Sisestage see aadress brauseri seadetes „kohandatud DNS-pakkujana“:",
+  "browserSetup.dohUrlAriaLabel": "Kohalik DoH-aadress",
+  "browserSetup.copyButton": "Kopeeri",
+  "browserSetup.showSteps": "Näita samm-sammult juhiseid",
+  "browserSetup.hideSteps": "Peida juhised",
+  "browserSetup.chromium.step1": "Avage uus vaheleht ja kleepige aadressiribale (lingid <code>chrome://</code> lehtedele veebilehelt ei tööta - ainult käsitsi):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → kleepige ülaltoodud aadress.",
+  "browserSetup.firefox.step1": "Avage uus vaheleht ja kleepige aadressiribale:",
+  "browserSetup.firefox.step2": "Jaotis \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → kleepige ülaltoodud aadress.",
+  "browserSetup.other.step1": "Leidke brauseri seadetest \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Valige režiim \"Custom\" ja kleepige ülaltoodud aadress.",
+  "browserSetup.verify": "Kontroll: avage suvaline sait - allolevasse logisse peab ilmuma rida <code>ALLOWED</code>. Seda, et brauser tõesti lahendab selle teenuse kaudu, kontrollitakse eraldi: blokeerige domeen ja avage see, peaksite nägema <code>ERR_ADDRESS_INVALID</code> (mitte <code>ERR_NAME_NOT_RESOLVED</code>); täielik protseduur on README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Kopeeritud.",
+  "browserSetup.copyManuallyTemplate": "Kopeerige käsitsi: {text}",
+  "advanced.summaryLabel": "Täpsemad seaded",
+  "advanced.summaryHint": "kogenud kasutajatele",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

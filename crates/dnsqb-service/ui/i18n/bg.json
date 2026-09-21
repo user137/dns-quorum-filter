@@ -170,6 +170,23 @@
     "one": "{n} активна проверка",
     "other": "{n} активни проверки"
   },
+  "browserSetup.heading": "Свързване на браузъра",
+  "browserSetup.intro": "Въведете този адрес като „персонализиран DNS доставчик“ в настройките на браузъра:",
+  "browserSetup.dohUrlAriaLabel": "Адрес на локалния DoH",
+  "browserSetup.copyButton": "Копирай",
+  "browserSetup.showSteps": "Покажи инструкциите стъпка по стъпка",
+  "browserSetup.hideSteps": "Скрий инструкциите",
+  "browserSetup.chromium.step1": "Отворете нов таб и поставете в адресната лента (връзките към <code>chrome://</code> страници от уеб страница не работят - само ръчно):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → поставете адреса отгоре.",
+  "browserSetup.firefox.step1": "Отворете нов таб и поставете в адресната лента:",
+  "browserSetup.firefox.step2": "Раздел \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → поставете адреса отгоре.",
+  "browserSetup.other.step1": "В настройките на браузъра намерете \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Изберете режим \"Custom\" и поставете адреса отгоре.",
+  "browserSetup.verify": "Проверка: отворете произволен сайт - в журнала по-долу трябва да се появи ред <code>ALLOWED</code>. Че браузърът наистина разрешава имената през тази услуга, се проверява отделно: блокирайте домейн и го отворете, трябва да получите <code>ERR_ADDRESS_INVALID</code> (не <code>ERR_NAME_NOT_RESOLVED</code>); пълната процедура е в README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Копирано.",
+  "browserSetup.copyManuallyTemplate": "Копирайте ръчно: {text}",
+  "advanced.summaryLabel": "Разширени настройки",
+  "advanced.summaryHint": "за опитни потребители",
   "zoneDomainCount": {
     "one": "{n} домейн",
     "other": "{n} домейна"

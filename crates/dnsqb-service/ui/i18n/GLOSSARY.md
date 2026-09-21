@@ -32,6 +32,13 @@ set to the rest of `main.js` and `index.html` under the same rules, plus the add
   key must be added to `admin_ui.rs`'s plural-shape test alongside the measured category table
   above (that test originally checked only `zoneDomainCount` by name and was generalized to walk
   every object-valued top-level key once Батч 5.4 introduced a second one).
+- **Browser-setup instructions (`browserSetup.*`) quote the browser's own menu labels in their English
+  originals in every non-uk locale** (`"Use secure DNS" → "Custom"`, `"DNS over HTTPS" → "Max
+  Protection" → ...`) - the operator's browser may run in a different UI language than this page, and
+  the English label is the one a search engine or the vendor docs will find. Only the surrounding prose
+  is translated. The README section the verify paragraph points at (`README "Перевірка: браузер →
+  локальний DoH"`) is quoted verbatim in Ukrainian in every locale, including `en` - the README itself
+  is Ukrainian-only.
 - **Brand/product names and technical scheme identifiers stay untranslated**, same principle as
   `fail_open`/`DNS`/`ccTLD` above: `Quad9`, `AdGuard`, `DB-IP Lite`, `MaxMind GeoLite2`, blocklist
   source names (HaGeZi, 1Hosts, …), and `chrome://`/`edge://`/`brave://`/`opera://` URL schemes.

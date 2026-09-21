@@ -170,6 +170,23 @@
     "one": "{n} सक्रिय जांच",
     "other": "{n} सक्रिय जांचें"
   },
+  "browserSetup.heading": "ब्राउज़र कनेक्ट करें",
+  "browserSetup.intro": "इस पते को ब्राउज़र सेटिंग्स में «कस्टम DNS प्रदाता» के रूप में दर्ज करें:",
+  "browserSetup.dohUrlAriaLabel": "स्थानीय DoH पता",
+  "browserSetup.copyButton": "कॉपी करें",
+  "browserSetup.showSteps": "चरण-दर-चरण निर्देश दिखाएं",
+  "browserSetup.hideSteps": "निर्देश छुपाएं",
+  "browserSetup.chromium.step1": "नया टैब खोलें और एड्रेस बार में पेस्ट करें (वेब पेज से <code>chrome://</code> पेजों के लिंक काम नहीं करते - केवल मैन्युअल रूप से):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → ऊपर का पता पेस्ट करें।",
+  "browserSetup.firefox.step1": "नया टैब खोलें और एड्रेस बार में पेस्ट करें:",
+  "browserSetup.firefox.step2": "अनुभाग \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → ऊपर का पता पेस्ट करें।",
+  "browserSetup.other.step1": "ब्राउज़र सेटिंग्स में खोजें \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "\"Custom\" मोड चुनें और ऊपर का पता पेस्ट करें।",
+  "browserSetup.verify": "जांच: कोई भी साइट खोलें - नीचे लॉग में <code>ALLOWED</code> वाली पंक्ति दिखनी चाहिए। ब्राउज़र वास्तव में इसी सेवा के माध्यम से रिज़ॉल्व करता है, यह अलग से जांचा जाता है: कोई डोमेन ब्लॉक करें और उसे खोलें, आपको <code>ERR_ADDRESS_INVALID</code> मिलना चाहिए (<code>ERR_NAME_NOT_RESOLVED</code> नहीं); पूरी प्रक्रिया README \"Перевірка: браузер → локальний DoH\" में है।",
+  "browserSetup.copied": "कॉपी हो गया।",
+  "browserSetup.copyManuallyTemplate": "मैन्युअल रूप से कॉपी करें: {text}",
+  "advanced.summaryLabel": "उन्नत सेटिंग्स",
+  "advanced.summaryHint": "अनुभवी उपयोगकर्ताओं के लिए",
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

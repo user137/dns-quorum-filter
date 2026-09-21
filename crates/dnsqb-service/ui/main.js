@@ -184,9 +184,10 @@ function applyDocumentLanguage() {
 // batch: the card would have stayed in the previous language after a live
 // locale switch). refreshLog() (with buildLogFilterRow() right before it -
 // see its own comment on why order matters) also calls t() since Батч 5.4;
-// initBrowserSetup() still renders no FIELD_HELP/HERO/region-name/t() text
-// and stays deliberately left out below.
+// initBrowserSetup() renders its own text via applyStaticTranslations()
+// below (static index.html markup, not a fetch/render cycle).
 function renderTranslatedCards() {
+  applyStaticTranslations();
   refresh();
   refreshRatingFilter();
   refreshBlocklistBundles();
@@ -198,6 +199,29 @@ function renderTranslatedCards() {
   refreshCctldBlock();
   buildLogFilterRow();
   refreshLog(); // must come after buildLogFilterRow() - see its own comment
+}
+
+// Батч 5.4: index.html text that no render function ever rewrites
+// (browser-setup prose, the advanced-settings summary, later the danger-zone
+// warning and the footer) carries data-i18n="<key>" (textContent),
+// data-i18n-html="<key>" (innerHTML - only for a dictionary value that
+// legitimately holds inline <code>/<strong>/<a>; the dictionaries are
+// first-party include_str! files, not an injection surface) or
+// data-i18n-attr="<attr>:<key>". The Ukrainian text left in the HTML is only
+// the pre-script fallback; this overwrites it once the dictionary is ready and
+// again on every live locale switch (called from renderTranslatedCards()).
+function applyStaticTranslations() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+    el.innerHTML = t(el.dataset.i18nHtml);
+  });
+  document.querySelectorAll("[data-i18n-attr]").forEach((el) => {
+    const [attr, key] = el.dataset.i18nAttr.split(":");
+    el.setAttribute(attr, t(key));
+  });
+  syncBrowserSetupToggleLabel();
 }
 
 async function setLocale(requested) {
@@ -3014,7 +3038,7 @@ function wireCopyButton(button, getText) {
         throw new Error("no clipboard API");
       }
       if (result) {
-        result.textContent = "Скопійовано.";
+        result.textContent = t("browserSetup.copied");
         setTimeout(() => {
           if (result) {
             result.textContent = "";
@@ -3023,7 +3047,7 @@ function wireCopyButton(button, getText) {
       }
     } catch (_err) {
       if (result) {
-        result.textContent = `Скопіюйте вручну: ${text}`;
+        result.textContent = t("browserSetup.copyManuallyTemplate", { text });
       }
     }
   });
@@ -3090,6 +3114,19 @@ async function revealBrowserSteps() {
   }
 }
 
+// The toggle's label depends on whether the steps are open, so it can't be a
+// plain data-i18n node - applyStaticTranslations() calls this after every
+// dictionary (re)load, and the click handler below on every flip.
+function syncBrowserSetupToggleLabel() {
+  const steps = document.getElementById("browser-setup-steps");
+  const toggle = document.getElementById("browser-setup-toggle");
+  if (steps && toggle) {
+    toggle.textContent = steps.hidden
+      ? t("browserSetup.showSteps")
+      : t("browserSetup.hideSteps");
+  }
+}
+
 function initBrowserSetup() {
   const steps = document.getElementById("browser-setup-steps");
   const toggle = document.getElementById("browser-setup-toggle");
@@ -3101,9 +3138,7 @@ function initBrowserSetup() {
     toggle.addEventListener("click", () => {
       steps.hidden = !steps.hidden;
       toggle.setAttribute("aria-expanded", String(!steps.hidden));
-      toggle.textContent = steps.hidden
-        ? "Показати покрокову інструкцію"
-        : "Сховати інструкцію";
+      syncBrowserSetupToggleLabel();
     });
   }
 
@@ -3131,7 +3166,6 @@ function initBrowserSetup() {
   if (!seen && steps && toggle) {
     steps.hidden = false;
     toggle.setAttribute("aria-expanded", "true");
-    toggle.textContent = "Сховати інструкцію";
     try {
       localStorage.setItem(BROWSER_SETUP_SEEN_KEY, "1");
     } catch (_err) {

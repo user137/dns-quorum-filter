@@ -170,6 +170,23 @@
     "one": "{n} فعال چیک",
     "other": "{n} فعال چیکس"
   },
+  "browserSetup.heading": "براؤزر کو جوڑیں",
+  "browserSetup.intro": "اس پتے کو براؤزر کی ترتیبات میں «حسب ضرورت DNS فراہم کنندہ» کے طور پر درج کریں:",
+  "browserSetup.dohUrlAriaLabel": "مقامی DoH پتہ",
+  "browserSetup.copyButton": "کاپی کریں",
+  "browserSetup.showSteps": "مرحلہ وار ہدایات دکھائیں",
+  "browserSetup.hideSteps": "ہدایات چھپائیں",
+  "browserSetup.chromium.step1": "نیا ٹیب کھولیں اور ایڈریس بار میں پیسٹ کریں (ویب صفحے سے <code>chrome://</code> صفحات کے لنکس کام نہیں کرتے - صرف دستی طور پر):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" ← اوپر کا پتہ پیسٹ کریں۔",
+  "browserSetup.firefox.step1": "نیا ٹیب کھولیں اور ایڈریس بار میں پیسٹ کریں:",
+  "browserSetup.firefox.step2": "سیکشن \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" ← اوپر کا پتہ پیسٹ کریں۔",
+  "browserSetup.other.step1": "براؤزر کی ترتیبات میں تلاش کریں \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "\"Custom\" موڈ منتخب کریں اور اوپر کا پتہ پیسٹ کریں۔",
+  "browserSetup.verify": "جانچ: کوئی بھی سائٹ کھولیں - نیچے لاگ میں <code>ALLOWED</code> والی لائن نظر آنی چاہیے۔ براؤزر واقعی اسی سروس سے ریزالو کرتا ہے، یہ الگ سے جانچا جاتا ہے: کوئی ڈومین بلاک کر کے کھولیں، آپ کو <code>ERR_ADDRESS_INVALID</code> ملنا چاہیے (<code>ERR_NAME_NOT_RESOLVED</code> نہیں)؛ مکمل طریقہ README \"Перевірка: браузер → локальний DoH\" میں ہے۔",
+  "browserSetup.copied": "کاپی ہو گیا۔",
+  "browserSetup.copyManuallyTemplate": "دستی طور پر کاپی کریں: {text}",
+  "advanced.summaryLabel": "اعلیٰ ترتیبات",
+  "advanced.summaryHint": "تجربہ کار صارفین کے لیے",
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"

@@ -168,6 +168,23 @@
   "filterControls.fanoutChecksClause": {
     "other": "การตรวจสอบที่เปิดใช้งาน {n} รายการ"
   },
+  "browserSetup.heading": "เชื่อมต่อเบราว์เซอร์",
+  "browserSetup.intro": "ป้อนที่อยู่นี้เป็น «ผู้ให้บริการ DNS แบบกำหนดเอง» ในการตั้งค่าเบราว์เซอร์:",
+  "browserSetup.dohUrlAriaLabel": "ที่อยู่ DoH ภายในเครื่อง",
+  "browserSetup.copyButton": "คัดลอก",
+  "browserSetup.showSteps": "แสดงคำแนะนำทีละขั้นตอน",
+  "browserSetup.hideSteps": "ซ่อนคำแนะนำ",
+  "browserSetup.chromium.step1": "เปิดแท็บใหม่แล้ววางในแถบที่อยู่ (ลิงก์ไปยังหน้า <code>chrome://</code> จากหน้าเว็บใช้ไม่ได้ - ต้องทำด้วยตนเองเท่านั้น):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → วางที่อยู่จากด้านบน",
+  "browserSetup.firefox.step1": "เปิดแท็บใหม่แล้ววางในแถบที่อยู่:",
+  "browserSetup.firefox.step2": "ส่วน \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → วางที่อยู่จากด้านบน",
+  "browserSetup.other.step1": "ในการตั้งค่าเบราว์เซอร์ให้ค้นหา \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "เลือกโหมด \"Custom\" แล้ววางที่อยู่จากด้านบน",
+  "browserSetup.verify": "การตรวจสอบ: เปิดเว็บไซต์ใดก็ได้ - แถว <code>ALLOWED</code> ควรปรากฏในบันทึกด้านล่าง การที่เบราว์เซอร์แก้ไขชื่อผ่านบริการนี้จริงจะตรวจสอบแยกต่างหาก: บล็อกโดเมนแล้วเปิด ควรได้ <code>ERR_ADDRESS_INVALID</code> (ไม่ใช่ <code>ERR_NAME_NOT_RESOLVED</code>) ขั้นตอนทั้งหมดอยู่ใน README \"Перевірка: браузер → локальний DoH\"",
+  "browserSetup.copied": "คัดลอกแล้ว",
+  "browserSetup.copyManuallyTemplate": "คัดลอกด้วยตนเอง: {text}",
+  "advanced.summaryLabel": "การตั้งค่าขั้นสูง",
+  "advanced.summaryHint": "สำหรับผู้ใช้ที่มีประสบการณ์",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

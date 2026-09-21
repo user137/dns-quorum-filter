@@ -170,6 +170,23 @@
     "one": "{n} aktiverad kontroll",
     "other": "{n} aktiverade kontroller"
   },
+  "browserSetup.heading": "Anslut webbläsaren",
+  "browserSetup.intro": "Ange den här adressen som „anpassad DNS-leverantör“ i webbläsarens inställningar:",
+  "browserSetup.dohUrlAriaLabel": "Lokal DoH-adress",
+  "browserSetup.copyButton": "Kopiera",
+  "browserSetup.showSteps": "Visa steg-för-steg-instruktioner",
+  "browserSetup.hideSteps": "Dölj instruktioner",
+  "browserSetup.chromium.step1": "Öppna en ny flik och klistra in i adressfältet (länkar till <code>chrome://</code>-sidor från en webbsida fungerar inte - bara manuellt):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → klistra in adressen ovanifrån.",
+  "browserSetup.firefox.step1": "Öppna en ny flik och klistra in i adressfältet:",
+  "browserSetup.firefox.step2": "Avsnitt \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → klistra in adressen ovanifrån.",
+  "browserSetup.other.step1": "Hitta i webbläsarens inställningar \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Välj läget \"Custom\" och klistra in adressen ovanifrån.",
+  "browserSetup.verify": "Kontroll: öppna en valfri webbplats - en rad med <code>ALLOWED</code> ska dyka upp i loggen nedan. Att webbläsaren verkligen slår upp via den här tjänsten verifieras separat: blockera en domän och öppna den, du bör få <code>ERR_ADDRESS_INVALID</code> (inte <code>ERR_NAME_NOT_RESOLVED</code>); hela proceduren finns i README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Kopierat.",
+  "browserSetup.copyManuallyTemplate": "Kopiera manuellt: {text}",
+  "advanced.summaryLabel": "Avancerade inställningar",
+  "advanced.summaryHint": "för erfarna användare",
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

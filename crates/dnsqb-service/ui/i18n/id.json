@@ -168,6 +168,23 @@
   "filterControls.fanoutChecksClause": {
     "other": "{n} pemeriksaan aktif"
   },
+  "browserSetup.heading": "Hubungkan browser",
+  "browserSetup.intro": "Masukkan alamat ini sebagai „penyedia DNS kustom“ di pengaturan browser:",
+  "browserSetup.dohUrlAriaLabel": "Alamat DoH lokal",
+  "browserSetup.copyButton": "Salin",
+  "browserSetup.showSteps": "Tampilkan petunjuk langkah demi langkah",
+  "browserSetup.hideSteps": "Sembunyikan petunjuk",
+  "browserSetup.chromium.step1": "Buka tab baru dan tempel di bilah alamat (tautan ke halaman <code>chrome://</code> dari halaman web tidak berfungsi - hanya manual):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → tempel alamat dari atas.",
+  "browserSetup.firefox.step1": "Buka tab baru dan tempel di bilah alamat:",
+  "browserSetup.firefox.step2": "Bagian \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → tempel alamat dari atas.",
+  "browserSetup.other.step1": "Di pengaturan browser cari \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Pilih mode \"Custom\" dan tempel alamat dari atas.",
+  "browserSetup.verify": "Pemeriksaan: buka situs apa pun - baris <code>ALLOWED</code> harus muncul di log di bawah. Bahwa browser benar-benar me-resolve melalui layanan ini diperiksa terpisah: blokir sebuah domain dan buka, Anda seharusnya mendapat <code>ERR_ADDRESS_INVALID</code> (bukan <code>ERR_NAME_NOT_RESOLVED</code>); prosedur lengkapnya ada di README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Disalin.",
+  "browserSetup.copyManuallyTemplate": "Salin secara manual: {text}",
+  "advanced.summaryLabel": "Pengaturan lanjutan",
+  "advanced.summaryHint": "untuk pengguna berpengalaman",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

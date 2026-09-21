@@ -170,6 +170,23 @@
     "one": "{n} aktivierte Prüfung",
     "other": "{n} aktivierte Prüfungen"
   },
+  "browserSetup.heading": "Browser verbinden",
+  "browserSetup.intro": "Tragen Sie diese Adresse in den Browser-Einstellungen als „benutzerdefinierten DNS-Anbieter“ ein:",
+  "browserSetup.dohUrlAriaLabel": "Lokale DoH-Adresse",
+  "browserSetup.copyButton": "Kopieren",
+  "browserSetup.showSteps": "Schritt-für-Schritt-Anleitung anzeigen",
+  "browserSetup.hideSteps": "Anleitung ausblenden",
+  "browserSetup.chromium.step1": "Öffnen Sie einen neuen Tab und fügen Sie in die Adressleiste ein (Links auf <code>chrome://</code>-Seiten aus einer Webseite funktionieren nicht - nur manuell):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → Adresse von oben einfügen.",
+  "browserSetup.firefox.step1": "Öffnen Sie einen neuen Tab und fügen Sie in die Adressleiste ein:",
+  "browserSetup.firefox.step2": "Abschnitt \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → Adresse von oben einfügen.",
+  "browserSetup.other.step1": "Suchen Sie in den Browser-Einstellungen nach \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Wählen Sie den Modus \"Custom\" und fügen Sie die Adresse von oben ein.",
+  "browserSetup.verify": "Prüfung: Öffnen Sie eine beliebige Seite - im Protokoll unten muss eine Zeile <code>ALLOWED</code> erscheinen. Dass der Browser tatsächlich über diesen Dienst auflöst, wird separat geprüft: Sperren Sie eine Domain und öffnen Sie sie, es sollte <code>ERR_ADDRESS_INVALID</code> erscheinen (nicht <code>ERR_NAME_NOT_RESOLVED</code>); das vollständige Verfahren steht in README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Kopiert.",
+  "browserSetup.copyManuallyTemplate": "Manuell kopieren: {text}",
+  "advanced.summaryLabel": "Erweiterte Einstellungen",
+  "advanced.summaryHint": "für erfahrene Nutzer",
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

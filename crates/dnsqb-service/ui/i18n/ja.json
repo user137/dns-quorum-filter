@@ -168,6 +168,23 @@
   "filterControls.fanoutChecksClause": {
     "other": "有効なチェック{n}件"
   },
+  "browserSetup.heading": "ブラウザーを接続",
+  "browserSetup.intro": "ブラウザーの設定で、このアドレスを「カスタムDNSプロバイダー」として入力してください:",
+  "browserSetup.dohUrlAriaLabel": "ローカルDoHアドレス",
+  "browserSetup.copyButton": "コピー",
+  "browserSetup.showSteps": "手順を表示",
+  "browserSetup.hideSteps": "手順を隠す",
+  "browserSetup.chromium.step1": "新しいタブを開き、アドレスバーに貼り付けてください(Webページから<code>chrome://</code>ページへのリンクは機能しません — 手動のみ):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → 上のアドレスを貼り付けます。",
+  "browserSetup.firefox.step1": "新しいタブを開き、アドレスバーに貼り付けてください:",
+  "browserSetup.firefox.step2": "セクション \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → 上のアドレスを貼り付けます。",
+  "browserSetup.other.step1": "ブラウザーの設定で次を探してください: \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "\"Custom\" モードを選び、上のアドレスを貼り付けます。",
+  "browserSetup.verify": "確認: 任意のサイトを開くと、下のログに <code>ALLOWED</code> の行が表示されるはずです。ブラウザーが実際にこのサービス経由で名前解決していることは別途確認します: ドメインをブロックして開くと <code>ERR_ADDRESS_INVALID</code>(<code>ERR_NAME_NOT_RESOLVED</code> ではなく)になるはずです。詳しい手順は README \"Перевірка: браузер → локальний DoH\" にあります。",
+  "browserSetup.copied": "コピーしました。",
+  "browserSetup.copyManuallyTemplate": "手動でコピーしてください: {text}",
+  "advanced.summaryLabel": "詳細設定",
+  "advanced.summaryHint": "上級ユーザー向け",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

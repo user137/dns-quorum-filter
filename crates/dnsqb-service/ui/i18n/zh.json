@@ -168,6 +168,23 @@
   "filterControls.fanoutChecksClause": {
     "other": "{n} 项已启用检查"
   },
+  "browserSetup.heading": "连接浏览器",
+  "browserSetup.intro": "请在浏览器设置中将此地址填写为“自定义 DNS 提供方”：",
+  "browserSetup.dohUrlAriaLabel": "本地 DoH 地址",
+  "browserSetup.copyButton": "复制",
+  "browserSetup.showSteps": "显示分步说明",
+  "browserSetup.hideSteps": "隐藏说明",
+  "browserSetup.chromium.step1": "打开新标签页并粘贴到地址栏(从网页链接到 <code>chrome://</code> 页面无效 - 只能手动操作)：",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → 粘贴上面的地址。",
+  "browserSetup.firefox.step1": "打开新标签页并粘贴到地址栏：",
+  "browserSetup.firefox.step2": "部分 \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → 粘贴上面的地址。",
+  "browserSetup.other.step1": "在浏览器设置中找到 \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "选择 \"Custom\" 模式并粘贴上面的地址。",
+  "browserSetup.verify": "验证：打开任意网站 - 下方日志中应出现一行 <code>ALLOWED</code>。浏览器是否确实通过此服务解析需要单独验证：阻止一个域名并打开它，应得到 <code>ERR_ADDRESS_INVALID</code>(而不是 <code>ERR_NAME_NOT_RESOLVED</code>)；完整流程见 README \"Перевірка: браузер → локальний DoH\"。",
+  "browserSetup.copied": "已复制。",
+  "browserSetup.copyManuallyTemplate": "请手动复制：{text}",
+  "advanced.summaryLabel": "高级设置",
+  "advanced.summaryHint": "面向有经验的用户",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

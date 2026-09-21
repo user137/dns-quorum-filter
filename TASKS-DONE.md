@@ -7177,3 +7177,27 @@ has_its_measured_plural_categories` — тепер обходить кожен o
 відсутність кириличних літералів (лише коментарі). Живий Chrome-смок цього разу знову
 недоступний; плюрал-форми перевірено лише структурно (тест вище), не на реальних значеннях `n`
 у браузері — залишається відкритим до сесії з робочим розширенням Chrome.
+
+---
+
+**Батч 5.4, коміт 10 — browser-setup + advanced-settings summary (T-151), 2026-09-22.** Десятий
+комміт; перший, що торкається статичного `index.html`. Заводить механізм із п.1/п.12 плану:
+`data-i18n` (textContent), `data-i18n-html` (innerHTML — лише для значень з inline `<code>`),
+`data-i18n-attr="attr:key"` + `applyStaticTranslations()`, що викликається з
+`renderTranslatedCards()` (тобто і при старті, і при живому перемиканні мови). Український текст у
+HTML лишено як pre-script fallback. 17 нових ключів × 37 локалей.
+
+**Кнопка "Показати/Сховати інструкцію" — не `data-i18n`:** її текст залежить від стану
+(`steps.hidden`), тож `syncBrowserSetupToggleLabel()` керує ним і викликається з
+`applyStaticTranslations()` та з click-handler'а. Раніше `initBrowserSetup()` ставив label на
+рівні модуля, до готовності словника — тепер цей рядок прибрано, інакше на першому візиті
+(auto-open) мигнув би сирий ключ.
+
+**Новий тест** `every_data_i18n_key_in_index_html_exists_in_the_dictionary` — друкарська помилка в
+`data-i18n` показала б сирий ключ, а український fallback у HTML ховав би її до завантаження
+словника. Правило про цитовані назви меню браузера (англійські оригінали в усіх non-uk локалях) —
+у GLOSSARY.md.
+
+**Перевірка:** `cargo test --workspace --lib --bins` (955, +1), `cargo clippy ... -D warnings`,
+`cargo fmt --check` — зелені. Живий Chrome-смок недоступний; `applyStaticTranslations()` як DOM-код
+у браузері не запускався.

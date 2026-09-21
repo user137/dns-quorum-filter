@@ -170,6 +170,23 @@
     "one": "{n} aktiveret kontrol",
     "other": "{n} aktiverede kontroller"
   },
+  "browserSetup.heading": "Tilslut din browser",
+  "browserSetup.intro": "Angiv denne adresse som den „brugerdefinerede DNS-udbyder“ i browserens indstillinger:",
+  "browserSetup.dohUrlAriaLabel": "Lokal DoH-adresse",
+  "browserSetup.copyButton": "Kopiér",
+  "browserSetup.showSteps": "Vis trin-for-trin-vejledning",
+  "browserSetup.hideSteps": "Skjul vejledning",
+  "browserSetup.chromium.step1": "Åbn en ny fane og indsæt i adresselinjen (links til <code>chrome://</code>-sider fra en webside virker ikke - kun manuelt):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → indsæt adressen ovenfra.",
+  "browserSetup.firefox.step1": "Åbn en ny fane og indsæt i adresselinjen:",
+  "browserSetup.firefox.step2": "Afsnit \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → indsæt adressen ovenfra.",
+  "browserSetup.other.step1": "Find i browserens indstillinger \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Vælg tilstanden \"Custom\" og indsæt adressen ovenfra.",
+  "browserSetup.verify": "Kontrol: åbn et vilkårligt websted - en linje med <code>ALLOWED</code> skal dukke op i loggen nedenfor. At browseren rent faktisk slår op via denne tjeneste, verificeres separat: bloker et domæne og åbn det, du bør få <code>ERR_ADDRESS_INVALID</code> (ikke <code>ERR_NAME_NOT_RESOLVED</code>); den fulde fremgangsmåde står i README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Kopieret.",
+  "browserSetup.copyManuallyTemplate": "Kopiér manuelt: {text}",
+  "advanced.summaryLabel": "Avancerede indstillinger",
+  "advanced.summaryHint": "for erfarne brugere",
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"

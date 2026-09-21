@@ -168,6 +168,23 @@
   "filterControls.fanoutChecksClause": {
     "other": "{n} kiểm tra đã bật"
   },
+  "browserSetup.heading": "Kết nối trình duyệt",
+  "browserSetup.intro": "Nhập địa chỉ này làm «nhà cung cấp DNS tùy chỉnh» trong cài đặt trình duyệt:",
+  "browserSetup.dohUrlAriaLabel": "Địa chỉ DoH cục bộ",
+  "browserSetup.copyButton": "Sao chép",
+  "browserSetup.showSteps": "Hiện hướng dẫn từng bước",
+  "browserSetup.hideSteps": "Ẩn hướng dẫn",
+  "browserSetup.chromium.step1": "Mở một tab mới và dán vào thanh địa chỉ (liên kết tới các trang <code>chrome://</code> từ trang web không hoạt động - chỉ thủ công):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → dán địa chỉ ở trên.",
+  "browserSetup.firefox.step1": "Mở một tab mới và dán vào thanh địa chỉ:",
+  "browserSetup.firefox.step2": "Mục \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → dán địa chỉ ở trên.",
+  "browserSetup.other.step1": "Trong cài đặt trình duyệt, tìm \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Chọn chế độ \"Custom\" và dán địa chỉ ở trên.",
+  "browserSetup.verify": "Kiểm tra: mở bất kỳ trang web nào - một dòng <code>ALLOWED</code> phải xuất hiện trong nhật ký bên dưới. Việc trình duyệt thực sự phân giải qua dịch vụ này được kiểm tra riêng: chặn một miền rồi mở nó, bạn sẽ nhận được <code>ERR_ADDRESS_INVALID</code> (không phải <code>ERR_NAME_NOT_RESOLVED</code>); quy trình đầy đủ nằm trong README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Đã sao chép.",
+  "browserSetup.copyManuallyTemplate": "Sao chép thủ công: {text}",
+  "advanced.summaryLabel": "Cài đặt nâng cao",
+  "advanced.summaryHint": "dành cho người dùng có kinh nghiệm",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

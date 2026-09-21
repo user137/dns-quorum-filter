@@ -170,6 +170,23 @@
     "one": "{n} bekapcsolt ellenőrzés",
     "other": "{n} bekapcsolt ellenőrzés"
   },
+  "browserSetup.heading": "Böngésző csatlakoztatása",
+  "browserSetup.intro": "Adja meg ezt a címet „egyéni DNS-szolgáltatóként“ a böngésző beállításaiban:",
+  "browserSetup.dohUrlAriaLabel": "Helyi DoH-cím",
+  "browserSetup.copyButton": "Másolás",
+  "browserSetup.showSteps": "Lépésenkénti útmutató megjelenítése",
+  "browserSetup.hideSteps": "Útmutató elrejtése",
+  "browserSetup.chromium.step1": "Nyisson új lapot, és illessze be a címsorba (a weboldalról a <code>chrome://</code> oldalakra mutató hivatkozások nem működnek - csak kézzel):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → illessze be a fenti címet.",
+  "browserSetup.firefox.step1": "Nyisson új lapot, és illessze be a címsorba:",
+  "browserSetup.firefox.step2": "Szakasz \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → illessze be a fenti címet.",
+  "browserSetup.other.step1": "A böngésző beállításaiban keresse meg \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Válassza a \"Custom\" módot, és illessze be a fenti címet.",
+  "browserSetup.verify": "Ellenőrzés: nyisson meg bármely webhelyet - az alábbi naplóban meg kell jelennie egy <code>ALLOWED</code> sornak. Azt, hogy a böngésző valóban ezen a szolgáltatáson keresztül old fel, külön ellenőrzik: tiltson le egy domaint és nyissa meg, <code>ERR_ADDRESS_INVALID</code> hibát kell kapnia (nem <code>ERR_NAME_NOT_RESOLVED</code>-ot); a teljes eljárás itt van: README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Másolva.",
+  "browserSetup.copyManuallyTemplate": "Másolja kézzel: {text}",
+  "advanced.summaryLabel": "Speciális beállítások",
+  "advanced.summaryHint": "tapasztalt felhasználóknak",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

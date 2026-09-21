@@ -170,6 +170,23 @@
     "one": "ukaguzi {n} ulioamilishwa",
     "other": "ukaguzi {n} ulioamilishwa"
   },
+  "browserSetup.heading": "Unganisha kivinjari",
+  "browserSetup.intro": "Weka anwani hii kama «mtoa huduma wa DNS maalum» kwenye mipangilio ya kivinjari:",
+  "browserSetup.dohUrlAriaLabel": "Anwani ya DoH ya ndani",
+  "browserSetup.copyButton": "Nakili",
+  "browserSetup.showSteps": "Onyesha maelekezo hatua kwa hatua",
+  "browserSetup.hideSteps": "Ficha maelekezo",
+  "browserSetup.chromium.step1": "Fungua kichupo kipya na ubandike kwenye upau wa anwani (viungo vya kurasa za <code>chrome://</code> kutoka ukurasa wa wavuti havifanyi kazi - kwa mkono tu):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → bandika anwani ya juu.",
+  "browserSetup.firefox.step1": "Fungua kichupo kipya na ubandike kwenye upau wa anwani:",
+  "browserSetup.firefox.step2": "Sehemu \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → bandika anwani ya juu.",
+  "browserSetup.other.step1": "Kwenye mipangilio ya kivinjari tafuta \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Chagua hali \"Custom\" na ubandike anwani ya juu.",
+  "browserSetup.verify": "Ukaguzi: fungua tovuti yoyote - mstari wa <code>ALLOWED</code> unapaswa kuonekana kwenye kumbukumbu hapa chini. Kwamba kivinjari kweli hutatua kupitia huduma hii hukaguliwa kando: zuia kikoa na ukifungue, unapaswa kupata <code>ERR_ADDRESS_INVALID</code> (si <code>ERR_NAME_NOT_RESOLVED</code>); utaratibu kamili uko kwenye README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Imenakiliwa.",
+  "browserSetup.copyManuallyTemplate": "Nakili kwa mkono: {text}",
+  "advanced.summaryLabel": "Mipangilio ya kina",
+  "advanced.summaryHint": "kwa watumiaji wenye uzoefu",
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

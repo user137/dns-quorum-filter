@@ -1273,6 +1273,38 @@ mod tests {
         );
     }
 
+    // Батч 5.4: a typo'd data-i18n key would render the raw key string on
+    // screen (t() echoes a missing key) and no other test would notice -
+    // index.html's own Ukrainian fallback text hides it until the dictionary
+    // loads. Every key the static markup references must exist in en.json.
+    #[test]
+    fn every_data_i18n_key_in_index_html_exists_in_the_dictionary() {
+        let Some(en_json) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(en_json)
+        else {
+            panic!("en.json must be a JSON object");
+        };
+        let mut checked = 0;
+        for marker in ["data-i18n=\"", "data-i18n-html=\"", "data-i18n-attr=\""] {
+            for (at, _) in INDEX_HTML.match_indices(marker) {
+                let rest = &INDEX_HTML[at + marker.len()..];
+                let Some(end) = rest.find('"') else {
+                    panic!("unterminated {marker} attribute");
+                };
+                let value = &rest[..end];
+                let key = value.rsplit(':').next().unwrap_or(value);
+                assert!(
+                    en.contains_key(key),
+                    "index.html references i18n key {key:?} that en.json doesn't define"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "expected at least one data-i18n reference");
+    }
+
     // TASKS.md's own reconciliation requirement: a ccTLD code set is not a
     // reprint of GeoIP's ISO 3166-1 code set.
     #[test]

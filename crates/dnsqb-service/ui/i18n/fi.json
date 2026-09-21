@@ -170,6 +170,23 @@
     "one": "{n} käytössä oleva tarkistus",
     "other": "{n} käytössä olevaa tarkistusta"
   },
+  "browserSetup.heading": "Yhdistä selain",
+  "browserSetup.intro": "Anna tämä osoite selaimen asetuksissa „mukautettuna DNS-palveluntarjoajana“:",
+  "browserSetup.dohUrlAriaLabel": "Paikallinen DoH-osoite",
+  "browserSetup.copyButton": "Kopioi",
+  "browserSetup.showSteps": "Näytä vaiheittaiset ohjeet",
+  "browserSetup.hideSteps": "Piilota ohjeet",
+  "browserSetup.chromium.step1": "Avaa uusi välilehti ja liitä osoiteriville (linkit <code>chrome://</code>-sivuille verkkosivulta eivät toimi - vain käsin):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → liitä yllä oleva osoite.",
+  "browserSetup.firefox.step1": "Avaa uusi välilehti ja liitä osoiteriville:",
+  "browserSetup.firefox.step2": "Osio \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → liitä yllä oleva osoite.",
+  "browserSetup.other.step1": "Etsi selaimen asetuksista \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Valitse tila \"Custom\" ja liitä yllä oleva osoite.",
+  "browserSetup.verify": "Tarkistus: avaa mikä tahansa sivusto - alla olevaan lokiin pitäisi ilmestyä rivi <code>ALLOWED</code>. Se, että selain todella ratkaisee tämän palvelun kautta, varmistetaan erikseen: estä verkkotunnus ja avaa se, sinun pitäisi saada <code>ERR_ADDRESS_INVALID</code> (ei <code>ERR_NAME_NOT_RESOLVED</code>); täydellinen menettely on kohdassa README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Kopioitu.",
+  "browserSetup.copyManuallyTemplate": "Kopioi käsin: {text}",
+  "advanced.summaryLabel": "Lisäasetukset",
+  "advanced.summaryHint": "kokeneille käyttäjille",
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

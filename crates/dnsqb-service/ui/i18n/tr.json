@@ -170,6 +170,23 @@
     "one": "{n} etkin kontrol",
     "other": "{n} etkin kontrol"
   },
+  "browserSetup.heading": "Tarayıcıyı bağlayın",
+  "browserSetup.intro": "Bu adresi tarayıcı ayarlarında «özel DNS sağlayıcısı» olarak girin:",
+  "browserSetup.dohUrlAriaLabel": "Yerel DoH adresi",
+  "browserSetup.copyButton": "Kopyala",
+  "browserSetup.showSteps": "Adım adım talimatları göster",
+  "browserSetup.hideSteps": "Talimatları gizle",
+  "browserSetup.chromium.step1": "Yeni bir sekme açın ve adres çubuğuna yapıştırın (bir web sayfasından <code>chrome://</code> sayfalarına verilen bağlantılar çalışmaz - yalnızca elle):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → yukarıdaki adresi yapıştırın.",
+  "browserSetup.firefox.step1": "Yeni bir sekme açın ve adres çubuğuna yapıştırın:",
+  "browserSetup.firefox.step2": "Bölüm \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → yukarıdaki adresi yapıştırın.",
+  "browserSetup.other.step1": "Tarayıcı ayarlarında şunu bulun: \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "\"Custom\" modunu seçin ve yukarıdaki adresi yapıştırın.",
+  "browserSetup.verify": "Kontrol: herhangi bir siteyi açın - aşağıdaki günlükte bir <code>ALLOWED</code> satırı görünmelidir. Tarayıcının gerçekten bu hizmet üzerinden çözümlediği ayrıca doğrulanır: bir alan adını engelleyip açın, <code>ERR_ADDRESS_INVALID</code> almalısınız (<code>ERR_NAME_NOT_RESOLVED</code> değil); tam prosedür README \"Перевірка: браузер → локальний DoH\" içindedir.",
+  "browserSetup.copied": "Kopyalandı.",
+  "browserSetup.copyManuallyTemplate": "Elle kopyalayın: {text}",
+  "advanced.summaryLabel": "Gelişmiş ayarlar",
+  "advanced.summaryHint": "deneyimli kullanıcılar için",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

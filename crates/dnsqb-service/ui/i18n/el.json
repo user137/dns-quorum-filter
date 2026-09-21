@@ -170,6 +170,23 @@
     "one": "{n} ενεργοποιημένος έλεγχος",
     "other": "{n} ενεργοποιημένοι έλεγχοι"
   },
+  "browserSetup.heading": "Σύνδεση του προγράμματος περιήγησης",
+  "browserSetup.intro": "Εισαγάγετε αυτή τη διεύθυνση ως «προσαρμοσμένο πάροχο DNS» στις ρυθμίσεις του προγράμματος περιήγησης:",
+  "browserSetup.dohUrlAriaLabel": "Διεύθυνση τοπικού DoH",
+  "browserSetup.copyButton": "Αντιγραφή",
+  "browserSetup.showSteps": "Εμφάνιση οδηγιών βήμα προς βήμα",
+  "browserSetup.hideSteps": "Απόκρυψη οδηγιών",
+  "browserSetup.chromium.step1": "Ανοίξτε νέα καρτέλα και επικολλήστε στη γραμμή διευθύνσεων (οι σύνδεσμοι σε σελίδες <code>chrome://</code> από ιστοσελίδα δεν λειτουργούν - μόνο χειροκίνητα):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → επικολλήστε τη διεύθυνση από πάνω.",
+  "browserSetup.firefox.step1": "Ανοίξτε νέα καρτέλα και επικολλήστε στη γραμμή διευθύνσεων:",
+  "browserSetup.firefox.step2": "Ενότητα \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → επικολλήστε τη διεύθυνση από πάνω.",
+  "browserSetup.other.step1": "Στις ρυθμίσεις του προγράμματος περιήγησης βρείτε \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Επιλέξτε τη λειτουργία \"Custom\" και επικολλήστε τη διεύθυνση από πάνω.",
+  "browserSetup.verify": "Έλεγχος: ανοίξτε οποιονδήποτε ιστότοπο - στο αρχείο καταγραφής παρακάτω πρέπει να εμφανιστεί γραμμή <code>ALLOWED</code>. Ότι το πρόγραμμα περιήγησης πράγματι επιλύει μέσω αυτής της υπηρεσίας ελέγχεται ξεχωριστά: αποκλείστε έναν τομέα και ανοίξτε τον, θα πρέπει να δείτε <code>ERR_ADDRESS_INVALID</code> (όχι <code>ERR_NAME_NOT_RESOLVED</code>); η πλήρης διαδικασία υπάρχει στο README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Αντιγράφηκε.",
+  "browserSetup.copyManuallyTemplate": "Αντιγράψτε χειροκίνητα: {text}",
+  "advanced.summaryLabel": "Προηγμένες ρυθμίσεις",
+  "advanced.summaryHint": "για έμπειρους χρήστες",
   "zoneDomainCount": {
     "one": "{n} τομέας",
     "other": "{n} τομείς"

@@ -170,6 +170,23 @@
     "one": "{n} ingeschakelde controle",
     "other": "{n} ingeschakelde controles"
   },
+  "browserSetup.heading": "Browser verbinden",
+  "browserSetup.intro": "Voer dit adres in als „aangepaste DNS-provider“ in de browserinstellingen:",
+  "browserSetup.dohUrlAriaLabel": "Lokaal DoH-adres",
+  "browserSetup.copyButton": "Kopiëren",
+  "browserSetup.showSteps": "Stapsgewijze instructies tonen",
+  "browserSetup.hideSteps": "Instructies verbergen",
+  "browserSetup.chromium.step1": "Open een nieuw tabblad en plak in de adresbalk (links naar <code>chrome://</code>-pagina's vanaf een webpagina werken niet - alleen handmatig):",
+  "browserSetup.chromium.step2": "\"Use secure DNS\" → \"Custom\" → plak het adres van hierboven.",
+  "browserSetup.firefox.step1": "Open een nieuw tabblad en plak in de adresbalk:",
+  "browserSetup.firefox.step2": "Sectie \"DNS over HTTPS\" → \"Max Protection\" → \"Choose provider\" → \"Custom\" → plak het adres van hierboven.",
+  "browserSetup.other.step1": "Zoek in de browserinstellingen naar \"DNS over HTTPS\" / \"Secure DNS\" / \"Custom DNS provider\".",
+  "browserSetup.other.step2": "Kies de modus \"Custom\" en plak het adres van hierboven.",
+  "browserSetup.verify": "Controle: open een willekeurige site - in het logboek hieronder moet een regel <code>ALLOWED</code> verschijnen. Dat de browser echt via deze service oplost, wordt apart gecontroleerd: blokkeer een domein en open het, u zou <code>ERR_ADDRESS_INVALID</code> moeten krijgen (niet <code>ERR_NAME_NOT_RESOLVED</code>); de volledige procedure staat in README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.copied": "Gekopieerd.",
+  "browserSetup.copyManuallyTemplate": "Kopieer handmatig: {text}",
+  "advanced.summaryLabel": "Geavanceerde instellingen",
+  "advanced.summaryHint": "voor ervaren gebruikers",
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"
