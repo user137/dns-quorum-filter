@@ -3328,7 +3328,12 @@ function ratingFilterZoneLabel(code) {
   if (code === "edu") {
     return t("rating.zone.edu");
   }
-  if (code.startsWith("gov-")) {
+  // Intl.DisplayNames.of() throws RangeError on anything but a well-formed
+  // region code, and a hand-edited/stale resolver_config.toml can still carry
+  // one (see displayCodes()) - an unguarded call here would take down the
+  // whole card instead of falling back to the bare code like the map it
+  // replaced did.
+  if (/^gov-[a-z]{2}$/.test(code)) {
     return t("rating.zone.governmentTemplate", {
       country: regionLabel(code.slice("gov-".length)),
     });
