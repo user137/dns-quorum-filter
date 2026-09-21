@@ -1393,6 +1393,26 @@ mod tests {
         out
     }
 
+    /// Tag names (with a leading `/` for closers) of every `<...>` in `text`, in
+    /// order and NOT deduplicated - three `<code>` pairs must stay three pairs.
+    fn html_tags(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(open) = rest.find('<') {
+            let after = &rest[open + 1..];
+            let Some(close) = after.find('>') else {
+                break;
+            };
+            let name = after[..close]
+                .split(|c: char| c.is_whitespace())
+                .next()
+                .unwrap_or("");
+            out.push(name.to_ascii_lowercase());
+            rest = &after[close + 1..];
+        }
+        out
+    }
+
     // Батч 5.4 (advisor, closing review): t() substitutes `{name}` tokens with
     // replaceAll per supplied var, so a translation that misspells or drops a
     // token renders a literal "{message}" (or an error notice with the error
@@ -1433,6 +1453,20 @@ mod tests {
                             placeholder_tokens(got),
                             expected,
                             "{code}.{key} must carry exactly the placeholder tokens en.json does"
+                        );
+                        // Markup inside a value reaches a real HTML parser
+                        // (innerHTML / data-i18n-html): a machine translation that
+                        // wrote `<code>x<code>` (missing slash) would silently
+                        // swallow the rest of the paragraph in that one locale.
+                        assert_eq!(
+                            html_tags(got),
+                            html_tags(want),
+                            "{code}.{key} must keep en.json's exact HTML tag sequence"
+                        );
+                        assert_eq!(
+                            got.matches('<').count(),
+                            want.matches('<').count(),
+                            "{code}.{key} has a different number of `<` than en.json (unterminated tag?)"
                         );
                     }
                     (serde_json::Value::Object(_), serde_json::Value::Object(forms)) => {
