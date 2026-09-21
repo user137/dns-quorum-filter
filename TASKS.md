@@ -1394,9 +1394,9 @@ Misuse-Fool / Error) + Concurrency де async/networked/stateful.
    `SU`→"Russia"). Деталі, advisor-catch'і (арм-скидання на будь-яку зміну picked, лоуеркейс
    typed-коду, подвійний refetch, CSS dual-class замість дублювання) — TASKS-DONE.md.
 4. **Батч 5.4** — решта сайту (T-151, той самий механізм з 5.2) — мультикомітний, один розділ
-   `main.js` = один комміт. **Коміти 1-10/~14 (`#app-body`+hero, `#timeout-config-body`,
+   `main.js` = один комміт. **Коміти 1-11/~14 (`#app-body`+hero, `#timeout-config-body`,
    `#overrides-body`, `#cache-config-body`, `#cctld-block-body`, `#geoip-body`+`#geoip-maxmind-
-   body`, `#log-body`, `#providers-body`, `#filter-controls-body`, browser-setup) зроблено 2026-09-20** — деталі, advisor-catch'і, живі
+   body`, `#log-body`, `#providers-body`, `#filter-controls-body`, browser-setup, `#danger-zone-body`) зроблено 2026-09-20** — деталі, advisor-catch'і, живі
    баги у `renderError()` і `refreshMaxmind()`'s подвійному-фетчу, усунуте дублювання
    `DECISION_LABELS` ↔ inline-опції, спільні `common.*`-ключі — TASKS-DONE.md. Решта коммітів:
    filter-controls, browser-setup, danger-zone, rating-filter, blocklist-bundles, footer.
@@ -1421,7 +1421,7 @@ static-vs-dynamic HTML, плюрал-ключі) узгоджено в plan-mode
 `plans/`-файл розмови як єдине джерело** — нарис кожного коміту одразу переноситься в
 TASKS-DONE.md (не відкладається до завершення всього батчу).
 
-- [ ] T-151 — Інтернаціоналізація UI: рядки веб-UI (`/admin/ui`) та `dnsqb-tray` (меню/tooltip) винесені у файли перекладу замість хардкоду в `admin_ui.rs`/`main.js`/Rust-рядках трея, підтримка щонайменше української й англійської, вибір мови — автовизначення з ОС + ручний перемикач в UI; SPEC.md/UI-SPEC.md наразі не називають жодної мовної вимоги — новий, не раніше зафіксований скоуп. **Батч 5.2 (i18n-інфраструктура + pilot-переклад FIELD_HELP/HERO_PRESENTATION) зроблено 2026-09-19; T-236 (той самий день) розширив мовний `<select>` з uk+en до 37 локалей для того самого pilot-набору ключів** — решта сайту (Батч 5.4, коміти 1-10/~14 зроблено 2026-09-20), трей (Батч 5.5), `nudge_popup`
+- [ ] T-151 — Інтернаціоналізація UI: рядки веб-UI (`/admin/ui`) та `dnsqb-tray` (меню/tooltip) винесені у файли перекладу замість хардкоду в `admin_ui.rs`/`main.js`/Rust-рядках трея, підтримка щонайменше української й англійської, вибір мови — автовизначення з ОС + ручний перемикач в UI; SPEC.md/UI-SPEC.md наразі не називають жодної мовної вимоги — новий, не раніше зафіксований скоуп. **Батч 5.2 (i18n-інфраструктура + pilot-переклад FIELD_HELP/HERO_PRESENTATION) зроблено 2026-09-19; T-236 (той самий день) розширив мовний `<select>` з uk+en до 37 локалей для того самого pilot-набору ключів** — решта сайту (Батч 5.4, коміти 1-11/~14 зроблено 2026-09-20), трей (Батч 5.5), `nudge_popup`
   (Батч 5.7) ще попереду
 - [ ] T-235 — **CLI `--help` для трьох бінарників, заведено 2026-09-18 (запит користувача,
   приєднано до Фази 5 разом з i18n).** Підтверджено grep'ом по всіх трьох `main.rs` +

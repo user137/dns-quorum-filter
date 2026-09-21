@@ -241,8 +241,8 @@
            (no fetch/render cycle - there is no persisted state to show, only a
            button and its one-shot result). -->
       <div id="danger-zone-body" class="card danger-zone">
-        <h3>Повне видалення</h3>
-        <p class="notice warn">
+        <h3 data-i18n="danger.heading">Повне видалення</h3>
+        <p class="notice warn" data-i18n-html="danger.warning">
           Видаляє локальний довірений сертифікат dns-quorum-filter і всі збережені ключі/креденшели
           (TLS-ключ, ключ шифрування журналу й кешу, креденшели MaxMind, якщо є) зі сховища
           облікових даних Windows. Це <strong>не</strong> видаляє сам застосунок і не чистить теку

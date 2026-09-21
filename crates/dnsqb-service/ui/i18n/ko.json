@@ -185,6 +185,19 @@
   "browserSetup.copyManuallyTemplate": "수동으로 복사하세요: {text}",
   "advanced.summaryLabel": "고급 설정",
   "advanced.summaryHint": "숙련된 사용자용",
+  "danger.heading": "완전 삭제",
+  "danger.warning": "Windows 자격 증명 저장소에서 dns-quorum-filter의 로컬 신뢰 인증서와 저장된 모든 키/자격 증명(TLS 키, 로그 및 캐시 암호화 키, 있는 경우 MaxMind 자격 증명)을 삭제합니다. 이는 앱 자체를 삭제하거나 앱의 데이터 폴더를 지우는 것이 <strong>아닙니다</strong> - 완전히 삭제하려면(앱 중지 + 전체 데이터 폴더 삭제 + Windows 설정) 트레이 아이콘 메뉴의 「완전 삭제」 항목을 사용하세요.",
+  "danger.uninstallButton": "완전 삭제",
+  "danger.confirmUninstallButton": "정말 모두 삭제하시겠습니까?",
+  "danger.outcome.removed": "삭제됨",
+  "danger.outcome.notPresent": "설치되어 있지 않았음",
+  "danger.outcome.failed": "삭제 실패",
+  "danger.row.cert": "인증서",
+  "danger.row.tlsKey": "TLS 키",
+  "danger.row.persistenceKey": "암호화 키",
+  "danger.row.maxmindCreds": "MaxMind 자격 증명",
+  "danger.row.personalZoneKey": "개인 영역 키",
+  "danger.rowTemplate": "{label}: {outcome}",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

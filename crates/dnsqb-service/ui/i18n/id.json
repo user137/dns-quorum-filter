@@ -185,6 +185,19 @@
   "browserSetup.copyManuallyTemplate": "Salin secara manual: {text}",
   "advanced.summaryLabel": "Pengaturan lanjutan",
   "advanced.summaryHint": "untuk pengguna berpengalaman",
+  "danger.heading": "Penghapusan penuh",
+  "danger.warning": "Menghapus sertifikat tepercaya lokal dns-quorum-filter dan semua kunci/kredensial tersimpan (kunci TLS, kunci enkripsi log dan cache, kredensial MaxMind jika ada) dari penyimpanan kredensial Windows. Ini <strong>tidak</strong> menghapus aplikasinya sendiri dan tidak membersihkan folder datanya - untuk penghapusan penuh (hentikan aplikasi + bersihkan seluruh folder data + Pengaturan Windows) gunakan item «Hapus sepenuhnya» di menu ikon baki.",
+  "danger.uninstallButton": "Hapus sepenuhnya",
+  "danger.confirmUninstallButton": "Yakin hapus semuanya?",
+  "danger.outcome.removed": "dihapus",
+  "danger.outcome.notPresent": "tidak terpasang",
+  "danger.outcome.failed": "GAGAL dihapus",
+  "danger.row.cert": "Sertifikat",
+  "danger.row.tlsKey": "Kunci TLS",
+  "danger.row.persistenceKey": "Kunci enkripsi",
+  "danger.row.maxmindCreds": "Kredensial MaxMind",
+  "danger.row.personalZoneKey": "Kunci zona pribadi",
+  "danger.rowTemplate": "{label}: {outcome}",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

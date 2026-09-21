@@ -185,6 +185,19 @@
   "browserSetup.copyManuallyTemplate": "请手动复制：{text}",
   "advanced.summaryLabel": "高级设置",
   "advanced.summaryHint": "面向有经验的用户",
+  "danger.heading": "完全删除",
+  "danger.warning": "从 Windows 凭据存储中删除 dns-quorum-filter 的本地受信任证书以及所有已保存的密钥/凭据(TLS 密钥、日志和缓存的加密密钥、MaxMind 凭据(如有))。这<strong>不会</strong>删除应用本身，也不会清理其数据文件夹 - 要完全删除(停止应用 + 清空整个数据文件夹 + Windows 设置)，请使用托盘图标菜单中的“完全删除”项。",
+  "danger.uninstallButton": "完全删除",
+  "danger.confirmUninstallButton": "确定要删除所有内容吗？",
+  "danger.outcome.removed": "已删除",
+  "danger.outcome.notPresent": "未安装",
+  "danger.outcome.failed": "删除失败",
+  "danger.row.cert": "证书",
+  "danger.row.tlsKey": "TLS 密钥",
+  "danger.row.persistenceKey": "加密密钥",
+  "danger.row.maxmindCreds": "MaxMind 凭据",
+  "danger.row.personalZoneKey": "个人区域密钥",
+  "danger.rowTemplate": "{label}：{outcome}",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

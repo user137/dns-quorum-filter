@@ -185,6 +185,19 @@
   "browserSetup.copyManuallyTemplate": "手動でコピーしてください: {text}",
   "advanced.summaryLabel": "詳細設定",
   "advanced.summaryHint": "上級ユーザー向け",
+  "danger.heading": "完全に削除",
+  "danger.warning": "dns-quorum-filterのローカル信頼済み証明書と、保存されているすべてのキー/資格情報(TLSキー、ログとキャッシュの暗号化キー、ある場合はMaxMind資格情報)をWindowsの資格情報ストアから削除します。これはアプリ自体を削除するものでも、そのデータフォルダーを消去するものでも<strong>ありません</strong> — 完全に削除するには(アプリの停止 + データフォルダー全体の消去 + Windowsの設定)、トレイアイコンのメニューの「完全に削除」を使用してください。",
+  "danger.uninstallButton": "完全に削除",
+  "danger.confirmUninstallButton": "本当にすべて削除しますか?",
+  "danger.outcome.removed": "削除しました",
+  "danger.outcome.notPresent": "インストールされていませんでした",
+  "danger.outcome.failed": "削除に失敗しました",
+  "danger.row.cert": "証明書",
+  "danger.row.tlsKey": "TLSキー",
+  "danger.row.persistenceKey": "暗号化キー",
+  "danger.row.maxmindCreds": "MaxMind資格情報",
+  "danger.row.personalZoneKey": "パーソナルゾーンのキー",
+  "danger.rowTemplate": "{label}: {outcome}",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

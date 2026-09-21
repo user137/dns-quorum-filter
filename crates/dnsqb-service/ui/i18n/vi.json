@@ -185,6 +185,19 @@
   "browserSetup.copyManuallyTemplate": "Sao chép thủ công: {text}",
   "advanced.summaryLabel": "Cài đặt nâng cao",
   "advanced.summaryHint": "dành cho người dùng có kinh nghiệm",
+  "danger.heading": "Xóa hoàn toàn",
+  "danger.warning": "Xóa chứng chỉ tin cậy cục bộ của dns-quorum-filter và tất cả khóa/thông tin xác thực đã lưu (khóa TLS, khóa mã hóa nhật ký và bộ nhớ đệm, thông tin xác thực MaxMind nếu có) khỏi kho thông tin xác thực của Windows. Thao tác này <strong>không</strong> xóa chính ứng dụng và không dọn thư mục dữ liệu của nó - để xóa hoàn toàn (dừng ứng dụng + dọn toàn bộ thư mục dữ liệu + Cài đặt Windows) hãy dùng mục «Xóa hoàn toàn» trong menu biểu tượng khay hệ thống.",
+  "danger.uninstallButton": "Xóa hoàn toàn",
+  "danger.confirmUninstallButton": "Bạn có chắc muốn xóa mọi thứ?",
+  "danger.outcome.removed": "đã xóa",
+  "danger.outcome.notPresent": "chưa được cài đặt",
+  "danger.outcome.failed": "XÓA THẤT BẠI",
+  "danger.row.cert": "Chứng chỉ",
+  "danger.row.tlsKey": "Khóa TLS",
+  "danger.row.persistenceKey": "Khóa mã hóa",
+  "danger.row.maxmindCreds": "Thông tin xác thực MaxMind",
+  "danger.row.personalZoneKey": "Khóa vùng cá nhân",
+  "danger.rowTemplate": "{label}: {outcome}",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

@@ -185,6 +185,19 @@
   "browserSetup.copyManuallyTemplate": "คัดลอกด้วยตนเอง: {text}",
   "advanced.summaryLabel": "การตั้งค่าขั้นสูง",
   "advanced.summaryHint": "สำหรับผู้ใช้ที่มีประสบการณ์",
+  "danger.heading": "ลบทั้งหมด",
+  "danger.warning": "ลบใบรับรองที่เชื่อถือได้ในเครื่องของ dns-quorum-filter และคีย์/ข้อมูลรับรองที่บันทึกไว้ทั้งหมด (คีย์ TLS คีย์เข้ารหัสบันทึกและแคช ข้อมูลรับรอง MaxMind หากมี) ออกจากที่เก็บข้อมูลรับรองของ Windows การทำเช่นนี้<strong>ไม่</strong>ลบตัวแอปเองและไม่ล้างโฟลเดอร์ข้อมูลของแอป - หากต้องการลบทั้งหมด (หยุดแอป + ล้างโฟลเดอร์ข้อมูลทั้งหมด + การตั้งค่า Windows) ให้ใช้รายการ «ลบทั้งหมด» ในเมนูไอคอนถาดระบบ",
+  "danger.uninstallButton": "ลบทั้งหมด",
+  "danger.confirmUninstallButton": "แน่ใจหรือไม่ว่าจะลบทุกอย่าง?",
+  "danger.outcome.removed": "ลบแล้ว",
+  "danger.outcome.notPresent": "ไม่ได้ติดตั้งไว้",
+  "danger.outcome.failed": "ลบไม่สำเร็จ",
+  "danger.row.cert": "ใบรับรอง",
+  "danger.row.tlsKey": "คีย์ TLS",
+  "danger.row.persistenceKey": "คีย์เข้ารหัส",
+  "danger.row.maxmindCreds": "ข้อมูลรับรอง MaxMind",
+  "danger.row.personalZoneKey": "คีย์โซนส่วนบุคคล",
+  "danger.rowTemplate": "{label}: {outcome}",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

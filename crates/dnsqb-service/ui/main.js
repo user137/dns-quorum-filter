@@ -222,6 +222,7 @@ function applyStaticTranslations() {
     el.setAttribute(attr, t(key));
   });
   syncBrowserSetupToggleLabel();
+  syncUninstallButtonLabel();
 }
 
 async function setLocale(requested) {
@@ -3183,11 +3184,18 @@ initBrowserSetup();
 // three Credential Manager secrets), so it gets the same in-page pattern,
 // not a native window.confirm() this page has no other precedent for.
 
-const OUTCOME_LABELS = {
-  REMOVED: "видалено",
-  NOT_PRESENT: "не було встановлено",
-  FAILED: "НЕ ВДАЛОСЯ видалити",
-};
+function outcomeLabel(outcome) {
+  switch (outcome) {
+    case "REMOVED":
+      return t("danger.outcome.removed");
+    case "NOT_PRESENT":
+      return t("danger.outcome.notPresent");
+    case "FAILED":
+      return t("danger.outcome.failed");
+    default:
+      return outcome;
+  }
+}
 
 async function uninstallLocalState() {
   const response = await fetch("/admin/uninstall-local-state", {
@@ -3205,17 +3213,19 @@ function renderUninstallResult(result) {
   const box = document.getElementById("uninstall-local-state-result");
   box.textContent = "";
   const rows = [
-    ["Сертифікат", result.cert],
-    ["TLS-ключ", result.tls_key],
-    ["Ключ шифрування", result.persistence_key],
-    ["Креденшели MaxMind", result.maxmind_creds],
-    ["Ключ особистої зони", result.personal_zone_key],
+    [t("danger.row.cert"), result.cert],
+    [t("danger.row.tlsKey"), result.tls_key],
+    [t("danger.row.persistenceKey"), result.persistence_key],
+    [t("danger.row.maxmindCreds"), result.maxmind_creds],
+    [t("danger.row.personalZoneKey"), result.personal_zone_key],
   ];
   const anyFailed = rows.some(([, outcome]) => outcome === "FAILED");
   const panel = document.createElement("p");
   panel.className = anyFailed ? "notice warn" : "notice ok";
   panel.textContent = rows
-    .map(([label, outcome]) => `${label}: ${OUTCOME_LABELS[outcome] || outcome}`)
+    .map(([label, outcome]) =>
+      t("danger.rowTemplate", { label, outcome: outcomeLabel(outcome) }),
+    )
     .join(" · ");
   box.appendChild(panel);
 }
@@ -3225,20 +3235,30 @@ function renderUninstallError(err) {
   box.textContent = "";
   const panel = document.createElement("p");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   box.appendChild(panel);
 }
 
 const uninstallBtn = document.getElementById("uninstall-local-state-btn");
 let confirmingUninstall = false;
+// Not a plain data-i18n node: the label must follow confirmingUninstall, or a
+// live locale switch during the 4s confirm window would repaint the default
+// label while the next click still deletes everything.
+function syncUninstallButtonLabel() {
+  uninstallBtn.textContent = confirmingUninstall
+    ? t("danger.confirmUninstallButton")
+    : t("danger.uninstallButton");
+}
 uninstallBtn.addEventListener("click", async () => {
   if (!confirmingUninstall) {
     confirmingUninstall = true;
-    uninstallBtn.textContent = "Точно видалити все?";
+    syncUninstallButtonLabel();
     setTimeout(() => {
       if (confirmingUninstall) {
         confirmingUninstall = false;
-        uninstallBtn.textContent = "Повністю видалити";
+        syncUninstallButtonLabel();
       }
     }, 4000);
     return;
@@ -3252,7 +3272,7 @@ uninstallBtn.addEventListener("click", async () => {
     // Same live-verified fix as #log-body's clearBtn - without it a
     // successful click leaves the button permanently reading "Точно
     // видалити все?" even though the action already completed.
-    uninstallBtn.textContent = "Повністю видалити";
+    syncUninstallButtonLabel();
   }
 });
 

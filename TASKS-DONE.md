@@ -7201,3 +7201,26 @@ HTML лишено як pre-script fallback. 17 нових ключів × 37 л�
 **Перевірка:** `cargo test --workspace --lib --bins` (955, +1), `cargo clippy ... -D warnings`,
 `cargo fmt --check` — зелені. Живий Chrome-смок недоступний; `applyStaticTranslations()` як DOM-код
 у браузері не запускався.
+
+---
+
+**Батч 5.4, коміт 11 — `#danger-zone-body` (T-151), 2026-09-22.** Одинадцятий комміт. Мігрує
+`OUTCOME_LABELS` (→ `outcomeLabel()`), `renderUninstallResult()`/`renderUninstallError()`, статичні
+`<h3>` і `<p class="notice warn">` (через `data-i18n`/`data-i18n-html` — абзац несе
+`<strong>не</strong>`), кнопку "Повністю видалити". 13 нових ключів × 37 локалей. Шаблон рядка
+результату — окремий ключ `danger.rowTemplate` (`{label}: {outcome}`), бо роздільник не
+універсальний (fr — `« : »` з пробілом, zh — повноширинна `：`).
+
+**Свідомо НЕ `data-i18n` для кнопки:** стан "підтвердити" (`confirmingUninstall`) живе в JS, тож
+`syncUninstallButtonLabel()` виводить текст з нього. Простий `data-i18n` дозволив би живому
+перемиканню мови за ті 4 с підтвердження перемалювати кнопку на дефолтний label, коли наступний клік
+усе ще видаляє все — тобто UI бреше про наслідок кліку на незворотній дії. Виклик додано в
+`applyStaticTranslations()`.
+
+**Зв'язок із Батчем 5.5 (трей):** абзац-попередження посилається на пункт меню трея «Повністю
+видалити»; у перекладах вживається переклад `danger.uninstallButton` як назва цього пункту. Коли
+Батч 5.5 локалізує трей, назви мають лишитись узгодженими — звірити тоді.
+
+**Перевірка:** `cargo test --workspace --lib --bins` (955), clippy, fmt — зелені.
+`danger_zone_calls_the_uninstall_route_and_names_every_consequence` проходить без змін (український
+fallback у HTML лишено). Живий Chrome-смок недоступний.
