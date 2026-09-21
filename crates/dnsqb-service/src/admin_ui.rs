@@ -934,7 +934,7 @@ mod tests {
             "the card must post to the dedicated rating-filter route"
         );
         assert!(
-            MAIN_JS.contains("Підтвердити ввімкнення"),
+            MAIN_JS.contains("rating.confirmEnableButton"),
             "turning the bubble on must require an explicit confirm step"
         );
         assert!(
@@ -991,7 +991,7 @@ mod tests {
             "zoneMeta must special-case the gov-* blanket-suffix codes"
         );
         assert!(
-            MAIN_JS.contains("весь простір"),
+            MAIN_JS.contains("rating.zone.wholeSpace"),
             "a gov-* zone's row must say it covers a whole domain space, \
              not a misleading single-digit count"
         );

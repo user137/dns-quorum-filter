@@ -7224,3 +7224,33 @@ HTML лишено як pre-script fallback. 17 нових ключів × 37 л�
 **Перевірка:** `cargo test --workspace --lib --bins` (955), clippy, fmt — зелені.
 `danger_zone_calls_the_uninstall_route_and_names_every_consequence` проходить без змін (український
 fallback у HTML лишено). Живий Chrome-смок недоступний.
+
+---
+
+**Батч 5.4, коміт 12 — `#rating-filter-badge` + `#rating-filter-body` (T-151), 2026-09-22.**
+Дванадцятий комміт, найбільша картка файлу. Мігрує `renderRatingFilterBadge()`,
+`renderRatingFilter()` (+ вкладені `renderPicked`/`renderMenu`/`zoneMeta`), `renderRatingFilterError()`.
+25 нових ключів × 37 локалей.
+
+**`RATING_FILTER_ZONE_LABELS` (план, п.4, найбільше контентне навантаження) — замінено, а не
+перекладено.** План закладав 11 назв зон × 37 локалей. Замість цього `ratingFilterZoneLabel()` бере
+назви країн (`ua`/`us`/`de`/`pl`/`gb` і країнову частину `gov-*`) з `Intl.DisplayNames` через
+наявний `regionLabel()` — той самий механізм, який Батч 5.3 дав GeoIP/ccTLD. Словникових ключів
+лишилось три: `rating.zone.global`, `rating.zone.edu`, `rating.zone.governmentTemplate`
+(`{country} (державні)`, де країна підставляється вже локалізованою). Бонус: нова країна в
+`AVAILABLE_TOPN_LISTS` більше не потребує правки клієнтського словника (був "distribution
+contract" gap).
+
+**Спільні ключі перевикористано:** `common.cancel`, `warning.notPersisted`, `error.generic`,
+`overrides.addButton` (кнопка "Додати" рекомендованої зони), `common.removeAriaLabelTemplate` (змінна
+`{code}` тут несе вже локалізовану назву зони, не код — ім'я змінної історичне). Офлайн-повідомлення
+тричі повторювалось у функції (confirm title + два inline) → один `rating.offlineMessage`; окремий від
+`maxmind.offlineMessage`, бо суфікс різний ("завантаження списків зон" vs "перевірку ключа").
+Рекомендація зони: раніше рядок закінчувався `". "` усередині літерала; тепер шаблон без хвостового
+пробілу, а JS додає `" "` — хвостовий пробіл у JSON-значенні крихкий.
+
+**Перевірка:** `cargo test --workspace --lib --bins` (955), clippy, fmt — зелені. Два тести
+(`Підтвердити ввімкнення`, `весь простір`) переведено на перевірку ключів у `MAIN_JS`. Грепом
+підтверджено відсутність кириличних літералів (лише `—`/`×`/`✓`). Живий Chrome-смок недоступний;
+зокрема **не перевірено вживу**, що `Intl.DisplayNames` дає очікувані назви для всіх 37 локалей у
+цьому контексті (лише в контексті ccTLD/GeoIP, Батч 5.3, де це вже було перевірено на `ja`).

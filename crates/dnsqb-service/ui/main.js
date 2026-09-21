@@ -3293,23 +3293,27 @@ uninstallBtn.addEventListener("click", async () => {
 // the Ukrainian names are a client-side presentation concern - the server
 // has no basis to localise "ua" (i18n is T-151 / Фаза 5). An unknown code
 // (a future dataset the client has no label for) falls back to the code.
-const RATING_FILTER_ZONE_LABELS = {
-  ua: "Україна",
-  us: "США",
-  de: "Німеччина",
-  pl: "Польща",
-  gb: "Велика Британія",
-  global: "Глобальний топ",
-  // T-122/T-123 (Батч 4.2) — hand-curated, not CrUX popularity lists.
-  "gov-ua": "Україна (державні)",
-  "gov-us": "США (державні)",
-  "gov-pl": "Польща (державні)",
-  "gov-gb": "Велика Британія (державні)",
-  edu: "Наука/освіта",
-};
-
+// Батч 5.4: the per-country names (ua/us/de/pl/gb, and the country part of
+// gov-*) now come from Intl.DisplayNames via regionLabel() - the same
+// mechanism Батч 5.3 gave the GeoIP/ccTLD pickers - instead of an 11-entry
+// hand-translated map that would have needed 11 strings x 37 locales. Only
+// the three non-country zones need dictionary keys.
 function ratingFilterZoneLabel(code) {
-  return RATING_FILTER_ZONE_LABELS[code] || code;
+  if (code === "global") {
+    return t("rating.zone.global");
+  }
+  if (code === "edu") {
+    return t("rating.zone.edu");
+  }
+  if (code.startsWith("gov-")) {
+    return t("rating.zone.governmentTemplate", {
+      country: regionLabel(code.slice("gov-".length)),
+    });
+  }
+  if (/^[a-z]{2}$/.test(code)) {
+    return regionLabel(code);
+  }
+  return code;
 }
 
 async function setRatingFilter(enabled, lists) {
@@ -3349,9 +3353,7 @@ function renderRatingFilterBadge(rf) {
   badge.appendChild(dot);
   badge.appendChild(
     document.createTextNode(
-      rf.active
-        ? "Рейтинговий фільтр «бульбашка» активний"
-        : "Рейтинговий фільтр увімкнено — списки завантажуються",
+      rf.active ? t("rating.badge.active") : t("rating.badge.pending"),
     ),
   );
   ratingFilterBadge.appendChild(badge);
@@ -3362,7 +3364,7 @@ function renderRatingFilter(status) {
   ratingFilterBody.textContent = "";
 
   const heading = document.createElement("h3");
-  heading.textContent = "Рейтинговий фільтр «бульбашка»";
+  heading.textContent = t("rating.heading");
   ratingFilterBody.appendChild(heading);
 
   // Same silent-data-loss concern as #overrides-body / #geoip-body (T-47).
@@ -3372,8 +3374,7 @@ function renderRatingFilter(status) {
   if (status.persisted === false) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     ratingFilterBody.appendChild(notPersisted);
   }
 
@@ -3384,7 +3385,7 @@ function renderRatingFilter(status) {
   head.className = "rf-head";
   const title = document.createElement("span");
   title.className = "rf-title";
-  title.textContent = "Обмежити інтернет обраними зонами";
+  title.textContent = t("rating.title");
   head.appendChild(title);
 
   const switchLabel = document.createElement("label");
@@ -3392,7 +3393,7 @@ function renderRatingFilter(status) {
   const switchInput = document.createElement("input");
   switchInput.type = "checkbox";
   switchInput.checked = rf.enabled;
-  switchInput.setAttribute("aria-label", "Рейтинговий фільтр «бульбашка»");
+  switchInput.setAttribute("aria-label", t("rating.heading"));
   const track = document.createElement("span");
   track.className = "track";
   const thumb = document.createElement("span");
@@ -3406,16 +3407,11 @@ function renderRatingFilter(status) {
   const desc = document.createElement("p");
   desc.className = "rf-desc";
   if (rf.active) {
-    desc.textContent =
-      "Активний. Поза обраними зонами → блок, кворум не опитується.";
+    desc.textContent = t("rating.desc.active");
   } else if (rf.enabled) {
-    desc.textContent =
-      "Дозволяє резолвити лише сайти з курованих списків популярних доменів. Усе інше → блок.";
+    desc.textContent = t("rating.desc.enabled");
   } else {
-    desc.textContent =
-      "Дозволяє резолвити лише сайти з курованих списків популярних доменів. " +
-      "Усе інше → блок. Опційно, дефолт вимкнено. Оберіть зони заздалегідь — " +
-      "вони застосуються, щойно ввімкнете.";
+    desc.textContent = t("rating.desc.off");
   }
   card.appendChild(desc);
 
@@ -3424,9 +3420,7 @@ function renderRatingFilter(status) {
   if (rf.enabled && !rf.active) {
     const forkB = document.createElement("div");
     forkB.className = "notice warn";
-    forkB.textContent =
-      "Фільтр увімкнено, але жоден список ще не завантажено — фільтрація поки не діє. " +
-      "Оновиться автоматично за кілька секунд.";
+    forkB.textContent = t("rating.forkBWarning");
     card.appendChild(forkB);
   }
 
@@ -3436,9 +3430,7 @@ function renderRatingFilter(status) {
   const confirmNotice = document.createElement("div");
   confirmNotice.className = "notice warn";
   confirmNotice.hidden = true;
-  confirmNotice.textContent =
-    "Увімкнення заблокує переважну більшість інтернету — доступними лишаться " +
-    "лише сайти з обраних зон нижче. Дефолт — вимкнено.";
+  confirmNotice.textContent = t("rating.confirmNotice");
   card.appendChild(confirmNotice);
 
   const confirmRow = document.createElement("div");
@@ -3446,11 +3438,11 @@ function renderRatingFilter(status) {
   confirmRow.hidden = true;
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
-  cancelBtn.textContent = "Скасувати";
+  cancelBtn.textContent = t("common.cancel");
   const confirmBtn = document.createElement("button");
   confirmBtn.type = "button";
   confirmBtn.className = "rf-confirm";
-  confirmBtn.textContent = "Підтвердити ввімкнення";
+  confirmBtn.textContent = t("rating.confirmEnableButton");
   // T-228: enabling wakes run_topn_updater (SPEC.md §5.3 / dispatch.rs), which
   // fetches any picked zone that isn't already cached on disk - offline, that
   // fetch just fails in the background with no feedback here beyond the
@@ -3458,8 +3450,7 @@ function renderRatingFilter(status) {
   // before the request instead of leaving that silent.
   if (lastNetworkStatus === "OFFLINE") {
     confirmBtn.disabled = true;
-    confirmBtn.title =
-      "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+    confirmBtn.title = t("rating.offlineMessage");
   }
   confirmRow.appendChild(cancelBtn);
   confirmRow.appendChild(confirmBtn);
@@ -3471,7 +3462,7 @@ function renderRatingFilter(status) {
 
   const sub = document.createElement("div");
   sub.className = "rf-sub";
-  sub.textContent = "Зони доступності";
+  sub.textContent = t("rating.zonesHeading");
   card.appendChild(sub);
 
   // T-227: a suggested zone matching the machine's own system region — a
@@ -3488,15 +3479,16 @@ function renderRatingFilter(status) {
   const suggestionBtn = document.createElement("button");
   suggestionBtn.type = "button";
   suggestionBtn.className = "rf-suggestion-add";
-  suggestionBtn.textContent = "Додати";
+  suggestionBtn.textContent = t("overrides.addButton");
   suggestionNotice.appendChild(suggestionBtn);
   card.appendChild(suggestionNotice);
 
   function syncSuggestion() {
     suggestionNotice.hidden = !rf.suggested_list || picked.size > 0;
     if (!suggestionNotice.hidden) {
-      suggestionText.textContent =
-        `Рекомендовано для вашого регіону: ${ratingFilterZoneLabel(rf.suggested_list)}. `;
+      suggestionText.textContent = `${t("rating.suggestionTemplate", {
+        zone: ratingFilterZoneLabel(rf.suggested_list),
+      })} `;
     }
   }
 
@@ -3520,8 +3512,8 @@ function renderRatingFilter(status) {
   input.setAttribute("aria-expanded", "false");
   input.setAttribute("aria-controls", "rf-zone-menu");
   input.setAttribute("aria-autocomplete", "list");
-  input.setAttribute("aria-label", "Пошук зони");
-  input.placeholder = "Додати зону — країна або «глобальний топ»…";
+  input.setAttribute("aria-label", t("rating.searchAriaLabel"));
+  input.placeholder = t("rating.inputPlaceholder");
   const menu = document.createElement("ul");
   menu.className = "rf-menu";
   menu.id = "rf-zone-menu";
@@ -3537,19 +3529,19 @@ function renderRatingFilter(status) {
 
   const emptyLine = document.createElement("p");
   emptyLine.className = "rf-empty";
-  emptyLine.textContent = "Ще нічого не обрано.";
+  emptyLine.textContent = t("rating.emptyLine");
   card.appendChild(emptyLine);
 
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
   saveBtn.className = "rf-save";
-  saveBtn.textContent = "Зберегти зони";
+  saveBtn.textContent = t("rating.saveZonesButton");
   saveBtn.hidden = true;
   // T-228: same reasoning as confirmBtn above - saving a changed zone set
   // wakes the same updater for whichever picked zone isn't cached yet.
   if (lastNetworkStatus === "OFFLINE") {
     saveBtn.disabled = true;
-    saveBtn.title = "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+    saveBtn.title = t("rating.offlineMessage");
   }
   card.appendChild(saveBtn);
 
@@ -3574,11 +3566,11 @@ function renderRatingFilter(status) {
     const isBlanketGovZone = code.startsWith("gov-");
     if (Object.prototype.hasOwnProperty.call(counts, code)) {
       return isBlanketGovZone
-        ? { text: "весь простір", loading: false }
+        ? { text: t("rating.zone.wholeSpace"), loading: false }
         : { text: tPlural("zoneDomainCount", counts[code]), loading: false };
     }
     if (rf.enabled) {
-      return { text: "завантажується…", loading: true };
+      return { text: t("rating.zone.loading"), loading: true };
     }
     return { text: "—", loading: false };
   }
@@ -3618,7 +3610,7 @@ function renderRatingFilter(status) {
       removeBtn.textContent = "×";
       removeBtn.setAttribute(
         "aria-label",
-        `Прибрати: ${ratingFilterZoneLabel(code)}`,
+        t("common.removeAriaLabelTemplate", { code: ratingFilterZoneLabel(code) }),
       );
       removeBtn.addEventListener("click", () => {
         picked.delete(code);
@@ -3777,33 +3769,37 @@ function renderRatingFilter(status) {
         renderRatingFilter(await setRatingFilter(false, [...picked]));
       } catch (err) {
         switchInput.checked = true;
-        errorLine.textContent = `Не вдалося вимкнути: ${(err && err.message) || String(err)}`;
+        errorLine.textContent = t("rating.disableFailedTemplate", {
+          message: (err && err.message) || String(err),
+        });
       }
     }
   });
   cancelBtn.addEventListener("click", clearArm);
   confirmBtn.addEventListener("click", async () => {
     if (lastNetworkStatus === "OFFLINE") {
-      errorLine.textContent =
-        "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+      errorLine.textContent = t("rating.offlineMessage");
       return;
     }
     try {
       renderRatingFilter(await setRatingFilter(true, [...picked]));
     } catch (err) {
-      errorLine.textContent = `Не вдалося ввімкнути: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("rating.enableFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
   saveBtn.addEventListener("click", async () => {
     if (lastNetworkStatus === "OFFLINE") {
-      errorLine.textContent =
-        "Немає з'єднання з інтернетом - завантаження списків зон неможливе.";
+      errorLine.textContent = t("rating.offlineMessage");
       return;
     }
     try {
       renderRatingFilter(await setRatingFilter(rf.enabled, [...picked]));
     } catch (err) {
-      errorLine.textContent = `Не вдалося зберегти зони: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("rating.saveFailedTemplate", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
 
@@ -3816,11 +3812,13 @@ function renderRatingFilter(status) {
 function renderRatingFilterError(err) {
   ratingFilterBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Рейтинговий фільтр «бульбашка»";
+  heading.textContent = t("rating.heading");
   ratingFilterBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   ratingFilterBody.appendChild(panel);
 }
 
