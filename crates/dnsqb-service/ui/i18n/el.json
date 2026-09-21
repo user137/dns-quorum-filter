@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Εισαγάγετε εμφανιζόμενο όνομα.",
   "providers.addFailedTemplate": "Αποτυχία προσθήκης: {message}",
   "providers.addPresetHeading": "Προσθήκη προεπιλογής",
+  "filterControls.masterToggleLabel": "Φιλτράρισμα",
+  "filterControls.masterToggleSub": "Κύριος διακόπτης - ενεργοποιεί και απενεργοποιεί όλους τους ελέγχους",
+  "filterControls.partialSuffix": ". Μερικώς ενεργό - κάντε κλικ για ενεργοποίηση όλων",
+  "filterControls.category.security.name": "Προστασία από κακόβουλο λογισμικό",
+  "filterControls.category.security.sub": "Ιοί, phishing, ιστότοποι απάτης",
+  "filterControls.category.adsTrackers.name": "Αποκλεισμός διαφημίσεων",
+  "filterControls.category.adsTrackers.sub": "Τομείς διαφημίσεων και ιχνηλάτησης",
+  "filterControls.category.adultContent.name": "Περιεχόμενο για ενήλικες",
+  "filterControls.category.adultContent.sub": "Πορνογραφία και παρόμοιοι ιστότοποι",
+  "filterControls.noFilterActiveWarning": "Κανένα φίλτρο δεν είναι ενεργό. Ο βασικός επιλυτής εξακολουθεί να βλέπει κάθε ερώτημα - γνωρίζει κάθε τομέα που επισκέπτεστε.",
+  "filterControls.fanoutSummary": "Κάθε ερώτημα εκτός προσωρινής μνήμης {partiesClause}: {checksClause} + ο βασικός επιλυτής.",
+  "filterControls.categoryFlipFailedTemplate": "Αποτυχία αλλαγής κατηγορίας: {message}",
+  "filterControls.categoriesFailedTemplate": "Δεν εναλλάχθηκαν: {list}. Δοκιμάστε ξανά.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "βλέπει {n} μέρος",
+    "other": "βλέπουν {n} μέρη"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} ενεργοποιημένος έλεγχος",
+    "other": "{n} ενεργοποιημένοι έλεγχοι"
+  },
   "zoneDomainCount": {
     "one": "{n} τομέας",
     "other": "{n} τομείς"

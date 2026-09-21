@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Sisestage kuvatav nimi.",
   "providers.addFailedTemplate": "Lisamine ebaõnnestus: {message}",
   "providers.addPresetHeading": "Lisa eelseadistus",
+  "filterControls.masterToggleLabel": "Filtreerimine",
+  "filterControls.masterToggleSub": "Pealüliti - lülitab kõik kontrollid sisse ja välja",
+  "filterControls.partialSuffix": ". Osaliselt sees - klõpsake kõigi sisselülitamiseks",
+  "filterControls.category.security.name": "Kaitse pahavara eest",
+  "filterControls.category.security.sub": "Viirused, õngitsus, pettuslehed",
+  "filterControls.category.adsTrackers.name": "Reklaamide blokeerimine",
+  "filterControls.category.adsTrackers.sub": "Reklaami- ja jälgimisdomeenid",
+  "filterControls.category.adultContent.name": "Täiskasvanute sisu",
+  "filterControls.category.adultContent.sub": "Pornograafia ja sarnased saidid",
+  "filterControls.noFilterActiveWarning": "Ükski filter pole aktiivne. Baaslahendaja näeb siiski iga päringut - see teab iga domeeni, mida külastate.",
+  "filterControls.fanoutSummary": "Iga vahemälust väljas päring {partiesClause}: {checksClause} + baaslahendaja.",
+  "filterControls.categoryFlipFailedTemplate": "Kategooria muutmine ebaõnnestus: {message}",
+  "filterControls.categoriesFailedTemplate": "Ei õnnestunud lülitada: {list}. Proovige uuesti.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "näeb {n} osapoolt",
+    "other": "näevad {n} osapoolt"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} lubatud kontroll",
+    "other": "{n} lubatud kontrolli"
+  },
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

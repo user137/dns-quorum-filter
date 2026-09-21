@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Geben Sie einen Anzeigenamen ein.",
   "providers.addFailedTemplate": "Hinzufügen fehlgeschlagen: {message}",
   "providers.addPresetHeading": "Voreinstellung hinzufügen",
+  "filterControls.masterToggleLabel": "Filterung",
+  "filterControls.masterToggleSub": "Hauptschalter - schaltet alle Prüfungen ein und aus",
+  "filterControls.partialSuffix": ". Teilweise aktiv - klicken, um alle zu aktivieren",
+  "filterControls.category.security.name": "Schutz vor Schadsoftware",
+  "filterControls.category.security.sub": "Viren, Phishing, Betrugsseiten",
+  "filterControls.category.adsTrackers.name": "Werbeblockierung",
+  "filterControls.category.adsTrackers.sub": "Werbe- und Tracking-Domains",
+  "filterControls.category.adultContent.name": "Erwachseneninhalte",
+  "filterControls.category.adultContent.sub": "Pornografie und ähnliche Seiten",
+  "filterControls.noFilterActiveWarning": "Kein Filter ist aktiv. Der Baseline-Resolver sieht weiterhin jede Anfrage - er kennt jede Domain, die Sie besuchen.",
+  "filterControls.fanoutSummary": "Jede nicht zwischengespeicherte Anfrage {partiesClause}: {checksClause} + der Baseline-Resolver.",
+  "filterControls.categoryFlipFailedTemplate": "Kategorie konnte nicht geändert werden: {message}",
+  "filterControls.categoriesFailedTemplate": "Nicht umgeschaltet: {list}. Versuchen Sie es erneut.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "sieht {n} Partei",
+    "other": "sehen {n} Parteien"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} aktivierte Prüfung",
+    "other": "{n} aktivierte Prüfungen"
+  },
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

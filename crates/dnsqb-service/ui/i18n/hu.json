@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Adjon meg egy megjelenített nevet.",
   "providers.addFailedTemplate": "Hozzáadás sikertelen: {message}",
   "providers.addPresetHeading": "Előbeállítás hozzáadása",
+  "filterControls.masterToggleLabel": "Szűrés",
+  "filterControls.masterToggleSub": "Főkapcsoló - be- és kikapcsolja az összes ellenőrzést",
+  "filterControls.partialSuffix": ". Részben bekapcsolva - kattintson az összes bekapcsolásához",
+  "filterControls.category.security.name": "Rosszindulatú programok elleni védelem",
+  "filterControls.category.security.sub": "Vírusok, adathalászat, csalárd oldalak",
+  "filterControls.category.adsTrackers.name": "Hirdetésblokkolás",
+  "filterControls.category.adsTrackers.sub": "Hirdetési és nyomkövető domainek",
+  "filterControls.category.adultContent.name": "Felnőtt tartalom",
+  "filterControls.category.adultContent.sub": "Pornográfia és hasonló oldalak",
+  "filterControls.noFilterActiveWarning": "Egyetlen szűrő sem aktív. Az alap feloldó továbbra is minden lekérdezést lát - ismeri minden meglátogatott domaint.",
+  "filterControls.fanoutSummary": "Minden nem gyorsítótárazott lekérdezést {partiesClause}: {checksClause} + az alap feloldó.",
+  "filterControls.categoryFlipFailedTemplate": "A kategória módosítása sikertelen: {message}",
+  "filterControls.categoriesFailedTemplate": "Nem sikerült váltani: {list}. Próbálja újra.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "{n} fél lát",
+    "other": "{n} fél lát"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} bekapcsolt ellenőrzés",
+    "other": "{n} bekapcsolt ellenőrzés"
+  },
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

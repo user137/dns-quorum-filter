@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Weka jina la kuonyesha.",
   "providers.addFailedTemplate": "Kuongeza kumeshindwa: {message}",
   "providers.addPresetHeading": "Ongeza mpangilio wa awali",
+  "filterControls.masterToggleLabel": "Kuchuja",
+  "filterControls.masterToggleSub": "Swichi kuu - huwasha na kuzima ukaguzi wote",
+  "filterControls.partialSuffix": ". Imewashwa kiasi - bofya kuwasha yote",
+  "filterControls.category.security.name": "Ulinzi dhidi ya programu hasidi",
+  "filterControls.category.security.sub": "Virusi, udanganyifu wa mtandaoni, tovuti za ulaghai",
+  "filterControls.category.adsTrackers.name": "Kuzuia matangazo",
+  "filterControls.category.adsTrackers.sub": "Vikoa vya matangazo na ufuatiliaji",
+  "filterControls.category.adultContent.name": "Maudhui ya watu wazima",
+  "filterControls.category.adultContent.sub": "Ponografia na tovuti kama hizo",
+  "filterControls.noFilterActiveWarning": "Hakuna kichujio kinachofanya kazi. Kitatuzi cha msingi bado kinaona kila hoja - kinajua kila kikoa unachotembelea.",
+  "filterControls.fanoutSummary": "Kila hoja isiyo kwenye akiba {partiesClause}: {checksClause} + kitatuzi cha msingi.",
+  "filterControls.categoryFlipFailedTemplate": "Kubadilisha jamii kumeshindwa: {message}",
+  "filterControls.categoriesFailedTemplate": "Havikubadilishwa: {list}. Jaribu tena.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "inaona upande {n}",
+    "other": "wanaona pande {n}"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "ukaguzi {n} ulioamilishwa",
+    "other": "ukaguzi {n} ulioamilishwa"
+  },
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

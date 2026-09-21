@@ -149,6 +149,31 @@
   "providers.displayNameRequiredError": "Įveskite rodomą pavadinimą.",
   "providers.addFailedTemplate": "Nepavyko pridėti: {message}",
   "providers.addPresetHeading": "Pridėti išankstinį nustatymą",
+  "filterControls.masterToggleLabel": "Filtravimas",
+  "filterControls.masterToggleSub": "Pagrindinis jungiklis - įjungia ir išjungia visus patikrinimus",
+  "filterControls.partialSuffix": ". Iš dalies įjungta - spustelėkite, kad įjungtumėte visus",
+  "filterControls.category.security.name": "Apsauga nuo kenkėjiškų programų",
+  "filterControls.category.security.sub": "Virusai, sukčiavimas, apgaulingos svetainės",
+  "filterControls.category.adsTrackers.name": "Reklamų blokavimas",
+  "filterControls.category.adsTrackers.sub": "Reklamos ir sekimo domenai",
+  "filterControls.category.adultContent.name": "Suaugusiems skirtas turinys",
+  "filterControls.category.adultContent.sub": "Pornografija ir panašios svetainės",
+  "filterControls.noFilterActiveWarning": "Nė vienas filtras neaktyvus. Bazinis sprendiklis vis tiek mato kiekvieną užklausą - jis žino kiekvieną jūsų lankomą domeną.",
+  "filterControls.fanoutSummary": "Kiekviena ne talpykloje esanti užklausa {partiesClause}: {checksClause} + bazinis sprendiklis.",
+  "filterControls.categoryFlipFailedTemplate": "Nepavyko pakeisti kategorijos: {message}",
+  "filterControls.categoriesFailedTemplate": "Nepavyko perjungti: {list}. Bandykite dar kartą.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "mato {n} šalį",
+    "few": "mato {n} šalis",
+    "many": "mato {n} šalies",
+    "other": "mato {n} šalių"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} įjungtas patikrinimas",
+    "few": "{n} įjungti patikrinimai",
+    "many": "{n} įjungto patikrinimo",
+    "other": "{n} įjungtų patikrinimų"
+  },
   "zoneDomainCount": {
     "one": "{n} domenas",
     "few": "{n} domenai",

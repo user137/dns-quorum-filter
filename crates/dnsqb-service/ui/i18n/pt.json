@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "Insira um nome de exibição.",
   "providers.addFailedTemplate": "Falha ao adicionar: {message}",
   "providers.addPresetHeading": "Adicionar predefinição",
+  "filterControls.masterToggleLabel": "Filtragem",
+  "filterControls.masterToggleSub": "Interruptor principal - ativa e desativa todas as verificações",
+  "filterControls.partialSuffix": ". Parcialmente ativado - clique para ativar tudo",
+  "filterControls.category.security.name": "Proteção contra malware",
+  "filterControls.category.security.sub": "Vírus, phishing, sites fraudulentos",
+  "filterControls.category.adsTrackers.name": "Bloqueio de anúncios",
+  "filterControls.category.adsTrackers.sub": "Domínios de anúncios e rastreamento",
+  "filterControls.category.adultContent.name": "Conteúdo adulto",
+  "filterControls.category.adultContent.sub": "Pornografia e sites semelhantes",
+  "filterControls.noFilterActiveWarning": "Nenhum filtro está ativo. O resolvedor de linha de base ainda vê cada consulta - ele conhece cada domínio que você visita.",
+  "filterControls.fanoutSummary": "Cada consulta fora do cache {partiesClause}: {checksClause} + o resolvedor de linha de base.",
+  "filterControls.categoryFlipFailedTemplate": "Falha ao alterar categoria: {message}",
+  "filterControls.categoriesFailedTemplate": "Não foi possível alternar: {list}. Tente novamente.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "vê {n} parte",
+    "many": "veem {n} partes",
+    "other": "veem {n} partes"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} verificação ativada",
+    "many": "{n} verificações ativadas",
+    "other": "{n} verificações ativadas"
+  },
   "zoneDomainCount": {
     "one": "{n} domínio",
     "many": "{n} de domínios",

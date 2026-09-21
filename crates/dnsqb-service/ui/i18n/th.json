@@ -149,6 +149,25 @@
   "providers.displayNameRequiredError": "ป้อนชื่อที่แสดง",
   "providers.addFailedTemplate": "เพิ่มไม่สำเร็จ: {message}",
   "providers.addPresetHeading": "เพิ่มพรีเซ็ต",
+  "filterControls.masterToggleLabel": "การกรอง",
+  "filterControls.masterToggleSub": "สวิตช์หลัก - เปิดและปิดการตรวจสอบทั้งหมด",
+  "filterControls.partialSuffix": "เปิดใช้งานบางส่วน - คลิกเพื่อเปิดใช้งานทั้งหมด",
+  "filterControls.category.security.name": "การป้องกันมัลแวร์",
+  "filterControls.category.security.sub": "ไวรัส ฟิชชิ่ง เว็บไซต์หลอกลวง",
+  "filterControls.category.adsTrackers.name": "การบล็อกโฆษณา",
+  "filterControls.category.adsTrackers.sub": "โดเมนโฆษณาและตัวติดตาม",
+  "filterControls.category.adultContent.name": "เนื้อหาสำหรับผู้ใหญ่",
+  "filterControls.category.adultContent.sub": "สื่อลามกและเว็บไซต์ที่คล้ายกัน",
+  "filterControls.noFilterActiveWarning": "ไม่มีตัวกรองที่ทำงานอยู่ ตัวแก้ไขพื้นฐานยังคงเห็นทุกคำขอ - รู้จักทุกโดเมนที่คุณเยี่ยมชม",
+  "filterControls.fanoutSummary": "ทุกคำขอที่ไม่ได้แคช {partiesClause}: {checksClause} + ตัวแก้ไขพื้นฐาน",
+  "filterControls.categoryFlipFailedTemplate": "เปลี่ยนหมวดหมู่ไม่สำเร็จ: {message}",
+  "filterControls.categoriesFailedTemplate": "ไม่ได้สลับ: {list} ลองอีกครั้ง",
+  "filterControls.fanoutPartiesClause": {
+    "other": "{n} ฝ่ายเห็น"
+  },
+  "filterControls.fanoutChecksClause": {
+    "other": "การตรวจสอบที่เปิดใช้งาน {n} รายการ"
+  },
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

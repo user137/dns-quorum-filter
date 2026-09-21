@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "ایک ظاہری نام درج کریں۔",
   "providers.addFailedTemplate": "شامل کرنا ناکام: {message}",
   "providers.addPresetHeading": "پری سیٹ شامل کریں",
+  "filterControls.masterToggleLabel": "فلٹرنگ",
+  "filterControls.masterToggleSub": "مین سوئچ - تمام چیکس کو آن اور آف کرتا ہے",
+  "filterControls.partialSuffix": "۔ جزوی طور پر آن - سب کو آن کرنے کے لیے کلک کریں",
+  "filterControls.category.security.name": "میلویئر سے تحفظ",
+  "filterControls.category.security.sub": "وائرس، فشنگ، دھوکہ دہی والی سائٹس",
+  "filterControls.category.adsTrackers.name": "اشتہارات کی بلاکنگ",
+  "filterControls.category.adsTrackers.sub": "اشتہاری اور ٹریکنگ ڈومینز",
+  "filterControls.category.adultContent.name": "بالغوں کا مواد",
+  "filterControls.category.adultContent.sub": "فحش نگاری اور اسی طرح کی سائٹس",
+  "filterControls.noFilterActiveWarning": "کوئی فلٹر فعال نہیں ہے۔ بیس لائن ریزالور اب بھی ہر استفسار دیکھتا ہے - یہ ہر اس ڈومین کو جانتا ہے جسے آپ دیکھتے ہیں۔",
+  "filterControls.fanoutSummary": "کیش سے باہر ہر استفسار کو {partiesClause}: {checksClause} + بیس لائن ریزالور۔",
+  "filterControls.categoryFlipFailedTemplate": "زمرہ تبدیل کرنا ناکام: {message}",
+  "filterControls.categoriesFailedTemplate": "تبدیل نہیں ہوا: {list}۔ دوبارہ کوشش کریں۔",
+  "filterControls.fanoutPartiesClause": {
+    "one": "{n} فریق دیکھتا ہے",
+    "other": "{n} فریق دیکھتے ہیں"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} فعال چیک",
+    "other": "{n} فعال چیکس"
+  },
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"

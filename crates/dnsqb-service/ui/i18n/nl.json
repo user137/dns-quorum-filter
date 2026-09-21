@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Voer een weergavenaam in.",
   "providers.addFailedTemplate": "Toevoegen mislukt: {message}",
   "providers.addPresetHeading": "Voorinstelling toevoegen",
+  "filterControls.masterToggleLabel": "Filtering",
+  "filterControls.masterToggleSub": "Hoofdschakelaar - schakelt alle controles in en uit",
+  "filterControls.partialSuffix": ". Gedeeltelijk aan - klik om alles aan te zetten",
+  "filterControls.category.security.name": "Bescherming tegen malware",
+  "filterControls.category.security.sub": "Virussen, phishing, oplichtingssites",
+  "filterControls.category.adsTrackers.name": "Advertentieblokkering",
+  "filterControls.category.adsTrackers.sub": "Advertentie- en trackingdomeinen",
+  "filterControls.category.adultContent.name": "Volwassen inhoud",
+  "filterControls.category.adultContent.sub": "Pornografie en vergelijkbare sites",
+  "filterControls.noFilterActiveWarning": "Geen filter is actief. De baseline-resolver ziet nog steeds elke query - hij kent elk domein dat u bezoekt.",
+  "filterControls.fanoutSummary": "Elke niet-gecachte query {partiesClause}: {checksClause} + de baseline-resolver.",
+  "filterControls.categoryFlipFailedTemplate": "Categorie wijzigen mislukt: {message}",
+  "filterControls.categoriesFailedTemplate": "Niet omgeschakeld: {list}. Probeer het opnieuw.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "ziet {n} partij",
+    "other": "zien {n} partijen"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} ingeschakelde controle",
+    "other": "{n} ingeschakelde controles"
+  },
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

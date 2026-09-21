@@ -149,6 +149,31 @@
   "providers.displayNameRequiredError": "Vnesite prikazano ime.",
   "providers.addFailedTemplate": "Dodajanje ni uspelo: {message}",
   "providers.addPresetHeading": "Dodaj prednastavitev",
+  "filterControls.masterToggleLabel": "Filtriranje",
+  "filterControls.masterToggleSub": "Glavno stikalo - vklopi in izklopi vse preverbe",
+  "filterControls.partialSuffix": ". Delno vklopljeno - kliknite za vklop vsega",
+  "filterControls.category.security.name": "Zaščita pred zlonamerno programsko opremo",
+  "filterControls.category.security.sub": "Virusi, lažno predstavljanje, goljufive strani",
+  "filterControls.category.adsTrackers.name": "Blokiranje oglasov",
+  "filterControls.category.adsTrackers.sub": "Oglaševalske in sledilne domene",
+  "filterControls.category.adultContent.name": "Vsebina za odrasle",
+  "filterControls.category.adultContent.sub": "Pornografija in podobne strani",
+  "filterControls.noFilterActiveWarning": "Noben filter ni aktiven. Osnovni razreševalnik še vedno vidi vsako poizvedbo - pozna vsako domeno, ki jo obiščete.",
+  "filterControls.fanoutSummary": "Vsaka poizvedba zunaj predpomnilnika {partiesClause}: {checksClause} + osnovni razreševalnik.",
+  "filterControls.categoryFlipFailedTemplate": "Spreminjanje kategorije ni uspelo: {message}",
+  "filterControls.categoriesFailedTemplate": "Ni bilo preklopljeno: {list}. Poskusite znova.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "vidi {n} stran",
+    "two": "vidita {n} strani",
+    "few": "vidijo {n} strani",
+    "other": "vidi {n} strani"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} vklopljena preverba",
+    "two": "{n} vklopljeni preverbi",
+    "few": "{n} vklopljene preverbe",
+    "other": "{n} vklopljenih preverb"
+  },
   "zoneDomainCount": {
     "one": "{n} domena",
     "two": "{n} domeni",

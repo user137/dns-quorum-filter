@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Angi et visningsnavn.",
   "providers.addFailedTemplate": "Kunne ikke legge til: {message}",
   "providers.addPresetHeading": "Legg til forhåndsinnstilling",
+  "filterControls.masterToggleLabel": "Filtrering",
+  "filterControls.masterToggleSub": "Hovedbryter - slår alle kontroller av og på",
+  "filterControls.partialSuffix": ". Delvis på - klikk for å slå på alle",
+  "filterControls.category.security.name": "Beskyttelse mot skadevare",
+  "filterControls.category.security.sub": "Virus, phishing, svindelsider",
+  "filterControls.category.adsTrackers.name": "Annonseblokkering",
+  "filterControls.category.adsTrackers.sub": "Annonse- og sporingsdomener",
+  "filterControls.category.adultContent.name": "Voksent innhold",
+  "filterControls.category.adultContent.sub": "Pornografi og lignende nettsteder",
+  "filterControls.noFilterActiveWarning": "Ingen filter er aktivt. Baseline-resolveren ser fortsatt hver forespørsel - den kjenner hvert domene du besøker.",
+  "filterControls.fanoutSummary": "Hver forespørsel utenom cache {partiesClause}: {checksClause} + baseline-resolveren.",
+  "filterControls.categoryFlipFailedTemplate": "Kunne ikke endre kategori: {message}",
+  "filterControls.categoriesFailedTemplate": "Klarte ikke å bytte: {list}. Prøv igjen.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "ser {n} part",
+    "other": "ser {n} parter"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} aktivert kontroll",
+    "other": "{n} aktiverte kontroller"
+  },
   "zoneDomainCount": {
     "one": "{n} domene",
     "other": "{n} domener"

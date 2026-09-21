@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "Ievadiet attēloto nosaukumu.",
   "providers.addFailedTemplate": "Neizdevās pievienot: {message}",
   "providers.addPresetHeading": "Pievienot iepriekšiestatījumu",
+  "filterControls.masterToggleLabel": "Filtrēšana",
+  "filterControls.masterToggleSub": "Galvenais slēdzis - ieslēdz un izslēdz visas pārbaudes",
+  "filterControls.partialSuffix": ". Daļēji ieslēgts - noklikšķiniet, lai ieslēgtu visu",
+  "filterControls.category.security.name": "Aizsardzība pret ļaunprogrammatūru",
+  "filterControls.category.security.sub": "Vīrusi, pikšķerēšana, krāpnieciskas vietnes",
+  "filterControls.category.adsTrackers.name": "Reklāmu bloķēšana",
+  "filterControls.category.adsTrackers.sub": "Reklāmu un izsekošanas domēni",
+  "filterControls.category.adultContent.name": "Pieaugušajiem paredzēts saturs",
+  "filterControls.category.adultContent.sub": "Pornogrāfija un līdzīgas vietnes",
+  "filterControls.noFilterActiveWarning": "Neviens filtrs nav aktīvs. Bāzes risinātājs joprojām redz katru vaicājumu - tas zina katru jūsu apmeklēto domēnu.",
+  "filterControls.fanoutSummary": "Katru vaicājumu ārpus kešatmiņas {partiesClause}: {checksClause} + bāzes risinātājs.",
+  "filterControls.categoryFlipFailedTemplate": "Neizdevās mainīt kategoriju: {message}",
+  "filterControls.categoriesFailedTemplate": "Neizdevās pārslēgt: {list}. Mēģiniet vēlreiz.",
+  "filterControls.fanoutPartiesClause": {
+    "zero": "neredz nevienu pusi",
+    "one": "redz {n} pusi",
+    "other": "redz {n} puses"
+  },
+  "filterControls.fanoutChecksClause": {
+    "zero": "nav ieslēgtu pārbaužu",
+    "one": "{n} ieslēgta pārbaude",
+    "other": "{n} ieslēgtas pārbaudes"
+  },
   "zoneDomainCount": {
     "zero": "nav domēnu",
     "one": "{n} domēns",

@@ -149,6 +149,25 @@
   "providers.displayNameRequiredError": "Masukkan nama tampilan.",
   "providers.addFailedTemplate": "Gagal menambahkan: {message}",
   "providers.addPresetHeading": "Tambahkan preset",
+  "filterControls.masterToggleLabel": "Pemfilteran",
+  "filterControls.masterToggleSub": "Sakelar utama - menghidupkan dan mematikan semua pemeriksaan",
+  "filterControls.partialSuffix": ". Sebagian aktif - klik untuk mengaktifkan semua",
+  "filterControls.category.security.name": "Perlindungan dari malware",
+  "filterControls.category.security.sub": "Virus, phishing, situs penipuan",
+  "filterControls.category.adsTrackers.name": "Pemblokiran iklan",
+  "filterControls.category.adsTrackers.sub": "Domain iklan dan pelacak",
+  "filterControls.category.adultContent.name": "Konten dewasa",
+  "filterControls.category.adultContent.sub": "Pornografi dan situs serupa",
+  "filterControls.noFilterActiveWarning": "Tidak ada filter yang aktif. Resolver dasar tetap melihat setiap kueri - ia mengetahui setiap domain yang Anda kunjungi.",
+  "filterControls.fanoutSummary": "Setiap kueri di luar cache {partiesClause}: {checksClause} + resolver dasar.",
+  "filterControls.categoryFlipFailedTemplate": "Gagal mengubah kategori: {message}",
+  "filterControls.categoriesFailedTemplate": "Tidak beralih: {list}. Coba lagi.",
+  "filterControls.fanoutPartiesClause": {
+    "other": "melihat {n} pihak"
+  },
+  "filterControls.fanoutChecksClause": {
+    "other": "{n} pemeriksaan aktif"
+  },
   "zoneDomainCount": {
     "other": "{n} domain"
   }

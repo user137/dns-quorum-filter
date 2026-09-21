@@ -149,6 +149,31 @@
   "providers.displayNameRequiredError": "Podaj wyświetlaną nazwę.",
   "providers.addFailedTemplate": "Nie udało się dodać: {message}",
   "providers.addPresetHeading": "Dodaj ustawienie wstępne",
+  "filterControls.masterToggleLabel": "Filtrowanie",
+  "filterControls.masterToggleSub": "Główny przełącznik - włącza i wyłącza wszystkie kontrole",
+  "filterControls.partialSuffix": ". Częściowo włączone - kliknij, aby włączyć wszystko",
+  "filterControls.category.security.name": "Ochrona przed złośliwym oprogramowaniem",
+  "filterControls.category.security.sub": "Wirusy, phishing, oszukańcze strony",
+  "filterControls.category.adsTrackers.name": "Blokowanie reklam",
+  "filterControls.category.adsTrackers.sub": "Domeny reklamowe i śledzące",
+  "filterControls.category.adultContent.name": "Treści dla dorosłych",
+  "filterControls.category.adultContent.sub": "Pornografia i podobne strony",
+  "filterControls.noFilterActiveWarning": "Żaden filtr nie jest aktywny. Resolver podstawowy nadal widzi każde zapytanie - zna każdą odwiedzaną domenę.",
+  "filterControls.fanoutSummary": "Każde zapytanie spoza pamięci podręcznej {partiesClause}: {checksClause} + resolver podstawowy.",
+  "filterControls.categoryFlipFailedTemplate": "Nie udało się zmienić kategorii: {message}",
+  "filterControls.categoriesFailedTemplate": "Nie przełączono: {list}. Spróbuj ponownie.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "widzi {n} stronę",
+    "few": "widzi {n} strony",
+    "many": "widzi {n} stron",
+    "other": "widzi {n} strony"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} włączona kontrola",
+    "few": "{n} włączone kontrole",
+    "many": "{n} włączonych kontroli",
+    "other": "{n} włączonej kontroli"
+  },
   "zoneDomainCount": {
     "one": "{n} domena",
     "few": "{n} domeny",

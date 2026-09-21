@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "Unesite prikazano ime.",
   "providers.addFailedTemplate": "Dodavanje nije uspelo: {message}",
   "providers.addPresetHeading": "Dodaj podrazumevano podešavanje",
+  "filterControls.masterToggleLabel": "Filtriranje",
+  "filterControls.masterToggleSub": "Glavni prekidač - uključuje i isključuje sve provere",
+  "filterControls.partialSuffix": ". Delimično uključeno - kliknite da uključite sve",
+  "filterControls.category.security.name": "Zaštita od zlonamernog softvera",
+  "filterControls.category.security.sub": "Virusi, fišing, prevarantski sajtovi",
+  "filterControls.category.adsTrackers.name": "Blokiranje reklama",
+  "filterControls.category.adsTrackers.sub": "Reklamni i prateći domeni",
+  "filterControls.category.adultContent.name": "Sadržaj za odrasle",
+  "filterControls.category.adultContent.sub": "Pornografija i slični sajtovi",
+  "filterControls.noFilterActiveWarning": "Nijedan filter nije aktivan. Osnovni razrešavač i dalje vidi svaki upit - zna svaki domen koji posetite.",
+  "filterControls.fanoutSummary": "Svaki nekeširani upit {partiesClause}: {checksClause} + osnovni razrešavač.",
+  "filterControls.categoryFlipFailedTemplate": "Promena kategorije nije uspela: {message}",
+  "filterControls.categoriesFailedTemplate": "Nije prebačeno: {list}. Pokušajte ponovo.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "vidi {n} stranu",
+    "few": "vidi {n} strane",
+    "other": "vidi {n} strana"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} uključena provera",
+    "few": "{n} uključene provere",
+    "other": "{n} uključenih provera"
+  },
   "zoneDomainCount": {
     "one": "{n} domen",
     "few": "{n} domena",

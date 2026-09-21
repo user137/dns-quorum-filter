@@ -149,6 +149,25 @@
   "providers.displayNameRequiredError": "Nhập tên hiển thị.",
   "providers.addFailedTemplate": "Thêm thất bại: {message}",
   "providers.addPresetHeading": "Thêm cấu hình sẵn",
+  "filterControls.masterToggleLabel": "Lọc",
+  "filterControls.masterToggleSub": "Công tắc chính - bật và tắt tất cả các kiểm tra",
+  "filterControls.partialSuffix": ". Bật một phần - nhấp để bật tất cả",
+  "filterControls.category.security.name": "Bảo vệ khỏi phần mềm độc hại",
+  "filterControls.category.security.sub": "Virus, lừa đảo, trang web lừa đảo",
+  "filterControls.category.adsTrackers.name": "Chặn quảng cáo",
+  "filterControls.category.adsTrackers.sub": "Miền quảng cáo và theo dõi",
+  "filterControls.category.adultContent.name": "Nội dung người lớn",
+  "filterControls.category.adultContent.sub": "Nội dung khiêu dâm và các trang tương tự",
+  "filterControls.noFilterActiveWarning": "Không có bộ lọc nào đang hoạt động. Bộ phân giải cơ sở vẫn thấy mọi truy vấn - nó biết mọi miền bạn truy cập.",
+  "filterControls.fanoutSummary": "Mọi truy vấn ngoài bộ nhớ đệm {partiesClause}: {checksClause} + bộ phân giải cơ sở.",
+  "filterControls.categoryFlipFailedTemplate": "Thay đổi danh mục thất bại: {message}",
+  "filterControls.categoriesFailedTemplate": "Không chuyển đổi được: {list}. Thử lại.",
+  "filterControls.fanoutPartiesClause": {
+    "other": "{n} bên nhìn thấy"
+  },
+  "filterControls.fanoutChecksClause": {
+    "other": "{n} kiểm tra đã bật"
+  },
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

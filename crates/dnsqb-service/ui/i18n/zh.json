@@ -149,6 +149,25 @@
   "providers.displayNameRequiredError": "请输入显示名称。",
   "providers.addFailedTemplate": "添加失败：{message}",
   "providers.addPresetHeading": "添加预设",
+  "filterControls.masterToggleLabel": "过滤",
+  "filterControls.masterToggleSub": "主开关 - 打开和关闭所有检查",
+  "filterControls.partialSuffix": "。部分开启 - 点击全部开启",
+  "filterControls.category.security.name": "恶意软件防护",
+  "filterControls.category.security.sub": "病毒、网络钓鱼、诈骗网站",
+  "filterControls.category.adsTrackers.name": "广告拦截",
+  "filterControls.category.adsTrackers.sub": "广告和跟踪域名",
+  "filterControls.category.adultContent.name": "成人内容",
+  "filterControls.category.adultContent.sub": "色情内容及类似网站",
+  "filterControls.noFilterActiveWarning": "没有过滤器处于活动状态。基线解析器仍然可以看到每个查询 - 它知道您访问的每个域名。",
+  "filterControls.fanoutSummary": "每个非缓存查询 {partiesClause}：{checksClause} + 基线解析器。",
+  "filterControls.categoryFlipFailedTemplate": "更改类别失败：{message}",
+  "filterControls.categoriesFailedTemplate": "未能切换：{list}。请重试。",
+  "filterControls.fanoutPartiesClause": {
+    "other": "{n} 方看到"
+  },
+  "filterControls.fanoutChecksClause": {
+    "other": "{n} 项已启用检查"
+  },
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

@@ -149,6 +149,31 @@
   "providers.displayNameRequiredError": "Вкажіть показову назву.",
   "providers.addFailedTemplate": "Не вдалося додати: {message}",
   "providers.addPresetHeading": "Додати пресет",
+  "filterControls.masterToggleLabel": "Фільтрація",
+  "filterControls.masterToggleSub": "Головний вимикач — вмикає й вимикає всі перевірки",
+  "filterControls.partialSuffix": ". Увімкнено частково — натисніть, щоб увімкнути всі",
+  "filterControls.category.security.name": "Захист від шкідливого",
+  "filterControls.category.security.sub": "Віруси, фішинг, шахрайські сайти",
+  "filterControls.category.adsTrackers.name": "Блокування реклами",
+  "filterControls.category.adsTrackers.sub": "Рекламні й стежні домени",
+  "filterControls.category.adultContent.name": "Дорослий вміст",
+  "filterControls.category.adultContent.sub": "Порнографія та подібні сайти",
+  "filterControls.noFilterActiveWarning": "Жоден фільтр не активний. Запити все одно бачить резервний резолвер — він знає кожен домен, який ви відвідуєте.",
+  "filterControls.fanoutSummary": "Кожен запит поза кешем {partiesClause}: {checksClause} + резервний резолвер.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "бачить {n} сторону",
+    "few": "бачать {n} сторони",
+    "many": "бачать {n} сторін",
+    "other": "бачать {n} сторін"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} увімкнена перевірка",
+    "few": "{n} увімкнені перевірки",
+    "many": "{n} увімкнених перевірок",
+    "other": "{n} увімкнених перевірок"
+  },
+  "filterControls.categoryFlipFailedTemplate": "Не вдалося змінити категорію: {message}",
+  "filterControls.categoriesFailedTemplate": "Не перемкнулись: {list}. Спробуйте ще раз.",
   "zoneDomainCount": {
     "one": "{n} домен",
     "few": "{n} домени",

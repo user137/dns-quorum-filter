@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "הזינו שם תצוגה.",
   "providers.addFailedTemplate": "ההוספה נכשלה: {message}",
   "providers.addPresetHeading": "הוספת תבנית מוגדרת מראש",
+  "filterControls.masterToggleLabel": "סינון",
+  "filterControls.masterToggleSub": "מתג ראשי - מפעיל ומכבה את כל הבדיקות",
+  "filterControls.partialSuffix": ". מופעל חלקית - לחצו כדי להפעיל הכול",
+  "filterControls.category.security.name": "הגנה מפני תוכנה זדונית",
+  "filterControls.category.security.sub": "וירוסים, פישינג, אתרי הונאה",
+  "filterControls.category.adsTrackers.name": "חסימת פרסומות",
+  "filterControls.category.adsTrackers.sub": "דומיינים של פרסום ומעקב",
+  "filterControls.category.adultContent.name": "תוכן למבוגרים",
+  "filterControls.category.adultContent.sub": "פורנוגרפיה ואתרים דומים",
+  "filterControls.noFilterActiveWarning": "אין מסנן פעיל. הפותר הבסיסי עדיין רואה כל שאילתה - הוא מכיר כל דומיין שאתם מבקרים בו.",
+  "filterControls.fanoutSummary": "כל שאילתה שאינה במטמון {partiesClause}: {checksClause} + הפותר הבסיסי.",
+  "filterControls.categoryFlipFailedTemplate": "שינוי הקטגוריה נכשל: {message}",
+  "filterControls.categoriesFailedTemplate": "לא הוחלפו: {list}. נסו שוב.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "רואה צד אחד",
+    "two": "רואה שני צדדים",
+    "other": "רואים {n} צדדים"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "בדיקה אחת מופעלת",
+    "two": "שתי בדיקות מופעלות",
+    "other": "{n} בדיקות מופעלות"
+  },
   "zoneDomainCount": {
     "one": "דומיין אחד",
     "two": "שני דומיינים",

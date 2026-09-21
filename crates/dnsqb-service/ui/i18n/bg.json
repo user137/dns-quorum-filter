@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Въведете показвано име.",
   "providers.addFailedTemplate": "Неуспешно добавяне: {message}",
   "providers.addPresetHeading": "Добавяне на пресет",
+  "filterControls.masterToggleLabel": "Филтриране",
+  "filterControls.masterToggleSub": "Главен превключвател - включва и изключва всички проверки",
+  "filterControls.partialSuffix": ". Частично включено - натиснете, за да включите всичко",
+  "filterControls.category.security.name": "Защита от зловреден софтуер",
+  "filterControls.category.security.sub": "Вируси, фишинг, измамни сайтове",
+  "filterControls.category.adsTrackers.name": "Блокиране на реклами",
+  "filterControls.category.adsTrackers.sub": "Рекламни и проследяващи домейни",
+  "filterControls.category.adultContent.name": "Съдържание за възрастни",
+  "filterControls.category.adultContent.sub": "Порнография и подобни сайтове",
+  "filterControls.noFilterActiveWarning": "Няма активен филтър. Базовият резолвър все още вижда всяка заявка - той знае всеки домейн, който посещавате.",
+  "filterControls.fanoutSummary": "Всяка заявка извън кеша {partiesClause}: {checksClause} + базовия резолвър.",
+  "filterControls.categoryFlipFailedTemplate": "Неуспешна промяна на категорията: {message}",
+  "filterControls.categoriesFailedTemplate": "Не се превключиха: {list}. Опитайте отново.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "вижда {n} страна",
+    "other": "виждат {n} страни"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} активна проверка",
+    "other": "{n} активни проверки"
+  },
   "zoneDomainCount": {
     "one": "{n} домейн",
     "other": "{n} домейна"

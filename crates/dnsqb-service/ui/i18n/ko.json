@@ -149,6 +149,25 @@
   "providers.displayNameRequiredError": "표시 이름을 입력하세요.",
   "providers.addFailedTemplate": "추가 실패: {message}",
   "providers.addPresetHeading": "프리셋 추가",
+  "filterControls.masterToggleLabel": "필터링",
+  "filterControls.masterToggleSub": "마스터 스위치 - 모든 검사를 켜고 끕니다",
+  "filterControls.partialSuffix": ". 부분적으로 켜짐 - 모두 켜려면 클릭하세요",
+  "filterControls.category.security.name": "악성코드 보호",
+  "filterControls.category.security.sub": "바이러스, 피싱, 사기 사이트",
+  "filterControls.category.adsTrackers.name": "광고 차단",
+  "filterControls.category.adsTrackers.sub": "광고 및 추적 도메인",
+  "filterControls.category.adultContent.name": "성인 콘텐츠",
+  "filterControls.category.adultContent.sub": "포르노 및 유사 사이트",
+  "filterControls.noFilterActiveWarning": "활성화된 필터가 없습니다. 기준 리졸버는 여전히 모든 쿼리를 봅니다 - 방문하는 모든 도메인을 알고 있습니다.",
+  "filterControls.fanoutSummary": "캐시되지 않은 모든 쿼리를 {partiesClause}: {checksClause} + 기준 리졸버.",
+  "filterControls.categoryFlipFailedTemplate": "카테고리 변경 실패: {message}",
+  "filterControls.categoriesFailedTemplate": "전환되지 않음: {list}. 다시 시도하세요.",
+  "filterControls.fanoutPartiesClause": {
+    "other": "{n}명이 봅니다"
+  },
+  "filterControls.fanoutChecksClause": {
+    "other": "활성화된 검사 {n}개"
+  },
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

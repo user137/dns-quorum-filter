@@ -149,6 +149,25 @@
   "providers.displayNameRequiredError": "表示名を入力してください。",
   "providers.addFailedTemplate": "追加に失敗しました: {message}",
   "providers.addPresetHeading": "プリセットを追加",
+  "filterControls.masterToggleLabel": "フィルタリング",
+  "filterControls.masterToggleSub": "マスタースイッチ - すべてのチェックをオン/オフ",
+  "filterControls.partialSuffix": "。一部有効 - クリックしてすべて有効にする",
+  "filterControls.category.security.name": "マルウェア対策",
+  "filterControls.category.security.sub": "ウイルス、フィッシング、詐欺サイト",
+  "filterControls.category.adsTrackers.name": "広告ブロック",
+  "filterControls.category.adsTrackers.sub": "広告およびトラッキングドメイン",
+  "filterControls.category.adultContent.name": "アダルトコンテンツ",
+  "filterControls.category.adultContent.sub": "ポルノグラフィおよび類似サイト",
+  "filterControls.noFilterActiveWarning": "有効なフィルターがありません。ベースラインリゾルバーは引き続きすべてのクエリを見ています — 訪問するすべてのドメインを把握しています。",
+  "filterControls.fanoutSummary": "キャッシュ外のすべてのクエリを{partiesClause}: {checksClause} + ベースラインリゾルバー。",
+  "filterControls.categoryFlipFailedTemplate": "カテゴリの変更に失敗しました: {message}",
+  "filterControls.categoriesFailedTemplate": "切り替えられませんでした: {list}。もう一度お試しください。",
+  "filterControls.fanoutPartiesClause": {
+    "other": "{n}者が見ています"
+  },
+  "filterControls.fanoutChecksClause": {
+    "other": "有効なチェック{n}件"
+  },
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "Indiquez un nom affiché.",
   "providers.addFailedTemplate": "Échec de l'ajout : {message}",
   "providers.addPresetHeading": "Ajouter un préréglage",
+  "filterControls.masterToggleLabel": "Filtrage",
+  "filterControls.masterToggleSub": "Interrupteur principal - active et désactive toutes les vérifications",
+  "filterControls.partialSuffix": ". Partiellement activé - cliquez pour tout activer",
+  "filterControls.category.security.name": "Protection contre les logiciels malveillants",
+  "filterControls.category.security.sub": "Virus, hameçonnage, sites frauduleux",
+  "filterControls.category.adsTrackers.name": "Blocage des publicités",
+  "filterControls.category.adsTrackers.sub": "Domaines publicitaires et de suivi",
+  "filterControls.category.adultContent.name": "Contenu pour adultes",
+  "filterControls.category.adultContent.sub": "Pornographie et sites similaires",
+  "filterControls.noFilterActiveWarning": "Aucun filtre n'est actif. Le résolveur de référence voit toujours chaque requête - il connaît chaque domaine que vous visitez.",
+  "filterControls.fanoutSummary": "Chaque requête hors cache {partiesClause} : {checksClause} + le résolveur de référence.",
+  "filterControls.categoryFlipFailedTemplate": "Échec du changement de catégorie : {message}",
+  "filterControls.categoriesFailedTemplate": "N'ont pas basculé : {list}. Réessayez.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "voit {n} partie",
+    "many": "voient {n} parties",
+    "other": "voient {n} parties"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} vérification activée",
+    "many": "{n} vérifications activées",
+    "other": "{n} vérifications activées"
+  },
   "zoneDomainCount": {
     "one": "{n} domaine",
     "many": "{n} de domaines",

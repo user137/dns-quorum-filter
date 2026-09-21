@@ -2528,20 +2528,9 @@ function providerRow(entry) {
   return li;
 }
 
-// Ukrainian count agreement: 1 / 2-4 / everything else (0, 5-20, then by the
-// last digit). Used for the fan-out privacy line, which CLAUDE.md requires
-// stay prominent and in the user's language.
-function pluralUk(n, one, few, many) {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) {
-    return one;
-  }
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
-    return few;
-  }
-  return many;
-}
+// Батч 5.4: pluralUk() (hand-rolled Ukrainian-only one/few/many logic) is
+// gone - the fan-out privacy line (renderFilterControls, below) now uses
+// tPlural()/Intl.PluralRules like the rest of the site.
 
 // Built exactly once and re-appended (not rebuilt) on every renderProviders()
 // - a toggle/add/remove elsewhere in the card must not wipe a half-typed
@@ -2766,22 +2755,12 @@ async function refreshProviders() {
 // every other card that owns its own cycle.
 // ===================================================================
 
+// name/sub resolved through t() at call time (Батч 5.4) - `key` stays the
+// wire identifier CATEGORY_STATE_FROM/flipCategory match against.
 const CATEGORY_META = [
-  {
-    key: "SECURITY",
-    name: "Захист від шкідливого",
-    sub: "Віруси, фішинг, шахрайські сайти",
-  },
-  {
-    key: "ADS_TRACKERS",
-    name: "Блокування реклами",
-    sub: "Рекламні й стежні домени",
-  },
-  {
-    key: "ADULT_CONTENT",
-    name: "Дорослий вміст",
-    sub: "Порнографія та подібні сайти",
-  },
+  { key: "SECURITY", nameKey: "filterControls.category.security.name", subKey: "filterControls.category.security.sub" },
+  { key: "ADS_TRACKERS", nameKey: "filterControls.category.adsTrackers.name", subKey: "filterControls.category.adsTrackers.sub" },
+  { key: "ADULT_CONTENT", nameKey: "filterControls.category.adultContent.name", subKey: "filterControls.category.adultContent.sub" },
 ];
 
 async function setCategoryEnabled(category, enabled) {
@@ -2884,7 +2863,9 @@ async function flipCategory(category, enabled) {
     // must be shown after it, not before (same order as flipAllCategories).
     await refreshProviders();
     showFilterControlsError(
-      `Не вдалося змінити категорію: ${(err && err.message) || String(err)}`,
+      t("filterControls.categoryFlipFailedTemplate", {
+        message: (err && err.message) || String(err),
+      }),
     );
   }
 }
@@ -2905,13 +2886,13 @@ async function flipAllCategories(enabled, targets) {
       await setCategoryEnabled(key, enabled);
     } catch (_err) {
       const meta = CATEGORY_META.find((cat) => cat.key === key);
-      failed.push(meta ? meta.name : key);
+      failed.push(meta ? t(meta.nameKey) : key);
     }
   }
   await refreshProviders();
   if (failed.length > 0) {
     showFilterControlsError(
-      `Не перемкнулись: ${failed.join(", ")}. Спробуйте ще раз.`,
+      t("filterControls.categoriesFailedTemplate", { list: failed.join(", ") }),
     );
   }
 }
@@ -2923,13 +2904,13 @@ function renderFilterControls(data) {
 
   filterControlsBody.appendChild(
     toggleRow(
-      "Фільтрація",
-      "Головний вимикач — вмикає й вимикає всі перевірки",
+      t("filterControls.masterToggleLabel"),
+      t("filterControls.masterToggleSub"),
       toggleControl(
         anyOn,
         false,
         (want) => flipAllCategories(want, data.master_switch_targets),
-        "Фільтрація",
+        t("filterControls.masterToggleLabel"),
       ),
       true,
     ),
@@ -2937,19 +2918,21 @@ function renderFilterControls(data) {
 
   CATEGORY_META.forEach((cat) => {
     const state = categoryStateFrom(data, cat.key);
+    const name = t(cat.nameKey);
+    const baseSub = t(cat.subKey);
     const sub =
       state === "partial"
-        ? `${cat.sub}. Увімкнено частково — натисніть, щоб увімкнути всі`
-        : cat.sub;
+        ? `${baseSub}${t("filterControls.partialSuffix")}`
+        : baseSub;
     filterControlsBody.appendChild(
       toggleRow(
-        cat.name,
+        name,
         sub,
         toggleControl(
           state === "on",
           state === "partial",
           (want) => flipCategory(cat.key, want),
-          cat.name,
+          name,
         ),
         false,
       ),
@@ -2962,9 +2945,7 @@ function renderFilterControls(data) {
   if (!data.filtering_active) {
     const off = document.createElement("div");
     off.className = "notice warn";
-    off.textContent =
-      "Жоден фільтр не активний. Запити все одно бачить резервний резолвер — " +
-      "він знає кожен домен, який ви відвідуєте.";
+    off.textContent = t("filterControls.noFilterActiveWarning");
     filterControlsBody.appendChild(off);
   }
 
@@ -2973,22 +2954,26 @@ function renderFilterControls(data) {
   if (!data.persisted) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     filterControlsBody.appendChild(notPersisted);
   }
 
   // SPEC.md / CLAUDE.md: the fan-out privacy tradeoff must stay user-visible,
   // not buried - so it lives in the basic view now, not the providers card.
+  // Батч 5.4: pluralUk() (hand-rolled Ukrainian-only one/few/many logic)
+  // replaced by two tPlural() calls, each producing a full "verb + count +
+  // noun" clause per its own count (mirrors the original code's own
+  // agreement-by-object-count shape, not a new one) - composed into the
+  // outer sentence via filterControls.fanoutSummary's two vars, one {n}
+  // slot per plural key (GLOSSARY.md's Батч 5.4 rule).
   const parties = data.third_party_count;
   const voterCount = parties - 1;
   const fanout = document.createElement("p");
   fanout.className = "fanout-note";
-  fanout.textContent =
-    `Кожен запит поза кешем ${pluralUk(parties, "бачить", "бачать", "бачать")} ${parties} ` +
-    `${pluralUk(parties, "сторону", "сторони", "сторін")}: ` +
-    `${voterCount} ${pluralUk(voterCount, "увімкнена перевірка", "увімкнені перевірки", "увімкнених перевірок")} ` +
-    `+ резервний резолвер.`;
+  fanout.textContent = t("filterControls.fanoutSummary", {
+    partiesClause: tPlural("filterControls.fanoutPartiesClause", parties),
+    checksClause: tPlural("filterControls.fanoutChecksClause", voterCount),
+  });
   filterControlsBody.appendChild(fanout);
 
   const errLine = document.createElement("div");

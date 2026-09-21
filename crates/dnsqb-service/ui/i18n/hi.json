@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "एक प्रदर्शन नाम दर्ज करें।",
   "providers.addFailedTemplate": "जोड़ना विफल: {message}",
   "providers.addPresetHeading": "प्रीसेट जोड़ें",
+  "filterControls.masterToggleLabel": "फ़िल्टरिंग",
+  "filterControls.masterToggleSub": "मुख्य स्विच - सभी जांचों को चालू और बंद करता है",
+  "filterControls.partialSuffix": "। आंशिक रूप से चालू - सभी चालू करने के लिए क्लिक करें",
+  "filterControls.category.security.name": "मैलवेयर से सुरक्षा",
+  "filterControls.category.security.sub": "वायरस, फ़िशिंग, धोखाधड़ी वाली साइटें",
+  "filterControls.category.adsTrackers.name": "विज्ञापन अवरोधन",
+  "filterControls.category.adsTrackers.sub": "विज्ञापन और ट्रैकिंग डोमेन",
+  "filterControls.category.adultContent.name": "वयस्क सामग्री",
+  "filterControls.category.adultContent.sub": "पोर्नोग्राफी और समान साइटें",
+  "filterControls.noFilterActiveWarning": "कोई फ़िल्टर सक्रिय नहीं है। बेसलाइन रिज़ॉल्वर अभी भी हर क्वेरी देखता है - यह हर उस डोमेन को जानता है जिसे आप देखते हैं।",
+  "filterControls.fanoutSummary": "कैश के बाहर हर क्वेरी {partiesClause}: {checksClause} + बेसलाइन रिज़ॉल्वर।",
+  "filterControls.categoryFlipFailedTemplate": "श्रेणी बदलना विफल: {message}",
+  "filterControls.categoriesFailedTemplate": "स्विच नहीं हुए: {list}। फिर से प्रयास करें।",
+  "filterControls.fanoutPartiesClause": {
+    "one": "{n} पक्ष देखता है",
+    "other": "{n} पक्ष देखते हैं"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} सक्रिय जांच",
+    "other": "{n} सक्रिय जांचें"
+  },
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

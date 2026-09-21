@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Ange ett visningsnamn.",
   "providers.addFailedTemplate": "Det gick inte att lägga till: {message}",
   "providers.addPresetHeading": "Lägg till förinställning",
+  "filterControls.masterToggleLabel": "Filtrering",
+  "filterControls.masterToggleSub": "Huvudbrytare - slår av och på alla kontroller",
+  "filterControls.partialSuffix": ". Delvis på - klicka för att slå på alla",
+  "filterControls.category.security.name": "Skydd mot skadlig programvara",
+  "filterControls.category.security.sub": "Virus, nätfiske, bedrägerisajter",
+  "filterControls.category.adsTrackers.name": "Annonsblockering",
+  "filterControls.category.adsTrackers.sub": "Annons- och spårningsdomäner",
+  "filterControls.category.adultContent.name": "Vuxeninnehåll",
+  "filterControls.category.adultContent.sub": "Pornografi och liknande webbplatser",
+  "filterControls.noFilterActiveWarning": "Inget filter är aktivt. Baslinjeupplösaren ser fortfarande varje fråga - den känner till varje domän du besöker.",
+  "filterControls.fanoutSummary": "Varje icke-cachad fråga {partiesClause}: {checksClause} + baslinjeupplösaren.",
+  "filterControls.categoryFlipFailedTemplate": "Det gick inte att ändra kategori: {message}",
+  "filterControls.categoriesFailedTemplate": "Kunde inte växla: {list}. Försök igen.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "ser {n} part",
+    "other": "ser {n} parter"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} aktiverad kontroll",
+    "other": "{n} aktiverade kontroller"
+  },
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

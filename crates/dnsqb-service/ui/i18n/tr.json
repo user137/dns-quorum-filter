@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Bir görünen ad girin.",
   "providers.addFailedTemplate": "Eklenemedi: {message}",
   "providers.addPresetHeading": "Ön ayar ekle",
+  "filterControls.masterToggleLabel": "Filtreleme",
+  "filterControls.masterToggleSub": "Ana anahtar - tüm kontrolleri açar ve kapatır",
+  "filterControls.partialSuffix": ". Kısmen açık - tümünü açmak için tıklayın",
+  "filterControls.category.security.name": "Kötü amaçlı yazılımdan koruma",
+  "filterControls.category.security.sub": "Virüsler, kimlik avı, dolandırıcılık siteleri",
+  "filterControls.category.adsTrackers.name": "Reklam engelleme",
+  "filterControls.category.adsTrackers.sub": "Reklam ve izleme alan adları",
+  "filterControls.category.adultContent.name": "Yetişkin içeriği",
+  "filterControls.category.adultContent.sub": "Pornografi ve benzeri siteler",
+  "filterControls.noFilterActiveWarning": "Hiçbir filtre etkin değil. Temel çözümleyici yine de her sorguyu görüyor - ziyaret ettiğiniz her alan adını biliyor.",
+  "filterControls.fanoutSummary": "Önbelleğe alınmamış her sorguyu {partiesClause}: {checksClause} + temel çözümleyici.",
+  "filterControls.categoryFlipFailedTemplate": "Kategori değiştirilemedi: {message}",
+  "filterControls.categoriesFailedTemplate": "Geçiş yapılamadı: {list}. Tekrar deneyin.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "{n} taraf görüyor",
+    "other": "{n} taraf görüyor"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} etkin kontrol",
+    "other": "{n} etkin kontrol"
+  },
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

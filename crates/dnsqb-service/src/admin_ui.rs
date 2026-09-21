@@ -466,8 +466,14 @@ mod tests {
         ("zh", &["other"]),
     ];
 
+    // Батч 5.4: generalized from a `zoneDomainCount`-only check (T-236) once
+    // `filterControls.fanoutPartiesClause`/`fanoutChecksClause` became the
+    // second and third plural-shaped keys - a named check would have missed
+    // them silently (tPlural() degrades an unmeasured category to `.other`,
+    // so neither Chrome nor this test would have shown a seam). Now walks
+    // every object-valued top-level key in each dict, not one hardcoded name.
     #[test]
-    fn every_locale_zone_domain_count_has_its_measured_plural_categories() {
+    fn every_locale_plural_key_has_its_measured_plural_categories() {
         assert_eq!(
             EXPECTED_PLURAL_CATEGORIES.len(),
             I18N_DICTS.len(),
@@ -482,14 +488,21 @@ mod tests {
             let Some(json) = i18n_dict(code) else {
                 panic!("{code} must be registered in I18N_DICTS");
             };
-            let Ok(dict) = serde_json::from_str::<serde_json::Value>(json) else {
-                panic!("{code}.json must be valid JSON");
+            let Ok(serde_json::Value::Object(dict)) =
+                serde_json::from_str::<serde_json::Value>(json)
+            else {
+                panic!("{code}.json must be a JSON object");
             };
-            for category in categories {
-                assert!(
-                    dict["zoneDomainCount"][*category].is_string(),
-                    "{code} zoneDomainCount must have a {category} form"
-                );
+            for (key, value) in &dict {
+                if !value.is_object() {
+                    continue;
+                }
+                for category in categories {
+                    assert!(
+                        value[*category].is_string(),
+                        "{code}.{key} must have a {category} form"
+                    );
+                }
             }
         }
     }
@@ -1216,14 +1229,26 @@ mod tests {
         );
     }
 
+    // Батч 5.4 moved the notice's own text out of main.js into the shared
+    // warning.notPersisted i18n key (uk.json/en.json + 35 more) - this now
+    // counts t()-call sites, not a raw Ukrainian substring that Батч 5.4's
+    // own migration was steadily shrinking to zero (it broke this test's
+    // original `>= 3` raw-substring assertion once enough cards migrated,
+    // exactly as anticipated when the batch was planned).
     #[test]
     fn cctld_block_surfaces_a_failed_persist() {
         assert!(
-            MAIN_JS.contains("не переживе перезапуск сервісу")
-                && MAIN_JS.matches("не переживе перезапуск сервісу").count() >= 3,
+            MAIN_JS.matches("t(\"warning.notPersisted\")").count() >= 3,
             "the persisted:false notice must exist on this card too - same \
              recurring bug class as #rating-filter-body/#geoip-body (CLAUDE.md: \
              \"a failed disk save must surface persisted: false\")"
+        );
+        let Some(en) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        assert!(
+            en.contains("will not survive a service restart"),
+            "the notice's actual text lives in en.json since Батч 5.4"
         );
     }
 

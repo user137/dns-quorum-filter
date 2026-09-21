@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "Introduzca un nombre para mostrar.",
   "providers.addFailedTemplate": "No se pudo añadir: {message}",
   "providers.addPresetHeading": "Añadir preajuste",
+  "filterControls.masterToggleLabel": "Filtrado",
+  "filterControls.masterToggleSub": "Interruptor principal - activa y desactiva todas las comprobaciones",
+  "filterControls.partialSuffix": ". Activado parcialmente - haga clic para activar todo",
+  "filterControls.category.security.name": "Protección contra malware",
+  "filterControls.category.security.sub": "Virus, phishing, sitios fraudulentos",
+  "filterControls.category.adsTrackers.name": "Bloqueo de anuncios",
+  "filterControls.category.adsTrackers.sub": "Dominios de anuncios y rastreo",
+  "filterControls.category.adultContent.name": "Contenido para adultos",
+  "filterControls.category.adultContent.sub": "Pornografía y sitios similares",
+  "filterControls.noFilterActiveWarning": "Ningún filtro está activo. El resolutor base sigue viendo cada consulta - conoce cada dominio que visita.",
+  "filterControls.fanoutSummary": "Cada consulta fuera de la caché {partiesClause}: {checksClause} + el resolutor base.",
+  "filterControls.categoryFlipFailedTemplate": "No se pudo cambiar la categoría: {message}",
+  "filterControls.categoriesFailedTemplate": "No se pudieron cambiar: {list}. Inténtelo de nuevo.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "ve {n} parte",
+    "many": "ven {n} partes",
+    "other": "ven {n} partes"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} comprobación activada",
+    "many": "{n} comprobaciones activadas",
+    "other": "{n} comprobaciones activadas"
+  },
   "zoneDomainCount": {
     "one": "{n} dominio",
     "many": "{n} de dominios",

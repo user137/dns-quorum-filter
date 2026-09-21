@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Anna näyttönimi.",
   "providers.addFailedTemplate": "Lisääminen epäonnistui: {message}",
   "providers.addPresetHeading": "Lisää esiasetus",
+  "filterControls.masterToggleLabel": "Suodatus",
+  "filterControls.masterToggleSub": "Pääkytkin - kytkee kaikki tarkistukset päälle ja pois",
+  "filterControls.partialSuffix": ". Osittain päällä - napsauta ottaaksesi kaikki käyttöön",
+  "filterControls.category.security.name": "Haittaohjelmasuojaus",
+  "filterControls.category.security.sub": "Virukset, tietojenkalastelu, huijaussivustot",
+  "filterControls.category.adsTrackers.name": "Mainosten esto",
+  "filterControls.category.adsTrackers.sub": "Mainos- ja seurantaverkkotunnukset",
+  "filterControls.category.adultContent.name": "Aikuissisältö",
+  "filterControls.category.adultContent.sub": "Pornografia ja vastaavat sivustot",
+  "filterControls.noFilterActiveWarning": "Yksikään suodatin ei ole aktiivinen. Perusratkaisija näkee silti jokaisen kyselyn - se tietää jokaisen vierailemasi verkkotunnuksen.",
+  "filterControls.fanoutSummary": "Jokainen välimuistin ohittava kysely {partiesClause}: {checksClause} + perusratkaisija.",
+  "filterControls.categoryFlipFailedTemplate": "Luokan vaihtaminen epäonnistui: {message}",
+  "filterControls.categoriesFailedTemplate": "Ei vaihdettu: {list}. Yritä uudelleen.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "näkee {n} osapuolen",
+    "other": "näkevät {n} osapuolta"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} käytössä oleva tarkistus",
+    "other": "{n} käytössä olevaa tarkistusta"
+  },
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

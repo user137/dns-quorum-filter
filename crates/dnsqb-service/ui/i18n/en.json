@@ -149,6 +149,27 @@
   "providers.displayNameRequiredError": "Enter a display name.",
   "providers.addFailedTemplate": "Failed to add: {message}",
   "providers.addPresetHeading": "Add preset",
+  "filterControls.masterToggleLabel": "Filtering",
+  "filterControls.masterToggleSub": "Master switch - turns every check on or off",
+  "filterControls.partialSuffix": ". Partially on - click to turn all on",
+  "filterControls.category.security.name": "Malware protection",
+  "filterControls.category.security.sub": "Viruses, phishing, scam sites",
+  "filterControls.category.adsTrackers.name": "Ad blocking",
+  "filterControls.category.adsTrackers.sub": "Ad and tracking domains",
+  "filterControls.category.adultContent.name": "Adult content",
+  "filterControls.category.adultContent.sub": "Pornography and similar sites",
+  "filterControls.noFilterActiveWarning": "No filter is active. The baseline resolver still sees every query - it knows every domain you visit.",
+  "filterControls.fanoutSummary": "Every non-cached query {partiesClause}: {checksClause} + the baseline resolver.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "sees {n} party",
+    "other": "see {n} parties"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} enabled check",
+    "other": "{n} enabled checks"
+  },
+  "filterControls.categoryFlipFailedTemplate": "Failed to change category: {message}",
+  "filterControls.categoriesFailedTemplate": "Didn't switch: {list}. Try again.",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

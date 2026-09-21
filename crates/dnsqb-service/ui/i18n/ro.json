@@ -149,6 +149,29 @@
   "providers.displayNameRequiredError": "Introduceți un nume afișat.",
   "providers.addFailedTemplate": "Adăugarea a eșuat: {message}",
   "providers.addPresetHeading": "Adaugă presetare",
+  "filterControls.masterToggleLabel": "Filtrare",
+  "filterControls.masterToggleSub": "Comutator principal - pornește și oprește toate verificările",
+  "filterControls.partialSuffix": ". Parțial activat - faceți clic pentru a activa tot",
+  "filterControls.category.security.name": "Protecție împotriva malware-ului",
+  "filterControls.category.security.sub": "Viruși, phishing, site-uri fraudă",
+  "filterControls.category.adsTrackers.name": "Blocarea reclamelor",
+  "filterControls.category.adsTrackers.sub": "Domenii de publicitate și urmărire",
+  "filterControls.category.adultContent.name": "Conținut pentru adulți",
+  "filterControls.category.adultContent.sub": "Pornografie și site-uri similare",
+  "filterControls.noFilterActiveWarning": "Niciun filtru nu este activ. Resolverul de bază vede în continuare fiecare interogare - cunoaște fiecare domeniu pe care îl vizitați.",
+  "filterControls.fanoutSummary": "Fiecare interogare din afara cache-ului {partiesClause}: {checksClause} + resolverul de bază.",
+  "filterControls.categoryFlipFailedTemplate": "Nu s-a putut schimba categoria: {message}",
+  "filterControls.categoriesFailedTemplate": "Nu s-au comutat: {list}. Încercați din nou.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "vede {n} parte",
+    "few": "văd {n} părți",
+    "other": "văd {n} de părți"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} verificare activată",
+    "few": "{n} verificări activate",
+    "other": "{n} de verificări activate"
+  },
   "zoneDomainCount": {
     "one": "{n} domeniu",
     "few": "{n} domenii",

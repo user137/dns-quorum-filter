@@ -149,6 +149,31 @@
   "providers.displayNameRequiredError": "Zadejte zobrazovaný název.",
   "providers.addFailedTemplate": "Nepodařilo se přidat: {message}",
   "providers.addPresetHeading": "Přidat předvolbu",
+  "filterControls.masterToggleLabel": "Filtrování",
+  "filterControls.masterToggleSub": "Hlavní vypínač - zapíná a vypíná všechny kontroly",
+  "filterControls.partialSuffix": ". Částečně zapnuto - kliknutím zapnete vše",
+  "filterControls.category.security.name": "Ochrana před malwarem",
+  "filterControls.category.security.sub": "Viry, phishing, podvodné weby",
+  "filterControls.category.adsTrackers.name": "Blokování reklam",
+  "filterControls.category.adsTrackers.sub": "Reklamní a sledovací domény",
+  "filterControls.category.adultContent.name": "Obsah pro dospělé",
+  "filterControls.category.adultContent.sub": "Pornografie a podobné weby",
+  "filterControls.noFilterActiveWarning": "Žádný filtr není aktivní. Základní resolver stále vidí každý dotaz - zná každou doménu, kterou navštívíte.",
+  "filterControls.fanoutSummary": "Každý nekešovaný dotaz {partiesClause}: {checksClause} + základní resolver.",
+  "filterControls.categoryFlipFailedTemplate": "Nepodařilo se změnit kategorii: {message}",
+  "filterControls.categoriesFailedTemplate": "Nepřepnulo se: {list}. Zkuste to znovu.",
+  "filterControls.fanoutPartiesClause": {
+    "one": "vidí {n} stranu",
+    "few": "vidí {n} strany",
+    "many": "vidí {n} strany",
+    "other": "vidí {n} stran"
+  },
+  "filterControls.fanoutChecksClause": {
+    "one": "{n} zapnutá kontrola",
+    "few": "{n} zapnuté kontroly",
+    "many": "{n} zapnuté kontroly",
+    "other": "{n} zapnutých kontrol"
+  },
   "zoneDomainCount": {
     "one": "{n} doména",
     "few": "{n} domény",
