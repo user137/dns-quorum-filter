@@ -39,6 +39,11 @@ set to the rest of `main.js` and `index.html` under the same rules, plus the add
   is translated. The README section the verify paragraph points at (`README "Перевірка: браузер →
   локальний DoH"`) is quoted verbatim in Ukrainian in every locale, including `en` - the README itself
   is Ukrainian-only.
+- **Licence/attribution links are never part of a translation** (footer, `footer.*Attribution`):
+  their `href`s and anchor texts (including DB-IP's mandated "IP Geolocation by DB-IP") are
+  constants in `main.js` (`FOOTER_LINK_VARS`) and reach the sentence through `{sapics}`/`{dbip}`/
+  `{ccby}`/... tokens - a translation may reorder or reword around a token but must keep every
+  token (`admin_ui::tests::every_locale_footer_attribution_keeps_every_required_link_token`).
 - **Brand/product names and technical scheme identifiers stay untranslated**, same principle as
   `fail_open`/`DNS`/`ccTLD` above: `Quad9`, `AdGuard`, `DB-IP Lite`, `MaxMind GeoLite2`, blocklist
   source names (HaGeZi, 1Hosts, …), and `chrome://`/`edge://`/`brave://`/`opera://` URL schemes.

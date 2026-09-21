@@ -262,6 +262,8 @@
     "one": "vor {n} T. aktualisiert",
     "other": "vor {n} T. aktualisiert"
   },
+  "footer.geoipAttribution": "GeoIP-Daten (Standardquelle): {sapics} („user-country“, erstellt aus offenen Daten der regionalen IP-Adressregister (RIR) und Routing-Archiven), Lizenz {pddl} (gemeinfrei). Die frühere Standardquelle, deren Daten bis zur ersten Datenbankaktualisierung weiter verwendet werden können: {dbip} - die Datenbank „IP to Country Lite“, Lizenz {ccby}. Im erweiterten Modus (eigener MaxMind-Schlüssel) werden von MaxMind erstellte GeoLite2-Daten verwendet, erhältlich unter {maxmind}.",
+  "footer.cruxAttribution": "Daten zur Beliebtheit von Websites (Bewertungsfilter „Blase“): {crux}, © Google, Lizenz {ccby} - normalisiert auf registrierbare Domains. Die registrierbare Domain wird mit der {psl} (Lizenz {mpl}) bestimmt.",
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

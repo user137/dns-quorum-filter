@@ -1305,6 +1305,48 @@ mod tests {
         assert!(checked > 0, "expected at least one data-i18n reference");
     }
 
+    // Батч 5.4 (footer): the licence links reach the translated sentence
+    // through `{name}` tokens. A locale that dropped one would silently lose
+    // a legally-required attribution (CC BY 4.0: DB-IP and CrUX) with no
+    // other test noticing - the Ukrainian fallback in index.html hides it
+    // until the dictionary loads.
+    #[test]
+    fn every_locale_footer_attribution_keeps_every_required_link_token() {
+        const GEOIP: &[&str] = &["{sapics}", "{pddl}", "{dbip}", "{ccby}", "{maxmind}"];
+        const CRUX: &[&str] = &["{crux}", "{ccby}", "{psl}", "{mpl}"];
+        for &(code, json) in I18N_DICTS {
+            let Ok(serde_json::Value::Object(dict)) =
+                serde_json::from_str::<serde_json::Value>(json)
+            else {
+                panic!("{code}.json must be a JSON object");
+            };
+            for (key, tokens) in [
+                ("footer.geoipAttribution", GEOIP),
+                ("footer.cruxAttribution", CRUX),
+            ] {
+                let Some(serde_json::Value::String(text)) = dict.get(key) else {
+                    panic!("{code}.json must define {key} as a string");
+                };
+                for token in tokens {
+                    assert!(
+                        text.contains(token),
+                        "{code}.{key} dropped the required link token {token}"
+                    );
+                }
+            }
+        }
+        for token in [
+            "FOOTER_LINK_VARS",
+            "https://db-ip.com",
+            "IP Geolocation by DB-IP",
+        ] {
+            assert!(
+                MAIN_JS.contains(token),
+                "main.js must own the mandated attribution link {token:?}"
+            );
+        }
+    }
+
     // TASKS.md's own reconciliation requirement: a ccTLD code set is not a
     // reprint of GeoIP's ISO 3166-1 code set.
     #[test]

@@ -267,6 +267,8 @@
     "few": "actualizat acum {n} z",
     "other": "actualizat acum {n} z"
   },
+  "footer.geoipAttribution": "Date GeoIP (sursa implicită): {sapics} («user-country», construită din datele deschise ale registrelor regionale de adrese IP (RIR) și ale arhivelor de rutare), licență {pddl} (domeniu public). Sursa implicită anterioară, ale cărei date pot continua să fie folosite până la prima actualizare a bazei: {dbip} - baza «IP to Country Lite», licență {ccby}. În modul avansat (cheia dvs. MaxMind) se folosesc datele GeoLite2 create de MaxMind, disponibile la {maxmind}.",
+  "footer.cruxAttribution": "Date despre popularitatea site-urilor (filtrul de evaluare «bulă»): {crux}, © Google, licență {ccby} - normalizate la domenii înregistrabile. Domeniul înregistrabil este determinat cu {psl} (licență {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domeniu",
     "few": "{n} domenii",

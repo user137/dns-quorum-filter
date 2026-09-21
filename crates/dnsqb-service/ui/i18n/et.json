@@ -262,6 +262,8 @@
     "one": "värskendatud {n} p tagasi",
     "other": "värskendatud {n} p tagasi"
   },
+  "footer.geoipAttribution": "GeoIP andmed (vaikeallikas): {sapics} („user-country“, koostatud piirkondlike IP-aadresside registrite (RIR) ja marsruutimisarhiivide avaandmetest), litsents {pddl} (avalik omand). Varasem vaikeallikas, mille andmeid võidakse kasutada kuni andmebaasi esimese värskenduseni: {dbip} - andmebaas „IP to Country Lite“, litsents {ccby}. Täpsemas režiimis (teie enda MaxMindi võti) kasutatakse MaxMindi loodud GeoLite2 andmeid, mis on saadaval aadressilt {maxmind}.",
+  "footer.cruxAttribution": "Saitide populaarsuse andmed (hindamisfilter „mull“): {crux}, © Google, litsents {ccby} - normaliseeritud registreeritavateks domeenideks. Registreeritav domeen määratakse {psl} abil (litsents {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

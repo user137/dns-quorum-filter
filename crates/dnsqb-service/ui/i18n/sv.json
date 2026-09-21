@@ -262,6 +262,8 @@
     "one": "uppdaterad för {n} d sedan",
     "other": "uppdaterad för {n} d sedan"
   },
+  "footer.geoipAttribution": "GeoIP-data (standardkälla): {sapics} (”user-country”, byggd på öppna data från de regionala IP-adressregistren (RIR) och routingarkiv), licens {pddl} (public domain). Den tidigare standardkällan, vars data kan fortsätta användas till den första databasuppdateringen: {dbip} - databasen ”IP to Country Lite”, licens {ccby}. I avancerat läge (egen MaxMind-nyckel) används GeoLite2-data skapad av MaxMind, tillgänglig från {maxmind}.",
+  "footer.cruxAttribution": "Data om webbplatsers popularitet (betygsfilter ”bubbla”): {crux}, © Google, licens {ccby} - normaliserad till registrerbara domäner. Den registrerbara domänen fastställs med {psl} (licens {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

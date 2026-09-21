@@ -272,6 +272,8 @@
     "many": "atnaujinta prieš {n} d.",
     "other": "atnaujinta prieš {n} d."
   },
+  "footer.geoipAttribution": "GeoIP duomenys (numatytasis šaltinis): {sapics} („user-country“, sukurta iš regioninių IP adresų registrų (RIR) ir maršrutizavimo archyvų atvirų duomenų), licencija {pddl} (viešasis turtas). Ankstesnis numatytasis šaltinis, kurio duomenys gali būti toliau naudojami iki pirmojo duomenų bazės atnaujinimo: {dbip} - duomenų bazė „IP to Country Lite“, licencija {ccby}. Išplėstiniu režimu (savo MaxMind raktas) naudojami MaxMind sukurti GeoLite2 duomenys, prieinami iš {maxmind}.",
+  "footer.cruxAttribution": "Svetainių populiarumo duomenys (reitingavimo filtras „burbulas“): {crux}, © Google, licencija {ccby} - normalizuota iki registruojamų domenų. Registruojamas domenas nustatomas naudojant {psl} (licencija {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domenas",
     "few": "{n} domenai",

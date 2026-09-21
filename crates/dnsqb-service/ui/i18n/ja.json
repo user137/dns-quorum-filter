@@ -257,6 +257,8 @@
   "blocklist.updated.days": {
     "other": "{n}日前に更新"
   },
+  "footer.geoipAttribution": "GeoIPデータ(既定のソース): {sapics}(「user-country」、地域IPアドレスレジストリ(RIR)とルーティングアーカイブのオープンデータから構築)、ライセンス {pddl}(パブリックドメイン)。以前の既定のソースで、データベースの最初の更新まで引き続き使用される場合があります: {dbip} — 「IP to Country Lite」データベース、ライセンス {ccby}。詳細モード(独自のMaxMindキー)では、MaxMindが作成したGeoLite2データを使用します。入手先: {maxmind}。",
+  "footer.cruxAttribution": "サイト人気度データ(レーティングフィルター「バブル」): {crux}、© Google、ライセンス {ccby} — 登録可能ドメインに正規化。登録可能ドメインは {psl}(ライセンス {mpl})で判定します。",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }

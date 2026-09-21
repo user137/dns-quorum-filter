@@ -267,6 +267,8 @@
     "many": "aggiornato {n} g fa",
     "other": "aggiornato {n} g fa"
   },
+  "footer.geoipAttribution": "Dati GeoIP (fonte predefinita): {sapics} («user-country», costruita da dati aperti dei registri regionali di indirizzi IP (RIR) e degli archivi di routing), licenza {pddl} (pubblico dominio). La precedente fonte predefinita, i cui dati possono restare in uso fino al primo aggiornamento del database: {dbip} - il database «IP to Country Lite», licenza {ccby}. In modalità avanzata (chiave MaxMind personale) vengono usati i dati GeoLite2 creati da MaxMind, disponibili su {maxmind}.",
+  "footer.cruxAttribution": "Dati sulla popolarità dei siti (filtro di valutazione «bolla»): {crux}, © Google, licenza {ccby} - normalizzati in domini registrabili. Il dominio registrabile è determinato con la {psl} (licenza {mpl}).",
   "zoneDomainCount": {
     "one": "{n} dominio",
     "many": "{n} di domini",

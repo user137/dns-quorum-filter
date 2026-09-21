@@ -267,6 +267,8 @@
     "many": "atualizado há {n} d",
     "other": "atualizado há {n} d"
   },
+  "footer.geoipAttribution": "Dados GeoIP (fonte padrão): {sapics} («user-country», construída a partir de dados abertos dos registros regionais de endereços IP (RIR) e arquivos de roteamento), licença {pddl} (domínio público). A fonte padrão anterior, cujos dados podem continuar em uso até a primeira atualização do banco: {dbip} - o banco «IP to Country Lite», licença {ccby}. No modo avançado (sua própria chave MaxMind) são usados dados GeoLite2 criados pela MaxMind, disponíveis em {maxmind}.",
+  "footer.cruxAttribution": "Dados de popularidade de sites (filtro de classificação «bolha»): {crux}, © Google, licença {ccby} - normalizados para domínios registráveis. O domínio registrável é determinado com a {psl} (licença {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domínio",
     "many": "{n} de domínios",

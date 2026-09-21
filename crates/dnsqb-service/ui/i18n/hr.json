@@ -267,6 +267,8 @@
     "few": "ažurirano prije {n} d",
     "other": "ažurirano prije {n} d"
   },
+  "footer.geoipAttribution": "GeoIP podaci (zadani izvor): {sapics} („user-country“, izgrađeno od otvorenih podataka regionalnih registara IP adresa (RIR) i arhiva usmjeravanja), licenca {pddl} (javno dobro). Prethodni zadani izvor, čiji se podaci mogu i dalje koristiti do prvog ažuriranja baze: {dbip} - baza „IP to Country Lite“, licenca {ccby}. U naprednom načinu (vlastiti MaxMind ključ) koriste se GeoLite2 podaci koje je izradio MaxMind, dostupni na {maxmind}.",
+  "footer.cruxAttribution": "Podaci o popularnosti stranica (filtar ocjenjivanja „mjehur“): {crux}, © Google, licenca {ccby} - normalizirano na domene koje se mogu registrirati. Domena koja se može registrirati određuje se pomoću {psl} (licenca {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domena",
     "few": "{n} domene",

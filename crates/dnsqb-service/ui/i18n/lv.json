@@ -267,6 +267,8 @@
     "one": "atjaunināts pirms {n} d",
     "other": "atjaunināts pirms {n} d"
   },
+  "footer.geoipAttribution": "GeoIP dati (noklusējuma avots): {sapics} („user-country“, veidots no reģionālo IP adrešu reģistru (RIR) un maršrutēšanas arhīvu atvērtajiem datiem), licence {pddl} (publiskais īpašums). Iepriekšējais noklusējuma avots, kura dati var tikt izmantoti līdz pirmajam datubāzes atjauninājumam: {dbip} - datubāze „IP to Country Lite“, licence {ccby}. Papildu režīmā (jūsu pašu MaxMind atslēga) tiek izmantoti MaxMind izveidotie GeoLite2 dati, pieejami no {maxmind}.",
+  "footer.cruxAttribution": "Vietņu popularitātes dati (vērtējuma filtrs „burbulis“): {crux}, © Google, licence {ccby} - normalizēti līdz reģistrējamiem domēniem. Reģistrējamo domēnu nosaka ar {psl} (licence {mpl}).",
   "zoneDomainCount": {
     "zero": "nav domēnu",
     "one": "{n} domēns",

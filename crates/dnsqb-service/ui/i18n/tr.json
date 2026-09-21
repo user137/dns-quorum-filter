@@ -262,6 +262,8 @@
     "one": "{n} gün önce güncellendi",
     "other": "{n} gün önce güncellendi"
   },
+  "footer.geoipAttribution": "GeoIP verileri (varsayılan kaynak): {sapics} («user-country», bölgesel IP adresi kayıtlarının (RIR) ve yönlendirme arşivlerinin açık verilerinden oluşturulmuştur), lisans {pddl} (kamu malı). Verileri ilk veritabanı güncellemesine kadar kullanılmaya devam edebilen önceki varsayılan kaynak: {dbip} - «IP to Country Lite» veritabanı, lisans {ccby}. Gelişmiş modda (kendi MaxMind anahtarınız) MaxMind tarafından oluşturulan GeoLite2 verileri kullanılır, {maxmind} adresinden edinilebilir.",
+  "footer.cruxAttribution": "Site popülerliği verileri (derecelendirme filtresi «balon»): {crux}, © Google, lisans {ccby} - kaydedilebilir alan adlarına normalleştirilmiştir. Kaydedilebilir alan adı {psl} ile belirlenir (lisans {mpl}).",
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

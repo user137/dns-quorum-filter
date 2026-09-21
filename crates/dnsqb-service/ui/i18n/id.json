@@ -257,6 +257,8 @@
   "blocklist.updated.days": {
     "other": "diperbarui {n} h lalu"
   },
+  "footer.geoipAttribution": "Data GeoIP (sumber default): {sapics} („user-country“, dibangun dari data terbuka registri alamat IP regional (RIR) dan arsip perutean), lisensi {pddl} (domain publik). Sumber default sebelumnya, yang datanya mungkin masih digunakan hingga pembaruan basis data pertama: {dbip} - basis data „IP to Country Lite“, lisensi {ccby}. Dalam mode lanjutan (kunci MaxMind Anda sendiri) digunakan data GeoLite2 yang dibuat oleh MaxMind, tersedia dari {maxmind}.",
+  "footer.cruxAttribution": "Data popularitas situs (filter peringkat «gelembung»): {crux}, © Google, lisensi {ccby} - dinormalisasi ke domain yang dapat didaftarkan. Domain yang dapat didaftarkan ditentukan dengan {psl} (lisensi {mpl}).",
   "zoneDomainCount": {
     "other": "{n} domain"
   }

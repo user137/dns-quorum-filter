@@ -262,6 +262,8 @@
     "one": "imesasishwa siku {n} zilizopita",
     "other": "imesasishwa siku {n} zilizopita"
   },
+  "footer.geoipAttribution": "Data ya GeoIP (chanzo chaguo-msingi): {sapics} («user-country», iliyojengwa kutoka data wazi ya rejista za kikanda za anwani za IP (RIR) na kumbukumbu za uelekezaji), leseni {pddl} (kikoa cha umma). Chanzo cha awali cha chaguo-msingi, ambacho data yake inaweza kuendelea kutumika hadi sasisho la kwanza la hifadhidata: {dbip} - hifadhidata ya «IP to Country Lite», leseni {ccby}. Katika hali ya kina (ufunguo wako wa MaxMind) data ya GeoLite2 iliyoundwa na MaxMind hutumika, inapatikana kutoka {maxmind}.",
+  "footer.cruxAttribution": "Data ya umaarufu wa tovuti (kichujio cha ukadiriaji «kiputo»): {crux}, © Google, leseni {ccby} - imeandaliwa kuwa vikoa vinavyoweza kusajiliwa. Kikoa kinachoweza kusajiliwa hubainishwa kwa {psl} (leseni {mpl}).",
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

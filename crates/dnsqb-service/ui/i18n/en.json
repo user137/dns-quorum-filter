@@ -262,6 +262,8 @@
     "one": "updated {n} d ago",
     "other": "updated {n} d ago"
   },
+  "footer.geoipAttribution": "GeoIP data (default source): {sapics} (\"user-country\", built from open data of the regional IP address registries (RIRs) and routing archives), licence {pddl} (public domain). The previous default source, whose data may still be in use until the first database refresh: {dbip} - the \"IP to Country Lite\" database, licence {ccby}. In advanced mode (your own MaxMind key) GeoLite2 data created by MaxMind is used, available from {maxmind}.",
+  "footer.cruxAttribution": "Site popularity data (rating filter \"bubble\"): {crux}, © Google, licence {ccby} - normalised to registrable domains. The registrable domain is determined with the {psl} (licence {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

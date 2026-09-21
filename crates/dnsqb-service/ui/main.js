@@ -210,12 +210,35 @@ function renderTranslatedCards() {
 // data-i18n-attr="<attr>:<key>". The Ukrainian text left in the HTML is only
 // the pre-script fallback; this overwrites it once the dictionary is ready and
 // again on every live locale switch (called from renderTranslatedCards()).
+// The footer's licence/attribution links (CC BY 4.0 for DB-IP and CrUX
+// require the link and, for DB-IP, the exact "IP Geolocation by DB-IP"
+// anchor text - see the comment above <footer id="credits"> in index.html).
+// Their hrefs and anchor texts are proper names/licence identifiers, not
+// prose, so they live here as constants and reach the translated sentence
+// through `{name}` tokens - a translation can reorder or drop the words
+// around a link but can never alter or lose the link itself (an
+// admin_ui.rs test asserts every locale keeps every token).
+const FOOTER_LINK_VARS = (() => {
+  const a = (href, text) =>
+    `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  return {
+    sapics: a("https://github.com/sapics/ip-location-db", "sapics/ip-location-db"),
+    pddl: a("https://opendatacommons.org/licenses/pddl/1-0/", "PDDL 1.0"),
+    dbip: a("https://db-ip.com", "IP Geolocation by DB-IP"),
+    ccby: a("https://creativecommons.org/licenses/by/4.0/", "CC BY 4.0"),
+    maxmind: a("https://www.maxmind.com", "maxmind.com"),
+    crux: a("https://developer.chrome.com/docs/crux/", "Chrome UX Report"),
+    psl: a("https://publicsuffix.org/", "Public Suffix List"),
+    mpl: a("https://mozilla.org/MPL/2.0/", "MPL 2.0"),
+  };
+})();
+
 function applyStaticTranslations() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     el.textContent = t(el.dataset.i18n);
   });
   document.querySelectorAll("[data-i18n-html]").forEach((el) => {
-    el.innerHTML = t(el.dataset.i18nHtml);
+    el.innerHTML = t(el.dataset.i18nHtml, FOOTER_LINK_VARS);
   });
   document.querySelectorAll("[data-i18n-attr]").forEach((el) => {
     const [attr, key] = el.dataset.i18nAttr.split(":");

@@ -262,6 +262,8 @@
     "one": "{n} napja frissítve",
     "other": "{n} napja frissítve"
   },
+  "footer.geoipAttribution": "GeoIP-adatok (alapértelmezett forrás): {sapics} („user-country“, a regionális IP-cím-nyilvántartók (RIR) és útválasztási archívumok nyílt adataiból építve), licenc: {pddl} (közkincs). A korábbi alapértelmezett forrás, amelynek adatai az adatbázis első frissítéséig még használatban lehetnek: {dbip} - az „IP to Country Lite“ adatbázis, licenc: {ccby}. Speciális módban (saját MaxMind-kulccsal) a MaxMind által készített GeoLite2 adatokat használja, amelyek innen érhetők el: {maxmind}.",
+  "footer.cruxAttribution": "Webhelyek népszerűségi adatai (értékelési szűrő „buborék“): {crux}, © Google, licenc: {ccby} - regisztrálható domainekre normalizálva. A regisztrálható domaint a {psl} alapján határozzuk meg (licenc: {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

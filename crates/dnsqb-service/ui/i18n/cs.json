@@ -272,6 +272,8 @@
     "many": "aktualizováno před {n} d",
     "other": "aktualizováno před {n} d"
   },
+  "footer.geoipAttribution": "Data GeoIP (výchozí zdroj): {sapics} („user-country“, sestaveno z otevřených dat regionálních registrů IP adres (RIR) a směrovacích archivů), licence {pddl} (volné dílo). Předchozí výchozí zdroj, jehož data mohou být dál používána do první aktualizace databáze: {dbip} - databáze „IP to Country Lite“, licence {ccby}. V pokročilém režimu (vlastní klíč MaxMind) se používají data GeoLite2 vytvořená společností MaxMind, dostupná z {maxmind}.",
+  "footer.cruxAttribution": "Data o popularitě webů (hodnoticí filtr „bublina“): {crux}, © Google, licence {ccby} - normalizováno na registrovatelné domény. Registrovatelná doména se určuje pomocí {psl} (licence {mpl}).",
   "zoneDomainCount": {
     "one": "{n} doména",
     "few": "{n} domény",

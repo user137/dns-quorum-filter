@@ -257,6 +257,8 @@
   "blocklist.updated.days": {
     "other": "{n} 天前更新"
   },
+  "footer.geoipAttribution": "GeoIP 数据(默认来源)：{sapics}(“user-country”，基于区域 IP 地址注册机构(RIR)和路由存档的开放数据构建)，许可证 {pddl}(公有领域)。此前的默认来源，其数据可能在数据库首次更新前继续使用：{dbip} - “IP to Country Lite”数据库，许可证 {ccby}。在高级模式(使用您自己的 MaxMind 密钥)下使用 MaxMind 创建的 GeoLite2 数据，可从 {maxmind} 获取。",
+  "footer.cruxAttribution": "网站热度数据(评级过滤器“气泡”)：{crux}，© Google，许可证 {ccby} - 已规范化为可注册域名。可注册域名通过 {psl}(许可证 {mpl})确定。",
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

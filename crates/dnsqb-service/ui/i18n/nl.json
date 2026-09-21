@@ -262,6 +262,8 @@
     "one": "{n} d geleden bijgewerkt",
     "other": "{n} d geleden bijgewerkt"
   },
+  "footer.geoipAttribution": "GeoIP-gegevens (standaardbron): {sapics} („user-country“, opgebouwd uit open gegevens van de regionale IP-adresregisters (RIR's) en routeringsarchieven), licentie {pddl} (publiek domein). De vorige standaardbron, waarvan de gegevens nog in gebruik kunnen zijn tot de eerste databaseverversing: {dbip} - de database „IP to Country Lite“, licentie {ccby}. In de geavanceerde modus (eigen MaxMind-sleutel) worden door MaxMind gemaakte GeoLite2-gegevens gebruikt, beschikbaar via {maxmind}.",
+  "footer.cruxAttribution": "Gegevens over de populariteit van sites (beoordelingsfilter „bubbel“): {crux}, © Google, licentie {ccby} - genormaliseerd naar registreerbare domeinen. Het registreerbare domein wordt bepaald met de {psl} (licentie {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

@@ -262,6 +262,8 @@
     "one": "päivitetty {n} pv sitten",
     "other": "päivitetty {n} pv sitten"
   },
+  "footer.geoipAttribution": "GeoIP-data (oletuslähde): {sapics} (”user-country”, rakennettu alueellisten IP-osoiterekisterien (RIR) ja reititysarkistojen avoimesta datasta), lisenssi {pddl} (public domain). Aiempi oletuslähde, jonka dataa voidaan edelleen käyttää tietokannan ensimmäiseen päivitykseen asti: {dbip} - ”IP to Country Lite” -tietokanta, lisenssi {ccby}. Lisätilassa (oma MaxMind-avain) käytetään MaxMindin luomaa GeoLite2-dataa, joka on saatavilla osoitteesta {maxmind}.",
+  "footer.cruxAttribution": "Sivustojen suosiotiedot (arviointisuodatin ”kupla”): {crux}, © Google, lisenssi {ccby} - normalisoitu rekisteröitävissä oleviin verkkotunnuksiin. Rekisteröitävä verkkotunnus määritetään {psl}-listalla (lisenssi {mpl}).",
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

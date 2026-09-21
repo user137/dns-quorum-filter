@@ -257,6 +257,8 @@
   "blocklist.updated.days": {
     "other": "cập nhật {n} ngày trước"
   },
+  "footer.geoipAttribution": "Dữ liệu GeoIP (nguồn mặc định): {sapics} («user-country», được xây dựng từ dữ liệu mở của các cơ quan đăng ký địa chỉ IP khu vực (RIR) và kho lưu trữ định tuyến), giấy phép {pddl} (phạm vi công cộng). Nguồn mặc định trước đây, dữ liệu của nó có thể vẫn được dùng cho đến lần cập nhật cơ sở dữ liệu đầu tiên: {dbip} - cơ sở dữ liệu «IP to Country Lite», giấy phép {ccby}. Ở chế độ nâng cao (khóa MaxMind của riêng bạn) sẽ dùng dữ liệu GeoLite2 do MaxMind tạo, có tại {maxmind}.",
+  "footer.cruxAttribution": "Dữ liệu mức độ phổ biến của trang web (bộ lọc xếp hạng «bong bóng»): {crux}, © Google, giấy phép {ccby} - được chuẩn hóa thành các miền có thể đăng ký. Miền có thể đăng ký được xác định bằng {psl} (giấy phép {mpl}).",
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

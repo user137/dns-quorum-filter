@@ -272,6 +272,8 @@
     "many": "zaktualizowano {n} dn. temu",
     "other": "zaktualizowano {n} dn. temu"
   },
+  "footer.geoipAttribution": "Dane GeoIP (źródło domyślne): {sapics} („user-country”, zbudowane z otwartych danych regionalnych rejestrów adresów IP (RIR) i archiwów routingu), licencja {pddl} (domena publiczna). Poprzednie źródło domyślne, którego dane mogą być nadal używane do pierwszej aktualizacji bazy: {dbip} - baza „IP to Country Lite”, licencja {ccby}. W trybie zaawansowanym (własny klucz MaxMind) używane są dane GeoLite2 utworzone przez MaxMind, dostępne na {maxmind}.",
+  "footer.cruxAttribution": "Dane o popularności witryn (filtr ocen „bańka”): {crux}, © Google, licencja {ccby} - znormalizowane do domen rejestrowalnych. Domenę rejestrowalną określa się za pomocą {psl} (licencja {mpl}).",
   "zoneDomainCount": {
     "one": "{n} domena",
     "few": "{n} domeny",

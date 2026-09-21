@@ -257,6 +257,8 @@
   "blocklist.updated.days": {
     "other": "{n}일 전에 업데이트됨"
   },
+  "footer.geoipAttribution": "GeoIP 데이터(기본 소스): {sapics}(「user-country」, 지역 IP 주소 레지스트리(RIR)와 라우팅 아카이브의 공개 데이터로 구축), 라이선스 {pddl}(퍼블릭 도메인). 이전 기본 소스로, 데이터베이스가 처음 갱신될 때까지 데이터가 계속 사용될 수 있습니다: {dbip} - 「IP to Country Lite」 데이터베이스, 라이선스 {ccby}. 고급 모드(자체 MaxMind 키)에서는 MaxMind가 만든 GeoLite2 데이터를 사용하며, {maxmind}에서 받을 수 있습니다.",
+  "footer.cruxAttribution": "사이트 인기도 데이터(평가 필터 «버블»): {crux}, © Google, 라이선스 {ccby} - 등록 가능한 도메인으로 정규화. 등록 가능한 도메인은 {psl}(라이선스 {mpl})로 결정합니다.",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }
