@@ -223,6 +223,40 @@
   "rating.disableFailedTemplate": "ปิดไม่สำเร็จ: {message}",
   "rating.enableFailedTemplate": "เปิดไม่สำเร็จ: {message}",
   "rating.saveFailedTemplate": "บันทึกโซนไม่สำเร็จ: {message}",
+  "blocklist.heading": "ชุดรายการบล็อก",
+  "blocklist.title": "บล็อกตามรายการชุดสาธารณะ",
+  "blocklist.desc.off": "เสริมควอรัมด้วยรายการสาธารณะแบบคงที่ (โฆษณา/ตัวติดตาม/มัลแวร์/DGA) เป็นตัวเลือก ปิดไว้โดยค่าเริ่มต้น ไปป์ไลน์เดียวกัน เฉพาะขั้นตอนที่ 2 (Blocklist)",
+  "blocklist.desc.pipelineNote": "ไปป์ไลน์เดียวกัน เฉพาะขั้นตอนที่ 2 (Blocklist)",
+  "blocklist.emptyNotice.active": "เปิดอยู่ แต่ยังไม่ได้เลือกแหล่งที่มา - การบล็อกยังคงมีผลกับชุดที่โหลดไว้ก่อนหน้า (จะไม่ถูกล้างอัตโนมัติจนกว่าคุณจะเลือกแหล่งที่มา)",
+  "blocklist.emptyNotice.inactive": "เปิดอยู่ แต่ยังไม่ได้เลือกแหล่งที่มา - การกรองไม่มีผล ติ๊กเลือกอย่างน้อยหนึ่งแหล่งที่มาด้านล่าง",
+  "blocklist.forkBNotice": "เปิดอยู่ การดาวน์โหลดครั้งแรกกำลังทำงานเบื้องหลัง - เวอร์ชันก่อนหน้า (ว่างเปล่า) ยังคงมีผล รีเฟรชหน้าเพื่อดูผลเมื่อเสร็จสิ้น",
+  "blocklist.sourcesSummaryTemplate": "แหล่งที่มา ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 แหล่งที่มา",
+  "blocklist.orphanHeading": "อื่นๆ",
+  "blocklist.orphanDesc": "แหล่งที่มาที่ไม่รู้จัก (ไม่เผยแพร่อีกต่อไป) - ยกเลิกการติ๊กเพื่อบันทึกการเปลี่ยนแปลงอื่นของคุณ",
+  "blocklist.status.notTracked": "ไม่ได้ติดตาม",
+  "blocklist.status.unchecked": "ยกเลิกการติ๊กแล้ว - ยังมีผลจนกว่าจะรีเฟรชครั้งถัดไป",
+  "blocklist.status.loading": "กำลังโหลด…",
+  "blocklist.status.refreshFailed": "รีเฟรชล้มเหลว - เวอร์ชันก่อนหน้า",
+  "blocklist.updated.justNow": "อัปเดตเมื่อสักครู่",
+  "blocklist.cluster.ads": "โฆษณาและตัวติดตาม",
+  "blocklist.cluster.security": "ความปลอดภัยและภัยคุกคาม",
+  "blocklist.source.hageziMultiPro.desc": "โฆษณา ตัวติดตาม มัลแวร์ - ชุดหลัก",
+  "blocklist.source.adguardDnsFilter.desc": "ประเภทเดียวกัน แหล่งที่มาแยก - ครอบคลุมกว้างขึ้น",
+  "blocklist.source.oneHostsLite.desc": "เหมือนกัน แต่รายการเบากว่า - บล็อกผิดพลาดน้อยกว่า",
+  "blocklist.source.hageziTif.desc": "ตัวบ่งชี้การถูกโจมตี ฟิชชิ่ง",
+  "blocklist.source.hageziNrdDga.desc": "โดเมนที่ลงทะเบียนใหม่และสร้างโดยอัลกอริทึม (C2 ของมัลแวร์)",
+  "blocklist.source.hageziDyndns.desc": "ชื่อโฮสต์ DNS แบบไดนามิก ซึ่งมักถูกนำไปใช้ในทางที่ผิด",
+  "blocklist.source.hageziHoster.desc": "ผู้ให้บริการโฮสติ้งที่รู้จักในการเผยแพร่มัลแวร์",
+  "blocklist.activeCount": {
+    "other": "ใช้งานอยู่ {n} แหล่งที่มา"
+  },
+  "blocklist.updated.hours": {
+    "other": "อัปเดตเมื่อ {n} ชม. ที่แล้ว"
+  },
+  "blocklist.updated.days": {
+    "other": "อัปเดตเมื่อ {n} วันที่แล้ว"
+  },
   "zoneDomainCount": {
     "other": "{n} โดเมน"
   }

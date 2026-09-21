@@ -223,6 +223,40 @@
   "rating.disableFailedTemplate": "Gagal menonaktifkan: {message}",
   "rating.enableFailedTemplate": "Gagal mengaktifkan: {message}",
   "rating.saveFailedTemplate": "Gagal menyimpan zona: {message}",
+  "blocklist.heading": "Paket daftar blokir",
+  "blocklist.title": "Blokir berdasarkan daftar paket publik",
+  "blocklist.desc.off": "Melengkapi kuorum dengan daftar publik statis (iklan/pelacak/malware/DGA). Opsional, nonaktif secara default. Pipeline yang sama, hanya langkah 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Pipeline yang sama, hanya langkah 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Aktif, tetapi tidak ada sumber yang dipilih - pemblokiran tetap berlaku pada set yang dimuat sebelumnya (tidak dihapus otomatis sampai Anda memilih sumber).",
+  "blocklist.emptyNotice.inactive": "Aktif, tetapi tidak ada sumber yang dipilih - pemfilteran tidak berlaku. Centang setidaknya satu sumber di bawah.",
+  "blocklist.forkBNotice": "Aktif, unduhan pertama berjalan di latar belakang - versi sebelumnya (kosong) tetap berlaku. Segarkan halaman untuk melihat hasilnya setelah selesai.",
+  "blocklist.sourcesSummaryTemplate": "Sumber ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 sumber",
+  "blocklist.orphanHeading": "Lainnya",
+  "blocklist.orphanDesc": "sumber tidak dikenal (tidak lagi dipublikasikan) - hapus centang untuk menyimpan perubahan lain Anda",
+  "blocklist.status.notTracked": "tidak dilacak",
+  "blocklist.status.unchecked": "dicentang dihapus - tetap berlaku sampai penyegaran berikutnya",
+  "blocklist.status.loading": "memuat…",
+  "blocklist.status.refreshFailed": "penyegaran gagal - versi sebelumnya",
+  "blocklist.updated.justNow": "diperbarui baru saja",
+  "blocklist.cluster.ads": "Iklan dan pelacak",
+  "blocklist.cluster.security": "Keamanan dan ancaman",
+  "blocklist.source.hageziMultiPro.desc": "Iklan, pelacak, malware - set utama",
+  "blocklist.source.adguardDnsFilter.desc": "Kelas yang sama, sumber terpisah - cakupan lebih luas",
+  "blocklist.source.oneHostsLite.desc": "Sama, daftar lebih ringan - lebih sedikit pemblokiran keliru",
+  "blocklist.source.hageziTif.desc": "Indikator kompromi, phishing",
+  "blocklist.source.hageziNrdDga.desc": "Domain yang baru terdaftar dan dihasilkan secara algoritmik (C2 malware)",
+  "blocklist.source.hageziDyndns.desc": "Nama host DNS dinamis, sering disalahgunakan",
+  "blocklist.source.hageziHoster.desc": "Hoster yang dikenal menyebarkan malware",
+  "blocklist.activeCount": {
+    "other": "Aktif, {n} sumber."
+  },
+  "blocklist.updated.hours": {
+    "other": "diperbarui {n} j lalu"
+  },
+  "blocklist.updated.days": {
+    "other": "diperbarui {n} h lalu"
+  },
   "zoneDomainCount": {
     "other": "{n} domain"
   }

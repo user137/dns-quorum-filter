@@ -223,6 +223,40 @@
   "rating.disableFailedTemplate": "Tắt thất bại: {message}",
   "rating.enableFailedTemplate": "Bật thất bại: {message}",
   "rating.saveFailedTemplate": "Lưu các vùng thất bại: {message}",
+  "blocklist.heading": "Gói danh sách chặn",
+  "blocklist.title": "Chặn theo danh sách gói công khai",
+  "blocklist.desc.off": "Bổ sung quorum bằng các danh sách công khai tĩnh (quảng cáo/trình theo dõi/phần mềm độc hại/DGA). Tùy chọn, mặc định tắt. Cùng một pipeline, chỉ bước 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Cùng một pipeline, chỉ bước 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Đã bật, nhưng chưa chọn nguồn nào - việc chặn vẫn áp dụng cho tập đã tải trước đó (không tự động xóa cho đến khi bạn chọn nguồn).",
+  "blocklist.emptyNotice.inactive": "Đã bật, nhưng chưa chọn nguồn nào - việc lọc chưa có hiệu lực. Hãy đánh dấu ít nhất một nguồn bên dưới.",
+  "blocklist.forkBNotice": "Đã bật, lần tải xuống đầu tiên đang chạy ngầm - phiên bản trước (trống) vẫn còn hiệu lực. Hãy làm mới trang để xem kết quả khi hoàn tất.",
+  "blocklist.sourcesSummaryTemplate": "Nguồn ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 nguồn",
+  "blocklist.orphanHeading": "Khác",
+  "blocklist.orphanDesc": "nguồn không xác định (không còn được công bố) - bỏ đánh dấu để lưu các thay đổi khác của bạn",
+  "blocklist.status.notTracked": "không được theo dõi",
+  "blocklist.status.unchecked": "đã bỏ đánh dấu - vẫn còn hiệu lực cho đến lần làm mới tiếp theo",
+  "blocklist.status.loading": "đang tải…",
+  "blocklist.status.refreshFailed": "làm mới thất bại - phiên bản trước",
+  "blocklist.updated.justNow": "vừa cập nhật",
+  "blocklist.cluster.ads": "Quảng cáo và trình theo dõi",
+  "blocklist.cluster.security": "Bảo mật và mối đe dọa",
+  "blocklist.source.hageziMultiPro.desc": "Quảng cáo, trình theo dõi, phần mềm độc hại - tập chính",
+  "blocklist.source.adguardDnsFilter.desc": "Cùng loại, nguồn riêng - phạm vi rộng hơn",
+  "blocklist.source.oneHostsLite.desc": "Tương tự, danh sách nhẹ hơn - ít chặn nhầm hơn",
+  "blocklist.source.hageziTif.desc": "Chỉ báo xâm phạm, lừa đảo",
+  "blocklist.source.hageziNrdDga.desc": "Các miền mới đăng ký và được tạo theo thuật toán (C2 của phần mềm độc hại)",
+  "blocklist.source.hageziDyndns.desc": "Tên máy chủ DNS động, thường bị lạm dụng",
+  "blocklist.source.hageziHoster.desc": "Nhà cung cấp lưu trữ nổi tiếng với việc phát tán phần mềm độc hại",
+  "blocklist.activeCount": {
+    "other": "Đang hoạt động, {n} nguồn."
+  },
+  "blocklist.updated.hours": {
+    "other": "cập nhật {n} giờ trước"
+  },
+  "blocklist.updated.days": {
+    "other": "cập nhật {n} ngày trước"
+  },
   "zoneDomainCount": {
     "other": "{n} tên miền"
   }

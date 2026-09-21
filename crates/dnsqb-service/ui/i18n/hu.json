@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "A kikapcsolás sikertelen: {message}",
   "rating.enableFailedTemplate": "A bekapcsolás sikertelen: {message}",
   "rating.saveFailedTemplate": "A zónák mentése sikertelen: {message}",
+  "blocklist.heading": "Tiltólista-csomagok",
+  "blocklist.title": "Blokkolás nyilvános csomaglisták alapján",
+  "blocklist.desc.off": "Statikus nyilvános listákkal (hirdetések/nyomkövetők/kártevők/DGA) egészíti ki a kvórumot. Opcionális, alapértelmezés szerint kikapcsolva. Ugyanaz a csővezeték, csak a 2. lépés (Blocklist).",
+  "blocklist.desc.pipelineNote": "Ugyanaz a csővezeték, csak a 2. lépés (Blocklist).",
+  "blocklist.emptyNotice.active": "Bekapcsolva, de nincs forrás kiválasztva - a blokkolás továbbra is a korábban betöltött készletre vonatkozik (nem törlődik automatikusan, amíg nem választ forrást).",
+  "blocklist.emptyNotice.inactive": "Bekapcsolva, de nincs forrás kiválasztva - a szűrés nem működik. Jelöljön be legalább egy forrást lent.",
+  "blocklist.forkBNotice": "Bekapcsolva, az első letöltés a háttérben zajlik - az előző (üres) verzió marad érvényben. Frissítse az oldalt, hogy lássa az eredményt, ha végzett.",
+  "blocklist.sourcesSummaryTemplate": "Források ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 forrás",
+  "blocklist.orphanHeading": "Egyéb",
+  "blocklist.orphanDesc": "ismeretlen forrás (már nem publikált) - törölje a jelölést a többi módosítás mentéséhez",
+  "blocklist.status.notTracked": "nincs követve",
+  "blocklist.status.unchecked": "jelölés törölve - a következő frissítésig érvényben marad",
+  "blocklist.status.loading": "betöltés…",
+  "blocklist.status.refreshFailed": "a frissítés sikertelen - előző verzió",
+  "blocklist.updated.justNow": "épp most frissítve",
+  "blocklist.cluster.ads": "Hirdetések és nyomkövetők",
+  "blocklist.cluster.security": "Biztonság és fenyegetések",
+  "blocklist.source.hageziMultiPro.desc": "Hirdetések, nyomkövetők, kártevők - a fő készlet",
+  "blocklist.source.adguardDnsFilter.desc": "Ugyanaz a kategória, külön forrás - szélesebb lefedettség",
+  "blocklist.source.oneHostsLite.desc": "Ugyanaz, könnyebb lista - kevesebb téves blokkolás",
+  "blocklist.source.hageziTif.desc": "Kompromittálódási mutatók, adathalászat",
+  "blocklist.source.hageziNrdDga.desc": "Frissen regisztrált és algoritmikusan generált domainek (kártevő C2)",
+  "blocklist.source.hageziDyndns.desc": "Dinamikus DNS-hosztnevek, gyakran visszaélnek velük",
+  "blocklist.source.hageziHoster.desc": "Kártevők terjesztéséről ismert tárhelyszolgáltatók",
+  "blocklist.activeCount": {
+    "one": "Aktív, {n} forrás.",
+    "other": "Aktív, {n} forrás."
+  },
+  "blocklist.updated.hours": {
+    "one": "{n} órája frissítve",
+    "other": "{n} órája frissítve"
+  },
+  "blocklist.updated.days": {
+    "one": "{n} napja frissítve",
+    "other": "{n} napja frissítve"
+  },
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"

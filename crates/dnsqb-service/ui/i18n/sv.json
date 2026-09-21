@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Det gick inte att slå av: {message}",
   "rating.enableFailedTemplate": "Det gick inte att slå på: {message}",
   "rating.saveFailedTemplate": "Det gick inte att spara zoner: {message}",
+  "blocklist.heading": "Blockeringslistpaket",
+  "blocklist.title": "Blockera efter offentliga paketlistor",
+  "blocklist.desc.off": "Kompletterar kvorumet med statiska offentliga listor (annonser/spårare/skadlig programvara/DGA). Valfritt, av som standard. Samma pipeline, bara steg 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Samma pipeline, bara steg 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "På, men ingen källa är vald - blockeringen gäller fortfarande för den tidigare inlästa uppsättningen (den rensas inte automatiskt förrän du väljer en källa).",
+  "blocklist.emptyNotice.inactive": "På, men ingen källa är vald - filtreringen gäller inte. Markera minst en källa nedan.",
+  "blocklist.forkBNotice": "På, den första nedladdningen körs i bakgrunden - den tidigare (tomma) versionen förblir gällande. Uppdatera sidan för att se resultatet när den är klar.",
+  "blocklist.sourcesSummaryTemplate": "Källor ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 källor",
+  "blocklist.orphanHeading": "Övrigt",
+  "blocklist.orphanDesc": "okänd källa (publiceras inte längre) - avmarkera för att spara dina andra ändringar",
+  "blocklist.status.notTracked": "följs inte",
+  "blocklist.status.unchecked": "avmarkerad - förblir gällande till nästa uppdatering",
+  "blocklist.status.loading": "laddar…",
+  "blocklist.status.refreshFailed": "uppdatering misslyckades - föregående version",
+  "blocklist.updated.justNow": "uppdaterad nyss",
+  "blocklist.cluster.ads": "Annonser och spårare",
+  "blocklist.cluster.security": "Säkerhet och hot",
+  "blocklist.source.hageziMultiPro.desc": "Annonser, spårare, skadlig programvara - huvuduppsättningen",
+  "blocklist.source.adguardDnsFilter.desc": "Samma klass, separat källa - bredare täckning",
+  "blocklist.source.oneHostsLite.desc": "Samma sak, en lättare lista - färre felaktiga blockeringar",
+  "blocklist.source.hageziTif.desc": "Kompromissindikatorer, nätfiske",
+  "blocklist.source.hageziNrdDga.desc": "Nyligen registrerade och algoritmiskt genererade domäner (skadeprogram-C2)",
+  "blocklist.source.hageziDyndns.desc": "Dynamiska DNS-värdnamn, ofta missbrukade",
+  "blocklist.source.hageziHoster.desc": "Värdar kända för att sprida skadlig programvara",
+  "blocklist.activeCount": {
+    "one": "Aktiv, {n} källa.",
+    "other": "Aktiva, {n} källor."
+  },
+  "blocklist.updated.hours": {
+    "one": "uppdaterad för {n} tim sedan",
+    "other": "uppdaterad för {n} tim sedan"
+  },
+  "blocklist.updated.days": {
+    "one": "uppdaterad för {n} d sedan",
+    "other": "uppdaterad för {n} d sedan"
+  },
   "zoneDomainCount": {
     "one": "{n} domän",
     "other": "{n} domäner"

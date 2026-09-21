@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Uitschakelen mislukt: {message}",
   "rating.enableFailedTemplate": "Inschakelen mislukt: {message}",
   "rating.saveFailedTemplate": "Zones opslaan mislukt: {message}",
+  "blocklist.heading": "Blokkeerlijstbundels",
+  "blocklist.title": "Blokkeren op basis van openbare bundellijsten",
+  "blocklist.desc.off": "Vult het quorum aan met statische openbare lijsten (advertenties/trackers/malware/DGA). Optioneel, standaard uit. Dezelfde pijplijn, alleen stap 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Dezelfde pijplijn, alleen stap 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Ingeschakeld, maar geen bron geselecteerd - het blokkeren geldt nog voor de eerder geladen set (die wordt niet automatisch geleegd totdat u een bron kiest).",
+  "blocklist.emptyNotice.inactive": "Ingeschakeld, maar geen bron geselecteerd - filteren is niet van kracht. Vink hieronder minstens één bron aan.",
+  "blocklist.forkBNotice": "Ingeschakeld, de eerste download loopt op de achtergrond - de vorige (lege) versie blijft van kracht. Ververs de pagina om het resultaat te zien wanneer die klaar is.",
+  "blocklist.sourcesSummaryTemplate": "Bronnen ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 bronnen",
+  "blocklist.orphanHeading": "Overig",
+  "blocklist.orphanDesc": "onbekende bron (wordt niet meer gepubliceerd) - haal het vinkje weg om uw andere wijzigingen op te slaan",
+  "blocklist.status.notTracked": "niet gevolgd",
+  "blocklist.status.unchecked": "uitgevinkt - blijft van kracht tot de volgende verversing",
+  "blocklist.status.loading": "laden…",
+  "blocklist.status.refreshFailed": "verversen mislukt - vorige versie",
+  "blocklist.updated.justNow": "zojuist bijgewerkt",
+  "blocklist.cluster.ads": "Advertenties en trackers",
+  "blocklist.cluster.security": "Beveiliging en bedreigingen",
+  "blocklist.source.hageziMultiPro.desc": "Advertenties, trackers, malware - de hoofdset",
+  "blocklist.source.adguardDnsFilter.desc": "Dezelfde klasse, aparte bron - bredere dekking",
+  "blocklist.source.oneHostsLite.desc": "Hetzelfde, een lichtere lijst - minder onterechte blokkades",
+  "blocklist.source.hageziTif.desc": "Indicatoren van compromittering, phishing",
+  "blocklist.source.hageziNrdDga.desc": "Pas geregistreerde en algoritmisch gegenereerde domeinen (malware-C2)",
+  "blocklist.source.hageziDyndns.desc": "Dynamische DNS-hostnamen, vaak misbruikt",
+  "blocklist.source.hageziHoster.desc": "Hosters die bekendstaan om het verspreiden van malware",
+  "blocklist.activeCount": {
+    "one": "Actief, {n} bron.",
+    "other": "Actief, {n} bronnen."
+  },
+  "blocklist.updated.hours": {
+    "one": "{n} u geleden bijgewerkt",
+    "other": "{n} u geleden bijgewerkt"
+  },
+  "blocklist.updated.days": {
+    "one": "{n} d geleden bijgewerkt",
+    "other": "{n} d geleden bijgewerkt"
+  },
   "zoneDomainCount": {
     "one": "{n} domein",
     "other": "{n} domeinen"

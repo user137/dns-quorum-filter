@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Ausschalten fehlgeschlagen: {message}",
   "rating.enableFailedTemplate": "Einschalten fehlgeschlagen: {message}",
   "rating.saveFailedTemplate": "Zonen konnten nicht gespeichert werden: {message}",
+  "blocklist.heading": "Sperrlisten-Pakete",
+  "blocklist.title": "Nach öffentlichen Paketlisten sperren",
+  "blocklist.desc.off": "Ergänzt das Quorum um statische öffentliche Listen (Werbung/Tracker/Schadsoftware/DGA). Optional, standardmäßig aus. Gleiche Pipeline, nur Schritt 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Gleiche Pipeline, nur Schritt 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Eingeschaltet, aber keine Quelle ausgewählt - die Sperrung gilt weiter für den zuvor geladenen Satz (er wird nicht automatisch geleert, bis Sie eine Quelle wählen).",
+  "blocklist.emptyNotice.inactive": "Eingeschaltet, aber keine Quelle ausgewählt - die Filterung ist nicht wirksam. Markieren Sie unten mindestens eine Quelle.",
+  "blocklist.forkBNotice": "Eingeschaltet, der erste Download läuft im Hintergrund - die vorherige (leere) Version bleibt gültig. Aktualisieren Sie die Seite, um das Ergebnis nach Abschluss zu sehen.",
+  "blocklist.sourcesSummaryTemplate": "Quellen ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 Quellen",
+  "blocklist.orphanHeading": "Sonstige",
+  "blocklist.orphanDesc": "unbekannte Quelle (wird nicht mehr veröffentlicht) - Häkchen entfernen, um Ihre anderen Änderungen zu speichern",
+  "blocklist.status.notTracked": "wird nicht verfolgt",
+  "blocklist.status.unchecked": "abgewählt - bleibt bis zur nächsten Aktualisierung gültig",
+  "blocklist.status.loading": "wird geladen…",
+  "blocklist.status.refreshFailed": "Aktualisierung fehlgeschlagen - vorherige Version",
+  "blocklist.updated.justNow": "gerade aktualisiert",
+  "blocklist.cluster.ads": "Werbung und Tracker",
+  "blocklist.cluster.security": "Sicherheit und Bedrohungen",
+  "blocklist.source.hageziMultiPro.desc": "Werbung, Tracker, Schadsoftware - der Hauptsatz",
+  "blocklist.source.adguardDnsFilter.desc": "Gleiche Klasse, eigene Quelle - breitere Abdeckung",
+  "blocklist.source.oneHostsLite.desc": "Dasselbe, eine leichtere Liste - weniger Fehlsperren",
+  "blocklist.source.hageziTif.desc": "Kompromittierungsindikatoren, Phishing",
+  "blocklist.source.hageziNrdDga.desc": "Neu registrierte und algorithmisch generierte Domains (Malware-C2)",
+  "blocklist.source.hageziDyndns.desc": "Dynamische DNS-Hostnamen, oft missbraucht",
+  "blocklist.source.hageziHoster.desc": "Hoster, die für die Verbreitung von Schadsoftware bekannt sind",
+  "blocklist.activeCount": {
+    "one": "Aktiv, {n} Quelle.",
+    "other": "Aktiv, {n} Quellen."
+  },
+  "blocklist.updated.hours": {
+    "one": "vor {n} Std. aktualisiert",
+    "other": "vor {n} Std. aktualisiert"
+  },
+  "blocklist.updated.days": {
+    "one": "vor {n} T. aktualisiert",
+    "other": "vor {n} T. aktualisiert"
+  },
   "zoneDomainCount": {
     "one": "{n} Domain",
     "other": "{n} Domains"

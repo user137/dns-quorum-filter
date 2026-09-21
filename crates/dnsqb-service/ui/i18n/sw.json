@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Kuzima kumeshindwa: {message}",
   "rating.enableFailedTemplate": "Kuwasha kumeshindwa: {message}",
   "rating.saveFailedTemplate": "Kuhifadhi kanda kumeshindwa: {message}",
+  "blocklist.heading": "Vifurushi vya orodha ya kuzuia",
+  "blocklist.title": "Zuia kwa orodha za vifurushi vya umma",
+  "blocklist.desc.off": "Huongeza akidi kwa orodha tuli za umma (matangazo/vifuatiliaji/programu hasidi/DGA). Hiari, imezimwa kwa chaguo-msingi. Bomba lile lile, hatua ya 2 pekee (Blocklist).",
+  "blocklist.desc.pipelineNote": "Bomba lile lile, hatua ya 2 pekee (Blocklist).",
+  "blocklist.emptyNotice.active": "Imewashwa, lakini hakuna chanzo kilichochaguliwa - kuzuia bado kunatumika kwa seti iliyopakiwa awali (haifutwi kiotomatiki hadi uchague chanzo).",
+  "blocklist.emptyNotice.inactive": "Imewashwa, lakini hakuna chanzo kilichochaguliwa - uchujaji haufanyi kazi. Weka alama angalau chanzo kimoja hapa chini.",
+  "blocklist.forkBNotice": "Imewashwa, upakuaji wa kwanza unaendelea nyuma - toleo la awali (tupu) linabaki kutumika. Onyesha upya ukurasa kuona matokeo utakapokamilika.",
+  "blocklist.sourcesSummaryTemplate": "Vyanzo ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — vyanzo 2",
+  "blocklist.orphanHeading": "Nyingine",
+  "blocklist.orphanDesc": "chanzo kisichojulikana (hakichapishwi tena) - ondoa alama ili kuhifadhi mabadiliko yako mengine",
+  "blocklist.status.notTracked": "hakifuatiliwi",
+  "blocklist.status.unchecked": "alama imeondolewa - inabaki kutumika hadi uonyeshaji upya ujao",
+  "blocklist.status.loading": "inapakia…",
+  "blocklist.status.refreshFailed": "kuonyesha upya kumeshindwa - toleo la awali",
+  "blocklist.updated.justNow": "imesasishwa sasa hivi",
+  "blocklist.cluster.ads": "Matangazo na vifuatiliaji",
+  "blocklist.cluster.security": "Usalama na vitisho",
+  "blocklist.source.hageziMultiPro.desc": "Matangazo, vifuatiliaji, programu hasidi - seti kuu",
+  "blocklist.source.adguardDnsFilter.desc": "Daraja lile lile, chanzo tofauti - ufikiaji mpana zaidi",
+  "blocklist.source.oneHostsLite.desc": "Vile vile, orodha nyepesi - uzuiaji wa makosa mdogo",
+  "blocklist.source.hageziTif.desc": "Viashiria vya uvamizi, udanganyifu wa mtandaoni",
+  "blocklist.source.hageziNrdDga.desc": "Vikoa vilivyosajiliwa hivi karibuni na vilivyozalishwa kialgorithimu (C2 ya programu hasidi)",
+  "blocklist.source.hageziDyndns.desc": "Majina ya wapangishi wa DNS yenye nguvu, mara nyingi hutumiwa vibaya",
+  "blocklist.source.hageziHoster.desc": "Wapangishaji wanaojulikana kwa kusambaza programu hasidi",
+  "blocklist.activeCount": {
+    "one": "Inatumika, chanzo {n}.",
+    "other": "Inatumika, vyanzo {n}."
+  },
+  "blocklist.updated.hours": {
+    "one": "imesasishwa saa {n} zilizopita",
+    "other": "imesasishwa saa {n} zilizopita"
+  },
+  "blocklist.updated.days": {
+    "one": "imesasishwa siku {n} zilizopita",
+    "other": "imesasishwa siku {n} zilizopita"
+  },
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"

@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Failed to turn off: {message}",
   "rating.enableFailedTemplate": "Failed to turn on: {message}",
   "rating.saveFailedTemplate": "Failed to save zones: {message}",
+  "blocklist.heading": "Blocklist bundles",
+  "blocklist.title": "Block using public bundle lists",
+  "blocklist.desc.off": "Supplements the quorum with static public lists (ads/trackers/malware/DGA). Optional, off by default. Same pipeline, step 2 only (Blocklist).",
+  "blocklist.desc.pipelineNote": "Same pipeline, step 2 only (Blocklist).",
+  "blocklist.emptyNotice.active": "Turned on, but no source is selected - blocking still applies to the previously loaded set (it isn't cleared automatically until you select a source).",
+  "blocklist.emptyNotice.inactive": "Turned on, but no source is selected - filtering isn't in effect. Tick at least one source below.",
+  "blocklist.forkBNotice": "Turned on, the first download is running in the background - the previous (empty) version stays in effect. Refresh the page to see the result once it finishes.",
+  "blocklist.sourcesSummaryTemplate": "Sources ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 sources",
+  "blocklist.orphanHeading": "Other",
+  "blocklist.orphanDesc": "unknown source (no longer published) - untick it to save your other changes",
+  "blocklist.status.notTracked": "not tracked",
+  "blocklist.status.unchecked": "unticked - stays in effect until the next refresh",
+  "blocklist.status.loading": "loading…",
+  "blocklist.status.refreshFailed": "refresh failed - previous version",
+  "blocklist.updated.justNow": "updated just now",
+  "blocklist.cluster.ads": "Ads and trackers",
+  "blocklist.cluster.security": "Security and threats",
+  "blocklist.source.hageziMultiPro.desc": "Ads, trackers, malware - the main set",
+  "blocklist.source.adguardDnsFilter.desc": "Same class, a separate source - wider coverage",
+  "blocklist.source.oneHostsLite.desc": "Same again, a lighter list - fewer false blocks",
+  "blocklist.source.hageziTif.desc": "Indicators of compromise, phishing",
+  "blocklist.source.hageziNrdDga.desc": "Newly registered and algorithmically generated domains (malware C2)",
+  "blocklist.source.hageziDyndns.desc": "Dynamic DNS hostnames, often abused",
+  "blocklist.source.hageziHoster.desc": "Hosters known for distributing malware",
+  "blocklist.activeCount": {
+    "one": "Active, {n} source.",
+    "other": "Active, {n} sources."
+  },
+  "blocklist.updated.hours": {
+    "one": "updated {n} h ago",
+    "other": "updated {n} h ago"
+  },
+  "blocklist.updated.days": {
+    "one": "updated {n} d ago",
+    "other": "updated {n} d ago"
+  },
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domains"

@@ -223,6 +223,40 @@
   "rating.disableFailedTemplate": "끄기 실패: {message}",
   "rating.enableFailedTemplate": "켜기 실패: {message}",
   "rating.saveFailedTemplate": "구역 저장 실패: {message}",
+  "blocklist.heading": "차단 목록 번들",
+  "blocklist.title": "공개 번들 목록으로 차단",
+  "blocklist.desc.off": "쿼럼을 정적 공개 목록(광고/추적기/악성코드/DGA)으로 보완합니다. 선택 사항, 기본값은 꺼짐. 같은 파이프라인, 2단계(Blocklist)만 해당.",
+  "blocklist.desc.pipelineNote": "같은 파이프라인, 2단계(Blocklist)만 해당.",
+  "blocklist.emptyNotice.active": "켜져 있지만 선택된 소스가 없습니다 - 이전에 불러온 세트에 계속 차단이 적용됩니다(소스를 선택할 때까지 자동으로 지워지지 않음).",
+  "blocklist.emptyNotice.inactive": "켜져 있지만 선택된 소스가 없습니다 - 필터링이 적용되지 않습니다. 아래에서 소스를 하나 이상 선택하세요.",
+  "blocklist.forkBNotice": "켜짐, 첫 다운로드가 백그라운드에서 진행 중입니다 - 이전(빈) 버전이 계속 적용됩니다. 완료되면 페이지를 새로 고쳐 결과를 확인하세요.",
+  "blocklist.sourcesSummaryTemplate": "소스({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2개 소스",
+  "blocklist.orphanHeading": "기타",
+  "blocklist.orphanDesc": "알 수 없는 소스(더 이상 게시되지 않음) - 다른 변경 사항을 저장하려면 선택을 해제하세요",
+  "blocklist.status.notTracked": "추적하지 않음",
+  "blocklist.status.unchecked": "선택 해제됨 - 다음 새로 고침까지 유효",
+  "blocklist.status.loading": "불러오는 중…",
+  "blocklist.status.refreshFailed": "새로 고침 실패 - 이전 버전",
+  "blocklist.updated.justNow": "방금 업데이트됨",
+  "blocklist.cluster.ads": "광고 및 추적기",
+  "blocklist.cluster.security": "보안 및 위협",
+  "blocklist.source.hageziMultiPro.desc": "광고, 추적기, 악성코드 - 기본 세트",
+  "blocklist.source.adguardDnsFilter.desc": "같은 분류, 별도 소스 - 더 넓은 범위",
+  "blocklist.source.oneHostsLite.desc": "같은 종류의 더 가벼운 목록 - 오탐 차단 감소",
+  "blocklist.source.hageziTif.desc": "침해 지표, 피싱",
+  "blocklist.source.hageziNrdDga.desc": "새로 등록되었거나 알고리즘으로 생성된 도메인(악성코드 C2)",
+  "blocklist.source.hageziDyndns.desc": "동적 DNS 호스트 이름, 자주 악용됨",
+  "blocklist.source.hageziHoster.desc": "악성코드 배포로 알려진 호스팅 업체",
+  "blocklist.activeCount": {
+    "other": "활성, 소스 {n}개."
+  },
+  "blocklist.updated.hours": {
+    "other": "{n}시간 전에 업데이트됨"
+  },
+  "blocklist.updated.days": {
+    "other": "{n}일 전에 업데이트됨"
+  },
   "zoneDomainCount": {
     "other": "도메인 {n}개"
   }

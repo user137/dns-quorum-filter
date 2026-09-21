@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Pois kytkeminen epäonnistui: {message}",
   "rating.enableFailedTemplate": "Päälle kytkeminen epäonnistui: {message}",
   "rating.saveFailedTemplate": "Vyöhykkeiden tallennus epäonnistui: {message}",
+  "blocklist.heading": "Estolistapaketit",
+  "blocklist.title": "Estä julkisten pakettilistojen perusteella",
+  "blocklist.desc.off": "Täydentää kvoorumia staattisilla julkisilla listoilla (mainokset/seurannat/haittaohjelmat/DGA). Valinnainen, oletuksena pois päältä. Sama putki, vain vaihe 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Sama putki, vain vaihe 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Päällä, mutta lähdettä ei ole valittu - esto koskee edelleen aiemmin ladattua joukkoa (sitä ei tyhjennetä automaattisesti ennen kuin valitset lähteen).",
+  "blocklist.emptyNotice.inactive": "Päällä, mutta lähdettä ei ole valittu - suodatus ei ole voimassa. Valitse alta vähintään yksi lähde.",
+  "blocklist.forkBNotice": "Päällä, ensimmäinen lataus on käynnissä taustalla - edellinen (tyhjä) versio pysyy voimassa. Päivitä sivu nähdäksesi tuloksen, kun se on valmis.",
+  "blocklist.sourcesSummaryTemplate": "Lähteet ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 lähdettä",
+  "blocklist.orphanHeading": "Muu",
+  "blocklist.orphanDesc": "tuntematon lähde (ei enää julkaista) - poista valinta tallentaaksesi muut muutokset",
+  "blocklist.status.notTracked": "ei seurannassa",
+  "blocklist.status.unchecked": "valinta poistettu - pysyy voimassa seuraavaan päivitykseen asti",
+  "blocklist.status.loading": "ladataan…",
+  "blocklist.status.refreshFailed": "päivitys epäonnistui - edellinen versio",
+  "blocklist.updated.justNow": "päivitetty juuri nyt",
+  "blocklist.cluster.ads": "Mainokset ja seurannat",
+  "blocklist.cluster.security": "Tietoturva ja uhat",
+  "blocklist.source.hageziMultiPro.desc": "Mainokset, seurannat, haittaohjelmat - pääjoukko",
+  "blocklist.source.adguardDnsFilter.desc": "Sama luokka, erillinen lähde - laajempi kattavuus",
+  "blocklist.source.oneHostsLite.desc": "Sama, kevyempi lista - vähemmän virhelukituksia",
+  "blocklist.source.hageziTif.desc": "Vaarantumisen indikaattorit, tietojenkalastelu",
+  "blocklist.source.hageziNrdDga.desc": "Vasta rekisteröidyt ja algoritmisesti generoidut verkkotunnukset (haittaohjelmien C2)",
+  "blocklist.source.hageziDyndns.desc": "Dynaamisen DNS:n isäntänimet, joita usein väärinkäytetään",
+  "blocklist.source.hageziHoster.desc": "Haittaohjelmien levittämisestä tunnetut palveluntarjoajat",
+  "blocklist.activeCount": {
+    "one": "Aktiivinen, {n} lähde.",
+    "other": "Aktiivinen, {n} lähdettä."
+  },
+  "blocklist.updated.hours": {
+    "one": "päivitetty {n} t sitten",
+    "other": "päivitetty {n} t sitten"
+  },
+  "blocklist.updated.days": {
+    "one": "päivitetty {n} pv sitten",
+    "other": "päivitetty {n} pv sitten"
+  },
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"

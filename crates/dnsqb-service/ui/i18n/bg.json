@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Неуспешно изключване: {message}",
   "rating.enableFailedTemplate": "Неуспешно включване: {message}",
   "rating.saveFailedTemplate": "Неуспешно запазване на зоните: {message}",
+  "blocklist.heading": "Пакети блок-списъци",
+  "blocklist.title": "Блокиране по публични пакетни списъци",
+  "blocklist.desc.off": "Допълва кворума със статични публични списъци (реклами/тракери/зловреден софтуер/DGA). По избор, изключено по подразбиране. Същият конвейер, само стъпка 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Същият конвейер, само стъпка 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Включено, но не е избран източник - блокирането продължава да действа върху по-рано заредения набор (не се изчиства автоматично, докато не изберете източник).",
+  "blocklist.emptyNotice.inactive": "Включено, но не е избран източник - филтрирането не действа. Отбележете поне един източник по-долу.",
+  "blocklist.forkBNotice": "Включено, първото изтегляне тече във фонов режим - предишната (празна) версия остава в сила. Опреснете страницата, за да видите резултата, когато приключи.",
+  "blocklist.sourcesSummaryTemplate": "Източници ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 източника",
+  "blocklist.orphanHeading": "Друго",
+  "blocklist.orphanDesc": "непознат източник (вече не се публикува) - махнете отметката, за да запазите другите промени",
+  "blocklist.status.notTracked": "не се следи",
+  "blocklist.status.unchecked": "отметката е махната - остава в сила до следващото обновяване",
+  "blocklist.status.loading": "зарежда се…",
+  "blocklist.status.refreshFailed": "неуспешно обновяване - предишна версия",
+  "blocklist.updated.justNow": "обновено току-що",
+  "blocklist.cluster.ads": "Реклами и тракери",
+  "blocklist.cluster.security": "Сигурност и заплахи",
+  "blocklist.source.hageziMultiPro.desc": "Реклами, тракери, зловреден софтуер - основният набор",
+  "blocklist.source.adguardDnsFilter.desc": "Същият клас, отделен източник - по-широко покритие",
+  "blocklist.source.oneHostsLite.desc": "Същото, по-лек списък - по-малко фалшиви блокирания",
+  "blocklist.source.hageziTif.desc": "Индикатори за компрометиране, фишинг",
+  "blocklist.source.hageziNrdDga.desc": "Току-що регистрирани и алгоритмично генерирани домейни (C2 на зловреден софтуер)",
+  "blocklist.source.hageziDyndns.desc": "Динамични DNS хостнейми, често злоупотребявани",
+  "blocklist.source.hageziHoster.desc": "Хостинг доставчици, известни с разпространение на зловреден софтуер",
+  "blocklist.activeCount": {
+    "one": "Активно, {n} източник.",
+    "other": "Активно, {n} източника."
+  },
+  "blocklist.updated.hours": {
+    "one": "обновено преди {n} ч",
+    "other": "обновено преди {n} ч"
+  },
+  "blocklist.updated.days": {
+    "one": "обновено преди {n} д",
+    "other": "обновено преди {n} д"
+  },
   "zoneDomainCount": {
     "one": "{n} домейн",
     "other": "{n} домейна"

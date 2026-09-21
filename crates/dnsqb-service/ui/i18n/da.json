@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Kunne ikke slå fra: {message}",
   "rating.enableFailedTemplate": "Kunne ikke slå til: {message}",
   "rating.saveFailedTemplate": "Kunne ikke gemme zoner: {message}",
+  "blocklist.heading": "Blokeringslistepakker",
+  "blocklist.title": "Bloker efter offentlige pakkelister",
+  "blocklist.desc.off": "Supplerer kvorummet med statiske offentlige lister (reklamer/trackere/malware/DGA). Valgfrit, slået fra som standard. Samme pipeline, kun trin 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Samme pipeline, kun trin 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Slået til, men ingen kilde er valgt - blokering gælder stadig for det tidligere indlæste sæt (det ryddes ikke automatisk, før du vælger en kilde).",
+  "blocklist.emptyNotice.inactive": "Slået til, men ingen kilde er valgt - filtreringen virker ikke. Markér mindst én kilde nedenfor.",
+  "blocklist.forkBNotice": "Slået til, den første download kører i baggrunden - den forrige (tomme) version forbliver gældende. Opdater siden for at se resultatet, når den er færdig.",
+  "blocklist.sourcesSummaryTemplate": "Kilder ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 kilder",
+  "blocklist.orphanHeading": "Andet",
+  "blocklist.orphanDesc": "ukendt kilde (udgives ikke længere) - fjern markeringen for at gemme dine andre ændringer",
+  "blocklist.status.notTracked": "følges ikke",
+  "blocklist.status.unchecked": "afmarkeret - forbliver gældende indtil næste opdatering",
+  "blocklist.status.loading": "indlæser…",
+  "blocklist.status.refreshFailed": "opdatering mislykkedes - forrige version",
+  "blocklist.updated.justNow": "opdateret lige nu",
+  "blocklist.cluster.ads": "Annoncer og trackere",
+  "blocklist.cluster.security": "Sikkerhed og trusler",
+  "blocklist.source.hageziMultiPro.desc": "Annoncer, trackere, malware - hovedsættet",
+  "blocklist.source.adguardDnsFilter.desc": "Samme klasse, separat kilde - bredere dækning",
+  "blocklist.source.oneHostsLite.desc": "Det samme, en lettere liste - færre falske blokeringer",
+  "blocklist.source.hageziTif.desc": "Kompromitteringsindikatorer, phishing",
+  "blocklist.source.hageziNrdDga.desc": "Nyregistrerede og algoritmisk genererede domæner (malware C2)",
+  "blocklist.source.hageziDyndns.desc": "Dynamiske DNS-værtsnavne, ofte misbrugt",
+  "blocklist.source.hageziHoster.desc": "Hostere kendt for at udbrede malware",
+  "blocklist.activeCount": {
+    "one": "Aktiv, {n} kilde.",
+    "other": "Aktiv, {n} kilder."
+  },
+  "blocklist.updated.hours": {
+    "one": "opdateret for {n} t siden",
+    "other": "opdateret for {n} t siden"
+  },
+  "blocklist.updated.days": {
+    "one": "opdateret for {n} d siden",
+    "other": "opdateret for {n} d siden"
+  },
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"

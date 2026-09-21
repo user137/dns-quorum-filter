@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Kapatılamadı: {message}",
   "rating.enableFailedTemplate": "Açılamadı: {message}",
   "rating.saveFailedTemplate": "Bölgeler kaydedilemedi: {message}",
+  "blocklist.heading": "Engelleme listesi paketleri",
+  "blocklist.title": "Herkese açık paket listelerine göre engelle",
+  "blocklist.desc.off": "Kotayı statik herkese açık listelerle (reklamlar/izleyiciler/kötü amaçlı yazılım/DGA) tamamlar. İsteğe bağlı, varsayılan olarak kapalı. Aynı işlem hattı, yalnızca 2. adım (Blocklist).",
+  "blocklist.desc.pipelineNote": "Aynı işlem hattı, yalnızca 2. adım (Blocklist).",
+  "blocklist.emptyNotice.active": "Açık, ancak kaynak seçilmedi - engelleme daha önce yüklenen kümeye uygulanmaya devam ediyor (bir kaynak seçene kadar otomatik olarak temizlenmez).",
+  "blocklist.emptyNotice.inactive": "Açık, ancak kaynak seçilmedi - filtreleme geçerli değil. Aşağıdan en az bir kaynağı işaretleyin.",
+  "blocklist.forkBNotice": "Açık, ilk indirme arka planda sürüyor - önceki (boş) sürüm geçerli kalıyor. Bittiğinde sonucu görmek için sayfayı yenileyin.",
+  "blocklist.sourcesSummaryTemplate": "Kaynaklar ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 kaynak",
+  "blocklist.orphanHeading": "Diğer",
+  "blocklist.orphanDesc": "bilinmeyen kaynak (artık yayımlanmıyor) - diğer değişikliklerinizi kaydetmek için işareti kaldırın",
+  "blocklist.status.notTracked": "izlenmiyor",
+  "blocklist.status.unchecked": "işaret kaldırıldı - bir sonraki yenilemeye kadar geçerli kalır",
+  "blocklist.status.loading": "yükleniyor…",
+  "blocklist.status.refreshFailed": "yenileme başarısız - önceki sürüm",
+  "blocklist.updated.justNow": "az önce güncellendi",
+  "blocklist.cluster.ads": "Reklamlar ve izleyiciler",
+  "blocklist.cluster.security": "Güvenlik ve tehditler",
+  "blocklist.source.hageziMultiPro.desc": "Reklamlar, izleyiciler, kötü amaçlı yazılım - ana küme",
+  "blocklist.source.adguardDnsFilter.desc": "Aynı sınıf, ayrı kaynak - daha geniş kapsam",
+  "blocklist.source.oneHostsLite.desc": "Aynısı, daha hafif liste - daha az yanlış engelleme",
+  "blocklist.source.hageziTif.desc": "Ele geçirilme göstergeleri, kimlik avı",
+  "blocklist.source.hageziNrdDga.desc": "Yeni kaydedilmiş ve algoritmik olarak üretilmiş alan adları (kötü amaçlı yazılım C2)",
+  "blocklist.source.hageziDyndns.desc": "Sıklıkla kötüye kullanılan dinamik DNS ana bilgisayar adları",
+  "blocklist.source.hageziHoster.desc": "Kötü amaçlı yazılım dağıtmasıyla bilinen barındırıcılar",
+  "blocklist.activeCount": {
+    "one": "Etkin, {n} kaynak.",
+    "other": "Etkin, {n} kaynak."
+  },
+  "blocklist.updated.hours": {
+    "one": "{n} sa önce güncellendi",
+    "other": "{n} sa önce güncellendi"
+  },
+  "blocklist.updated.days": {
+    "one": "{n} gün önce güncellendi",
+    "other": "{n} gün önce güncellendi"
+  },
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"

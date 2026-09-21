@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "बंद करना विफल: {message}",
   "rating.enableFailedTemplate": "चालू करना विफल: {message}",
   "rating.saveFailedTemplate": "क्षेत्र सहेजना विफल: {message}",
+  "blocklist.heading": "ब्लॉकलिस्ट बंडल",
+  "blocklist.title": "सार्वजनिक बंडल सूचियों के आधार पर अवरोधित करें",
+  "blocklist.desc.off": "कोरम को स्थैतिक सार्वजनिक सूचियों (विज्ञापन/ट्रैकर/मैलवेयर/DGA) से पूरक बनाता है। वैकल्पिक, डिफ़ॉल्ट रूप से बंद। वही पाइपलाइन, केवल चरण 2 (Blocklist)।",
+  "blocklist.desc.pipelineNote": "वही पाइपलाइन, केवल चरण 2 (Blocklist)।",
+  "blocklist.emptyNotice.active": "चालू है, लेकिन कोई स्रोत नहीं चुना गया - अवरोधन पहले लोड किए गए सेट पर लागू रहता है (जब तक आप स्रोत नहीं चुनते, यह अपने आप साफ़ नहीं होता)।",
+  "blocklist.emptyNotice.inactive": "चालू है, लेकिन कोई स्रोत नहीं चुना गया - फ़िल्टरिंग प्रभावी नहीं है। नीचे कम से कम एक स्रोत चुनें।",
+  "blocklist.forkBNotice": "चालू है, पहला डाउनलोड पृष्ठभूमि में चल रहा है - पिछला (खाली) संस्करण प्रभावी रहता है। पूरा होने पर परिणाम देखने के लिए पेज रीफ़्रेश करें।",
+  "blocklist.sourcesSummaryTemplate": "स्रोत ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 स्रोत",
+  "blocklist.orphanHeading": "अन्य",
+  "blocklist.orphanDesc": "अज्ञात स्रोत (अब प्रकाशित नहीं होता) - अपने अन्य बदलाव सहेजने के लिए इसे अनचेक करें",
+  "blocklist.status.notTracked": "ट्रैक नहीं किया जा रहा",
+  "blocklist.status.unchecked": "अनचेक किया - अगले रीफ़्रेश तक प्रभावी रहता है",
+  "blocklist.status.loading": "लोड हो रहा है…",
+  "blocklist.status.refreshFailed": "रीफ़्रेश विफल - पिछला संस्करण",
+  "blocklist.updated.justNow": "अभी अपडेट हुआ",
+  "blocklist.cluster.ads": "विज्ञापन और ट्रैकर",
+  "blocklist.cluster.security": "सुरक्षा और खतरे",
+  "blocklist.source.hageziMultiPro.desc": "विज्ञापन, ट्रैकर, मैलवेयर - मुख्य सेट",
+  "blocklist.source.adguardDnsFilter.desc": "वही श्रेणी, अलग स्रोत - व्यापक कवरेज",
+  "blocklist.source.oneHostsLite.desc": "वही, हल्की सूची - कम गलत अवरोधन",
+  "blocklist.source.hageziTif.desc": "समझौते के संकेतक, फ़िशिंग",
+  "blocklist.source.hageziNrdDga.desc": "नए पंजीकृत और एल्गोरिथमिक रूप से जनित डोमेन (मैलवेयर C2)",
+  "blocklist.source.hageziDyndns.desc": "डायनेमिक DNS होस्टनाम, जिनका अक्सर दुरुपयोग होता है",
+  "blocklist.source.hageziHoster.desc": "मैलवेयर फैलाने के लिए जाने जाने वाले होस्टर",
+  "blocklist.activeCount": {
+    "one": "सक्रिय, {n} स्रोत।",
+    "other": "सक्रिय, {n} स्रोत।"
+  },
+  "blocklist.updated.hours": {
+    "one": "{n} घं पहले अपडेट हुआ",
+    "other": "{n} घं पहले अपडेट हुआ"
+  },
+  "blocklist.updated.days": {
+    "one": "{n} दिन पहले अपडेट हुआ",
+    "other": "{n} दिन पहले अपडेट हुआ"
+  },
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"

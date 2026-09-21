@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Αποτυχία απενεργοποίησης: {message}",
   "rating.enableFailedTemplate": "Αποτυχία ενεργοποίησης: {message}",
   "rating.saveFailedTemplate": "Αποτυχία αποθήκευσης ζωνών: {message}",
+  "blocklist.heading": "Πακέτα λιστών αποκλεισμού",
+  "blocklist.title": "Αποκλεισμός βάσει δημόσιων λιστών-πακέτων",
+  "blocklist.desc.off": "Συμπληρώνει την απαρτία με στατικές δημόσιες λίστες (διαφημίσεις/ιχνηλάτες/κακόβουλο λογισμικό/DGA). Προαιρετικό, απενεργοποιημένο από προεπιλογή. Ίδια διοχέτευση, μόνο βήμα 2 (Blocklist).",
+  "blocklist.desc.pipelineNote": "Ίδια διοχέτευση, μόνο βήμα 2 (Blocklist).",
+  "blocklist.emptyNotice.active": "Ενεργοποιημένο, αλλά δεν έχει επιλεγεί πηγή - ο αποκλεισμός εξακολουθεί να ισχύει για το σύνολο που φορτώθηκε νωρίτερα (δεν εκκαθαρίζεται αυτόματα μέχρι να επιλέξετε πηγή).",
+  "blocklist.emptyNotice.inactive": "Ενεργοποιημένο, αλλά δεν έχει επιλεγεί πηγή - το φιλτράρισμα δεν ισχύει. Επιλέξτε τουλάχιστον μία πηγή παρακάτω.",
+  "blocklist.forkBNotice": "Ενεργοποιημένο, η πρώτη λήψη εκτελείται στο παρασκήνιο - η προηγούμενη (κενή) έκδοση παραμένει σε ισχύ. Ανανεώστε τη σελίδα για να δείτε το αποτέλεσμα όταν ολοκληρωθεί.",
+  "blocklist.sourcesSummaryTemplate": "Πηγές ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 πηγές",
+  "blocklist.orphanHeading": "Άλλο",
+  "blocklist.orphanDesc": "άγνωστη πηγή (δεν δημοσιεύεται πλέον) - αποεπιλέξτε την για να αποθηκεύσετε τις άλλες αλλαγές",
+  "blocklist.status.notTracked": "δεν παρακολουθείται",
+  "blocklist.status.unchecked": "αποεπιλέχθηκε - παραμένει σε ισχύ μέχρι την επόμενη ανανέωση",
+  "blocklist.status.loading": "φόρτωση…",
+  "blocklist.status.refreshFailed": "αποτυχία ανανέωσης - προηγούμενη έκδοση",
+  "blocklist.updated.justNow": "ενημερώθηκε μόλις τώρα",
+  "blocklist.cluster.ads": "Διαφημίσεις και ιχνηλάτες",
+  "blocklist.cluster.security": "Ασφάλεια και απειλές",
+  "blocklist.source.hageziMultiPro.desc": "Διαφημίσεις, ιχνηλάτες, κακόβουλο λογισμικό - το βασικό σύνολο",
+  "blocklist.source.adguardDnsFilter.desc": "Ίδια κατηγορία, ξεχωριστή πηγή - ευρύτερη κάλυψη",
+  "blocklist.source.oneHostsLite.desc": "Το ίδιο, ελαφρύτερη λίστα - λιγότεροι εσφαλμένοι αποκλεισμοί",
+  "blocklist.source.hageziTif.desc": "Δείκτες παραβίασης, phishing",
+  "blocklist.source.hageziNrdDga.desc": "Πρόσφατα καταχωρισμένοι και αλγοριθμικά παραγόμενοι τομείς (C2 κακόβουλου λογισμικού)",
+  "blocklist.source.hageziDyndns.desc": "Δυναμικά ονόματα κεντρικών υπολογιστών DNS, συχνά υπό κατάχρηση",
+  "blocklist.source.hageziHoster.desc": "Πάροχοι φιλοξενίας γνωστοί για διάδοση κακόβουλου λογισμικού",
+  "blocklist.activeCount": {
+    "one": "Ενεργό, {n} πηγή.",
+    "other": "Ενεργό, {n} πηγές."
+  },
+  "blocklist.updated.hours": {
+    "one": "ενημερώθηκε πριν από {n} ώ",
+    "other": "ενημερώθηκε πριν από {n} ώ"
+  },
+  "blocklist.updated.days": {
+    "one": "ενημερώθηκε πριν από {n} ημ",
+    "other": "ενημερώθηκε πριν από {n} ημ"
+  },
   "zoneDomainCount": {
     "one": "{n} τομέας",
     "other": "{n} τομείς"

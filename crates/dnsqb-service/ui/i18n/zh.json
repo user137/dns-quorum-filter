@@ -223,6 +223,40 @@
   "rating.disableFailedTemplate": "关闭失败：{message}",
   "rating.enableFailedTemplate": "开启失败：{message}",
   "rating.saveFailedTemplate": "保存区域失败：{message}",
+  "blocklist.heading": "屏蔽列表捆绑包",
+  "blocklist.title": "按公开捆绑列表阻止",
+  "blocklist.desc.off": "用静态公开列表(广告/跟踪器/恶意软件/DGA)补充 quorum。可选，默认关闭。同一管线，仅第 2 步(Blocklist)。",
+  "blocklist.desc.pipelineNote": "同一管线，仅第 2 步(Blocklist)。",
+  "blocklist.emptyNotice.active": "已开启，但未选择任何来源 - 阻止仍适用于此前加载的集合(在您选择来源之前不会自动清空)。",
+  "blocklist.emptyNotice.inactive": "已开启，但未选择任何来源 - 过滤未生效。请在下方至少勾选一个来源。",
+  "blocklist.forkBNotice": "已开启，首次下载正在后台进行 - 之前的(空)版本仍然有效。完成后请刷新页面查看结果。",
+  "blocklist.sourcesSummaryTemplate": "来源({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 个来源",
+  "blocklist.orphanHeading": "其他",
+  "blocklist.orphanDesc": "未知来源(不再发布) - 取消勾选以保存您的其他更改",
+  "blocklist.status.notTracked": "未跟踪",
+  "blocklist.status.unchecked": "已取消勾选 - 在下次刷新前仍然有效",
+  "blocklist.status.loading": "加载中…",
+  "blocklist.status.refreshFailed": "刷新失败 - 沿用上一版本",
+  "blocklist.updated.justNow": "刚刚更新",
+  "blocklist.cluster.ads": "广告和跟踪器",
+  "blocklist.cluster.security": "安全与威胁",
+  "blocklist.source.hageziMultiPro.desc": "广告、跟踪器、恶意软件 - 主集合",
+  "blocklist.source.adguardDnsFilter.desc": "同类，独立来源 - 覆盖更广",
+  "blocklist.source.oneHostsLite.desc": "同类，更轻量的列表 - 误拦截更少",
+  "blocklist.source.hageziTif.desc": "入侵指标、网络钓鱼",
+  "blocklist.source.hageziNrdDga.desc": "新注册及算法生成的域名(恶意软件 C2)",
+  "blocklist.source.hageziDyndns.desc": "动态 DNS 主机名，常被滥用",
+  "blocklist.source.hageziHoster.desc": "以传播恶意软件闻名的托管商",
+  "blocklist.activeCount": {
+    "other": "已启用，{n} 个来源。"
+  },
+  "blocklist.updated.hours": {
+    "other": "{n} 小时前更新"
+  },
+  "blocklist.updated.days": {
+    "other": "{n} 天前更新"
+  },
   "zoneDomainCount": {
     "other": "{n} 个域名"
   }

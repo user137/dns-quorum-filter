@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "بند کرنا ناکام: {message}",
   "rating.enableFailedTemplate": "آن کرنا ناکام: {message}",
   "rating.saveFailedTemplate": "زونز محفوظ کرنا ناکام: {message}",
+  "blocklist.heading": "بلاک لسٹ بنڈلز",
+  "blocklist.title": "عوامی بنڈل فہرستوں کے مطابق بلاک کریں",
+  "blocklist.desc.off": "کورم کو جامد عوامی فہرستوں (اشتہارات/ٹریکرز/میلویئر/DGA) سے مکمل کرتا ہے۔ اختیاری، بطور ڈیفالٹ بند۔ وہی پائپ لائن، صرف مرحلہ 2 (Blocklist)۔",
+  "blocklist.desc.pipelineNote": "وہی پائپ لائن، صرف مرحلہ 2 (Blocklist)۔",
+  "blocklist.emptyNotice.active": "آن ہے، لیکن کوئی ماخذ منتخب نہیں - بلاکنگ پہلے سے لوڈ شدہ سیٹ پر لاگو رہتی ہے (جب تک آپ ماخذ منتخب نہ کریں یہ خود بخود صاف نہیں ہوتا)۔",
+  "blocklist.emptyNotice.inactive": "آن ہے، لیکن کوئی ماخذ منتخب نہیں - فلٹرنگ نافذ نہیں ہے۔ نیچے کم از کم ایک ماخذ پر نشان لگائیں۔",
+  "blocklist.forkBNotice": "آن ہے، پہلی ڈاؤن لوڈ پس منظر میں جاری ہے - پچھلا (خالی) ورژن نافذ رہتا ہے۔ مکمل ہونے پر نتیجہ دیکھنے کے لیے صفحہ ریفریش کریں۔",
+  "blocklist.sourcesSummaryTemplate": "ماخذ ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 ماخذ",
+  "blocklist.orphanHeading": "دیگر",
+  "blocklist.orphanDesc": "نامعلوم ماخذ (اب شائع نہیں ہوتا) - اپنی دیگر تبدیلیاں محفوظ کرنے کے لیے نشان ہٹائیں",
+  "blocklist.status.notTracked": "ٹریک نہیں کیا جا رہا",
+  "blocklist.status.unchecked": "نشان ہٹایا گیا - اگلے ریفریش تک نافذ رہتا ہے",
+  "blocklist.status.loading": "لوڈ ہو رہا ہے…",
+  "blocklist.status.refreshFailed": "ریفریش ناکام - پچھلا ورژن",
+  "blocklist.updated.justNow": "ابھی اپ ڈیٹ ہوا",
+  "blocklist.cluster.ads": "اشتہارات اور ٹریکرز",
+  "blocklist.cluster.security": "سیکیورٹی اور خطرات",
+  "blocklist.source.hageziMultiPro.desc": "اشتہارات، ٹریکرز، میلویئر - مرکزی سیٹ",
+  "blocklist.source.adguardDnsFilter.desc": "وہی زمرہ، الگ ماخذ - وسیع کوریج",
+  "blocklist.source.oneHostsLite.desc": "وہی، ہلکی فہرست - کم غلط بلاکنگ",
+  "blocklist.source.hageziTif.desc": "سمجھوتے کے اشارے، فشنگ",
+  "blocklist.source.hageziNrdDga.desc": "نئے رجسٹر شدہ اور الگورتھم سے تیار کردہ ڈومینز (میلویئر C2)",
+  "blocklist.source.hageziDyndns.desc": "متحرک DNS ہوسٹ نام، جن کا اکثر غلط استعمال ہوتا ہے",
+  "blocklist.source.hageziHoster.desc": "میلویئر پھیلانے کے لیے مشہور ہوسٹرز",
+  "blocklist.activeCount": {
+    "one": "فعال، {n} ماخذ۔",
+    "other": "فعال، {n} ماخذ۔"
+  },
+  "blocklist.updated.hours": {
+    "one": "{n} گھنٹے پہلے اپ ڈیٹ ہوا",
+    "other": "{n} گھنٹے پہلے اپ ڈیٹ ہوا"
+  },
+  "blocklist.updated.days": {
+    "one": "{n} دن پہلے اپ ڈیٹ ہوا",
+    "other": "{n} دن پہلے اپ ڈیٹ ہوا"
+  },
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"

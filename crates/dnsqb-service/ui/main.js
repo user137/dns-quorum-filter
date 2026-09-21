@@ -3850,55 +3850,58 @@ const BLOCKLIST_SOURCE_META = {
     group: "hagezi-multi-pro",
     cluster: "ads",
     name: "HaGeZi Multi PRO",
-    desc: "Реклама, трекери, шкідливе ПЗ — основний набір",
+    descKey: "blocklist.source.hageziMultiPro.desc",
   },
   "adguard-dns-filter": {
     group: "adguard-dns-filter",
     cluster: "ads",
     name: "AdGuard DNS filter",
-    desc: "Той самий клас, окреме джерело — ширше покриття",
+    descKey: "blocklist.source.adguardDnsFilter.desc",
   },
   "1hosts-lite": {
     group: "1hosts-lite",
     cluster: "ads",
     name: "1Hosts Lite",
-    desc: "Те саме, легший список — менше хибних блокувань",
+    descKey: "blocklist.source.oneHostsLite.desc",
   },
   "hagezi-tif": {
     group: "hagezi-tif",
     cluster: "security",
     name: "HaGeZi Threat Intelligence Feeds",
-    desc: "Індикатори компрометації, фішинг",
+    descKey: "blocklist.source.hageziTif.desc",
   },
   "hagezi-nrd": {
     group: "hagezi-nrd-dga",
     cluster: "security",
     name: "HaGeZi NRD / DGA",
-    desc: "Щойно зареєстровані й алгоритмічно згенеровані домени (malware C2)",
+    descKey: "blocklist.source.hageziNrdDga.desc",
   },
   "hagezi-dga": {
     group: "hagezi-nrd-dga",
     cluster: "security",
     name: "HaGeZi NRD / DGA",
-    desc: "Щойно зареєстровані й алгоритмічно згенеровані домени (malware C2)",
+    descKey: "blocklist.source.hageziNrdDga.desc",
   },
   "hagezi-dyndns": {
     group: "hagezi-dyndns",
     cluster: "security",
     name: "HaGeZi Dynamic DNS",
-    desc: "Динамічні DNS-хостнейми, часто зловживані",
+    descKey: "blocklist.source.hageziDyndns.desc",
   },
   "hagezi-hoster": {
     group: "hagezi-hoster",
     cluster: "security",
     name: "HaGeZi Badware Hoster",
-    desc: "Хостери, відомі розповсюдженням шкідливого ПЗ",
+    descKey: "blocklist.source.hageziHoster.desc",
   },
 };
 
-const BLOCKLIST_CLUSTER_LABELS = {
-  ads: "Реклама й трекери",
-  security: "Безпека й загрози",
+// Батч 5.4: `name` fields are product names (kept as-is in every locale) and
+// each `desc` is now a dictionary key (`descKey`) resolved at render time;
+// the cluster titles below are keys too, not a module-level string map.
+const BLOCKLIST_CLUSTER_LABEL_KEYS = {
+  ads: "blocklist.cluster.ads",
+  security: "blocklist.cluster.security",
 };
 const BLOCKLIST_CLUSTER_ORDER = ["ads", "security"];
 
@@ -3914,19 +3917,20 @@ async function setBlocklistBundles(enabled, sources) {
   return response.json();
 }
 
-// "N год/дн тому" - a first-pass relative-time label, same precision level
-// the mockup itself shows ("оновлено 3 год тому"), not a claim of
-// second-accuracy.
+// "N h/d ago" - a first-pass relative-time label, same precision level the
+// mockup itself shows ("оновлено 3 год тому"), not a claim of second-accuracy.
+// Батч 5.4: the hand-rolled Ukrainian-only formatting is now two tPlural()
+// keys (one {n} slot each) plus one plain key for "just now".
 function blocklistRelativeTime(unixMillis) {
   const deltaMs = Date.now() - unixMillis;
   const hours = Math.floor(deltaMs / 3600000);
   if (hours < 1) {
-    return "оновлено щойно";
+    return t("blocklist.updated.justNow");
   }
   if (hours < 24) {
-    return `оновлено ${hours} год тому`;
+    return tPlural("blocklist.updated.hours", hours);
   }
-  return `оновлено ${Math.floor(hours / 24)} дн тому`;
+  return tPlural("blocklist.updated.days", Math.floor(hours / 24));
 }
 
 function renderBlocklistBundles(status) {
@@ -3934,14 +3938,13 @@ function renderBlocklistBundles(status) {
   blocklistBundlesBody.textContent = "";
 
   const heading = document.createElement("h3");
-  heading.textContent = "Блок-лист-бандли";
+  heading.textContent = t("blocklist.heading");
   blocklistBundlesBody.appendChild(heading);
 
   if (status.persisted === false) {
     const notPersisted = document.createElement("div");
     notPersisted.className = "notice warn";
-    notPersisted.textContent =
-      "Зміну застосовано, але НЕ збережено на диск — вона не переживе перезапуск сервісу.";
+    notPersisted.textContent = t("warning.notPersisted");
     blocklistBundlesBody.appendChild(notPersisted);
   }
 
@@ -3952,7 +3955,7 @@ function renderBlocklistBundles(status) {
   head.className = "rf-head";
   const title = document.createElement("span");
   title.className = "rf-title";
-  title.textContent = "Блокувати за публічними бандл-списками";
+  title.textContent = t("blocklist.title");
   head.appendChild(title);
 
   const switchLabel = document.createElement("label");
@@ -3960,7 +3963,7 @@ function renderBlocklistBundles(status) {
   const switchInput = document.createElement("input");
   switchInput.type = "checkbox";
   switchInput.checked = bb.enabled;
-  switchInput.setAttribute("aria-label", "Блок-лист-бандли");
+  switchInput.setAttribute("aria-label", t("blocklist.heading"));
   const track = document.createElement("span");
   track.className = "track";
   const thumb = document.createElement("span");
@@ -4009,18 +4012,18 @@ function renderBlocklistBundles(status) {
       // card-level notice below instead; a per-row promise here would
       // contradict it.
       if (trackedSet.size === 0) {
-        return { text: "не відстежується", cls: "" };
+        return { text: t("blocklist.status.notTracked"), cls: "" };
       }
       return loaded.length > 0
-        ? { text: "знято — лишається чинним до наступного оновлення", cls: "stale" }
-        : { text: "не відстежується", cls: "" };
+        ? { text: t("blocklist.status.unchecked"), cls: "stale" }
+        : { text: t("blocklist.status.notTracked"), cls: "" };
     }
     if (loaded.length === 0) {
-      return { text: "завантажується…", cls: "loading" };
+      return { text: t("blocklist.status.loading"), cls: "loading" };
     }
     const failed = loaded.find((entry) => entry.last_error);
     if (failed) {
-      return { text: "збій оновлення — попередня версія", cls: "stale" };
+      return { text: t("blocklist.status.refreshFailed"), cls: "stale" };
     }
     // last_updated is None only alongside last_error (refresh_all_sources'
     // Ok branch always sets Some(now); its Err branch always sets
@@ -4079,32 +4082,28 @@ function renderBlocklistBundles(status) {
     [...orphanIds].filter((id) => trackedSet.has(id)).length;
 
   if (!bb.enabled) {
-    desc.textContent =
-      "Доповнює кворум статичними публічними списками (реклама/трекери/шкідливе/DGA). " +
-      "Опційно, дефолт вимкнено. Той самий пайплайн, лише крок 2 (Blocklist).";
+    desc.textContent = t("blocklist.desc.off");
     card.appendChild(desc);
   } else if (trackedEmpty) {
-    desc.textContent = "Той самий пайплайн, лише крок 2 (Blocklist).";
+    desc.textContent = t("blocklist.desc.pipelineNote");
     card.appendChild(desc);
     const emptyNotice = document.createElement("div");
     emptyNotice.className = "notice warn";
     emptyNotice.textContent = bb.active
-      ? "Увімкнено, але жодного джерела не обрано — блокування й далі діє на раніше " +
-        "завантаженому наборі (він не очищується автоматично, поки не оберете джерело)."
-      : "Увімкнено, але жодного джерела не обрано — фільтрація не діє. Позначте " +
-        "принаймні одне джерело нижче.";
+      ? t("blocklist.emptyNotice.active")
+      : t("blocklist.emptyNotice.inactive");
     card.appendChild(emptyNotice);
   } else if (bb.active) {
-    desc.textContent = `Активно, ${trackedRowCount} джерел. Той самий пайплайн, лише крок 2 (Blocklist).`;
+    desc.textContent = `${tPlural("blocklist.activeCount", trackedRowCount)} ${t(
+      "blocklist.desc.pipelineNote",
+    )}`;
     card.appendChild(desc);
   } else {
-    desc.textContent = "Той самий пайплайн, лише крок 2 (Blocklist).";
+    desc.textContent = t("blocklist.desc.pipelineNote");
     card.appendChild(desc);
     const forkB = document.createElement("div");
     forkB.className = "notice warn";
-    forkB.textContent =
-      "Увімкнено, перше завантаження триває у фоні — попередня (порожня) версія лишається " +
-      "чинною. Оновіть сторінку, щоб побачити результат, коли воно завершиться.";
+    forkB.textContent = t("blocklist.forkBNotice");
     card.appendChild(forkB);
   }
 
@@ -4116,7 +4115,9 @@ function renderBlocklistBundles(status) {
   sourcesDetails.className = "bl-sources";
   const summary = document.createElement("summary");
   const summaryLabel = document.createElement("span");
-  summaryLabel.textContent = `Джерела (${knownRowCount})`;
+  summaryLabel.textContent = t("blocklist.sourcesSummaryTemplate", {
+    count: knownRowCount,
+  });
   const chev = document.createElement("span");
   chev.className = "chev";
   chev.textContent = "›";
@@ -4144,7 +4145,9 @@ function renderBlocklistBundles(status) {
       } catch (err) {
         checkbox.checked = !checkbox.checked;
         checkbox.disabled = false;
-        errorLine.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+        errorLine.textContent = t("error.generic", {
+          message: (err && err.message) || String(err),
+        });
       }
     });
     li.appendChild(checkbox);
@@ -4187,13 +4190,17 @@ function renderBlocklistBundles(status) {
     }
     const sub = document.createElement("div");
     sub.className = "rf-sub";
-    sub.textContent = BLOCKLIST_CLUSTER_LABELS[cluster];
+    sub.textContent = t(BLOCKLIST_CLUSTER_LABEL_KEYS[cluster]);
     sourcesDetails.appendChild(sub);
     const list = document.createElement("ul");
     list.className = "bl-list";
     groupsInCluster.forEach((ids) => {
       const meta = BLOCKLIST_SOURCE_META[ids[0]];
-      const rowDesc = ids.length > 1 ? `${meta.desc} — 2 джерела` : meta.desc;
+      const baseDesc = t(meta.descKey);
+      const rowDesc =
+        ids.length > 1
+          ? t("blocklist.twoSourcesTemplate", { desc: baseDesc })
+          : baseDesc;
       list.appendChild(buildCheckboxRow(ids, meta.name, rowDesc));
     });
     sourcesDetails.appendChild(list);
@@ -4202,17 +4209,13 @@ function renderBlocklistBundles(status) {
   if (orphanIds.size > 0) {
     const sub = document.createElement("div");
     sub.className = "rf-sub";
-    sub.textContent = "Інше";
+    sub.textContent = t("blocklist.orphanHeading");
     sourcesDetails.appendChild(sub);
     const list = document.createElement("ul");
     list.className = "bl-list";
     orphanIds.forEach((id) => {
       list.appendChild(
-        buildCheckboxRow(
-          [id],
-          id,
-          "невідоме джерело (більше не публікується) — зніміть позначку, щоб зберегти інші зміни",
-        ),
+        buildCheckboxRow([id], id, t("blocklist.orphanDesc")),
       );
     });
     sourcesDetails.appendChild(list);
@@ -4226,7 +4229,9 @@ function renderBlocklistBundles(status) {
       renderBlocklistBundles(await setBlocklistBundles(switchInput.checked, bb.sources));
     } catch (err) {
       switchInput.checked = !switchInput.checked;
-      errorLine.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+      errorLine.textContent = t("error.generic", {
+        message: (err && err.message) || String(err),
+      });
     }
   });
 
@@ -4236,11 +4241,13 @@ function renderBlocklistBundles(status) {
 function renderBlocklistBundlesError(err) {
   blocklistBundlesBody.textContent = "";
   const heading = document.createElement("h3");
-  heading.textContent = "Блок-лист-бандли";
+  heading.textContent = t("blocklist.heading");
   blocklistBundlesBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
-  panel.textContent = `Помилка: ${(err && err.message) || String(err)}`;
+  panel.textContent = t("error.generic", {
+    message: (err && err.message) || String(err),
+  });
   blocklistBundlesBody.appendChild(panel);
 }
 

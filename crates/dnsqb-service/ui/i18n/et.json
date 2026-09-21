@@ -225,6 +225,43 @@
   "rating.disableFailedTemplate": "Väljalülitamine ebaõnnestus: {message}",
   "rating.enableFailedTemplate": "Sisselülitamine ebaõnnestus: {message}",
   "rating.saveFailedTemplate": "Tsoonide salvestamine ebaõnnestus: {message}",
+  "blocklist.heading": "Blokeerimisloendite paketid",
+  "blocklist.title": "Blokeeri avalike paketiloendite järgi",
+  "blocklist.desc.off": "Täiendab kvoorumit staatiliste avalike loenditega (reklaam/jälgijad/pahavara/DGA). Valikuline, vaikimisi väljas. Sama torujuhe, ainult 2. samm (Blocklist).",
+  "blocklist.desc.pipelineNote": "Sama torujuhe, ainult 2. samm (Blocklist).",
+  "blocklist.emptyNotice.active": "Sees, kuid allikat pole valitud - blokeerimine kehtib endiselt varem laaditud komplektile (seda ei tühjendata automaatselt, kuni valite allika).",
+  "blocklist.emptyNotice.inactive": "Sees, kuid allikat pole valitud - filtreerimine ei kehti. Märkige allpool vähemalt üks allikas.",
+  "blocklist.forkBNotice": "Sees, esimene allalaadimine käib taustal - eelmine (tühi) versioon jääb kehtima. Värskendage lehte, et tulemust näha, kui see valmis saab.",
+  "blocklist.sourcesSummaryTemplate": "Allikad ({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2 allikat",
+  "blocklist.orphanHeading": "Muu",
+  "blocklist.orphanDesc": "tundmatu allikas (enam ei avaldata) - eemaldage märge, et salvestada teised muudatused",
+  "blocklist.status.notTracked": "ei jälgita",
+  "blocklist.status.unchecked": "märge eemaldatud - kehtib kuni järgmise värskenduseni",
+  "blocklist.status.loading": "laadimine…",
+  "blocklist.status.refreshFailed": "värskendamine ebaõnnestus - eelmine versioon",
+  "blocklist.updated.justNow": "värskendatud äsja",
+  "blocklist.cluster.ads": "Reklaam ja jälgijad",
+  "blocklist.cluster.security": "Turvalisus ja ohud",
+  "blocklist.source.hageziMultiPro.desc": "Reklaam, jälgijad, pahavara - põhikomplekt",
+  "blocklist.source.adguardDnsFilter.desc": "Sama klass, eraldi allikas - laiem katvus",
+  "blocklist.source.oneHostsLite.desc": "Sama, kergem loend - vähem valeblokeerimisi",
+  "blocklist.source.hageziTif.desc": "Kompromiteerimisnäitajad, andmepüük",
+  "blocklist.source.hageziNrdDga.desc": "Äsja registreeritud ja algoritmiliselt genereeritud domeenid (pahavara C2)",
+  "blocklist.source.hageziDyndns.desc": "Dünaamilise DNS-i hostinimed, mida sageli kuritarvitatakse",
+  "blocklist.source.hageziHoster.desc": "Majutajad, kes on tuntud pahavara levitamise poolest",
+  "blocklist.activeCount": {
+    "one": "Aktiivne, {n} allikas.",
+    "other": "Aktiivne, {n} allikat."
+  },
+  "blocklist.updated.hours": {
+    "one": "värskendatud {n} h tagasi",
+    "other": "värskendatud {n} h tagasi"
+  },
+  "blocklist.updated.days": {
+    "one": "värskendatud {n} p tagasi",
+    "other": "värskendatud {n} p tagasi"
+  },
   "zoneDomainCount": {
     "one": "{n} domeen",
     "other": "{n} domeeni"

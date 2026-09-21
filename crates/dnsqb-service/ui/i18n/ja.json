@@ -223,6 +223,40 @@
   "rating.disableFailedTemplate": "オフにできませんでした: {message}",
   "rating.enableFailedTemplate": "オンにできませんでした: {message}",
   "rating.saveFailedTemplate": "ゾーンを保存できませんでした: {message}",
+  "blocklist.heading": "ブロックリストバンドル",
+  "blocklist.title": "公開バンドルリストでブロック",
+  "blocklist.desc.off": "クォーラムを静的な公開リスト(広告/トラッカー/マルウェア/DGA)で補完します。オプション、デフォルトはオフ。同じパイプライン、ステップ2(Blocklist)のみ。",
+  "blocklist.desc.pipelineNote": "同じパイプライン、ステップ2(Blocklist)のみ。",
+  "blocklist.emptyNotice.active": "オンですが、ソースが選択されていません — ブロックは以前に読み込まれたセットに引き続き適用されます(ソースを選択するまで自動的には消去されません)。",
+  "blocklist.emptyNotice.inactive": "オンですが、ソースが選択されていません — フィルタリングは機能していません。下で少なくとも1つのソースにチェックを入れてください。",
+  "blocklist.forkBNotice": "オン、最初のダウンロードをバックグラウンドで実行中 — 以前の(空の)バージョンが引き続き有効です。完了したらページを更新して結果を確認してください。",
+  "blocklist.sourcesSummaryTemplate": "ソース({count})",
+  "blocklist.twoSourcesTemplate": "{desc} — 2ソース",
+  "blocklist.orphanHeading": "その他",
+  "blocklist.orphanDesc": "不明なソース(公開終了) — 他の変更を保存するにはチェックを外してください",
+  "blocklist.status.notTracked": "追跡していません",
+  "blocklist.status.unchecked": "チェックを外しました — 次回の更新まで有効です",
+  "blocklist.status.loading": "読み込み中…",
+  "blocklist.status.refreshFailed": "更新に失敗しました — 以前のバージョン",
+  "blocklist.updated.justNow": "たった今更新",
+  "blocklist.cluster.ads": "広告とトラッカー",
+  "blocklist.cluster.security": "セキュリティと脅威",
+  "blocklist.source.hageziMultiPro.desc": "広告、トラッカー、マルウェア — 主要セット",
+  "blocklist.source.adguardDnsFilter.desc": "同じ分類の別ソース — より広いカバレッジ",
+  "blocklist.source.oneHostsLite.desc": "同様のより軽量なリスト — 誤ブロックが少ない",
+  "blocklist.source.hageziTif.desc": "侵害の痕跡、フィッシング",
+  "blocklist.source.hageziNrdDga.desc": "新規登録およびアルゴリズム生成ドメイン(マルウェアC2)",
+  "blocklist.source.hageziDyndns.desc": "ダイナミックDNSのホスト名(悪用されやすい)",
+  "blocklist.source.hageziHoster.desc": "マルウェアの配布で知られるホスティング事業者",
+  "blocklist.activeCount": {
+    "other": "有効、{n}ソース。"
+  },
+  "blocklist.updated.hours": {
+    "other": "{n}時間前に更新"
+  },
+  "blocklist.updated.days": {
+    "other": "{n}日前に更新"
+  },
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
   }
