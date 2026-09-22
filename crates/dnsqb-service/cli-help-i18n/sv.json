@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Kör utan argument för att starta normal drift - vanligtvis inte manuellt, utan automatiskt.",
+  "cliHelp.description.service": "Lokalt DoH-kvorumfilter - lyssnar på 127.0.0.1, startas vanligtvis automatiskt av dnsqb-watcher, inte manuellt.",
+  "cliHelp.description.tray": "Ikon i systemfältet - visar filtreringsstatus och ger åtkomst till inställningar; startas vanligtvis automatiskt av dnsqb-watcher.",
+  "cliHelp.description.watcher": "Övervakningsprocessen och startpunkten för automatisk start - övervakar dnsqb-service, startar om den vid behov och startar dnsqb-tray."
+}

@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Ejecútelo sin argumentos para iniciar el funcionamiento normal, normalmente no de forma manual, sino automática.",
+  "cliHelp.description.service": "Filtro de quórum DoH local - escucha en 127.0.0.1, normalmente lo inicia automáticamente dnsqb-watcher, no manualmente.",
+  "cliHelp.description.tray": "Icono de la bandeja del sistema - muestra el estado del filtrado y da acceso a la configuración; normalmente lo inicia automáticamente dnsqb-watcher.",
+  "cliHelp.description.watcher": "El proceso de supervisión y punto de entrada de inicio automático - supervisa dnsqb-service, lo reinicia si es necesario e inicia dnsqb-tray."
+}

@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Chạy không có đối số để bắt đầu hoạt động bình thường - thường không phải thủ công mà tự động.",
+  "cliHelp.description.service": "Bộ lọc quorum DoH cục bộ - lắng nghe tại 127.0.0.1, thường được dnsqb-watcher tự động khởi động, không phải thủ công.",
+  "cliHelp.description.tray": "Biểu tượng khay hệ thống - hiển thị trạng thái lọc và cho phép truy cập cài đặt; thường được dnsqb-watcher tự động khởi động.",
+  "cliHelp.description.watcher": "Tiến trình giám sát và điểm khởi động tự động - giám sát dnsqb-service, khởi động lại nếu cần, và khởi động dnsqb-tray."
+}

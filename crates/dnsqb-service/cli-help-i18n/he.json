@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "הפעילו ללא פרמטרים כדי להתחיל בפעולה רגילה - בדרך כלל לא ידנית, אלא אוטומטית.",
+  "cliHelp.description.service": "מסנן קוורום DoH מקומי - מאזין בכתובת 127.0.0.1, מופעל בדרך כלל אוטומטית על ידי dnsqb-watcher, לא ידנית.",
+  "cliHelp.description.tray": "סמל במגש המערכת - מציג את מצב הסינון ומאפשר גישה להגדרות; מופעל בדרך כלל אוטומטית על ידי dnsqb-watcher.",
+  "cliHelp.description.watcher": "תהליך הפיקוח ונקודת הכניסה להפעלה אוטומטית - משגיח על dnsqb-service, מפעיל אותו מחדש במידת הצורך, ומפעיל את dnsqb-tray."
+}

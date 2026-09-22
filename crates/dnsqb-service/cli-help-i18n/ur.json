@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "معمول کا کام شروع کرنے کے لیے بغیر کسی آرگیومنٹ کے چلائیں - عام طور پر ہاتھ سے نہیں بلکہ خودکار طور پر۔",
+  "cliHelp.description.service": "مقامی DoH کورم فلٹر - 127.0.0.1 پر سنتا ہے، عام طور پر dnsqb-watcher کے ذریعے خودکار طور پر شروع ہوتا ہے، ہاتھ سے نہیں۔",
+  "cliHelp.description.tray": "سسٹم ٹرے آئیکن - فلٹرنگ کی حالت دکھاتا ہے اور سیٹنگز تک رسائی دیتا ہے؛ عام طور پر dnsqb-watcher کے ذریعے خودکار طور پر شروع ہوتا ہے۔",
+  "cliHelp.description.watcher": "نگرانی کا عمل اور خودکار آغاز کا انٹری پوائنٹ - dnsqb-service کی نگرانی کرتا ہے، ضرورت پڑنے پر اسے دوبارہ شروع کرتا ہے، اور dnsqb-tray شروع کرتا ہے۔"
+}

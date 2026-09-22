@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Käivitage argumentideta, et alustada tavapärast tööd - tavaliselt mitte käsitsi, vaid automaatselt.",
+  "cliHelp.description.service": "Kohalik DoH kvoorumifilter - kuulab aadressil 127.0.0.1, tavaliselt käivitab selle automaatselt dnsqb-watcher, mitte käsitsi.",
+  "cliHelp.description.tray": "Süsteemisalve ikoon - näitab filtreerimise olekut ja annab juurdepääsu seadetele; tavaliselt käivitab selle automaatselt dnsqb-watcher.",
+  "cliHelp.description.watcher": "Järelevalveprotsess ja automaatkäivituse sisenemispunkt - jälgib teenust dnsqb-service, taaskäivitab selle vajaduse korral ja käivitab dnsqb-tray."
+}

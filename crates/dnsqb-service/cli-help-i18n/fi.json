@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Käynnistä ilman argumentteja aloittaaksesi normaalin toiminnan - yleensä ei käsin vaan automaattisesti.",
+  "cliHelp.description.service": "Paikallinen DoH-kvorumisuodatin - kuuntelee osoitteessa 127.0.0.1, käynnistyy yleensä automaattisesti dnsqb-watcherin toimesta, ei käsin.",
+  "cliHelp.description.tray": "Ilmaisinalueen kuvake - näyttää suodatuksen tilan ja antaa pääsyn asetuksiin; käynnistyy yleensä automaattisesti dnsqb-watcherin toimesta.",
+  "cliHelp.description.watcher": "Valvontaprosessi ja automaattisen käynnistyksen aloituspiste - valvoo dnsqb-servicea, käynnistää sen tarvittaessa uudelleen ja käynnistää dnsqb-trayn."
+}

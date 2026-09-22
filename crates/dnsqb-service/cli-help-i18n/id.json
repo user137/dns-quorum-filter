@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Jalankan tanpa argumen untuk memulai operasi normal - biasanya bukan secara manual, melainkan otomatis.",
+  "cliHelp.description.service": "Filter kuorum DoH lokal - mendengarkan di 127.0.0.1, biasanya dijalankan secara otomatis oleh dnsqb-watcher, bukan secara manual.",
+  "cliHelp.description.tray": "Ikon baki sistem - menampilkan status pemfilteran dan memberikan akses ke pengaturan; biasanya dijalankan secara otomatis oleh dnsqb-watcher.",
+  "cliHelp.description.watcher": "Proses pengawas dan titik masuk mulai otomatis - mengawasi dnsqb-service, memulai ulang jika diperlukan, dan menjalankan dnsqb-tray."
+}

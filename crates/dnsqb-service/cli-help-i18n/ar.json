@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "شغّل البرنامج بدون وسيطات لبدء العمل المعتاد - عادةً ليس يدويًا بل تلقائيًا.",
+  "cliHelp.description.service": "مرشح كوروم DoH محلي - يستمع على 127.0.0.1، ويُشغَّل عادةً تلقائيًا بواسطة dnsqb-watcher، وليس يدويًا.",
+  "cliHelp.description.tray": "أيقونة شريط النظام - تعرض حالة التصفية وتتيح الوصول إلى الإعدادات؛ تُشغَّل عادةً تلقائيًا بواسطة dnsqb-watcher.",
+  "cliHelp.description.watcher": "عملية المراقبة ونقطة دخول التشغيل التلقائي - تشرف على dnsqb-service، وتعيد تشغيله عند الحاجة، وتشغّل dnsqb-tray."
+}

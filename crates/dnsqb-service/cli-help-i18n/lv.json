@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Palaidiet bez argumentiem, lai sāktu parasto darbību - parasti ne manuāli, bet automātiski.",
+  "cliHelp.description.service": "Lokāls DoH kvoruma filtrs - klausās adresē 127.0.0.1, parasti to automātiski palaiž dnsqb-watcher, nevis manuāli.",
+  "cliHelp.description.tray": "Sistēmas ikonjoslas ikona - rāda filtrēšanas statusu un nodrošina piekļuvi iestatījumiem; parasti to automātiski palaiž dnsqb-watcher.",
+  "cliHelp.description.watcher": "Uzraudzības process un automātiskās palaišanas ieejas punkts - uzrauga dnsqb-service, nepieciešamības gadījumā to restartē un palaiž dnsqb-tray."
+}

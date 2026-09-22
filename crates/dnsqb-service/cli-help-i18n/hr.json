@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Pokrenite bez argumenata za uobičajen rad - obično ne ručno, nego automatski.",
+  "cliHelp.description.service": "Lokalni DoH kvorum filtar - osluškuje na 127.0.0.1, obično ga automatski pokreće dnsqb-watcher, ne ručno.",
+  "cliHelp.description.tray": "Ikona u sistemskoj traci - prikazuje status filtriranja i omogućuje pristup postavkama; obično je automatski pokreće dnsqb-watcher.",
+  "cliHelp.description.watcher": "Nadzorni proces i ulazna točka automatskog pokretanja - nadzire dnsqb-service, po potrebi ga ponovno pokreće i pokreće dnsqb-tray."
+}

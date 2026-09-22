@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "인수 없이 실행하면 일반적인 동작을 시작합니다 - 보통 수동이 아니라 자동으로 시작됩니다.",
+  "cliHelp.description.service": "로컬 DoH 쿼럼 필터 - 127.0.0.1에서 수신 대기하며, 보통 수동이 아니라 dnsqb-watcher가 자동으로 시작합니다.",
+  "cliHelp.description.tray": "시스템 트레이 아이콘 - 필터링 상태를 표시하고 설정에 대한 액세스를 제공합니다. 보통 dnsqb-watcher가 자동으로 시작합니다.",
+  "cliHelp.description.watcher": "감독 프로세스이자 자동 시작 진입점입니다 - dnsqb-service를 감독하고, 필요하면 다시 시작하며, dnsqb-tray를 시작합니다."
+}

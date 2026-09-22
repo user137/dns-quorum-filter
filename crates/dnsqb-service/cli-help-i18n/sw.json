@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Endesha bila hoja yoyote ili kuanza uendeshaji wa kawaida - kwa kawaida si kwa mkono, bali kiotomatiki.",
+  "cliHelp.description.service": "Kichujio cha kota cha DoH cha ndani - husikiliza kwenye 127.0.0.1, kwa kawaida huanzishwa kiotomatiki na dnsqb-watcher, si kwa mkono.",
+  "cliHelp.description.tray": "Aikoni ya trei ya mfumo - inaonyesha hali ya uchujaji na kutoa ufikiaji wa mipangilio; kwa kawaida huanzishwa kiotomatiki na dnsqb-watcher.",
+  "cliHelp.description.watcher": "Mchakato wa usimamizi na sehemu ya kuanzia ya kuanzisha kiotomatiki - husimamia dnsqb-service, huianzisha upya inapohitajika, na huanzisha dnsqb-tray."
+}

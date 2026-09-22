@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Spusťte bez argumentů, aby začal běžný provoz - obvykle ne ručně, ale automaticky.",
+  "cliHelp.description.service": "Místní DoH kvorum filtr - naslouchá na 127.0.0.1, obvykle jej automaticky spouští dnsqb-watcher, ne ručně.",
+  "cliHelp.description.tray": "Ikona na hlavním panelu - zobrazuje stav filtrování a poskytuje přístup k nastavení; obvykle ji automaticky spouští dnsqb-watcher.",
+  "cliHelp.description.watcher": "Hlídací proces a vstupní bod automatického spouštění - dohlíží na dnsqb-service, v případě potřeby jej restartuje a spouští dnsqb-tray."
+}

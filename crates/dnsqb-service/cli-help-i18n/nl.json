@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Voer uit zonder argumenten om normaal te starten - meestal niet handmatig, maar automatisch.",
+  "cliHelp.description.service": "Lokaal DoH-quorumfilter - luistert op 127.0.0.1, wordt meestal automatisch gestart door dnsqb-watcher, niet handmatig.",
+  "cliHelp.description.tray": "Systeemvakpictogram - toont de filterstatus en geeft toegang tot instellingen; wordt meestal automatisch gestart door dnsqb-watcher.",
+  "cliHelp.description.watcher": "Het toezichtproces en startpunt voor automatisch opstarten - houdt toezicht op dnsqb-service, start deze indien nodig opnieuw op en start dnsqb-tray."
+}

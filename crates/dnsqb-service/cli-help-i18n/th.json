@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "รันโดยไม่มีอาร์กิวเมนต์เพื่อเริ่มการทำงานตามปกติ - โดยปกติไม่ใช่ด้วยตนเอง แต่เป็นแบบอัตโนมัติ",
+  "cliHelp.description.service": "ตัวกรองโควรัม DoH ในเครื่อง - รับฟังที่ 127.0.0.1 โดยปกติจะเริ่มทำงานโดยอัตโนมัติผ่าน dnsqb-watcher ไม่ใช่ด้วยตนเอง",
+  "cliHelp.description.tray": "ไอคอนถาดระบบ - แสดงสถานะการกรองและให้สิทธิ์เข้าถึงการตั้งค่า มักเริ่มทำงานโดยอัตโนมัติผ่าน dnsqb-watcher",
+  "cliHelp.description.watcher": "กระบวนการเฝ้าระวังและจุดเริ่มต้นการเริ่มทำงานอัตโนมัติ - ดูแล dnsqb-service รีสตาร์ทเมื่อจำเป็น และเริ่ม dnsqb-tray"
+}

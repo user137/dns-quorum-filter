@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Normal çalışmayı başlatmak için argümansız çalıştırın - genellikle elle değil, otomatik olarak.",
+  "cliHelp.description.service": "Yerel DoH kota filtresi - 127.0.0.1 üzerinde dinler, genellikle elle değil dnsqb-watcher tarafından otomatik olarak başlatılır.",
+  "cliHelp.description.tray": "Sistem tepsisi simgesi - filtreleme durumunu gösterir ve ayarlara erişim sağlar; genellikle dnsqb-watcher tarafından otomatik olarak başlatılır.",
+  "cliHelp.description.watcher": "Denetim süreci ve otomatik başlatma giriş noktası - dnsqb-service'i denetler, gerektiğinde yeniden başlatır ve dnsqb-tray'i başlatır."
+}

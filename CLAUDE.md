@@ -13,7 +13,9 @@ DECISIONS.md) shipped 2026-09-19; Батч 5.3 (ccTLD UI, T-118) shipped 2026-09
 of `/admin/ui` i18n, T-151 — ~330 keys × 37 locales) shipped 2026-09-22, **not yet verified in a real
 browser** (`KNOWN-LIMITATIONS.md`); Батч 5.5 (`dnsqb-tray` i18n, T-151, 37 locales, own
 `crates/dnsqb-tray/i18n/*.json` file tree — see TASKS.md for why not shared with `ui/i18n/`)
-shipped 2026-09-22; next per `TASKS.md`: Батч 5.6 (CLI `--help`), 5.7 (`nudge_popup`). Фаза 7
+shipped 2026-09-22; Батч 5.6 (CLI `--help` for all three binaries, T-235 — closed; see TASKS-DONE.md
+for why `println!` alone is safe with no `AttachConsole`/`unsafe`, empirically verified) shipped
+2026-09-23; next per `TASKS.md`: Батч 5.7 (`nudge_popup`). Фаза 7
 (T-218, public blocklist bundles) fully closed 2026-09-17 (Батчі 7.1-7.4,
 full stack). Фаза 4
 (rating filter «bubble», per-country top-N zone infra, personal learned zone) fully closed

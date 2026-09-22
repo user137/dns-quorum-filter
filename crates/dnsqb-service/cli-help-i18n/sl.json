@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Zaženite brez argumentov za običajno delovanje - običajno ne ročno, temveč samodejno.",
+  "cliHelp.description.service": "Lokalni filter kvoruma DoH - posluša na 127.0.0.1, običajno ga samodejno zažene dnsqb-watcher, ne ročno.",
+  "cliHelp.description.tray": "Ikona v sistemski vrstici - prikazuje stanje filtriranja in omogoča dostop do nastavitev; običajno jo samodejno zažene dnsqb-watcher.",
+  "cliHelp.description.watcher": "Nadzorni proces in vstopna točka samodejnega zagona - nadzoruje dnsqb-service, ga po potrebi znova zažene in zažene dnsqb-tray."
+}

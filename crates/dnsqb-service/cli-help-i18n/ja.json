@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "引数を付けずに実行すると通常どおり起動します - 通常は手動ではなく自動的に起動します。",
+  "cliHelp.description.service": "ローカル DoH クォーラムフィルター - 127.0.0.1 で待ち受けます。通常は手動ではなく dnsqb-watcher によって自動的に起動されます。",
+  "cliHelp.description.tray": "システムトレイのアイコン - フィルタリングの状態を表示し、設定へのアクセスを提供します。通常は dnsqb-watcher によって自動的に起動されます。",
+  "cliHelp.description.watcher": "監視プロセスであり、自動起動のエントリポイントです - dnsqb-service を監視し、必要に応じて再起動し、dnsqb-tray を起動します。"
+}

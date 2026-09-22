@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Argumentumok nélkül indítva a szokásos működés indul el - jellemzően nem kézzel, hanem automatikusan.",
+  "cliHelp.description.service": "Helyi DoH kvórumszűrő - a 127.0.0.1 címen figyel, általában a dnsqb-watcher indítja automatikusan, nem kézzel.",
+  "cliHelp.description.tray": "Tálcaikon - megjeleníti a szűrés állapotát és hozzáférést biztosít a beállításokhoz; általában a dnsqb-watcher indítja automatikusan.",
+  "cliHelp.description.watcher": "A felügyeleti folyamat és az automatikus indítás belépési pontja - felügyeli a dnsqb-service-t, szükség esetén újraindítja, és elindítja a dnsqb-tray-t."
+}

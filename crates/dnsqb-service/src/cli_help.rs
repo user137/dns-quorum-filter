@@ -33,7 +33,11 @@ macro_rules! i18n_dicts {
         ];
     };
 }
-i18n_dicts!("en", "uk");
+i18n_dicts!(
+    "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id",
+    "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "sk", "sl", "sr-Latn", "sv", "sw",
+    "th", "tr", "uk", "ur", "vi", "zh",
+);
 
 fn dict(locale: &str) -> Option<&'static str> {
     I18N_DICTS

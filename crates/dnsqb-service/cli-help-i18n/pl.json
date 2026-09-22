@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Uruchom bez argumentów, aby rozpocząć normalną pracę - zwykle nie ręcznie, lecz automatycznie.",
+  "cliHelp.description.service": "Lokalny filtr kworum DoH - nasłuchuje na 127.0.0.1, zwykle uruchamiany automatycznie przez dnsqb-watcher, nie ręcznie.",
+  "cliHelp.description.tray": "Ikona w zasobniku systemowym - pokazuje stan filtrowania i daje dostęp do ustawień; zwykle uruchamiana automatycznie przez dnsqb-watcher.",
+  "cliHelp.description.watcher": "Proces nadzorujący i punkt wejścia autostartu - nadzoruje dnsqb-service, w razie potrzeby go restartuje i uruchamia dnsqb-tray."
+}

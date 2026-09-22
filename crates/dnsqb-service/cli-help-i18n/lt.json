@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Paleiskite be argumentų, kad prasidėtų įprastas darbas - paprastai ne rankiniu būdu, o automatiškai.",
+  "cliHelp.description.service": "Vietinis DoH kvorumo filtras - klausosi 127.0.0.1, paprastai automatiškai paleidžiamas dnsqb-watcher, ne rankiniu būdu.",
+  "cliHelp.description.tray": "Sistemos dėklo piktograma - rodo filtravimo būseną ir suteikia prieigą prie nustatymų; paprastai automatiškai paleidžiama dnsqb-watcher.",
+  "cliHelp.description.watcher": "Priežiūros procesas ir automatinio paleidimo įėjimo taškas - prižiūri dnsqb-service, prireikus jį paleidžia iš naujo ir paleidžia dnsqb-tray."
+}

@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Rulați fără argumente pentru a porni funcționarea normală - de obicei nu manual, ci automat.",
+  "cliHelp.description.service": "Filtru de cvorum DoH local - ascultă pe 127.0.0.1, de obicei pornit automat de dnsqb-watcher, nu manual.",
+  "cliHelp.description.tray": "Pictograma din bara de sistem - afișează starea filtrării și oferă acces la setări; de obicei pornită automat de dnsqb-watcher.",
+  "cliHelp.description.watcher": "Procesul de supraveghere și punctul de intrare pentru pornirea automată - supraveghează dnsqb-service, îl repornește dacă este necesar și pornește dnsqb-tray."
+}

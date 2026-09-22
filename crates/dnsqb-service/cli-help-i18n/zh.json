@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "不带任何参数运行即可开始正常工作 - 通常不是手动启动，而是自动启动。",
+  "cliHelp.description.service": "本地 DoH 法定人数过滤器 - 监听 127.0.0.1，通常由 dnsqb-watcher 自动启动，而非手动启动。",
+  "cliHelp.description.tray": "系统托盘图标 - 显示过滤状态并提供设置入口；通常由 dnsqb-watcher 自动启动。",
+  "cliHelp.description.watcher": "监督进程和自动启动入口点 - 监督 dnsqb-service，必要时重启它，并启动 dnsqb-tray。"
+}
