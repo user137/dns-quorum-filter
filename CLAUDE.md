@@ -11,8 +11,10 @@ per-locale JSON dictionaries, `t()`/`tPlural()`, `/admin/ui/i18n/{uk,en}.json`, 
 FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19. T-236 (same day, user request — full 37-locale switcher, see `ui/i18n/GLOSSARY.md` and
 DECISIONS.md) shipped 2026-09-19; Батч 5.3 (ccTLD UI, T-118) shipped 2026-09-19; Батч 5.4 (the rest
 of `/admin/ui` i18n, T-151 — ~330 keys × 37 locales) shipped 2026-09-22, **not yet verified in a real
-browser** (`KNOWN-LIMITATIONS.md`); next per `TASKS.md`: Батч 5.5 (tray), 5.6 (CLI `--help`), 5.7
-(`nudge_popup`). Фаза 7 (T-218, public blocklist bundles) fully closed 2026-09-17 (Батчі 7.1-7.4,
+browser** (`KNOWN-LIMITATIONS.md`); Батч 5.5 (`dnsqb-tray` i18n, T-151, 37 locales, own
+`crates/dnsqb-tray/i18n/*.json` file tree — see TASKS.md for why not shared with `ui/i18n/`)
+shipped 2026-09-22; next per `TASKS.md`: Батч 5.6 (CLI `--help`), 5.7 (`nudge_popup`). Фаза 7
+(T-218, public blocklist bundles) fully closed 2026-09-17 (Батчі 7.1-7.4,
 full stack). Фаза 4
 (rating filter «bubble», per-country top-N zone infra, personal learned zone) fully closed
 2026-09-11 — tag `v0.4.0` published as GitHub `latest` 2026-09-12 (retagged once pre-publish for a

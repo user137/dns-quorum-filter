@@ -6,6 +6,16 @@ convention). Originally scoped to the T-236 pilot key set (`localeSwitcher.label
 `hero.*`, `zoneDomainCount`); Батч 5.4 (2026-09-20-, one card/section per commit) extends the key
 set to the rest of `main.js` and `index.html` under the same rules, plus the additions below.
 
+**`dnsqb-tray` has its own, separate 37-locale dictionary** —
+`crates/dnsqb-tray/i18n/*.json` (T-151 Батч 5.5), not part of *this* file's `ui/i18n/*.json` tree.
+Same locale-code list, same flat dotted-key JSON format, same MT-tier quality bar and the same
+untranslated-terms/technical-abbreviation conventions below — but a deliberately separate file set
+and separate Rust module (`dnsqb-tray/src/i18n.rs`, its own `t()`/`t_args()`/`detect_locale()`),
+because the tray's strings (native `rfd` dialogs, no web page) are a different domain from this
+crate's embedded web UI. The rating-filter "bubble" phrase and the em/en-dash-vs-colon separator
+used in the tray's tooltip strings are pulled directly from this file's own already-reviewed
+`rating.badge.active`/`hero.NO_PROVIDERS.detail` values, for cross-app consistency.
+
 ## Батч 5.4 additions to the rules above
 
 - **Every new key ships translated into all 37 locales in the same commit that adds it** — not

@@ -31,10 +31,10 @@
 
 /// One `macro_rules!` invocation building the whole dictionary table from a
 /// literal locale-code list - same code-generation shape as `admin_ui.rs`'s
-/// own `i18n_dicts!`. **Batch 1 of Батч 5.5: `uk`/`en` only** (mirrors T-151's
-/// own two-stage rollout, Батч 5.2 before T-236's 37-locale expansion) - the
-/// remaining 35 locale files land in a later commit of this same batch, at
-/// which point this list grows to match.
+/// own `i18n_dicts!`. Started as `uk`/`en` only (mirrors T-151's own
+/// two-stage rollout, Батч 5.2 before T-236's 37-locale expansion); grown to
+/// the full 37-locale list here in the same batch's follow-up commit - the
+/// same code list `admin_ui.rs`'s own `i18n_dicts!` invocation uses.
 macro_rules! i18n_dicts {
     ($($code:literal),+ $(,)?) => {
         pub(crate) const I18N_DICTS: &[(&str, &str)] = &[
@@ -42,7 +42,11 @@ macro_rules! i18n_dicts {
         ];
     };
 }
-i18n_dicts!("en", "uk");
+i18n_dicts!(
+    "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "he", "hi", "hr", "hu", "id",
+    "it", "ja", "ko", "lt", "lv", "nb", "nl", "pl", "pt", "ro", "sk", "sl", "sr-Latn", "sv", "sw",
+    "th", "tr", "uk", "ur", "vi", "zh",
+);
 
 /// Looks up one locale's raw dictionary JSON — `None` for an unregistered
 /// code (never happens for the output of [`detect_locale`], but callers of
