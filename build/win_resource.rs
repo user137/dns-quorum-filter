@@ -10,7 +10,13 @@ use std::{env, fs, path::PathBuf};
 
 /// `file_description` / `original_filename` are the only per-binary fields;
 /// everything else is shared and the version is read from Cargo.
-fn embed_windows_resource(file_description: &str, original_filename: &str) {
+/// `app_manifest` is `Some(<name>.manifest)` (a file in this same `build/`
+/// directory) only for a binary that shows native GUI dialogs - today just
+/// `dnsqb-tray` (T-241 follow-up: this is what actually turns on Windows
+/// 10/11-style `TaskDialogIndirect` rendering for rfd's dialogs, on top of
+/// its own `common-controls-v6` Cargo feature). `dnsqb-service`/
+/// `dnsqb-watcher` are headless and pass `None`.
+fn embed_windows_resource(file_description: &str, original_filename: &str, app_manifest: Option<&str>) {
     if env::var_os("CARGO_CFG_WINDOWS").is_none() {
         return;
     }
@@ -24,6 +30,17 @@ fn embed_windows_resource(file_description: &str, original_filename: &str) {
     // string would be read as escape sequences.
     let icon_literal = icon.to_string_lossy().replace('\\', "/");
 
+    // RT_MANIFEST (24) at resource ID 1 (CREATEPROCESS_MANIFEST_RESOURCE_ID)
+    // is the well-known slot Windows reads an embedded application manifest
+    // from - same forward-slash-escaping reasoning as the icon path above.
+    let manifest_rc_line = app_manifest
+        .map(|name| {
+            let path = manifest_dir.join("../../build").join(name);
+            let literal = path.to_string_lossy().replace('\\', "/");
+            format!(r#"1 24 "{literal}""#)
+        })
+        .unwrap_or_default();
+
     let major = env::var("CARGO_PKG_VERSION_MAJOR").expect("set by cargo");
     let minor = env::var("CARGO_PKG_VERSION_MINOR").expect("set by cargo");
     let patch = env::var("CARGO_PKG_VERSION_PATCH").expect("set by cargo");
@@ -34,6 +51,8 @@ fn embed_windows_resource(file_description: &str, original_filename: &str) {
         r#"#include <winresrc.h>
 
 1 ICON "{icon_literal}"
+
+{manifest_rc_line}
 
 1 VERSIONINFO
 FILEVERSION {version_quad}
@@ -68,6 +87,9 @@ END
 
     println!("cargo:rerun-if-changed=../../assets/icon/app.ico");
     println!("cargo:rerun-if-changed=../../build/win_resource.rs");
+    if let Some(name) = app_manifest {
+        println!("cargo:rerun-if-changed=../../build/{name}");
+    }
 
     match embed_resource::compile(&rc_path, embed_resource::NONE) {
         embed_resource::CompilationResult::Ok | embed_resource::CompilationResult::NotWindows => {}

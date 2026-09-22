@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  T-241 follow-up (2026-09-22 v0.5.0 smoke test): without this manifest,
+  TaskDialogIndirect (enabled via rfd's `common-controls-v6` feature,
+  dnsqb-tray/Cargo.toml) silently falls back to the classic pre-Vista visual
+  style even though the API call itself succeeds - the ComCtl32 v6
+  dependency below is what actually turns on Windows 10/11-style rendering
+  for every rfd::MessageDialog this crate shows. dpiAwareness/supportedOS
+  are the standard companions for any manifested Win32 GUI app; harmless
+  and expected here, not scope creep.
+
+  dpiAwareness/dpiAware each carry their OWN explicit xmlns (not one shared
+  default on <windowsSettings>) - verified empirically via a scratch build:
+  a single 2005-namespace default on the wrapper applied to <dpiAwareness>
+  too and Windows refused to launch the exe at all ("Activation context
+  generation failed ... dpiAwareness is not registered", Application event
+  log, SideBySide source, event id 79) because PerMonitorV2 is only defined
+  in the 2016 schema. <dpiAware> (2005) stays as the pre-1607 fallback.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="dnsqb-tray" version="1.0.0.0" processorArchitecture="*"/>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"/>
+    </dependentAssembly>
+  </dependency>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+  <asmv3:application xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+    <asmv3:windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+</assembly>

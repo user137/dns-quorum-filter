@@ -462,7 +462,7 @@ fn handle_menu_event(
                 let cert_path = app_data.join("cert.pem");
                 spawn_cert_action(
                     "install",
-                    "Встановити сертифікат",
+                    dialog_title("Встановити сертифікат"),
                     trust,
                     move || ensure_installed(&cert_path).map(|outcome| format!("{outcome:?}")),
                 );
@@ -472,7 +472,7 @@ fn handle_menu_event(
             if confirm_uninstall_cert() {
                 spawn_cert_action(
                     "uninstall",
-                    "Видалити сертифікат",
+                    dialog_title("Видалити сертифікат"),
                     trust,
                     || uninstall_trust_store().map(|()| "removed".to_string()),
                 );
@@ -482,7 +482,7 @@ fn handle_menu_event(
             if confirm_rotate_cert() {
                 spawn_cert_action(
                     "rotate",
-                    "Перевипустити сертифікат",
+                    dialog_title("Перевипустити сертифікат"),
                     trust,
                     || rotate_certificate().map(|report| report.to_string()),
                 );
@@ -572,6 +572,17 @@ where
     });
 }
 
+/// Every native dialog's title, so a user with several DNS-QF popups open
+/// (or a screenshot shared for support) can always see which app and which
+/// build it came from at a glance (user request, 2026-09-22 v0.5.0 smoke
+/// test) - one shared function so the format can't drift between call
+/// sites the way the ten literal titles it replaced already had (`"dns-
+/// quorum-filter"` lowercase-hyphenated on the About dialog vs `"DNS Quorum
+/// Filter"` everywhere else).
+fn dialog_title(action: &str) -> String {
+    format!("DNS Quorum Filter {} — {action}", env!("CARGO_PKG_VERSION"))
+}
+
 /// Runs one trust-store action (`install`/`uninstall`) on its own throwaway
 /// OS thread — unlike [`spawn_admin_action`], this is a synchronous local
 /// `certutil` call, not an admin-HTTP-channel round trip, so no `tokio`
@@ -584,7 +595,7 @@ where
 /// the "no on-screen indication" failure class this crate's own module doc
 /// comment already names for "Зупинити фільтрацію" (advisor-caught before
 /// commit, not written this way from the start).
-fn spawn_trust_store_action<F, E>(action_name: &'static str, dialog_title: &'static str, action: F)
+fn spawn_trust_store_action<F, E>(action_name: &'static str, dialog_title: String, action: F)
 where
     F: FnOnce() -> Result<String, E> + Send + 'static,
     E: std::fmt::Display,
@@ -618,7 +629,7 @@ where
 /// ~100–300 ms action and re-poll before the store actually changed.
 fn spawn_cert_action<F, E>(
     action_name: &'static str,
-    dialog_title: &'static str,
+    dialog_title: String,
     trust: &TrustState,
     action: F,
 ) where
@@ -654,7 +665,7 @@ fn spawn_remove_all_and_quit(app_data: PathBuf) {
         let report = format_uninstall_report(&remove_all_local_state(Some(&app_data)));
         tracing::info!("remove-all-local-state finished:\n{report}");
         rfd::MessageDialog::new()
-            .set_title("Повністю видалити")
+            .set_title(dialog_title("Повністю видалити"))
             .set_description(format!(
                 "{report}\n\nТека даних застосунку буде повністю видалена, а сам застосунок \
                  закриється. Відкриються Параметри Windows — натисніть «Видалити» на \
@@ -778,21 +789,18 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
     let app_data = app_data.to_path_buf();
     let trust = trust.clone();
     std::thread::spawn(move || {
-        let proceed = rfd::MessageDialog::new()
-            .set_title("Ласкаво просимо до DNS Quorum Filter")
-            .set_description(
-                "Залишилось два кроки, щоб браузер почав фільтрувати DNS:\n\n\
-                 1. Встановити локальний сертифікат — без нього браузер не довірятиме \
-                 сторінці налаштувань.\n\
-                 2. Вказати адресу локального фільтра в налаштуваннях браузера — \
-                 сторінка з інструкцією відкриється після кроку 1.\n\n\
-                 Встановити сертифікат зараз?",
-            )
-            .set_level(rfd::MessageLevel::Info)
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show();
+        let proceed = confirm(
+            "Ласкаво просимо",
+            "Залишилось два кроки, щоб браузер почав фільтрувати DNS:\n\n\
+             1. Встановити локальний сертифікат — без нього браузер не довірятиме \
+             сторінці налаштувань.\n\
+             2. Вказати адресу локального фільтра в налаштуваннях браузера — \
+             сторінка з інструкцією відкриється після кроку 1.\n\n\
+             Встановити сертифікат зараз?",
+            rfd::MessageLevel::Info,
+        );
         WIZARD_ACTIVE.store(false, Ordering::SeqCst);
-        if proceed != rfd::MessageDialogResult::Yes {
+        if !proceed {
             onboarding::mark_onboarding_seen(&app_data);
             return;
         }
@@ -800,7 +808,7 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
         let url = format!("https://127.0.0.1:{port}/admin/ui");
         spawn_cert_action(
             "onboarding-install",
-            "Встановити сертифікат",
+            dialog_title("Встановити сертифікат"),
             &trust,
             move || -> Result<String, dnsqb_service::TrustStoreError> {
                 let outcome = ensure_installed(&cert_path)?;
@@ -814,39 +822,51 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
     });
 }
 
+/// The one shape every "are you sure?" dialog below shares: [`dialog_title`]
+/// for the header, always Yes/No buttons, always "did they pick Yes" as the
+/// answer. Only the description text and severity actually differ per
+/// dialog, so those stay ordinary arguments at each named `confirm_*`
+/// call site below — this collapses the six-line `MessageDialog` builder
+/// that used to be copy-pasted at every one of those sites (user question,
+/// 2026-09-22: "чи можна винести це в одне місце" — this is that place),
+/// without losing the named function + doc comment that explains *why*
+/// that particular dialog exists, which a single generic call from the
+/// menu-dispatch match arm would have.
+fn confirm(action: &str, description: &str, level: rfd::MessageLevel) -> bool {
+    rfd::MessageDialog::new()
+        .set_title(dialog_title(action))
+        .set_description(description)
+        .set_level(level)
+        .set_buttons(rfd::MessageButtons::YesNo)
+        .show()
+        == rfd::MessageDialogResult::Yes
+}
+
 /// Native confirm dialog before `certutil -addstore` — this pops the OS's
 /// own confirmation dialog too (a second, separate prompt) unless/until
 /// T-49's open "is certutil silent?" question is settled by a real run; see
 /// `trust_store.rs`'s module doc comment.
 fn confirm_install_cert() -> bool {
-    let result = rfd::MessageDialog::new()
-        .set_title("Встановити сертифікат")
-        .set_description(
-            "Локальний сертифікат dns-quorum-filter буде додано до довірених кореневих \
-             сертифікатів поточного користувача (CurrentUser\\Root). Це прибирає попередження \
-             браузера про недовірений сертифікат на сторінці налаштувань. Windows може показати \
-             власний діалог підтвердження. Продовжити?",
-        )
-        .set_level(rfd::MessageLevel::Info)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    result == rfd::MessageDialogResult::Yes
+    confirm(
+        "Встановити сертифікат",
+        "Локальний сертифікат dns-quorum-filter буде додано до довірених кореневих \
+         сертифікатів поточного користувача (CurrentUser\\Root). Це прибирає попередження \
+         браузера про недовірений сертифікат на сторінці налаштувань. Windows може показати \
+         власний діалог підтвердження. Продовжити?",
+        rfd::MessageLevel::Info,
+    )
 }
 
 /// Native confirm dialog before `certutil -delstore` — names the real
 /// consequence (browser warning returns), same pattern as [`confirm_pause`].
 fn confirm_uninstall_cert() -> bool {
-    let result = rfd::MessageDialog::new()
-        .set_title("Видалити сертифікат")
-        .set_description(
-            "Локальний сертифікат dns-quorum-filter буде видалено з довірених кореневих \
-             сертифікатів. Браузер знову покаже попередження про недовірений сертифікат на \
-             сторінці налаштувань, доки сертифікат не буде встановлено повторно. Продовжити?",
-        )
-        .set_level(rfd::MessageLevel::Warning)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    result == rfd::MessageDialogResult::Yes
+    confirm(
+        "Видалити сертифікат",
+        "Локальний сертифікат dns-quorum-filter буде видалено з довірених кореневих \
+         сертифікатів. Браузер знову покаже попередження про недовірений сертифікат на \
+         сторінці налаштувань, доки сертифікат не буде встановлено повторно. Продовжити?",
+        rfd::MessageLevel::Warning,
+    )
 }
 
 /// Native confirm dialog before certificate rotation — names every consequence
@@ -860,21 +880,17 @@ fn confirm_uninstall_cert() -> bool {
 /// [`status::spawn`] keeps its cached client, still pinned to and matching the
 /// still-served previous certificate.)
 fn confirm_rotate_cert() -> bool {
-    let result = rfd::MessageDialog::new()
-        .set_title("Перевипустити сертифікат")
-        .set_description(
-            "Буде згенеровано новий локальний сертифікат dns-quorum-filter із новим ключем. \
-             Старі записи цього проєкту прибираються з довірених кореневих сертифікатів \
-             (CurrentUser\\Root), новий сертифікат встановлюється замість них. \
-             dnsqb-service потрібно перезапустити, щоб новий сертифікат почав діяти — до \
-             перезапуску сервіс віддає попередній сертифікат, і браузер показуватиме \
-             попередження про недовірений сертифікат на сторінці налаштувань. Після \
-             перезапуску воно зникає. Продовжити?",
-        )
-        .set_level(rfd::MessageLevel::Warning)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    result == rfd::MessageDialogResult::Yes
+    confirm(
+        "Перевипустити сертифікат",
+        "Буде згенеровано новий локальний сертифікат dns-quorum-filter із новим ключем. \
+         Старі записи цього проєкту прибираються з довірених кореневих сертифікатів \
+         (CurrentUser\\Root), новий сертифікат встановлюється замість них. \
+         dnsqb-service потрібно перезапустити, щоб новий сертифікат почав діяти — до \
+         перезапуску сервіс віддає попередній сертифікат, і браузер показуватиме \
+         попередження про недовірений сертифікат на сторінці налаштувань. Після \
+         перезапуску воно зникає. Продовжити?",
+        rfd::MessageLevel::Warning,
+    )
 }
 
 /// Native confirm dialog before T-70/T-195's full removal — names everything
@@ -883,19 +899,15 @@ fn confirm_rotate_cert() -> bool {
 /// closes and Windows Settings opens for the final "Remove" click (MSIX,
 /// T-156, gives the app no uninstall-time hook of its own).
 fn confirm_remove_all_local_state() -> bool {
-    let result = rfd::MessageDialog::new()
-        .set_title("Повністю видалити")
-        .set_description(
-            "Буде повністю видалено локальні дані dns-quorum-filter: довірений сертифікат, \
-             TLS-ключ, ключ шифрування журналу/кешу та збережені креденшели MaxMind зі сховища \
-             облікових даних Windows, а також уся тека даних застосунку (журнал, кеш, \
-             налаштування). Застосунок закриється, і відкриються Параметри Windows — там \
-             натисніть «Видалити» на dns-quorum-filter. Продовжити?",
-        )
-        .set_level(rfd::MessageLevel::Warning)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    result == rfd::MessageDialogResult::Yes
+    confirm(
+        "Повністю видалити",
+        "Буде повністю видалено локальні дані dns-quorum-filter: довірений сертифікат, \
+         TLS-ключ, ключ шифрування журналу/кешу та збережені креденшели MaxMind зі сховища \
+         облікових даних Windows, а також уся тека даних застосунку (журнал, кеш, \
+         налаштування). Застосунок закриється, і відкриються Параметри Windows — там \
+         натисніть «Видалити» на dns-quorum-filter. Продовжити?",
+        rfd::MessageLevel::Warning,
+    )
 }
 
 /// One line per artifact, never a single collapsed pass/fail — the same
@@ -921,7 +933,7 @@ fn format_uninstall_report(report: &UninstallReport) -> String {
 
 fn show_about_dialog() {
     rfd::MessageDialog::new()
-        .set_title("dns-quorum-filter")
+        .set_title(dialog_title("Про програму"))
         .set_description(format!(
             "dnsqb-tray {}\nЛіцензія: Apache-2.0\nЛокальний DoH quorum-фільтр \u{2014} \
              https://127.0.0.1/admin/ui",
@@ -939,35 +951,27 @@ fn show_about_dialog() {
 /// dialog says so. Deliberately does **not** claim "everything goes unfiltered"
 /// — a blocklisted domain is still blocked during a pause.
 fn confirm_pause() -> bool {
-    let result = rfd::MessageDialog::new()
-        .set_title("Призупинити фільтрацію")
-        .set_description(
-            "DNS продовжить працювати, але фільтрацію буде вимкнено: quorum-перевірка та \
-             GeoIP не застосовуватимуться, домени резолвитимуться напряму через \
-             baseline-резолвер. Ваші власні списки блокування та дозволу продовжать діяти. \
-             Відновити — цим самим пунктом меню або перезапуском застосунку. Продовжити?",
-        )
-        .set_level(rfd::MessageLevel::Warning)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    result == rfd::MessageDialogResult::Yes
+    confirm(
+        "Призупинити фільтрацію",
+        "DNS продовжить працювати, але фільтрацію буде вимкнено: quorum-перевірка та \
+         GeoIP не застосовуватимуться, домени резолвитимуться напряму через \
+         baseline-резолвер. Ваші власні списки блокування та дозволу продовжать діяти. \
+         Відновити — цим самим пунктом меню або перезапуском застосунку. Продовжити?",
+        rfd::MessageLevel::Warning,
+    )
 }
 
 /// Native confirm dialog before quitting the whole app (T-185) — this stops
 /// the service, the watchdog and the tray. Same blast-radius warning shape as
 /// [`confirm_pause`], stronger wording.
 fn confirm_quit() -> bool {
-    let result = rfd::MessageDialog::new()
-        .set_title("Вийти з DNS Quorum Filter")
-        .set_description(
-            "Застосунок повністю зупиниться: DNS-фільтрація, фоновий нагляд і ця іконка. \
-             DNS піде нефільтрованим, доки ви знову не запустите застосунок із меню Пуск. \
-             Продовжити?",
-        )
-        .set_level(rfd::MessageLevel::Warning)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    result == rfd::MessageDialogResult::Yes
+    confirm(
+        "Вийти",
+        "Застосунок повністю зупиниться: DNS-фільтрація, фоновий нагляд і ця іконка. \
+         DNS піде нефільтрованим, доки ви знову не запустите застосунок із меню Пуск. \
+         Продовжити?",
+        rfd::MessageLevel::Warning,
+    )
 }
 
 #[cfg(test)]

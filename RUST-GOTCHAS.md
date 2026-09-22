@@ -615,3 +615,40 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   thread, which is not one of the runtime's `worker_threads` and so never contends with anything
   spawned onto the pool (another false-negative the first round hit).
 
+- **A Windows `.rc` resource script written as raw UTF-8 (no BOM) is read by `rc.exe`/`windres`
+  using the system ANSI codepage, regardless of what the `StringFileInfo` block inside it declares
+  (`BLOCK "040904b0"` = codepage 1200/Unicode).** That codepage tag only governs the *compiled*
+  string table's encoding, not how the *source* `.rc` text itself is parsed. A non-ASCII byte in a
+  version-resource string (an em dash, `—`) silently becomes mojibake (`â€"`) in Task Manager/File
+  Explorer properties on the shipped binary — no build error, no warning, both `rc.exe` (MSVC) and
+  `windres` (MinGW) affected identically. Found in `v0.5.0`'s already-released `dnsqb-tray.exe`/
+  `dnsqb-service.exe`/`dnsqb-watcher.exe` (T-241). Fix: keep every string embedded this way plain
+  ASCII — sidesteps the BOM/compiler-detection question entirely instead of chasing which resource
+  compiler on which target handles a UTF-8 BOM correctly.
+- **`rfd`'s `common-controls-v6` feature alone does not switch `MessageDialog` to the modern
+  `TaskDialogIndirect` look** — it only makes the *code path* available; the process also needs an
+  embedded application manifest declaring a dependency on `Microsoft.Windows.Common-Controls`
+  `6.0.0.0`, or the OS silently keeps rendering the classic pre-Vista `MessageBoxW` style with no
+  error at all (T-241). And that manifest's `<dpiAwareness>PerMonitorV2</dpiAwareness>` element
+  **must carry its own `xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings"`, not inherit
+  a `2005`-namespace default from its `<windowsSettings>` parent** — `PerMonitorV2` is only defined
+  in the 2016 schema, and mixing the two makes Windows refuse to launch the process at all
+  (`Activation context generation failed ... dpiAwareness is not registered`, Application event
+  log, source `SideBySide`, event id 79 — not a compile-time or link-time failure, only surfaces at
+  process launch). Keep a `<dpiAware xmlns=".../2005/...">true/pm</dpiAware>` sibling (its own
+  explicit namespace too) as the pre-1607 fallback. Verified empirically with an isolated scratch
+  crate + `mt.exe -inputresource:exe;#1` (extracts an embedded manifest for inspection) before
+  touching the real crate's build script.
+- **A manifest/version-resource change made on a `windows-gnu` dev host cannot be trusted to
+  reflect the toolchain that actually ships the release (`windows-msvc`, per `deny.toml`'s
+  `[graph] targets` and every CI job).** Embedding a custom manifest resource on this project's
+  windows-gnu dev box produces an `ld.exe` linker warning, `.rsrc merge failure: multiple
+  non-default manifests` — MinGW's own CRT startup objects already link in a default manifest,
+  and a second one (yours) conflicts. This warning **does not reproduce on MSVC** (verified by
+  installing the exact `rust-toolchain.toml`-pinned version for the `x86_64-pc-windows-msvc`
+  target with `rustup toolchain install <ver>-x86_64-pc-windows-msvc` and building there instead —
+  no shared toolchain state with the default `stable-x86_64-pc-windows-gnu` host). When a
+  Windows-resource-adjacent change behaves differently than expected on this dev box, build once
+  on the pinned MSVC toolchain before concluding there's a real bug — this project's own local/CI
+  toolchain split (documented in the `Windows toolchain env` memory) is exactly the kind of gap
+  that makes a dev-box-only artifact look like a shipped-binary bug if not cross-checked.

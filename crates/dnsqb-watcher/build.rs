@@ -2,5 +2,7 @@
 include!("../../build/win_resource.rs");
 
 fn main() {
-    embed_windows_resource("DNS Quorum Filter — watchdog", "dnsqb-watcher.exe");
+    // Plain ASCII hyphen - see the identical comment in dnsqb-tray/build.rs
+    // (T-241) for why an em dash here becomes Task Manager mojibake.
+    embed_windows_resource("DNS Quorum Filter - watchdog", "dnsqb-watcher.exe", None);
 }
