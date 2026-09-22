@@ -3282,7 +3282,20 @@ where
     F: FnOnce(Vec<ProviderEntry>) -> Result<Vec<ProviderEntry>, StatusCode>,
 {
     let _persist_guard = state.persist_lock.lock();
-    let after = compute(state.providers_snapshot())?;
+    let before = state.providers_snapshot();
+    let after = compute(before.clone())?;
+    if after != before {
+        // A changed voter set can flip a cached quorum verdict in either
+        // direction (a disabled voter's BLOCK no longer applies; a newly
+        // enabled voter's BLOCK isn't reflected in an old cached ALLOW) — the
+        // cache holds no per-entry record of which voters produced it, so a
+        // full clear is the only correct invalidation here (same primitive
+        // `/admin/reset` already exposes manually; found live in smoke-testing
+        // 2026-09-22 — a disabled category's cached BLOCK persisted for its
+        // full `block_verdict_ttl_secs`, up to 24h, with no way to tell the
+        // user why the "off" toggle didn't take effect).
+        state.cache.read().cache.clear();
+    }
     state.update_providers(after.clone());
     let runtime = *state.runtime.read();
     let cache_config = state.cache.read().config;
@@ -9977,6 +9990,87 @@ mod tests {
             .providers
             .iter()
             .any(|e| e.spec.id == "opendns-familyshield" && e.enabled));
+    }
+
+    // Found live in smoke-testing 2026-09-22: disabling a category left a
+    // cached BLOCK verdict in place for its full `block_verdict_ttl_secs` (up
+    // to 24h) since no `/admin/providers/*` route touched the cache. Mirrors
+    // `serve_admin_overrides_add_invalidates_a_cached_verdict_for_the_newly_
+    // blocked_domain`'s pattern: pre-populate a verdict, drive the route,
+    // assert the entry is gone.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_invalidates_the_whole_cache() {
+        let (_dir, state) = providers_state();
+        let Ok(key) = CacheKey::new("cache-inval-provider.test", RecordType::A) else {
+            panic!("valid fixture domain");
+        };
+        let cache_state = Arc::clone(&state.cache.read());
+        cache_state
+            .cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(Verdict::Block, std::time::Duration::from_secs(300)),
+            )
+            .await;
+        assert!(cache_state.cache.get(&key).await.is_some());
+
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-category-enabled",
+                &serde_json::json!({"category": "ADS_TRACKERS", "enabled": false}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            cache_state.cache.get(&key).await.is_none(),
+            "a voter-set change must invalidate the whole cache, not just the toggled category's own verdicts"
+        );
+    }
+
+    // Companion to the test above: a no-op call (off on an already-empty
+    // category) must not clear the cache — there is no reason a client-visible
+    // idempotent echo should discard unrelated cached verdicts.
+    #[tokio::test]
+    async fn serve_admin_providers_set_category_enabled_noop_does_not_clear_the_cache() {
+        let (_dir, state) = providers_state();
+        let Ok(key) = CacheKey::new("cache-noop-provider.test", RecordType::A) else {
+            panic!("valid fixture domain");
+        };
+        let cache_state = Arc::clone(&state.cache.read());
+        cache_state
+            .cache
+            .insert(
+                key.clone(),
+                CacheEntry::new(
+                    Verdict::Allow(vec![Ipv4Addr::new(1, 2, 3, 4).into()]),
+                    std::time::Duration::from_secs(300),
+                ),
+            )
+            .await;
+
+        let response = match serve(
+            admin_post_json(
+                "/admin/providers/set-category-enabled",
+                &serde_json::json!({"category": "ADULT_CONTENT", "enabled": false}),
+            ),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            cache_state.cache.get(&key).await.is_some(),
+            "a no-op provider-config call must not clear unrelated cached verdicts"
+        );
     }
 
     // T-176 — Misuse & Fool: on/off/on for the adult category must re-enable
