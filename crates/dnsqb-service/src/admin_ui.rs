@@ -1205,6 +1205,7 @@ mod tests {
             "refreshCacheConfig()",
             "refreshMaxmind()",
             "refreshProviders()",
+            "retranslateCustomProviderForm()",
             "refreshGeoip()",
             "refreshCctldBlock()",
             "buildLogFilterRow()",
@@ -1254,6 +1255,51 @@ mod tests {
             "must not also fire eagerly at module scope any more - same \
              double-fetch risk, fixed in Батч 5.4"
         );
+    }
+
+    // T-240 regression: customProviderForm() intentionally caches its whole
+    // DOM node (T-47, so switching/adding another provider never wipes an
+    // in-progress custom-provider entry) - but that cache meant a live
+    // setLocale() never revisited its placeholders/aria-labels/options text.
+    #[test]
+    fn custom_provider_form_is_retranslated_without_rebuilding_or_touching_value() {
+        let Some(fn_start) = MAIN_JS.find("function retranslateCustomProviderForm() {") else {
+            panic!("retranslateCustomProviderForm must exist");
+        };
+        let Some(fn_end) = MAIN_JS[fn_start..].find("\n}") else {
+            panic!("retranslateCustomProviderForm must be closed");
+        };
+        let body = &MAIN_JS[fn_start..fn_start + fn_end];
+        assert!(
+            !body.contains("createElement"),
+            "must retranslate the existing cached fields in place, never \
+             rebuild the form - that would defeat the T-47 cache this fix \
+             is layered on top of"
+        );
+        for input_value in ["idInput.value", "urlInput.value", "nameInput.value"] {
+            assert!(
+                !body.contains(input_value),
+                "must never touch {input_value} - an in-progress, \
+                 unsubmitted entry must survive a locale switch (reading \
+                 opt.value off the cat/sig <option>s to relabel them is \
+                 fine, that's not user input)"
+            );
+        }
+        // The second T-240 finding, same session: the aria-labels froze too,
+        // not just placeholders/option text - a screen-reader-only bug that
+        // is easy to fix and re-break separately from the visible text.
+        for aria_target in [
+            "idInput.setAttribute(\"aria-label\"",
+            "nameInput.setAttribute(\"aria-label\"",
+            "urlInput.setAttribute(\"aria-label\"",
+            "catSelect.setAttribute(\"aria-label\"",
+            "sigSelect.setAttribute(\"aria-label\"",
+        ] {
+            assert!(
+                body.contains(aria_target),
+                "must refresh {aria_target} too, not just placeholder/option text"
+            );
+        }
     }
 
     #[test]

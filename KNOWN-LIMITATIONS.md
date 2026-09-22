@@ -232,11 +232,14 @@ TASKS-DONE.md, never here.
   **Verified in a real browser 2026-09-22** (T-238 smoke test, `chrome-devtools` MCP, live
   `setLocale()` across all 37 locales, both collapsed and expanded "Розширені" view): 0 raw
   `a.b.c` keys, 0 unsubstituted `{token}`s, `#advanced-settings`'s open state survives a locale
-  switch. **One real regression found this way, filed as T-240 (`TASKS.md`)**: the custom
-  DoH-provider add-form (`customProviderForm()`) caches its whole DOM node to protect
-  in-progress typed input (T-47) and, as a side effect, never re-translates on a later
-  `setLocale()` — the one render path in the whole batch a fresh-module-per-locale `node vm`
-  smoke structurally cannot reach, exactly as anticipated below. RTL mirroring, the first-visit
-  browser-setup auto-open label, and the tray/CLI (Батч 5.5/5.6) remain unexercised by this pass.
+  switch. **One real regression found this way, filed and fixed as T-240 (`TASKS-DONE.md`,
+  2026-09-23)**: the custom DoH-provider add-form (`customProviderForm()`) caches its whole DOM
+  node to protect in-progress typed input (T-47) and, as a side effect, never re-translated on a
+  later `setLocale()` — the one render path in the whole batch a fresh-module-per-locale `node vm`
+  smoke structurally cannot reach, exactly as anticipated below. Fixed by
+  `retranslateCustomProviderForm()`; **the fix itself was not re-verified in a real browser**
+  (T-240's own closing note, TASKS-DONE.md) — a native Windows cert-trust confirmation dialog
+  blocked automating a scratch instance. RTL mirroring, the first-visit browser-setup auto-open
+  label, and the tray/CLI (Батч 5.5/5.6) remain unexercised by this pass.
   Translated browser-menu labels in `browserSetup.*` are quoted in English on purpose.
 

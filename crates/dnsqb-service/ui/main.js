@@ -187,6 +187,12 @@ function applyDocumentLanguage() {
 // see its own comment on why order matters) also calls t() since Батч 5.4;
 // initBrowserSetup() renders its own text via applyStaticTranslations()
 // below (static index.html markup, not a fetch/render cycle).
+// retranslateCustomProviderForm() (T-240) is a deliberate exception to
+// "every card is its own fetch/render cycle" - it retranslates the custom-
+// provider form's cached DOM node in place instead of going through
+// refreshProviders()'s render path, because that node is intentionally
+// never rebuilt (T-47, in-progress input survives every other re-render
+// too) - see its own comment for why.
 function renderTranslatedCards() {
   applyStaticTranslations();
   buildTimeoutConfigHeading();
@@ -197,6 +203,7 @@ function renderTranslatedCards() {
   refreshCacheConfig();
   refreshMaxmind();
   refreshProviders();
+  retranslateCustomProviderForm();
   refreshGeoip();
   refreshCctldBlock();
   buildLogFilterRow();
@@ -2652,6 +2659,7 @@ function providerRow(entry) {
 // weaker "accept the wipe" trade logItem() makes for the single overrides
 // input doesn't carry to a five-field form sitting right below the toggles.
 let customFormNode = null;
+let customFormRefs = null;
 
 function customProviderForm() {
   if (customFormNode) {
@@ -2767,7 +2775,39 @@ function customProviderForm() {
   wrap.appendChild(row);
   wrap.appendChild(errorLine);
   customFormNode = wrap;
+  customFormRefs = { heading, idInput, urlInput, nameInput, catSelect, sigSelect, addBtn };
   return wrap;
+}
+
+// T-240: customProviderForm() caches its whole DOM node so toggling/adding/
+// removing a different provider never wipes an in-progress, unsubmitted
+// custom-provider entry (T-47) - but that same cache means a live
+// setLocale() never revisits its text. Retranslate the fields in place
+// instead of rebuilding them - never touches .value, so an in-progress edit
+// survives a locale switch the same way it survives every other
+// providers-card re-render. No-op before the form has been built once
+// (customFormRefs still null) - the first render already uses the current
+// locale's t().
+function retranslateCustomProviderForm() {
+  if (!customFormRefs) {
+    return;
+  }
+  const { heading, idInput, urlInput, nameInput, catSelect, sigSelect, addBtn } = customFormRefs;
+  heading.textContent = t("providers.customFormHeading");
+  idInput.placeholder = t("providers.idPlaceholder");
+  idInput.setAttribute("aria-label", t("providers.idPlaceholder"));
+  nameInput.placeholder = t("providers.displayNamePlaceholder");
+  nameInput.setAttribute("aria-label", t("providers.displayNamePlaceholder"));
+  urlInput.setAttribute("aria-label", t("providers.urlAriaLabel"));
+  catSelect.setAttribute("aria-label", t("providers.categoryAriaLabel"));
+  Array.from(catSelect.options).forEach((opt) => {
+    opt.textContent = providerCategoryLabel(opt.value);
+  });
+  sigSelect.setAttribute("aria-label", t("providers.signatureTitle"));
+  Array.from(sigSelect.options).forEach((opt) => {
+    opt.textContent = blockSignatureLabel(opt.value);
+  });
+  addBtn.textContent = t("overrides.addButton");
 }
 
 function renderProviders(data) {
