@@ -199,7 +199,9 @@ pub use query_log::QueryLog;
 pub use quorum::{is_blocked, requires_quorum};
 pub use rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
 pub use timeout::TimeoutMode;
-pub use trust_store::{ensure_installed, is_trusted, uninstall, TrustStoreError};
+pub use trust_store::{
+    ensure_installed, is_trusted, uninstall, TrustStoreError, TrustStoreOutcome,
+};
 pub use upstream::{
     all_builtin_presets, doh_get_url, sinkhole_nets_for, BlockSignature, Category, DohClient,
     ProviderSpec, ReqwestDohClient, SinkholeNet, UpstreamError, BASELINE_DOH_URL,

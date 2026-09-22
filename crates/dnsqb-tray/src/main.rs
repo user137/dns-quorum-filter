@@ -51,7 +51,7 @@ use dnsqb_service::{
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
-    uninstall as uninstall_trust_store, ArtifactOutcome, UninstallReport,
+    uninstall as uninstall_trust_store, ArtifactOutcome, TrustStoreOutcome, UninstallReport,
 };
 use status::{IconColour, TrayStatus, TrustState};
 use std::path::{Path, PathBuf};
@@ -464,7 +464,10 @@ fn handle_menu_event(
                     "install",
                     dialog_title("Встановити сертифікат"),
                     trust,
-                    move || ensure_installed(&cert_path).map(|outcome| format!("{outcome:?}")),
+                    move || {
+                        ensure_installed(&cert_path)
+                            .map(|outcome| trust_store_outcome_uk(outcome).to_string())
+                    },
                 );
             }
         }
@@ -474,7 +477,7 @@ fn handle_menu_event(
                     "uninstall",
                     dialog_title("Видалити сертифікат"),
                     trust,
-                    || uninstall_trust_store().map(|()| "removed".to_string()),
+                    || uninstall_trust_store().map(|()| "сертифікат видалено".to_string()),
                 );
             }
         }
@@ -484,7 +487,16 @@ fn handle_menu_event(
                     "rotate",
                     dialog_title("Перевипустити сертифікат"),
                     trust,
-                    || rotate_certificate().map(|report| report.to_string()),
+                    || {
+                        rotate_certificate().map(|report| {
+                            format!(
+                                "новий сертифікат згенеровано, старі записи прибрано з \
+                                 довірених, {}. Перезапустіть dnsqb-service, щоб зміни \
+                                 набули чинності.",
+                                trust_store_outcome_uk(report.install_outcome)
+                            )
+                        })
+                    },
                 );
             }
         }
@@ -581,6 +593,20 @@ where
 /// Filter"` everywhere else).
 fn dialog_title(action: &str) -> String {
     format!("DNS Quorum Filter {} — {action}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Found in live smoke-testing (2026-09-22): the install/rotate success
+/// dialogs used to forward `TrustStoreOutcome`'s raw `{:?}` ("Installed" /
+/// "`AlreadyInstalled`") straight into a Ukrainian "Успішно: {outcome}"
+/// sentence, mixing languages mid-sentence. `TrustStoreOutcome`/
+/// `RotationReport`'s own `Debug`/`Display` are deliberately English (their
+/// own doc comments: for logs) - this is the translation step that was
+/// supposed to happen at the tray boundary but didn't.
+fn trust_store_outcome_uk(outcome: TrustStoreOutcome) -> &'static str {
+    match outcome {
+        TrustStoreOutcome::Installed => "сертифікат встановлено",
+        TrustStoreOutcome::AlreadyInstalled => "сертифікат уже було встановлено",
+    }
 }
 
 /// Runs one trust-store action (`install`/`uninstall`) on its own throwaway
@@ -816,7 +842,7 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
                 // `?` above with the marker still unwritten.
                 onboarding::mark_onboarding_seen(&app_data);
                 browser::open_in_default_browser(&url);
-                Ok(format!("{outcome:?}"))
+                Ok(trust_store_outcome_uk(outcome).to_string())
             },
         );
     });
@@ -976,8 +1002,28 @@ fn confirm_quit() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_uninstall_report, menu_action_for, MenuAction};
-    use dnsqb_service::{ArtifactOutcome, UninstallReport};
+    use super::{format_uninstall_report, menu_action_for, trust_store_outcome_uk, MenuAction};
+    use dnsqb_service::{ArtifactOutcome, TrustStoreOutcome, UninstallReport};
+
+    // Found in live smoke-testing (2026-09-22): the install/rotate success
+    // dialogs used to forward TrustStoreOutcome's raw `{:?}` straight into the
+    // Ukrainian "Успішно: {outcome}" sentence, mixing languages mid-sentence
+    // ("Успішно: Installed"). Guard both variants stay real Ukrainian text,
+    // never the English Debug label.
+    #[test]
+    fn trust_store_outcome_uk_never_leaks_the_raw_debug_label() {
+        for outcome in [TrustStoreOutcome::Installed, TrustStoreOutcome::AlreadyInstalled] {
+            let text = trust_store_outcome_uk(outcome);
+            assert!(
+                !text.contains("Installed"),
+                "must not leak the raw Debug identifier: {text:?}"
+            );
+            assert!(
+                text.chars().any(|c| matches!(c, 'а'..='я' | 'і' | 'ї' | 'є' | 'ґ')),
+                "must actually be Ukrainian text: {text:?}"
+            );
+        }
+    }
 
     // Keyed on the literal id strings `build_menu` passes to
     // `MenuItem::with_id`, NOT the `*_ID` constants — so a constant silently
