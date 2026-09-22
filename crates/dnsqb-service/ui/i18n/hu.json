@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} domain",
     "other": "{n} domain"
-  }
+  },
+  "providers.urlAriaLabel": "DoH-szolgáltató URL-je",
+  "providers.categoryAriaLabel": "Kategória",
+  "geoip.addCountryAriaLabel": "Ország hozzáadása kód vagy név alapján"
 }

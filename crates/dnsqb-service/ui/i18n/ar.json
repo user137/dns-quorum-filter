@@ -294,5 +294,8 @@
     "few": "{n} نطاقات",
     "many": "{n} نطاقًا",
     "other": "{n} نطاق"
-  }
+  },
+  "providers.urlAriaLabel": "عنوان URL لمزود DoH",
+  "providers.categoryAriaLabel": "الفئة",
+  "geoip.addCountryAriaLabel": "إضافة دولة بالرمز أو الاسم"
 }

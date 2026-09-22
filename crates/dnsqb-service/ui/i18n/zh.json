@@ -264,5 +264,8 @@
   "footer.cruxAttribution": "网站热度数据(评级过滤器“气泡”)：{crux}，© Google，许可证 {ccby} - 已规范化为可注册域名。可注册域名通过 {psl}(许可证 {mpl})确定。",
   "zoneDomainCount": {
     "other": "{n} 个域名"
-  }
+  },
+  "providers.urlAriaLabel": "DoH 提供方的 URL",
+  "providers.categoryAriaLabel": "类别",
+  "geoip.addCountryAriaLabel": "按代码或名称添加国家/地区"
 }

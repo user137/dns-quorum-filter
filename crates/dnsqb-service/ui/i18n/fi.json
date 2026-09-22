@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} verkkotunnus",
     "other": "{n} verkkotunnusta"
-  }
+  },
+  "providers.urlAriaLabel": "DoH-tarjoajan URL-osoite",
+  "providers.categoryAriaLabel": "Luokka",
+  "geoip.addCountryAriaLabel": "Lisää maa koodin tai nimen perusteella"
 }

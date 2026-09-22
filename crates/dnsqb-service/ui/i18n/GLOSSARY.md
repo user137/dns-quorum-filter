@@ -81,6 +81,16 @@ still never translated — this only added the sentence around it, which had bee
 
 Technical abbreviations also stay as-is across every locale: `DNS`, `DoH`, `ccTLD`, `GeoIP`, `TTL`.
 
+Found in live smoke-testing (2026-09-22): three fields had no programmatic accessible name at
+all (no `<label>`, no `id`/`name`, nothing but a `placeholder` that disappears once the user
+starts typing) — the custom-DoH-provider form's URL `<input>` and category `<select>`, and the
+GeoIP "add a blocked country" `<input>`. Added `providers.urlAriaLabel`, `providers.categoryAriaLabel`,
+`geoip.addCountryAriaLabel` (all 37 locales, same commit, per the Батч 5.4 rule above) and wired
+them via `aria-label`, the same idiom `cctldBlock.searchAriaLabel`/`rating.searchAriaLabel`
+already used elsewhere on the page. The MaxMind credentials row was also wrapped in a real
+`<form>` (was a bare `<div>`) — Chrome's own console flags a `type="password"` input outside any
+`<form>` as unusable by a password manager.
+
 ## Terms with a per-locale rendering
 
 - **quorum** — has a direct cognate in most European languages (кворум/quorum/quórum/kworum/…),

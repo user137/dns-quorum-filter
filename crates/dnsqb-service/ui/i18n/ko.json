@@ -264,5 +264,8 @@
   "footer.cruxAttribution": "사이트 인기도 데이터(평가 필터 «버블»): {crux}, © Google, 라이선스 {ccby} - 등록 가능한 도메인으로 정규화. 등록 가능한 도메인은 {psl}(라이선스 {mpl})로 결정합니다.",
   "zoneDomainCount": {
     "other": "도메인 {n}개"
-  }
+  },
+  "providers.urlAriaLabel": "DoH 제공자 URL",
+  "providers.categoryAriaLabel": "카테고리",
+  "geoip.addCountryAriaLabel": "코드 또는 이름으로 국가 추가"
 }

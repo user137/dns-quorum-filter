@@ -282,5 +282,8 @@
     "two": "{n} domeni",
     "few": "{n} domene",
     "other": "{n} domen"
-  }
+  },
+  "providers.urlAriaLabel": "URL ponudnika DoH",
+  "providers.categoryAriaLabel": "Kategorija",
+  "geoip.addCountryAriaLabel": "Dodaj državo po kodi ali imenu"
 }

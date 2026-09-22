@@ -276,5 +276,8 @@
     "one": "{n} dominio",
     "many": "{n} de dominios",
     "other": "{n} dominios"
-  }
+  },
+  "providers.urlAriaLabel": "URL del proveedor DoH",
+  "providers.categoryAriaLabel": "Categoría",
+  "geoip.addCountryAriaLabel": "Añadir un país por código o nombre"
 }

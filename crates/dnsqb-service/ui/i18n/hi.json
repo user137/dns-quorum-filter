@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} डोमेन",
     "other": "{n} डोमेन"
-  }
+  },
+  "providers.urlAriaLabel": "DoH प्रदाता का URL",
+  "providers.categoryAriaLabel": "श्रेणी",
+  "geoip.addCountryAriaLabel": "कोड या नाम से देश जोड़ें"
 }

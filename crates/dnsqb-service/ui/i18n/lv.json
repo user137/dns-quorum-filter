@@ -276,5 +276,8 @@
     "zero": "{n} domēnu",
     "one": "{n} domēns",
     "other": "{n} domēni"
-  }
+  },
+  "providers.urlAriaLabel": "DoH nodrošinātāja URL",
+  "providers.categoryAriaLabel": "Kategorija",
+  "geoip.addCountryAriaLabel": "Pievienot valsti pēc koda vai nosaukuma"
 }

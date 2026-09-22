@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} домейн",
     "other": "{n} домейна"
-  }
+  },
+  "providers.urlAriaLabel": "URL адрес на DoH доставчика",
+  "providers.categoryAriaLabel": "Категория",
+  "geoip.addCountryAriaLabel": "Добавяне на държава по код или име"
 }

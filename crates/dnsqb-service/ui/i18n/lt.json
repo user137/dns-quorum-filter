@@ -282,5 +282,8 @@
     "few": "{n} domenai",
     "many": "{n} domeno",
     "other": "{n} domenų"
-  }
+  },
+  "providers.urlAriaLabel": "DoH teikėjo URL",
+  "providers.categoryAriaLabel": "Kategorija",
+  "geoip.addCountryAriaLabel": "Pridėti šalį pagal kodą arba pavadinimą"
 }

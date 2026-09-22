@@ -276,5 +276,8 @@
     "one": "{n} domen",
     "few": "{n} domena",
     "other": "{n} domena"
-  }
+  },
+  "providers.urlAriaLabel": "URL DoH dobavljača",
+  "providers.categoryAriaLabel": "Kategorija",
+  "geoip.addCountryAriaLabel": "Dodaj zemlju po kodu ili nazivu"
 }

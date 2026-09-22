@@ -264,5 +264,8 @@
   "footer.cruxAttribution": "Data popularitas situs (filter peringkat «gelembung»): {crux}, © Google, lisensi {ccby} - dinormalisasi ke domain yang dapat didaftarkan. Domain yang dapat didaftarkan ditentukan dengan {psl} (lisensi {mpl}).",
   "zoneDomainCount": {
     "other": "{n} domain"
-  }
+  },
+  "providers.urlAriaLabel": "URL penyedia DoH",
+  "providers.categoryAriaLabel": "Kategori",
+  "geoip.addCountryAriaLabel": "Tambahkan negara berdasarkan kode atau nama"
 }

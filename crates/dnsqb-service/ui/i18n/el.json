@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} τομέας",
     "other": "{n} τομείς"
-  }
+  },
+  "providers.urlAriaLabel": "URL του πάροχου DoH",
+  "providers.categoryAriaLabel": "Κατηγορία",
+  "geoip.addCountryAriaLabel": "Προσθήκη χώρας με κωδικό ή όνομα"
 }

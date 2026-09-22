@@ -264,5 +264,8 @@
   "footer.cruxAttribution": "サイト人気度データ(レーティングフィルター「バブル」): {crux}、© Google、ライセンス {ccby} — 登録可能ドメインに正規化。登録可能ドメインは {psl}(ライセンス {mpl})で判定します。",
   "zoneDomainCount": {
     "other": "{n} 件のドメイン"
-  }
+  },
+  "providers.urlAriaLabel": "DoHプロバイダーのURL",
+  "providers.categoryAriaLabel": "カテゴリー",
+  "geoip.addCountryAriaLabel": "コードまたは名前で国を追加"
 }

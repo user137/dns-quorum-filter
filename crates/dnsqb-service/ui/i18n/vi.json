@@ -264,5 +264,8 @@
   "footer.cruxAttribution": "Dữ liệu mức độ phổ biến của trang web (bộ lọc xếp hạng «bong bóng»): {crux}, © Google, giấy phép {ccby} - được chuẩn hóa thành các miền có thể đăng ký. Miền có thể đăng ký được xác định bằng {psl} (giấy phép {mpl}).",
   "zoneDomainCount": {
     "other": "{n} tên miền"
-  }
+  },
+  "providers.urlAriaLabel": "URL của nhà cung cấp DoH",
+  "providers.categoryAriaLabel": "Danh mục",
+  "geoip.addCountryAriaLabel": "Thêm quốc gia theo mã hoặc tên"
 }

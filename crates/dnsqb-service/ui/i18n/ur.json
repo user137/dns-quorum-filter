@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} ڈومین",
     "other": "{n} ڈومینز"
-  }
+  },
+  "providers.urlAriaLabel": "DoH فراہم کنندہ کا URL",
+  "providers.categoryAriaLabel": "زمرہ",
+  "geoip.addCountryAriaLabel": "کوڈ یا نام سے ملک شامل کریں"
 }

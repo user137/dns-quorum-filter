@@ -1673,7 +1673,10 @@ function renderGeoip(data) {
   addRow.className = "override-add-row";
   const input = document.createElement("input");
   input.type = "text";
+  input.id = "geoip-add-country";
+  input.name = "geoip-add-country";
   input.placeholder = "SE";
+  input.setAttribute("aria-label", t("geoip.addCountryAriaLabel"));
   // T-226(a): name-assisted autocomplete via the shared datalist above -
   // typing a country NAME (e.g. "Ukraine") needs more than 2 characters,
   // so the old maxLength=2 (back when only a bare code could be typed) is
@@ -1893,13 +1896,19 @@ function renderMaxmind(data) {
 
   const accountInput = document.createElement("input");
   accountInput.type = "text";
+  accountInput.id = "maxmind-account-id";
+  accountInput.name = "maxmind-account-id";
   // Not translated (Батч 5.4): "account ID" is MaxMind's own dashboard field
   // name, in English on every locale of their own site - matching it here
   // is more useful to the operator than a translated paraphrase.
   accountInput.placeholder = "account ID";
+  accountInput.setAttribute("aria-label", "account ID");
   const keyInput = document.createElement("input");
   keyInput.type = "password";
+  keyInput.id = "maxmind-license-key";
+  keyInput.name = "maxmind-license-key";
   keyInput.placeholder = t("maxmind.licenseKeyPlaceholder");
+  keyInput.setAttribute("aria-label", t("maxmind.licenseKeyPlaceholder"));
   keyInput.autocomplete = "off";
 
   const saveBtn = document.createElement("button");
@@ -1937,8 +1946,14 @@ function renderMaxmind(data) {
     }
   });
 
-  const addRow = document.createElement("div");
+  // <form>, not <div>: a bare password field outside any <form> can't be
+  // offered to the browser's own password manager (found live in
+  // smoke-testing 2026-09-22 - Chrome's own console warns about exactly
+  // this). No native submit button exists, so an implicit Enter-key
+  // submission is neutralized rather than left to reload the page.
+  const addRow = document.createElement("form");
   addRow.className = "override-add-row";
+  addRow.addEventListener("submit", (event) => event.preventDefault());
   addRow.appendChild(accountInput);
   addRow.appendChild(keyInput);
   addRow.appendChild(saveBtn);
@@ -2653,19 +2668,31 @@ function customProviderForm() {
 
   const idInput = document.createElement("input");
   idInput.type = "text";
+  idInput.id = "custom-provider-id";
+  idInput.name = "custom-provider-id";
   idInput.placeholder = t("providers.idPlaceholder");
+  idInput.setAttribute("aria-label", t("providers.idPlaceholder"));
   idInput.maxLength = 64;
 
   const urlInput = document.createElement("input");
   urlInput.type = "text";
+  urlInput.id = "custom-provider-url";
+  urlInput.name = "custom-provider-url";
   // Not translated: a literal example URL, not prose.
   urlInput.placeholder = "https://xxxx.dns.nextdns.io/dns-query";
+  urlInput.setAttribute("aria-label", t("providers.urlAriaLabel"));
 
   const nameInput = document.createElement("input");
   nameInput.type = "text";
+  nameInput.id = "custom-provider-name";
+  nameInput.name = "custom-provider-name";
   nameInput.placeholder = t("providers.displayNamePlaceholder");
+  nameInput.setAttribute("aria-label", t("providers.displayNamePlaceholder"));
 
   const catSelect = document.createElement("select");
+  catSelect.id = "custom-provider-category";
+  catSelect.name = "custom-provider-category";
+  catSelect.setAttribute("aria-label", t("providers.categoryAriaLabel"));
   PROVIDER_CATEGORY_ORDER.forEach((cat) => {
     const opt = document.createElement("option");
     opt.value = cat;
@@ -2674,6 +2701,9 @@ function customProviderForm() {
   });
 
   const sigSelect = document.createElement("select");
+  sigSelect.id = "custom-provider-signature";
+  sigSelect.name = "custom-provider-signature";
+  sigSelect.setAttribute("aria-label", t("providers.signatureTitle"));
   // NULL_IP_OR_NXDOMAIN first: the permissive default for an endpoint whose
   // block behaviour hasn't been live-verified - matches resolve_providers'
   // own default on the backend.

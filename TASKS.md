@@ -1442,6 +1442,12 @@ TASKS-DONE.md (не відкладається до завершення всь�
   `retranslateCustomProviderForm()` (оновлює `placeholder`/`textContent` на вже існуючих полях, не
   чіпаючи `.value`), викликана з `renderTranslatedCards()`. Не блокує базову функціональність
   (форму можна заповнити й надіслати), лише текст застарілий — заплановано на 0.5.1, не в v0.5.0.
+  **Оновлено 2026-09-22 (окрема знахідка, той самий прохід):** той самий кешований вузол тепер
+  застигає ще й на `aria-label` для `idInput`/`urlInput`/`nameInput`/`catSelect`/`sigSelect`
+  (додано разом з `id`/`name` — accessibility-фікс, `providers.urlAriaLabel`/
+  `providers.categoryAriaLabel`, GLOSSARY.md), не лише `placeholder`/опції — коли
+  `retranslateCustomProviderForm()` нарешті пишеться, вона мусить оновлювати й ці 3 `aria-label`,
+  інакше лишиться той самий клас бага для скрін-рідерів.
 - [ ] T-235 — **CLI `--help` для трьох бінарників, заведено 2026-09-18 (запит користувача,
   приєднано до Фази 5 разом з i18n).** Підтверджено grep'ом по всіх трьох `main.rs` +
   `Cargo.toml` (жодного `clap`/`argh`/`std::env::args`-парсингу): сьогодні **жодного** CLI-тексту

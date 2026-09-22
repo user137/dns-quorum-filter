@@ -276,5 +276,8 @@
     "one": "{n} domeniu",
     "few": "{n} domenii",
     "other": "{n} de domenii"
-  }
+  },
+  "providers.urlAriaLabel": "URL-ul furnizorului DoH",
+  "providers.categoryAriaLabel": "Categorie",
+  "geoip.addCountryAriaLabel": "Adaugă o țară după cod sau nume"
 }

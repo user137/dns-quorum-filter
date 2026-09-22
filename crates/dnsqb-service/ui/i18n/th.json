@@ -264,5 +264,8 @@
   "footer.cruxAttribution": "ข้อมูลความนิยมของเว็บไซต์ (ตัวกรองการให้คะแนน «ฟอง»): {crux}, © Google ใบอนุญาต {ccby} - ปรับให้เป็นโดเมนที่จดทะเบียนได้ โดเมนที่จดทะเบียนได้กำหนดด้วย {psl} (ใบอนุญาต {mpl})",
   "zoneDomainCount": {
     "other": "{n} โดเมน"
-  }
+  },
+  "providers.urlAriaLabel": "URL ของผู้ให้บริการ DoH",
+  "providers.categoryAriaLabel": "หมวดหมู่",
+  "geoip.addCountryAriaLabel": "เพิ่มประเทศตามรหัสหรือชื่อ"
 }

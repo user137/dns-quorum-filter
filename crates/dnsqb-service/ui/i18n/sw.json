@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "kikoa {n}",
     "other": "vikoa {n}"
-  }
+  },
+  "providers.urlAriaLabel": "URL ya mtoa huduma wa DoH",
+  "providers.categoryAriaLabel": "Jamii",
+  "geoip.addCountryAriaLabel": "Ongeza nchi kwa msimbo au jina"
 }

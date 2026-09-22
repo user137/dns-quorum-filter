@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} domæne",
     "other": "{n} domæner"
-  }
+  },
+  "providers.urlAriaLabel": "DoH-udbyderens URL",
+  "providers.categoryAriaLabel": "Kategori",
+  "geoip.addCountryAriaLabel": "Tilføj et land efter kode eller navn"
 }

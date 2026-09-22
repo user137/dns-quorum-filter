@@ -282,5 +282,8 @@
     "few": "{n} domeny",
     "many": "{n} domen",
     "other": "{n} domeny"
-  }
+  },
+  "providers.urlAriaLabel": "Adres URL dostawcy DoH",
+  "providers.categoryAriaLabel": "Kategoria",
+  "geoip.addCountryAriaLabel": "Dodaj kraj po kodzie lub nazwie"
 }

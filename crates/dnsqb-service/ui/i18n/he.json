@@ -276,5 +276,8 @@
     "one": "דומיין אחד",
     "two": "שני דומיינים",
     "other": "{n} דומיינים"
-  }
+  },
+  "providers.urlAriaLabel": "כתובת URL של ספק DoH",
+  "providers.categoryAriaLabel": "קטגוריה",
+  "geoip.addCountryAriaLabel": "הוספת מדינה לפי קוד או שם"
 }

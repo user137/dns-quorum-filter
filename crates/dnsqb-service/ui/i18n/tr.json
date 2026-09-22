@@ -270,5 +270,8 @@
   "zoneDomainCount": {
     "one": "{n} alan adı",
     "other": "{n} alan adı"
-  }
+  },
+  "providers.urlAriaLabel": "DoH sağlayıcı URL'si",
+  "providers.categoryAriaLabel": "Kategori",
+  "geoip.addCountryAriaLabel": "Koda veya ada göre ülke ekle"
 }

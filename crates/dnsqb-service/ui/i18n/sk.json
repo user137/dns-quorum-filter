@@ -282,5 +282,8 @@
     "few": "{n} domény",
     "many": "{n} domény",
     "other": "{n} domén"
-  }
+  },
+  "providers.urlAriaLabel": "URL adresa DoH poskytovateľa",
+  "providers.categoryAriaLabel": "Kategória",
+  "geoip.addCountryAriaLabel": "Pridať krajinu podľa kódu alebo názvu"
 }
