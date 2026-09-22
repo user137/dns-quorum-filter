@@ -455,7 +455,7 @@ fn handle_menu_event(
                 client.reset().await.map(|_response| ())
             });
         }
-        MenuAction::ShowAbout => show_about_dialog(),
+        MenuAction::ShowAbout => show_about_dialog(port),
         MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust),
         MenuAction::InstallCert => {
             if confirm_install_cert() {
@@ -957,14 +957,26 @@ fn format_uninstall_report(report: &UninstallReport) -> String {
     .join("\n")
 }
 
-fn show_about_dialog() {
+/// Found in live smoke-testing (2026-09-22): the settings-page URL here was a
+/// literal `https://127.0.0.1/admin/ui` with no port at all — following it
+/// hits the browser's default port 443, not this instance's actual (possibly
+/// non-default) `DoH` port. `port` was simply never plumbed into this function;
+/// `MenuAction::OpenSettings` right above already has the correct pattern.
+/// Pulled out as its own pure function so the fix has a regression test —
+/// `show_about_dialog` itself calls a real blocking `rfd` dialog and can't be
+/// unit tested directly.
+fn about_dialog_text(port: u16) -> String {
+    format!(
+        "dnsqb-tray {}\nЛіцензія: Apache-2.0\nЛокальний DoH quorum-фільтр \u{2014} \
+         https://127.0.0.1:{port}/admin/ui",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+fn show_about_dialog(port: u16) {
     rfd::MessageDialog::new()
         .set_title(dialog_title("Про програму"))
-        .set_description(format!(
-            "dnsqb-tray {}\nЛіцензія: Apache-2.0\nЛокальний DoH quorum-фільтр \u{2014} \
-             https://127.0.0.1/admin/ui",
-            env!("CARGO_PKG_VERSION")
-        ))
+        .set_description(about_dialog_text(port))
         .set_level(rfd::MessageLevel::Info)
         .set_buttons(rfd::MessageButtons::Ok)
         .show();
@@ -1002,8 +1014,28 @@ fn confirm_quit() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_uninstall_report, menu_action_for, trust_store_outcome_uk, MenuAction};
+    use super::{
+        about_dialog_text, format_uninstall_report, menu_action_for, trust_store_outcome_uk,
+        MenuAction,
+    };
     use dnsqb_service::{ArtifactOutcome, TrustStoreOutcome, UninstallReport};
+
+    // Found in live smoke-testing (2026-09-22): the About dialog's settings
+    // URL used to be a literal with no port, hitting 443 instead of the
+    // actual (possibly non-default) DoH port on click.
+    #[test]
+    fn about_dialog_text_includes_the_actual_port() {
+        let text = about_dialog_text(8443);
+        assert!(
+            text.contains("https://127.0.0.1:8443/admin/ui"),
+            "must carry the real port, not a bare https://127.0.0.1/admin/ui: {text:?}"
+        );
+        let custom = about_dialog_text(9999);
+        assert!(
+            custom.contains(":9999/"),
+            "must reflect a non-default port too: {custom:?}"
+        );
+    }
 
     // Found in live smoke-testing (2026-09-22): the install/rotate success
     // dialogs used to forward TrustStoreOutcome's raw `{:?}` straight into the
