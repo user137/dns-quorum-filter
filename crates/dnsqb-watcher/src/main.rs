@@ -51,6 +51,21 @@ use std::time::SystemTime;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    // T-235 Батч 5.6: checked before anything else - no app-data dir, no
+    // logging, no single-instance guard. A `--help` that took the guard
+    // would make the flag unusable exactly while the app is already
+    // running, which is when someone is most likely to reach for it.
+    // `dnsqb_service::cli_help`'s own module doc explains why plain
+    // `println!` is safe here even in a `windows_subsystem = "windows"`
+    // release build (empirically verified, not assumed).
+    if dnsqb_service::wants_help(std::env::args().skip(1)) {
+        println!(
+            "{}",
+            dnsqb_service::help_text(dnsqb_service::CliHelpBinary::Watcher)
+        );
+        return;
+    }
+
     let app_data = match app_data_dir() {
         Ok(dir) => {
             init_logging("dnsqb-watcher", Some(&dir)); // T-184

@@ -16,5 +16,16 @@
 
 #[tokio::main]
 async fn main() {
+    // T-235 Батч 5.6: checked before anything else - no app-data dir, no
+    // logging, no listener bind. See `cli_help`'s own module doc for why
+    // plain `println!` is safe here even in a `windows_subsystem = "windows"`
+    // release build (empirically verified, not assumed).
+    if dnsqb_service::wants_help(std::env::args().skip(1)) {
+        println!(
+            "{}",
+            dnsqb_service::help_text(dnsqb_service::CliHelpBinary::Service)
+        );
+        return;
+    }
     dnsqb_service::run().await;
 }

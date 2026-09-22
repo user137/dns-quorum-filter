@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Запустіть без аргументів, щоб почати звичайну роботу — зазвичай не вручну, а автоматично.",
+  "cliHelp.description.service": "Локальний DoH quorum-фільтр — слухає на 127.0.0.1, зазвичай запускається автоматично через dnsqb-watcher, не вручну.",
+  "cliHelp.description.tray": "Іконка в треї — показує стан фільтрації й дає доступ до налаштувань; зазвичай запускається автоматично через dnsqb-watcher.",
+  "cliHelp.description.watcher": "Вартовий процес і точка входу автозапуску — стежить за dnsqb-service, за потреби перезапускає його, і запускає dnsqb-tray."
+}

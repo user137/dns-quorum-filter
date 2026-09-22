@@ -36,6 +36,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
+# T-235 Батч 5.6: `cli_help`'s own OS-language auto-detect for `--help` text -
+# same crate `dnsqb-tray`'s i18n already uses (T-151 Батч 5.5), promoted here
+# too so all three binaries share one `--help` implementation. See its own
+# Cargo.toml comment for why it's the right fit (vs. `winreg`'s GeoIP-region
+# use, which needs region, not UI language).
+sys-locale = "0.3"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tar = { version = "0.4.44", default-features = false }
 thiserror = "2.0.20"

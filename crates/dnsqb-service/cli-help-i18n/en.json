@@ -1,0 +1,7 @@
+{
+  "cliHelp.bodyTemplate": "{binary} {version}\n\n{description}\n\n{usage}",
+  "cliHelp.usage": "Run without arguments to start normally - usually not by hand, but automatically.",
+  "cliHelp.description.service": "Local DoH quorum filter - listens on 127.0.0.1, normally started automatically by dnsqb-watcher, not by hand.",
+  "cliHelp.description.tray": "Tray icon - shows filtering status and gives access to settings; normally started automatically by dnsqb-watcher.",
+  "cliHelp.description.watcher": "The watchdog process and autostart entry point - supervises dnsqb-service, restarts it if needed, and starts dnsqb-tray."
+}

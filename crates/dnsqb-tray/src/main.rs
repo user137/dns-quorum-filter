@@ -186,6 +186,18 @@ fn bootstrap(app_data: &Path) -> Option<(InstanceGuard, u16)> {
 }
 
 fn main() {
+    // T-235 Батч 5.6: checked before anything else - no app-data dir, no
+    // logging, no single-instance guard. `dnsqb_service::cli_help`'s own
+    // module doc explains why plain `println!` is safe here even in a
+    // `windows_subsystem = "windows"` release build (empirically verified).
+    if dnsqb_service::wants_help(std::env::args().skip(1)) {
+        println!(
+            "{}",
+            dnsqb_service::help_text(dnsqb_service::CliHelpBinary::Tray)
+        );
+        return;
+    }
+
     // T-151 Батч 5.5: detected once at startup, then threaded explicitly
     // through every function that needs translated text - see `i18n.rs`'s
     // own module doc comment for why this is never read from ambient global

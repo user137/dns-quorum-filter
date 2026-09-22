@@ -132,6 +132,7 @@ mod cctld_block;
 mod cert;
 mod cert_rotation;
 mod cert_watch;
+mod cli_help;
 mod config;
 mod dispatch;
 mod encrypted_file;
@@ -180,6 +181,7 @@ pub use baseline_selector::BASELINE_CHAIN;
 pub use cache::{Cache, CacheConfig};
 pub use cert::generate_self_signed_cert;
 pub use cert_rotation::rotate_certificate;
+pub use cli_help::{help_text, wants_help, Binary as CliHelpBinary};
 pub use config::{LimitsConfig, RatingFilterConfig, ResolverConfig};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistTarget, RuntimeInit,
