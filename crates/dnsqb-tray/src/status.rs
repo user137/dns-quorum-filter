@@ -6,6 +6,7 @@
 //! [`StatusHandle::current`], a cheap lock-guarded read of whatever this
 //! background thread last wrote.
 
+use crate::i18n;
 use dnsqb_service::{
     AdminClient, AdminStatusResponse, NetworkStatusView, WatchdogState, WATCHDOG_STATE_STALE_AFTER,
 };
@@ -120,26 +121,21 @@ impl TrayStatus {
 
     /// The text shown as the tray icon's hover tooltip. T-176 reworded these
     /// for a non-technical reader (no "резолвінг", no "апстрім", no stale
-    /// "обидва провайдери") while keeping the raw counts intact.
+    /// "обидва провайдери") while keeping the raw counts intact. **T-151
+    /// Батч 5.5:** `locale` is an explicit parameter, never read from ambient
+    /// global state - see `i18n.rs`'s own module doc comment for why.
     #[must_use]
-    pub fn tooltip(&self) -> String {
+    pub fn tooltip(&self, locale: &str) -> String {
         match self {
-            Self::Unreachable => "DNS Quorum Filter: служба недоступна".to_string(),
-            Self::ServiceRestarting => {
-                "DNS Quorum Filter: служба перезапускається\u{2026}".to_string()
-            }
-            Self::ServiceGaveUp => {
-                "DNS Quorum Filter: служба зупинилася \u{2014} відкрийте вікно, щоб перезапустити"
-                    .to_string()
-            }
-            Self::Paused => {
-                "DNS Quorum Filter: фільтрацію призупинено \u{2014} увімкніть через меню".to_string()
-            }
-            Self::Offline => {
-                "DNS Quorum Filter: немає інтернету \u{2014} перевірки призупинено".to_string()
-            }
-            Self::NoActiveProvider { in_flight } => format!(
-                "DNS Quorum Filter: фільтрація вимкнена \u{2014} жоден провайдер не активний ({in_flight} запит(ів) зараз)"
+            Self::Unreachable => i18n::t(locale, "tooltip.unreachable"),
+            Self::ServiceRestarting => i18n::t(locale, "tooltip.restarting"),
+            Self::ServiceGaveUp => i18n::t(locale, "tooltip.gaveUp"),
+            Self::Paused => i18n::t(locale, "tooltip.paused"),
+            Self::Offline => i18n::t(locale, "tooltip.offline"),
+            Self::NoActiveProvider { in_flight } => i18n::t_args(
+                locale,
+                "tooltip.noActiveProviderTemplate",
+                &[("inFlight", &in_flight.to_string())],
             ),
             Self::Filtering {
                 in_flight,
@@ -149,8 +145,14 @@ impl TrayStatus {
                 degraded_window,
                 rating_filter_active,
             } => {
-                let base = format!(
-                    "DNS Quorum Filter: захищає \u{2014} {blocked}/{total} заблоковано ({in_flight} запит(ів) зараз)"
+                let base = i18n::t_args(
+                    locale,
+                    "tooltip.filteringBaseTemplate",
+                    &[
+                        ("blocked", &blocked.to_string()),
+                        ("total", &total.to_string()),
+                        ("inFlight", &in_flight.to_string()),
+                    ],
                 );
                 // Raw counts, not a collapsed bool/percentage (admin.rs's
                 // own degraded_counts doc comment) — any nonzero count is
@@ -159,8 +161,14 @@ impl TrayStatus {
                 // during planning: a bare threshold-free boolean would go
                 // permanently true under routine fail-open timeouts).
                 let mut text = if *degraded_events > 0 {
-                    format!(
-                        "{base} \u{2014} деякі перевірки не відповідають ({degraded_events}/{degraded_window} останніх запитів мали тайм-аут)"
+                    i18n::t_args(
+                        locale,
+                        "tooltip.degradedSuffixTemplate",
+                        &[
+                            ("base", &base),
+                            ("degradedEvents", &degraded_events.to_string()),
+                            ("degradedWindow", &degraded_window.to_string()),
+                        ],
                     )
                 } else {
                     base
@@ -168,7 +176,7 @@ impl TrayStatus {
                 // T-128: an informational suffix, ranked after the degraded
                 // note (a real problem outranks a scope choice).
                 if *rating_filter_active {
-                    text.push_str(" \u{2014} рейтинг-фільтр «бульбашка» активний");
+                    text.push_str(&i18n::t(locale, "tooltip.ratingFilterSuffix"));
                 }
                 text
             }
@@ -236,14 +244,14 @@ pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
 /// already in [`TrayStatus::tooltip`]; appended by [`compose_tooltip`], never
 /// alone, so a red icon can't sit beside a green-sounding tooltip.
 #[must_use]
-pub fn cert_warning(status: TrayStatus, cert_trusted: bool) -> Option<&'static str> {
+pub fn cert_warning(status: TrayStatus, cert_trusted: bool, locale: &str) -> Option<String> {
     if cert_trusted {
         return None;
     }
     match status {
-        TrayStatus::Filtering { .. } | TrayStatus::NoActiveProvider { .. } => Some(
-            " \u{2014} сертифікат не встановлено: у меню іконки \u{2192} «Встановити сертифікат»",
-        ),
+        TrayStatus::Filtering { .. } | TrayStatus::NoActiveProvider { .. } => {
+            Some(i18n::t(locale, "tooltip.certWarningSuffix"))
+        }
         _ => None,
     }
 }
@@ -251,10 +259,10 @@ pub fn cert_warning(status: TrayStatus, cert_trusted: bool) -> Option<&'static s
 /// The tray tooltip for `status`, plus the [`cert_warning`] suffix when it
 /// applies. `main.rs` calls this instead of [`TrayStatus::tooltip`] directly.
 #[must_use]
-pub fn compose_tooltip(status: TrayStatus, cert_trusted: bool) -> String {
-    let mut text = status.tooltip();
-    if let Some(suffix) = cert_warning(status, cert_trusted) {
-        text.push_str(suffix);
+pub fn compose_tooltip(status: TrayStatus, cert_trusted: bool, locale: &str) -> String {
+    let mut text = status.tooltip(locale);
+    if let Some(suffix) = cert_warning(status, cert_trusted, locale) {
+        text.push_str(&suffix);
     }
     text
 }
@@ -460,7 +468,7 @@ mod tests {
             }],
             stats(20, 0),
         );
-        let tooltip = TrayStatus::from_response(&resp).tooltip();
+        let tooltip = TrayStatus::from_response(&resp).tooltip("uk");
         assert!(
             !tooltip.contains("тайм-аут"),
             "must not warn with zero recorded degraded events: {tooltip}"
@@ -477,7 +485,7 @@ mod tests {
             }],
             stats(20, 3),
         );
-        let tooltip = TrayStatus::from_response(&resp).tooltip();
+        let tooltip = TrayStatus::from_response(&resp).tooltip("uk");
         assert!(
             tooltip.contains("3/20"),
             "expected the raw counts in the tooltip, got: {tooltip}"
@@ -506,7 +514,7 @@ mod tests {
         resp.rating_filter.active = true;
         assert!(
             TrayStatus::from_response(&resp)
-                .tooltip()
+                .tooltip("uk")
                 .contains("рейтинг-фільтр «бульбашка» активний"),
             "an active bubble must add its suffix"
         );
@@ -514,7 +522,7 @@ mod tests {
         resp.rating_filter.active = false;
         assert!(
             !TrayStatus::from_response(&resp)
-                .tooltip()
+                .tooltip("uk")
                 .contains("рейтинг-фільтр"),
             "Fork B (enabled, no list) gets no tray suffix"
         );
@@ -522,7 +530,7 @@ mod tests {
         resp.rating_filter.enabled = false;
         assert!(
             !TrayStatus::from_response(&resp)
-                .tooltip()
+                .tooltip("uk")
                 .contains("рейтинг-фільтр"),
             "a disabled bubble gets no suffix"
         );
@@ -548,7 +556,7 @@ mod tests {
     fn paused_tooltip_names_the_state_plainly_and_not_as_a_failure() {
         // T-185: a deliberate pause must not read as "служба недоступна" /
         // "зупинилася" — those are failure states, this one the user chose.
-        let tooltip = TrayStatus::Paused.tooltip();
+        let tooltip = TrayStatus::Paused.tooltip("uk");
         assert!(tooltip.contains("призупинено"), "got: {tooltip}");
         assert!(!tooltip.contains("недоступна"), "got: {tooltip}");
     }
@@ -650,23 +658,23 @@ mod tests {
 
     #[test]
     fn cert_warning_fires_for_reachable_states_only_and_never_when_trusted() {
-        assert!(cert_warning(filtering(0), false).is_some());
-        assert!(cert_warning(TrayStatus::NoActiveProvider { in_flight: 0 }, false).is_some());
+        assert!(cert_warning(filtering(0), false, "uk").is_some());
+        assert!(cert_warning(TrayStatus::NoActiveProvider { in_flight: 0 }, false, "uk").is_some());
         // Trusted → never a warning.
-        assert!(cert_warning(filtering(0), true).is_none());
+        assert!(cert_warning(filtering(0), true, "uk").is_none());
         // Unreachable / paused → the cert isn't the point; no suffix.
-        assert!(cert_warning(TrayStatus::Unreachable, false).is_none());
-        assert!(cert_warning(TrayStatus::Paused, false).is_none());
+        assert!(cert_warning(TrayStatus::Unreachable, false, "uk").is_none());
+        assert!(cert_warning(TrayStatus::Paused, false, "uk").is_none());
     }
 
     #[test]
     fn compose_tooltip_appends_the_cert_warning_when_it_applies() {
         let status = filtering(0);
-        let with = compose_tooltip(status, false);
+        let with = compose_tooltip(status, false, "uk");
         assert!(with.contains("захищає"), "{with}");
         assert!(with.contains("сертифікат не встановлено"), "{with}");
         // Trusted → identical to the plain tooltip.
-        assert_eq!(compose_tooltip(status, true), status.tooltip());
+        assert_eq!(compose_tooltip(status, true, "uk"), status.tooltip("uk"));
     }
 
     #[test]

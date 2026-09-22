@@ -39,6 +39,7 @@
 
 mod browser;
 mod browser_nudge;
+mod i18n;
 mod nudge_popup;
 mod onboarding;
 mod self_uninstall;
@@ -123,9 +124,6 @@ const UNINSTALL_CERT_ID: &str = "uninstall-cert";
 const ROTATE_CERT_ID: &str = "rotate-cert";
 const REMOVE_ALL_ID: &str = "remove-all-local-state";
 
-const PAUSE_LABEL: &str = "Призупинити фільтрацію";
-const RESUME_LABEL: &str = "Відновити фільтрацію";
-
 /// Re-check cadence for `muda`'s global menu-event channel (see the module
 /// doc comment for why this loop drives it rather than `tao` itself) —
 /// independent of [`status::spawn`]'s own 2s poll interval; this tick only
@@ -188,6 +186,12 @@ fn bootstrap(app_data: &Path) -> Option<(InstanceGuard, u16)> {
 }
 
 fn main() {
+    // T-151 Батч 5.5: detected once at startup, then threaded explicitly
+    // through every function that needs translated text - see `i18n.rs`'s
+    // own module doc comment for why this is never read from ambient global
+    // state instead.
+    let locale = i18n::detect_locale();
+
     let app_data = match app_data_dir() {
         Ok(dir) => {
             init_logging("dnsqb-tray", Some(&dir)); // T-184
@@ -213,32 +217,14 @@ fn main() {
     let status_handle = status::spawn(app_data.clone(), port);
     let trust = status::spawn_trust_watch(app_data.join("cert.pem"));
 
-    let Some(icons) = TrayIcons::build() else {
-        tracing::error!(
-            "an embedded tray icon failed to decode - these are build-time assets, not user input"
-        );
-        std::process::exit(1);
-    };
-    let (menu, pause_resume_item) = build_menu(&app_data);
-    // Start on red, matching the initial `TrayStatus::Unreachable` tooltip
-    // below — icon and tooltip agree from the first frame.
-    let tray_icon = match TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_icon(icons.get(IconColour::Red))
-        .with_tooltip(TrayStatus::Unreachable.tooltip())
-        .build()
-    {
-        Ok(tray_icon) => tray_icon,
-        Err(err) => {
-            tracing::error!("failed to create the tray icon: {err}");
-            std::process::exit(1);
-        }
-    };
+    let (tray_icon, icons, pause_resume_item) = build_tray_icon(&app_data, locale);
 
     let menu_channel = MenuEvent::receiver();
-    let mut last_status = TrayStatus::Unreachable;
-    let mut last_trusted = trust.is_trusted();
-    let mut last_colour = IconColour::Red;
+    let mut refresh_state = TrayRefreshState {
+        status: TrayStatus::Unreachable,
+        trusted: trust.is_trusted(),
+        colour: IconColour::Red,
+    };
     let mut last_paused = stop_flag_is_set(&app_data);
     let mut last_flag_check = Instant::now();
     let mut onboarding_offered = false;
@@ -266,11 +252,17 @@ fn main() {
             &icons,
             observed,
             trusted,
-            &mut last_status,
-            &mut last_trusted,
-            &mut last_colour,
+            locale,
+            &mut refresh_state,
         );
-        maybe_offer_onboarding(&mut onboarding_offered, &app_data, port, &trust, trusted);
+        maybe_offer_onboarding(
+            &mut onboarding_offered,
+            &app_data,
+            port,
+            &trust,
+            trusted,
+            locale,
+        );
         drive_browser_nudge(
             &mut browser_nudge_offered,
             &app_data,
@@ -288,15 +280,37 @@ fn main() {
             last_flag_check = Instant::now();
             let paused = stop_flag_is_set(&app_data);
             if paused != last_paused {
-                pause_resume_item.set_text(if paused { RESUME_LABEL } else { PAUSE_LABEL });
+                let label = if paused {
+                    i18n::t(locale, "menu.resume")
+                } else {
+                    i18n::t(locale, "menu.pause")
+                };
+                pause_resume_item.set_text(&label);
                 last_paused = paused;
             }
         }
 
         if let Ok(event) = menu_channel.try_recv() {
-            handle_menu_event(event.id().as_ref(), &app_data, port, control_flow, &trust);
+            handle_menu_event(
+                event.id().as_ref(),
+                &app_data,
+                port,
+                control_flow,
+                &trust,
+                locale,
+            );
         }
     });
+}
+
+/// The three "last observed" fields [`refresh_tray`] diffs the fresh poll
+/// result against — grouped into one cohesive struct (clippy
+/// `too_many_arguments`, fixed structurally per this project's own
+/// convention, not `#[allow]`) rather than three separate `&mut` parameters.
+struct TrayRefreshState {
+    status: TrayStatus,
+    trusted: bool,
+    colour: IconColour,
 }
 
 /// Tooltip + icon refresh on one event-loop tick (T-191). The tooltip is
@@ -312,54 +326,119 @@ fn refresh_tray(
     icons: &TrayIcons,
     observed: TrayStatus,
     trusted: bool,
-    last_status: &mut TrayStatus,
-    last_trusted: &mut bool,
-    last_colour: &mut IconColour,
+    locale: &str,
+    state: &mut TrayRefreshState,
 ) {
-    if observed != *last_status || trusted != *last_trusted {
-        let tooltip = status::compose_tooltip(observed, trusted);
+    if observed != state.status || trusted != state.trusted {
+        let tooltip = status::compose_tooltip(observed, trusted, locale);
         if let Err(err) = tray_icon.set_tooltip(Some(tooltip)) {
             tracing::warn!("failed to update tray tooltip: {err}");
         }
-        *last_status = observed;
-        *last_trusted = trusted;
+        state.status = observed;
+        state.trusted = trusted;
     }
 
     let colour = status::icon_colour(observed, trusted);
-    if colour != *last_colour {
+    if colour != state.colour {
         match tray_icon.set_icon(Some(icons.get(colour))) {
-            Ok(()) => *last_colour = colour,
+            Ok(()) => state.colour = colour,
             Err(err) => tracing::warn!("failed to update tray icon colour: {err}"),
         }
     }
 }
 
+/// Builds the tray icon (all four colour variants + the initial red/
+/// unreachable frame) and its menu — extracted only to keep `main` under
+/// clippy's line-count lint (same "cohesive extracted helper" discipline as
+/// [`bootstrap`]), not a behaviour change. Exits the process on any
+/// unrecoverable failure, exactly as this code did inline.
+fn build_tray_icon(app_data: &Path, locale: &str) -> (TrayIcon, TrayIcons, MenuItem) {
+    let Some(icons) = TrayIcons::build() else {
+        tracing::error!(
+            "an embedded tray icon failed to decode - these are build-time assets, not user input"
+        );
+        std::process::exit(1);
+    };
+    let (menu, pause_resume_item) = build_menu(app_data, locale);
+    // Start on red, matching the initial `TrayStatus::Unreachable` tooltip
+    // below — icon and tooltip agree from the first frame.
+    let tray_icon = match TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_icon(icons.get(IconColour::Red))
+        .with_tooltip(TrayStatus::Unreachable.tooltip(locale))
+        .build()
+    {
+        Ok(tray_icon) => tray_icon,
+        Err(err) => {
+            tracing::error!("failed to create the tray icon: {err}");
+            std::process::exit(1);
+        }
+    };
+    (tray_icon, icons, pause_resume_item)
+}
+
 /// Builds the tray menu and returns it together with a handle to the
 /// pause/resume item, whose label the event loop flips between
-/// [`PAUSE_LABEL`] and [`RESUME_LABEL`] as `stop.flag` comes and goes (T-185).
-fn build_menu(app_data: &Path) -> (Menu, MenuItem) {
+/// `t(locale, "menu.pause")` and `t(locale, "menu.resume")` as `stop.flag`
+/// comes and goes (T-185; T-151 Батч 5.5 — used to be two fixed constants).
+fn build_menu(app_data: &Path, locale: &str) -> (Menu, MenuItem) {
     let menu = Menu::new();
-    let open_settings = MenuItem::with_id(OPEN_SETTINGS_ID, "Відкрити налаштування", true, None);
-    let restart = MenuItem::with_id(RESTART_ID, "Скинути кеш і лог", true, None);
-    let about = MenuItem::with_id(ABOUT_ID, "Про програму", true, None);
-    let setup_wizard = MenuItem::with_id(SETUP_WIZARD_ID, "Майстер налаштування", true, None);
-    let install_cert = MenuItem::with_id(INSTALL_CERT_ID, "Встановити сертифікат", true, None);
-    let uninstall_cert = MenuItem::with_id(UNINSTALL_CERT_ID, "Видалити сертифікат", true, None);
-    let rotate_cert = MenuItem::with_id(ROTATE_CERT_ID, "Перевипустити сертифікат", true, None);
-    let remove_all = MenuItem::with_id(REMOVE_ALL_ID, "Повністю видалити", true, None);
+    let open_settings = MenuItem::with_id(
+        OPEN_SETTINGS_ID,
+        i18n::t(locale, "menu.openSettings"),
+        true,
+        None,
+    );
+    let restart = MenuItem::with_id(
+        RESTART_ID,
+        i18n::t(locale, "menu.resetCacheLog"),
+        true,
+        None,
+    );
+    let about = MenuItem::with_id(ABOUT_ID, i18n::t(locale, "menu.about"), true, None);
+    let setup_wizard = MenuItem::with_id(
+        SETUP_WIZARD_ID,
+        i18n::t(locale, "menu.setupWizard"),
+        true,
+        None,
+    );
+    let install_cert = MenuItem::with_id(
+        INSTALL_CERT_ID,
+        i18n::t(locale, "menu.installCert"),
+        true,
+        None,
+    );
+    let uninstall_cert = MenuItem::with_id(
+        UNINSTALL_CERT_ID,
+        i18n::t(locale, "menu.uninstallCert"),
+        true,
+        None,
+    );
+    let rotate_cert = MenuItem::with_id(
+        ROTATE_CERT_ID,
+        i18n::t(locale, "menu.rotateCert"),
+        true,
+        None,
+    );
+    let remove_all =
+        MenuItem::with_id(REMOVE_ALL_ID, i18n::t(locale, "menu.removeAll"), true, None);
 
     // Lifecycle group (Варіант B): pause/resume · restore supervision · [sep]
     // · hide icon · quit.
     let pause_resume_label = if stop_flag_is_set(app_data) {
-        RESUME_LABEL
+        i18n::t(locale, "menu.resume")
     } else {
-        PAUSE_LABEL
+        i18n::t(locale, "menu.pause")
     };
     let pause_resume = MenuItem::with_id(PAUSE_RESUME_ID, pause_resume_label, true, None);
-    let restore_supervision =
-        MenuItem::with_id(RESTORE_SUPERVISION_ID, "Відновити нагляд", true, None);
-    let hide_icon = MenuItem::with_id(CLOSE_ID, "Сховати іконку", true, None);
-    let quit_app = MenuItem::with_id(QUIT_APP_ID, "Вийти з DNS Quorum Filter", true, None);
+    let restore_supervision = MenuItem::with_id(
+        RESTORE_SUPERVISION_ID,
+        i18n::t(locale, "menu.restoreSupervision"),
+        true,
+        None,
+    );
+    let hide_icon = MenuItem::with_id(CLOSE_ID, i18n::t(locale, "menu.hideIcon"), true, None);
+    let quit_app = MenuItem::with_id(QUIT_APP_ID, i18n::t(locale, "menu.quitApp"), true, None);
 
     if let Err(err) = menu.append_items(&[
         &open_settings,
@@ -445,6 +524,7 @@ fn handle_menu_event(
     port: u16,
     control_flow: &mut ControlFlow,
     trust: &TrustState,
+    locale: &str,
 ) {
     match menu_action_for(id) {
         MenuAction::OpenSettings => {
@@ -455,45 +535,56 @@ fn handle_menu_event(
                 client.reset().await.map(|_response| ())
             });
         }
-        MenuAction::ShowAbout => show_about_dialog(port),
-        MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust),
+        MenuAction::ShowAbout => show_about_dialog(port, locale),
+        MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust, locale),
         MenuAction::InstallCert => {
-            if confirm_install_cert() {
+            if confirm_install_cert(locale) {
                 let cert_path = app_data.join("cert.pem");
+                let locale = locale.to_string();
                 spawn_cert_action(
                     "install",
-                    dialog_title("Встановити сертифікат"),
+                    dialog_title(&i18n::t(&locale, "menu.installCert")),
+                    locale.clone(),
                     trust,
                     move || {
                         ensure_installed(&cert_path)
-                            .map(|outcome| trust_store_outcome_uk(outcome).to_string())
+                            .map(|outcome| trust_store_outcome_text(outcome, &locale))
                     },
                 );
             }
         }
         MenuAction::UninstallCert => {
-            if confirm_uninstall_cert() {
+            if confirm_uninstall_cert(locale) {
+                let locale = locale.to_string();
                 spawn_cert_action(
                     "uninstall",
-                    dialog_title("Видалити сертифікат"),
+                    dialog_title(&i18n::t(&locale, "menu.uninstallCert")),
+                    locale.clone(),
                     trust,
-                    || uninstall_trust_store().map(|()| "сертифікат видалено".to_string()),
+                    move || {
+                        uninstall_trust_store()
+                            .map(|()| i18n::t(&locale, "certOutcome.uninstalled"))
+                    },
                 );
             }
         }
         MenuAction::RotateCert => {
-            if confirm_rotate_cert() {
+            if confirm_rotate_cert(locale) {
+                let locale = locale.to_string();
                 spawn_cert_action(
                     "rotate",
-                    dialog_title("Перевипустити сертифікат"),
+                    dialog_title(&i18n::t(&locale, "menu.rotateCert")),
+                    locale.clone(),
                     trust,
-                    || {
+                    move || {
                         rotate_certificate().map(|report| {
-                            format!(
-                                "новий сертифікат згенеровано, старі записи прибрано з \
-                                 довірених, {}. Перезапустіть dnsqb-service, щоб зміни \
-                                 набули чинності.",
-                                trust_store_outcome_uk(report.install_outcome)
+                            i18n::t_args(
+                                &locale,
+                                "certOutcome.rotateSuccessTemplate",
+                                &[(
+                                    "outcome",
+                                    &trust_store_outcome_text(report.install_outcome, &locale),
+                                )],
                             )
                         })
                     },
@@ -501,8 +592,8 @@ fn handle_menu_event(
             }
         }
         MenuAction::RemoveAllLocalState => {
-            if confirm_remove_all_local_state() {
-                spawn_remove_all_and_quit(app_data.to_path_buf());
+            if confirm_remove_all_local_state(locale) {
+                spawn_remove_all_and_quit(app_data.to_path_buf(), locale.to_string());
             }
         }
         // T-185 + T-193: pause = write `stop.flag` only. `dnsqb-service` polls
@@ -516,7 +607,7 @@ fn handle_menu_event(
                 clear_stop_flag(app_data);
                 ensure_sibling_running(app_data, InstanceRole::Service);
                 tracing::info!("filtering resumed by the user");
-            } else if confirm_pause() {
+            } else if confirm_pause(locale) {
                 if let Err(err) = set_stop_flag(app_data) {
                     tracing::warn!("could not write stop.flag: {err}");
                 }
@@ -533,7 +624,7 @@ fn handle_menu_event(
         // exits itself. `stop.flag` covers the gap so nothing is respawned in
         // between.
         MenuAction::QuitApp => {
-            if confirm_quit() {
+            if confirm_quit(locale) {
                 if let Err(err) = set_stop_flag(app_data) {
                     tracing::warn!("could not write stop.flag: {err}");
                 }
@@ -601,11 +692,13 @@ fn dialog_title(action: &str) -> String {
 /// sentence, mixing languages mid-sentence. `TrustStoreOutcome`/
 /// `RotationReport`'s own `Debug`/`Display` are deliberately English (their
 /// own doc comments: for logs) - this is the translation step that was
-/// supposed to happen at the tray boundary but didn't.
-fn trust_store_outcome_uk(outcome: TrustStoreOutcome) -> &'static str {
+/// supposed to happen at the tray boundary but didn't. **T-151 Батч 5.5:**
+/// generalized from a hardcoded Ukrainian match into a `t()` lookup, same
+/// reasoning, any locale.
+fn trust_store_outcome_text(outcome: TrustStoreOutcome, locale: &str) -> String {
     match outcome {
-        TrustStoreOutcome::Installed => "сертифікат встановлено",
-        TrustStoreOutcome::AlreadyInstalled => "сертифікат уже було встановлено",
+        TrustStoreOutcome::Installed => i18n::t(locale, "certOutcome.installed"),
+        TrustStoreOutcome::AlreadyInstalled => i18n::t(locale, "certOutcome.alreadyInstalled"),
     }
 }
 
@@ -621,8 +714,12 @@ fn trust_store_outcome_uk(outcome: TrustStoreOutcome) -> &'static str {
 /// the "no on-screen indication" failure class this crate's own module doc
 /// comment already names for "Зупинити фільтрацію" (advisor-caught before
 /// commit, not written this way from the start).
-fn spawn_trust_store_action<F, E>(action_name: &'static str, dialog_title: String, action: F)
-where
+fn spawn_trust_store_action<F, E>(
+    action_name: &'static str,
+    dialog_title: String,
+    locale: String,
+    action: F,
+) where
     F: FnOnce() -> Result<String, E> + Send + 'static,
     E: std::fmt::Display,
 {
@@ -631,16 +728,25 @@ where
             tracing::info!("{action_name} succeeded: {outcome}");
             rfd::MessageDialog::new()
                 .set_title(dialog_title)
-                .set_description(format!("Успішно: {outcome}"))
+                .set_description(i18n::t_args(
+                    &locale,
+                    "dialog.successTemplate",
+                    &[("outcome", &outcome)],
+                ))
                 .set_level(rfd::MessageLevel::Info)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
         }
         Err(err) => {
+            let err = err.to_string();
             tracing::warn!("{action_name} failed: {err}");
             rfd::MessageDialog::new()
                 .set_title(dialog_title)
-                .set_description(format!("Не вдалося: {err}"))
+                .set_description(i18n::t_args(
+                    &locale,
+                    "dialog.failedTemplate",
+                    &[("err", &err)],
+                ))
                 .set_level(rfd::MessageLevel::Error)
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
@@ -656,6 +762,7 @@ where
 fn spawn_cert_action<F, E>(
     action_name: &'static str,
     dialog_title: String,
+    locale: String,
     trust: &TrustState,
     action: F,
 ) where
@@ -663,7 +770,7 @@ fn spawn_cert_action<F, E>(
     E: std::fmt::Display,
 {
     let trust = trust.clone();
-    spawn_trust_store_action(action_name, dialog_title, move || {
+    spawn_trust_store_action(action_name, dialog_title, locale, move || {
         let outcome = action();
         trust.request_recheck();
         outcome
@@ -686,16 +793,16 @@ static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// [`QUIT_APP_ID`]) → spawn the detached wipe helper (it waits for every
 /// DNS-QF process to exit before deleting) → open Windows Settings →
 /// `QUIT_REQUESTED` so this tray exits too.
-fn spawn_remove_all_and_quit(app_data: PathBuf) {
+fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
     std::thread::spawn(move || {
-        let report = format_uninstall_report(&remove_all_local_state(Some(&app_data)));
+        let report = format_uninstall_report(&remove_all_local_state(Some(&app_data)), &locale);
         tracing::info!("remove-all-local-state finished:\n{report}");
         rfd::MessageDialog::new()
-            .set_title(dialog_title("Повністю видалити"))
-            .set_description(format!(
-                "{report}\n\nТека даних застосунку буде повністю видалена, а сам застосунок \
-                 закриється. Відкриються Параметри Windows — натисніть «Видалити» на \
-                 «dns-quorum-filter», щоб завершити."
+            .set_title(dialog_title(&i18n::t(&locale, "menu.removeAll")))
+            .set_description(i18n::t_args(
+                &locale,
+                "uninstall.reportDialogTemplate",
+                &[("report", &report)],
             ))
             .set_level(rfd::MessageLevel::Info)
             .set_buttons(rfd::MessageButtons::Ok)
@@ -724,6 +831,7 @@ fn maybe_offer_onboarding(
     port: u16,
     trust: &TrustState,
     trusted: bool,
+    locale: &str,
 ) {
     if *offered {
         return;
@@ -731,7 +839,7 @@ fn maybe_offer_onboarding(
     let seen = onboarding::onboarding_seen(app_data);
     if onboarding::should_offer_onboarding(trust.is_confirmed(), trusted, seen) {
         *offered = true;
-        run_setup_wizard(app_data, port, trust);
+        run_setup_wizard(app_data, port, trust, locale);
     }
 }
 
@@ -808,21 +916,17 @@ static WIZARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// afterward for free. `onboarding.seen` is written on «Пізніше» and on a
 /// *successful* install, never on a failed one (that should re-offer next
 /// launch); the menu item is the manual re-entry regardless.
-fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
+fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState, locale: &str) {
     if WIZARD_ACTIVE.swap(true, Ordering::SeqCst) {
         return; // a welcome dialog is already open
     }
     let app_data = app_data.to_path_buf();
     let trust = trust.clone();
+    let locale = locale.to_string();
     std::thread::spawn(move || {
         let proceed = confirm(
-            "Ласкаво просимо",
-            "Залишилось два кроки, щоб браузер почав фільтрувати DNS:\n\n\
-             1. Встановити локальний сертифікат — без нього браузер не довірятиме \
-             сторінці налаштувань.\n\
-             2. Вказати адресу локального фільтра в налаштуваннях браузера — \
-             сторінка з інструкцією відкриється після кроку 1.\n\n\
-             Встановити сертифікат зараз?",
+            &i18n::t(&locale, "onboarding.title"),
+            &i18n::t(&locale, "onboarding.description"),
             rfd::MessageLevel::Info,
         );
         WIZARD_ACTIVE.store(false, Ordering::SeqCst);
@@ -834,7 +938,8 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
         let url = format!("https://127.0.0.1:{port}/admin/ui");
         spawn_cert_action(
             "onboarding-install",
-            dialog_title("Встановити сертифікат"),
+            dialog_title(&i18n::t(&locale, "menu.installCert")),
+            locale.clone(),
             &trust,
             move || -> Result<String, dnsqb_service::TrustStoreError> {
                 let outcome = ensure_installed(&cert_path)?;
@@ -842,7 +947,7 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState) {
                 // `?` above with the marker still unwritten.
                 onboarding::mark_onboarding_seen(&app_data);
                 browser::open_in_default_browser(&url);
-                Ok(trust_store_outcome_uk(outcome).to_string())
+                Ok(trust_store_outcome_text(outcome, &locale))
             },
         );
     });
@@ -872,25 +977,20 @@ fn confirm(action: &str, description: &str, level: rfd::MessageLevel) -> bool {
 /// own confirmation dialog too (a second, separate prompt) unless/until
 /// T-49's open "is certutil silent?" question is settled by a real run; see
 /// `trust_store.rs`'s module doc comment.
-fn confirm_install_cert() -> bool {
+fn confirm_install_cert(locale: &str) -> bool {
     confirm(
-        "Встановити сертифікат",
-        "Локальний сертифікат dns-quorum-filter буде додано до довірених кореневих \
-         сертифікатів поточного користувача (CurrentUser\\Root). Це прибирає попередження \
-         браузера про недовірений сертифікат на сторінці налаштувань. Windows може показати \
-         власний діалог підтвердження. Продовжити?",
+        &i18n::t(locale, "menu.installCert"),
+        &i18n::t(locale, "confirm.installCert.description"),
         rfd::MessageLevel::Info,
     )
 }
 
 /// Native confirm dialog before `certutil -delstore` — names the real
 /// consequence (browser warning returns), same pattern as [`confirm_pause`].
-fn confirm_uninstall_cert() -> bool {
+fn confirm_uninstall_cert(locale: &str) -> bool {
     confirm(
-        "Видалити сертифікат",
-        "Локальний сертифікат dns-quorum-filter буде видалено з довірених кореневих \
-         сертифікатів. Браузер знову покаже попередження про недовірений сертифікат на \
-         сторінці налаштувань, доки сертифікат не буде встановлено повторно. Продовжити?",
+        &i18n::t(locale, "menu.uninstallCert"),
+        &i18n::t(locale, "confirm.uninstallCert.description"),
         rfd::MessageLevel::Warning,
     )
 }
@@ -905,16 +1005,10 @@ fn confirm_uninstall_cert() -> bool {
 /// `dnsqb-service` clears it. (The tray's own status poll is unaffected —
 /// [`status::spawn`] keeps its cached client, still pinned to and matching the
 /// still-served previous certificate.)
-fn confirm_rotate_cert() -> bool {
+fn confirm_rotate_cert(locale: &str) -> bool {
     confirm(
-        "Перевипустити сертифікат",
-        "Буде згенеровано новий локальний сертифікат dns-quorum-filter із новим ключем. \
-         Старі записи цього проєкту прибираються з довірених кореневих сертифікатів \
-         (CurrentUser\\Root), новий сертифікат встановлюється замість них. \
-         dnsqb-service потрібно перезапустити, щоб новий сертифікат почав діяти — до \
-         перезапуску сервіс віддає попередній сертифікат, і браузер показуватиме \
-         попередження про недовірений сертифікат на сторінці налаштувань. Після \
-         перезапуску воно зникає. Продовжити?",
+        &i18n::t(locale, "menu.rotateCert"),
+        &i18n::t(locale, "confirm.rotateCert.description"),
         rfd::MessageLevel::Warning,
     )
 }
@@ -924,35 +1018,51 @@ fn confirm_rotate_cert() -> bool {
 /// **and** the whole app-data directory) and what happens next: the app
 /// closes and Windows Settings opens for the final "Remove" click (MSIX,
 /// T-156, gives the app no uninstall-time hook of its own).
-fn confirm_remove_all_local_state() -> bool {
+fn confirm_remove_all_local_state(locale: &str) -> bool {
     confirm(
-        "Повністю видалити",
-        "Буде повністю видалено локальні дані dns-quorum-filter: довірений сертифікат, \
-         TLS-ключ, ключ шифрування журналу/кешу та збережені креденшели MaxMind зі сховища \
-         облікових даних Windows, а також уся тека даних застосунку (журнал, кеш, \
-         налаштування). Застосунок закриється, і відкриються Параметри Windows — там \
-         натисніть «Видалити» на dns-quorum-filter. Продовжити?",
+        &i18n::t(locale, "menu.removeAll"),
+        &i18n::t(locale, "confirm.removeAll.description"),
         rfd::MessageLevel::Warning,
     )
 }
 
 /// One line per artifact, never a single collapsed pass/fail — the same
 /// discipline [`UninstallReport`] itself follows.
-fn format_uninstall_report(report: &UninstallReport) -> String {
-    fn line(label: &str, outcome: ArtifactOutcome) -> String {
-        let text = match outcome {
-            ArtifactOutcome::Removed => "видалено",
-            ArtifactOutcome::NotPresent => "не було встановлено",
-            ArtifactOutcome::Failed(_) => "НЕ ВДАЛОСЯ видалити",
+fn format_uninstall_report(report: &UninstallReport, locale: &str) -> String {
+    fn line(label: &str, outcome: ArtifactOutcome, locale: &str) -> String {
+        let key = match outcome {
+            ArtifactOutcome::Removed => "uninstall.outcome.removed",
+            ArtifactOutcome::NotPresent => "uninstall.outcome.notPresent",
+            ArtifactOutcome::Failed(_) => "uninstall.outcome.failed",
         };
-        format!("{label}: {text}")
+        format!("{label}: {}", i18n::t(locale, key))
     }
     [
-        line("Сертифікат", report.cert),
-        line("TLS-ключ", report.tls_key),
-        line("Ключ шифрування", report.persistence_key),
-        line("Креденшели MaxMind", report.maxmind_creds),
-        line("Ключ особистої зони", report.personal_zone_key),
+        line(
+            &i18n::t(locale, "uninstall.label.cert"),
+            report.cert,
+            locale,
+        ),
+        line(
+            &i18n::t(locale, "uninstall.label.tlsKey"),
+            report.tls_key,
+            locale,
+        ),
+        line(
+            &i18n::t(locale, "uninstall.label.persistenceKey"),
+            report.persistence_key,
+            locale,
+        ),
+        line(
+            &i18n::t(locale, "uninstall.label.maxmindCreds"),
+            report.maxmind_creds,
+            locale,
+        ),
+        line(
+            &i18n::t(locale, "uninstall.label.personalZoneKey"),
+            report.personal_zone_key,
+            locale,
+        ),
     ]
     .join("\n")
 }
@@ -965,18 +1075,21 @@ fn format_uninstall_report(report: &UninstallReport) -> String {
 /// Pulled out as its own pure function so the fix has a regression test —
 /// `show_about_dialog` itself calls a real blocking `rfd` dialog and can't be
 /// unit tested directly.
-fn about_dialog_text(port: u16) -> String {
-    format!(
-        "dnsqb-tray {}\nЛіцензія: Apache-2.0\nЛокальний DoH quorum-фільтр \u{2014} \
-         https://127.0.0.1:{port}/admin/ui",
-        env!("CARGO_PKG_VERSION")
+fn about_dialog_text(port: u16, locale: &str) -> String {
+    i18n::t_args(
+        locale,
+        "about.bodyTemplate",
+        &[
+            ("version", env!("CARGO_PKG_VERSION")),
+            ("port", &port.to_string()),
+        ],
     )
 }
 
-fn show_about_dialog(port: u16) {
+fn show_about_dialog(port: u16, locale: &str) {
     rfd::MessageDialog::new()
-        .set_title(dialog_title("Про програму"))
-        .set_description(about_dialog_text(port))
+        .set_title(dialog_title(&i18n::t(locale, "menu.about")))
+        .set_description(about_dialog_text(port, locale))
         .set_level(rfd::MessageLevel::Info)
         .set_buttons(rfd::MessageButtons::Ok)
         .show();
@@ -988,13 +1101,10 @@ fn show_about_dialog(port: u16) {
 /// from the same menu, and a fresh app launch also clears `stop.flag`, so the
 /// dialog says so. Deliberately does **not** claim "everything goes unfiltered"
 /// — a blocklisted domain is still blocked during a pause.
-fn confirm_pause() -> bool {
+fn confirm_pause(locale: &str) -> bool {
     confirm(
-        "Призупинити фільтрацію",
-        "DNS продовжить працювати, але фільтрацію буде вимкнено: quorum-перевірка та \
-         GeoIP не застосовуватимуться, домени резолвитимуться напряму через \
-         baseline-резолвер. Ваші власні списки блокування та дозволу продовжать діяти. \
-         Відновити — цим самим пунктом меню або перезапуском застосунку. Продовжити?",
+        &i18n::t(locale, "menu.pause"),
+        &i18n::t(locale, "confirm.pause.description"),
         rfd::MessageLevel::Warning,
     )
 }
@@ -1002,12 +1112,10 @@ fn confirm_pause() -> bool {
 /// Native confirm dialog before quitting the whole app (T-185) — this stops
 /// the service, the watchdog and the tray. Same blast-radius warning shape as
 /// [`confirm_pause`], stronger wording.
-fn confirm_quit() -> bool {
+fn confirm_quit(locale: &str) -> bool {
     confirm(
-        "Вийти",
-        "Застосунок повністю зупиниться: DNS-фільтрація, фоновий нагляд і ця іконка. \
-         DNS піде нефільтрованим, доки ви знову не запустите застосунок із меню Пуск. \
-         Продовжити?",
+        &i18n::t(locale, "confirm.quit.title"),
+        &i18n::t(locale, "confirm.quit.description"),
         rfd::MessageLevel::Warning,
     )
 }
@@ -1015,7 +1123,7 @@ fn confirm_quit() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        about_dialog_text, format_uninstall_report, menu_action_for, trust_store_outcome_uk,
+        about_dialog_text, format_uninstall_report, menu_action_for, trust_store_outcome_text,
         MenuAction,
     };
     use dnsqb_service::{ArtifactOutcome, TrustStoreOutcome, UninstallReport};
@@ -1025,12 +1133,12 @@ mod tests {
     // actual (possibly non-default) DoH port on click.
     #[test]
     fn about_dialog_text_includes_the_actual_port() {
-        let text = about_dialog_text(8443);
+        let text = about_dialog_text(8443, "uk");
         assert!(
             text.contains("https://127.0.0.1:8443/admin/ui"),
             "must carry the real port, not a bare https://127.0.0.1/admin/ui: {text:?}"
         );
-        let custom = about_dialog_text(9999);
+        let custom = about_dialog_text(9999, "uk");
         assert!(
             custom.contains(":9999/"),
             "must reflect a non-default port too: {custom:?}"
@@ -1041,14 +1149,16 @@ mod tests {
     // dialogs used to forward TrustStoreOutcome's raw `{:?}` straight into the
     // Ukrainian "Успішно: {outcome}" sentence, mixing languages mid-sentence
     // ("Успішно: Installed"). Guard both variants stay real Ukrainian text,
-    // never the English Debug label.
+    // never the English Debug label. T-151 Батч 5.5: generalized to `t()` -
+    // pin "uk" explicitly so the assertion doesn't depend on the OS locale of
+    // whatever machine runs this test (i18n.rs's own module doc comment).
     #[test]
-    fn trust_store_outcome_uk_never_leaks_the_raw_debug_label() {
+    fn trust_store_outcome_text_never_leaks_the_raw_debug_label() {
         for outcome in [
             TrustStoreOutcome::Installed,
             TrustStoreOutcome::AlreadyInstalled,
         ] {
-            let text = trust_store_outcome_uk(outcome);
+            let text = trust_store_outcome_text(outcome, "uk");
             assert!(
                 !text.contains("Installed"),
                 "must not leak the raw Debug identifier: {text:?}"
@@ -1105,7 +1215,7 @@ mod tests {
 
     #[test]
     fn uninstall_report_has_one_labelled_line_per_artifact() {
-        let text = format_uninstall_report(&report_of(ArtifactOutcome::Removed));
+        let text = format_uninstall_report(&report_of(ArtifactOutcome::Removed), "uk");
         assert_eq!(text.lines().count(), 5);
         for label in [
             "Сертифікат",
@@ -1121,17 +1231,17 @@ mod tests {
     #[test]
     fn uninstall_report_maps_each_outcome_to_its_phrase() {
         assert!(
-            format_uninstall_report(&report_of(ArtifactOutcome::Removed))
+            format_uninstall_report(&report_of(ArtifactOutcome::Removed), "uk")
                 .lines()
                 .all(|line| line.ends_with(": видалено"))
         );
         assert!(
-            format_uninstall_report(&report_of(ArtifactOutcome::NotPresent))
+            format_uninstall_report(&report_of(ArtifactOutcome::NotPresent), "uk")
                 .lines()
                 .all(|line| line.ends_with(": не було встановлено"))
         );
         assert!(
-            format_uninstall_report(&report_of(ArtifactOutcome::Failed("x")))
+            format_uninstall_report(&report_of(ArtifactOutcome::Failed("x")), "uk")
                 .lines()
                 .all(|line| line.ends_with(": НЕ ВДАЛОСЯ видалити"))
         );
@@ -1139,13 +1249,16 @@ mod tests {
 
     #[test]
     fn uninstall_report_renders_each_field_independently() {
-        let text = format_uninstall_report(&UninstallReport {
-            cert: ArtifactOutcome::Removed,
-            tls_key: ArtifactOutcome::NotPresent,
-            persistence_key: ArtifactOutcome::Failed("secret store error"),
-            maxmind_creds: ArtifactOutcome::Removed,
-            personal_zone_key: ArtifactOutcome::NotPresent,
-        });
+        let text = format_uninstall_report(
+            &UninstallReport {
+                cert: ArtifactOutcome::Removed,
+                tls_key: ArtifactOutcome::NotPresent,
+                persistence_key: ArtifactOutcome::Failed("secret store error"),
+                maxmind_creds: ArtifactOutcome::Removed,
+                personal_zone_key: ArtifactOutcome::NotPresent,
+            },
+            "uk",
+        );
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
             lines,
@@ -1155,6 +1268,24 @@ mod tests {
                 "Ключ шифрування: НЕ ВДАЛОСЯ видалити",
                 "Креденшели MaxMind: видалено",
                 "Ключ особистої зони: не було встановлено",
+            ]
+        );
+    }
+
+    // T-151 Батч 5.5: the same report in English, proving the labels/outcome
+    // phrases actually come from the dictionary, not leftover Ukrainian
+    // literals still hardcoded somewhere in `format_uninstall_report`.
+    #[test]
+    fn uninstall_report_translates_into_english() {
+        let text = format_uninstall_report(&report_of(ArtifactOutcome::Removed), "en");
+        assert_eq!(
+            text.lines().collect::<Vec<_>>(),
+            vec![
+                "Certificate: removed",
+                "TLS key: removed",
+                "Encryption key: removed",
+                "MaxMind credentials: removed",
+                "Personal-zone key: removed",
             ]
         );
     }

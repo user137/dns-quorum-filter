@@ -20,7 +20,16 @@ parking_lot = "0.12"
 # below (build.rs) to actually take effect - TaskDialogIndirect silently
 # falls back to classic visuals without it.
 rfd = { version = "0.15.4", default-features = false, features = ["common-controls-v6"] }
+serde_json = "1"
 softbuffer = { version = "0.4.8", default-features = false }
+# T-151 Батч 5.5: OS-language detection for the tray's own i18n (`i18n.rs`) —
+# a tiny, focused crate (no runtime deps of its own beyond platform FFI),
+# chosen over hand-rolling `GetUserDefaultLocaleName`/`CFLocale` calls per
+# platform. The same crate T-227 considered and rejected for GeoIP-region
+# detection (`winreg::HKCU\Control Panel\International\Geo` was the right
+# signal there - UI display language, not region); here UI display language
+# is exactly the signal needed, so the earlier rejection doesn't apply.
+sys-locale = "0.3"
 tao = "0.31.1"
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "net", "time"] }
 tracing = "0.1.41"
