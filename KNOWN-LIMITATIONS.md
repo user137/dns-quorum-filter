@@ -229,10 +229,14 @@ TASKS-DONE.md, never here.
   flex/grid layout — text reads right-to-left correctly, but component layout (the locale
   switcher, cards, buttons) stays left-to-right-oriented; full RTL mirroring via CSS logical
   properties is unscoped future work.
-  **Батч 5.4 was never verified in a real browser** (the Chrome extension was unavailable for every
-  session of the batch): the checks are server-side dictionary fetches, structural Rust tests
-  (key existence, `{token}` parity, plural-category shape, footer link tokens), and a `node vm` smoke
-  of every render function against all 37 dictionaries with a stubbed DOM. Live locale switching, the
-  first-visit browser-setup auto-open label, and real `n` values through `Intl.PluralRules` are
-  unexercised. Translated browser-menu labels in `browserSetup.*` are quoted in English on purpose.
+  **Verified in a real browser 2026-09-22** (T-238 smoke test, `chrome-devtools` MCP, live
+  `setLocale()` across all 37 locales, both collapsed and expanded "Розширені" view): 0 raw
+  `a.b.c` keys, 0 unsubstituted `{token}`s, `#advanced-settings`'s open state survives a locale
+  switch. **One real regression found this way, filed as T-240 (`TASKS.md`)**: the custom
+  DoH-provider add-form (`customProviderForm()`) caches its whole DOM node to protect
+  in-progress typed input (T-47) and, as a side effect, never re-translates on a later
+  `setLocale()` — the one render path in the whole batch a fresh-module-per-locale `node vm`
+  smoke structurally cannot reach, exactly as anticipated below. RTL mirroring, the first-visit
+  browser-setup auto-open label, and the tray/CLI (Батч 5.5/5.6) remain unexercised by this pass.
+  Translated browser-menu labels in `browserSetup.*` are quoted in English on purpose.
 
