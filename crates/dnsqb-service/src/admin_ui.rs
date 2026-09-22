@@ -523,6 +523,36 @@ mod tests {
     }
 
     #[test]
+    fn timeout_config_heading_is_never_rebuilt_by_the_2s_status_poll() {
+        // Found in live smoke-testing (2026-09-22): renderTimeoutConfig used to
+        // reassign `timeoutConfigBody.innerHTML` wholesale on every 2s poll
+        // tick (render() -> renderTimeoutConfig()), which included the
+        // field-help <details> in the card heading - so a user-opened "?"
+        // tooltip silently snapped shut within ~2s. The heading (and its
+        // <details>) must be built exactly once by buildTimeoutConfigHeading(),
+        // called only from renderTranslatedCards() (locale change/bootstrap);
+        // the poll-driven renderTimeoutConfig() may only touch the separate
+        // #timeout-config-fields subtree.
+        assert!(
+            !MAIN_JS.contains("timeoutConfigBody.innerHTML"),
+            "renderTimeoutConfig must not reassign timeoutConfigBody.innerHTML \
+             directly - that wipes the field-help <details> on every poll tick"
+        );
+        assert!(
+            MAIN_JS.contains("function buildTimeoutConfigHeading()")
+                && MAIN_JS.contains("timeoutConfigBody.appendChild(cardHeading("),
+            "the heading must be built once via cardHeading(), same as every \
+             other card, not inlined into the poll-driven template"
+        );
+        assert!(
+            MAIN_JS.contains(r#"fields.id = "timeout-config-fields""#)
+                && MAIN_JS.contains(r#"document.getElementById("timeout-config-fields")"#),
+            "renderTimeoutConfig must target the #timeout-config-fields \
+             subtree, not the card's own root element"
+        );
+    }
+
+    #[test]
     fn main_js_hero_presentation_uses_the_t_helper_for_text() {
         assert!(
             MAIN_JS.contains("t(`hero.${key}.detail`)")

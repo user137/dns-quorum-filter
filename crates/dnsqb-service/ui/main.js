@@ -189,6 +189,7 @@ function applyDocumentLanguage() {
 // below (static index.html markup, not a fetch/render cycle).
 function renderTranslatedCards() {
   applyStaticTranslations();
+  buildTimeoutConfigHeading();
   refresh();
   refreshRatingFilter();
   refreshBlocklistBundles();
@@ -481,15 +482,30 @@ function blockedPercentLabel(stats) {
 }
 
 // T-176: the timeout-mode radios + baseline-fallback checkbox. Moved out of
-// #app-body into its own card inside the advanced disclosure. Still driven by
-// the 2s status poll (click-only, no free-text), same as the stats below.
+// #app-body into its own card inside the advanced disclosure.
+//
+// The heading (with its "?" field-help <details>) is built once by
+// buildTimeoutConfigHeading() below, called only from renderTranslatedCards()
+// - NOT here. Bug found in live smoke-testing (2026-09-22): this function
+// used to rebuild the whole card's innerHTML, heading included, on every 2s
+// status-poll tick; a user-opened field-help <details> got silently replaced
+// by a fresh closed one within ~2s, looking like it "closed itself." Every
+// other card's field-help survives because its whole card is only ever
+// rebuilt from renderTranslatedCards() (locale change / bootstrap), never the
+// 2s poll - this card is the one exception that also needs live status
+// (timeout_mode / serve_baseline_when_filters_unreachable), so only the
+// fields subtree below is poll-driven, same split as the heading/fields
+// separation this fixes it into.
 function renderTimeoutConfig(status) {
+  const fields = document.getElementById("timeout-config-fields");
+  if (!fields) {
+    return; // heading/fields not built yet (dictionary still loading)
+  }
   const configWarning =
     configPersistFailed || status.persisted === false
       ? `<div class="notice warn">${t("warning.notPersisted")}</div>`
       : "";
-  timeoutConfigBody.innerHTML = `
-    <div class="card-heading-row"><h3>${t("timeoutConfig.heading")}</h3><details class="field-help"><summary aria-label="${t("common.helpAriaLabel")}">?</summary><p>${t("fieldHelp.timeoutMode")}</p></details></div>
+  fields.innerHTML = `
     ${configWarning}
     <div class="radio-group">
       ${["fail_open", "fail_closed", "degraded"]
@@ -514,6 +530,16 @@ function renderTimeoutConfig(status) {
   if (baselineFallback) {
     baselineFallback.addEventListener("change", onConfigChanged);
   }
+}
+
+// Built once per translation pass (renderTranslatedCards()), never by the 2s
+// poll - see renderTimeoutConfig()'s own comment for why the split exists.
+function buildTimeoutConfigHeading() {
+  timeoutConfigBody.textContent = "";
+  timeoutConfigBody.appendChild(cardHeading(t("timeoutConfig.heading"), "timeoutMode"));
+  const fields = document.createElement("div");
+  fields.id = "timeout-config-fields";
+  timeoutConfigBody.appendChild(fields);
 }
 
 // T-241 follow-up: `status.app_version` is `AdminStatusResponse.app_version`
