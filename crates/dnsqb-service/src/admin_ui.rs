@@ -669,6 +669,23 @@ mod tests {
         );
     }
 
+    // T-241 follow-up — the page heading shows the running service's own
+    // version, mirroring `dnsqb-tray`'s dialog titles (user request, so a
+    // screenshot self-identifies which build it came from). Never a
+    // fabricated placeholder: the fallback (a pre-T-241 service, or a fetch
+    // failure) is the plain title with no version suffix, not a guessed one.
+    #[test]
+    fn main_js_renders_the_app_title_from_status_app_version() {
+        assert!(
+            MAIN_JS.contains("appTitle.textContent") && MAIN_JS.contains("status.app_version"),
+            "render() must set #app-title's text from status.app_version"
+        );
+        assert!(
+            INDEX_HTML.contains(r#"id="app-title""#),
+            "index.html must carry the #app-title element main.js targets"
+        );
+    }
+
     // T-188 / T-204 — the cert-trust branch of the hero moved to the server
     // (admin.rs::compute_hero_state, tested there). `main.js` now only renders
     // the CERT_NOT_TRUSTED / CERT_UNKNOWN presentation and wires the install

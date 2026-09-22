@@ -376,6 +376,9 @@ mod tests {
             // Фаза 5, T-115/T-118: same reasoning — the tray doesn't render
             // this field either.
             cctld_block: dnsqb_service::CctldBlockStatusView::default(),
+            // T-241 follow-up: `/admin/ui`-only display field, same reasoning
+            // as `blocklist_bundles`/`cctld_block` above.
+            app_version: String::new(),
         }
     }
 

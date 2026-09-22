@@ -53,7 +53,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 5;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 6;
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the
@@ -210,6 +210,15 @@ pub struct AdminStatusResponse {
     /// fallback and `schema_version` carries the real signal.
     #[serde(default)]
     pub hero_state: HeroStateView,
+    /// T-241 follow-up — `dnsqb-service`'s own `CARGO_PKG_VERSION`, so a user
+    /// with several DNS-QF popups/screenshots open (or filing a support
+    /// report) can always see which build the running service actually is,
+    /// same reasoning as `dnsqb-tray`'s dialog titles. `#[serde(default)]`
+    /// (T-205 convention): an absent value from a pre-T-241 service decodes
+    /// as `""`, and `main.js` simply omits the version suffix rather than
+    /// showing a placeholder — never a fabricated number.
+    #[serde(default)]
+    pub app_version: String,
 }
 
 /// T-96 / T-97 — the passive "this store is written to disk (encrypted)"

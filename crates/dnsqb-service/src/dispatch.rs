@@ -1759,6 +1759,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -1901,6 +1902,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 

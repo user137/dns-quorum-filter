@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "dnsqb-service"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "dnsqb-tray"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dnsqb-service",
  "embed-resource",
@@ -888,7 +888,7 @@ dependencies = [
 
 [[package]]
 name = "dnsqb-watcher"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "dnsqb-service",
  "embed-resource",

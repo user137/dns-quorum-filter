@@ -6,6 +6,7 @@
 // calls became same-origin `fetch()` calls - no CORS needed, the existing
 // `content_type_is_json` CSRF gate on `/admin/config` still applies.
 
+const appTitle = document.getElementById("app-title");
 const appBody = document.getElementById("app-body");
 const providersBody = document.getElementById("providers-body");
 const overridesBody = document.getElementById("overrides-body");
@@ -515,7 +516,17 @@ function renderTimeoutConfig(status) {
   }
 }
 
+// T-241 follow-up: `status.app_version` is `AdminStatusResponse.app_version`
+// (`dnsqb-service`'s own `CARGO_PKG_VERSION`) - so a screenshot of this page
+// is self-identifying the same way the tray's dialog titles already are.
+// `#[serde(default)]` on the server means a pre-T-241 service decodes as
+// `""` here too; omit the suffix rather than show a fabricated version.
+function renderAppTitle(version) {
+  appTitle.textContent = version ? `DNS Quorum Filter ${version}` : "DNS Quorum Filter";
+}
+
 function render(status) {
+  renderAppTitle(status.app_version);
   // `|| "ONLINE"` makes the fail-open default provable from this line alone
   // (not just true by the server's own NetworkStatusView::#[default] Online)
   // - an older/malformed response missing `network` must not read as offline
