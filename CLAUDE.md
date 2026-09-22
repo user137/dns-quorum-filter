@@ -15,8 +15,8 @@ browser** (`KNOWN-LIMITATIONS.md`); next per `TASKS.md`: Батч 5.5 (tray), 5.
 (`nudge_popup`). Фаза 7 (T-218, public blocklist bundles) fully closed 2026-09-17 (Батчі 7.1-7.4,
 full stack). Фаза 4
 (rating filter «bubble», per-country top-N zone infra, personal learned zone) fully closed
-2026-09-11 — tag `v0.4.0` published as GitHub `latest` 2026-09-12 (moved once mid-smoke-test to
-include the T-219 MSIX cert-trust fix, Батч 4.7.A, before publishing). Фаза 3 (production
+2026-09-11 — tag `v0.4.0` published as GitHub `latest` 2026-09-12 (retagged once pre-publish for a
+smoke-test fix, TASKS-DONE.md T-219). Фаза 3 (production
 hardening — watchdog, MSIX packaging) closed 2026-09-06 (`v0.3.0`, no longer `latest`); Фаза 2
 (cert automation) closed 2026-08-31; Фаза 1 (PoC) closed 2026-08-29.
 
@@ -467,8 +467,15 @@ never reaches production (real key = `key_store::load_or_create_persistence_key`
 **Check the actual CI run after every push — local-green is not CI-green**, especially for
 OS-permission/environment-dependent code. `gh run list --branch main --limit 5`; `gh run watch
 <run-id> --exit-status`; `gh run view <run-id> --log-failed`. Confirmed the hard way: an
-`icacls` ACL fix (T-50) passed the full local gate on a Windows 11 Pro dev box but failed on the
-`windows-latest` CI runner, which has different default file ACLs.
+`icacls` fix (T-50) passed the full local gate on a Windows 11 Pro dev box but failed on
+`windows-latest` CI (different default file ACLs) — and again by a `.rc`/manifest resource
+divergence between this dev box's default `windows-gnu` host and the `windows-msvc` target CI and
+`release.yml` actually build (T-241, RUST-GOTCHAS.md). **The same split applies to manual/smoke
+testing of the packaged app, not just the automated suite: always test the artifact downloaded
+from a GitHub Actions run or release** (`gh run download` / `gh release download`), **never a
+local unsigned `cargo build`/`cargo run`** — this includes any pre-release Store-submission smoke
+pass (T-238/T-239). A local build is a different toolchain, unsigned, and never MSIX-packaged;
+none of that is guaranteed to match what a real install actually runs.
 
 **`SPEC.md` is the source of truth for all design decisions.** Read it before proposing any
 architectural change — most non-obvious choices are already deliberated there with explicit
