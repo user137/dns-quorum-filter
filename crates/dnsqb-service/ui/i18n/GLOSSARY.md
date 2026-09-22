@@ -55,6 +55,16 @@ sentence around them, never the identifiers: `fail_open`, `fail_closed`, `degrad
 already the convention in the original `uk.json`/`en.json` (`fieldHelp.timeoutMode`); T-236 keeps
 it for all 37 locales for consistency.
 
+Found in live smoke-testing (2026-09-22): the timeout-mode *radio labels*
+(`timeoutConfig.mode.failOpen`/`failClosed`/`degraded`) used to render the bare identifier alone,
+with no surrounding sentence at all — technically consistent with "never translate the
+identifier," but useless to a user who doesn't already know the config format. Fixed by giving
+each radio label a real translated word (reusing that locale's own `overrides.allowOption`/
+`blockOption` for the first two, a locale-appropriate "incomplete" for `degraded` — matching
+`fieldHelp.timeoutMode`'s own English/Ukrainian wording, not a new "degraded" jargon term) with
+the untranslated identifier kept in parens: `"Дозволити (fail_open)"`. The identifier itself is
+still never translated — this only added the sentence around it, which had been missing entirely.
+
 Technical abbreviations also stay as-is across every locale: `DNS`, `DoH`, `ccTLD`, `GeoIP`, `TTL`.
 
 ## Terms with a per-locale rendering

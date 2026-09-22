@@ -496,6 +496,19 @@ function blockedPercentLabel(stats) {
 // (timeout_mode / serve_baseline_when_filters_unreachable), so only the
 // fields subtree below is poll-driven, same split as the heading/fields
 // separation this fixes it into.
+// Found in live smoke-testing (2026-09-22): the radio labels used to render
+// the bare config-file identifier (`fail_open`/`fail_closed`/`degraded`) as
+// the *entire* visible label - correct per GLOSSARY.md ("these identifiers
+// stay untranslated, quoted inside a sentence"), but there was no sentence
+// here, just the naked lowercase literal. The identifier still stays
+// untranslated per that same rule (kept in parens); this only adds the
+// translated word describing what it does.
+const TIMEOUT_MODE_LABEL_KEYS = {
+  fail_open: "timeoutConfig.mode.failOpen",
+  fail_closed: "timeoutConfig.mode.failClosed",
+  degraded: "timeoutConfig.mode.degraded",
+};
+
 function renderTimeoutConfig(status) {
   const fields = document.getElementById("timeout-config-fields");
   if (!fields) {
@@ -513,7 +526,7 @@ function renderTimeoutConfig(status) {
           (mode) => `
         <label class="radio-opt">
           <input type="radio" name="timeout-mode" value="${mode}" ${status.timeout_mode === mode ? "checked" : ""} />
-          <span>${mode}</span>
+          <span>${t(TIMEOUT_MODE_LABEL_KEYS[mode])}</span>
         </label>`
         )
         .join("")}

@@ -1012,14 +1012,18 @@ mod tests {
     // never the English Debug label.
     #[test]
     fn trust_store_outcome_uk_never_leaks_the_raw_debug_label() {
-        for outcome in [TrustStoreOutcome::Installed, TrustStoreOutcome::AlreadyInstalled] {
+        for outcome in [
+            TrustStoreOutcome::Installed,
+            TrustStoreOutcome::AlreadyInstalled,
+        ] {
             let text = trust_store_outcome_uk(outcome);
             assert!(
                 !text.contains("Installed"),
                 "must not leak the raw Debug identifier: {text:?}"
             );
             assert!(
-                text.chars().any(|c| matches!(c, 'а'..='я' | 'і' | 'ї' | 'є' | 'ґ')),
+                text.chars()
+                    .any(|c| matches!(c, 'а'..='я' | 'і' | 'ї' | 'є' | 'ґ')),
                 "must actually be Ukrainian text: {text:?}"
             );
         }
