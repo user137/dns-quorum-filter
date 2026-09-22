@@ -55,6 +55,20 @@ sentence around them, never the identifiers: `fail_open`, `fail_closed`, `degrad
 already the convention in the original `uk.json`/`en.json` (`fieldHelp.timeoutMode`); T-236 keeps
 it for all 37 locales for consistency.
 
+Found in live smoke-testing (2026-09-22, same day): `providers.heading` /
+`log.allVotersOption` used the internal quorum term "voter" (`VoterRecord`/`VoterVerdict` in Rust)
+verbatim in user-facing text in every locale (`"Providers (voters)"`, `"Провайдери-voter'и"`, …) -
+this one genuinely was never translated, unlike `fail_open` above which is a deliberate code
+literal. Replaced with each locale's own already-established word for "provider" everywhere.
+Also `blocklist.desc.pipelineNote` (and its copy inside `blocklist.desc.off`) referenced this
+project's own internal pipeline step numbering ("Same pipeline, step 2 only (Blocklist)") in
+every locale — replaced with a short plain consequence clause ("Applies before the providers are
+asked."/"Діє ще до опитування провайдерів." etc.), same MT-tier bar as the rest of this file. And
+`uk`/`hi`/`ur`'s `blocklist.heading`/`.title` phonetically transliterated the English words
+"blocklist"/"bundle" instead of translating them (`uk`: "Блок-лист-бандли", three English words
+hyphenated in Cyrillic - the other ~32 locales already had a real native word for "bundle" and
+were left untouched).
+
 Found in live smoke-testing (2026-09-22): the timeout-mode *radio labels*
 (`timeoutConfig.mode.failOpen`/`failClosed`/`degraded`) used to render the bare identifier alone,
 with no surrounding sentence at all — technically consistent with "never translate the
