@@ -1,7 +1,7 @@
 """Record a verdict in review/QA-MATRIX.md by row ID (Phase 2).
 
 Usage: python review/qa-matrix-verdict.py <ID> <VERDICT> "<evidence>" ["<bug/task>"]
-VERDICT: PASS / FAIL / BLOCKED / NOT RUN / USER-MANUAL / N/A-IN-BUILD.
+VERDICT: PASS / FAIL / BLOCKED / NOT RUN / USER-MANUAL / N/A-IN-BUILD / N/A (category not applicable, reason in Кроки).
 Several rows at once: pass a JSON file instead -- [{"id":..,"verdict":..,"evidence":..,"bug":..}].
 """
 import json
@@ -10,7 +10,7 @@ import re
 import sys
 
 MATRIX = pathlib.Path(__file__).resolve().parent / "QA-MATRIX.md"
-VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT RUN", "USER-MANUAL", "N/A-IN-BUILD"}
+VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT RUN", "USER-MANUAL", "N/A-IN-BUILD", "N/A"}
 
 
 def cell(text):
