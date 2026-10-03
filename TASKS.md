@@ -1585,6 +1585,47 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   (`logs\watcher.log` після ребуту); (3) чи впливає шлях інсталу (sideload тест-підписаного
   пакета vs. Store). Якщо ОС сама не гарантує ввімкнений стан — потрібен видимий користувачу
   сигнал/крок у майстрі першого запуску, не мовчазна відсутність автозапуску. Блокер для T-239.
+- [ ] T-244 — **Заведено 2026-10-03, QA-прохід (рядок `G-upgrade`, `review/QA-MATRIX.md`).** Апгрейд
+  MSIX документованим шляхом (`Trust-TestCert.ps1 -Install` → `Add-AppxPackage
+  -ForceTargetApplicationShutdown`, T-223) 0.7.0 → 0.8.0 мовчки не спрацьовує. Спостережено наживо:
+  прапорець закрив лише `dnsqb-watcher` (Application Hang 1002 у журналі), а `dnsqb-service` і
+  `dnsqb-tray` 0.7.0 лишились живими, хоча каталог `WindowsApps\…_0.7.0.0_…` уже видалено.
+  Сервіс 0.7.0 далі обслуговував DoH (`/admin/status.app_version: 0.7.0`, `hero_state: PROTECTED`)
+  без watcher'а, пишучи кожні ~20 с `failed to respawn dnsqb-watcher: no sibling binary found`.
+  Запуск 0.8.0 плиткою (двічі) не створив жодного процесу: `AppModel-Runtime/Admin` 215/208
+  `0x80070020: Cannot create the Desktop AppX container … converting the job`. Тобто нова версія не
+  стартує, доки живі старі процеси, — аж до ребуту або ручного kill. **Діагноз (частковий):**
+  watcher спавнить дітей з `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` (T-182,
+  `watchdog::spawn`), тож вони поза job пакета і `-ForceTargetApplicationShutdown` їх не бачить;
+  `0x80070020` — їх утримання контейнера родини пакета (перевірено лише за журналом, не кодом
+  Windows). Три Б: user safety — користувач бачить «Захищено» і не знає, що оновлення не
+  відбулось, а нагляду немає; оновлення через Store (T-239) матиме той самий шлях. T-223
+  ніколи не перевірявся наживо (власна нотатка в TASKS-DONE.md). Обхід у проході: kill старих PID →
+  плитка → 0.8.0 стартує. Фікс не почато.
+- [ ] T-245 — **Заведено 2026-10-03, QA-прохід (рядки `A-dto-doc-drift`, `KL-tls-key-uninstall`).**
+  Документація розійшлась із кодом у чотирьох місцях (лише доки, код коректний): (1) `UI-SPEC.md:265`
+  каже, що версія застосунку ніде в UI не показана — з `v0.7.0` вона в заголовку `/admin/ui`
+  (`AdminStatusResponse.app_version`); (2) `UI-SPEC.md` не описує `app_version`,
+  `encrypted_persistence`, `MaxmindCredentialsView.refresh_health` і
+  `UninstallLocalStateResponse` (5 полів); (3) рядок `local_state` у `CLAUDE.md` — «3 keyring entries
+  … 4 artifacts», а код (`local_state.rs:60`, DTO) звітує 5 артефактів: cert + 4 секрети, включно з
+  `tls_key`; (4) пункт `KNOWN-LIMITATIONS.md` «The stored TLS private key (T-67) is never removed on
+  uninstall yet» застарів — `local_state::remove_all` видаляє `tls_key_entry` (`local_state.rs:107`).
+- [ ] T-246 — **Заведено 2026-10-03, QA-прохід (поверхня E).** CLI `--help` (T-235) на встановленому
+  MSIX 0.8.0, три спостереження: (1) `dnsqb-service.exe`/`dnsqb-tray.exe` з `WindowsApps\` напряму
+  (PowerShell 7, Windows PowerShell 5.1, `cmd`) — «Access is denied», ACL ідентичні з
+  `dnsqb-watcher.exe`, який запускається; через `Invoke-CommandInDesktopPackage` обидва друкують
+  довідку (код 0). Найімовірніше Windows не дає запускати поза пакетом exe, не оголошений у
+  маніфесті (`Application`/`startupTask` — лише watcher) — **не підтверджено документацією**.
+  Тобто для користувача `--help` реально доступний лише у watcher. (2) Закритий stdout →
+  паніка: `dnsqb-watcher.exe --help | Select -First 1` і `--help > file` у PowerShell 7 дають
+  `thread 'main' panicked … failed printing to stdout: The pipe is being closed. (os error 232)`
+  (відтворено 3 рази); `println!` панікує на зламаному pipe — суперечить `deny(unwrap/expect)`-духу
+  «без panic у продакшн-коді», правильніше `writeln!` з ігноруванням помилки. (3) Через (2) `> file`
+  у PowerShell 7 лишає порожній файл (PowerShell не чекає GUI-subsystem процес); `Start-Process
+  -Wait -RedirectStandardOutput` і `| Out-String` працюють. Низька тяжкість, не блокує реліз.
+  Принагідно: другий екземпляр `dnsqb-service` логує `ERROR … not starting a second one`, але
+  виходить з кодом 0 — зафіксовано, не досліджено.
 - [ ] T-239 — **Заведено 2026-09-19, запит користувача.** Публікація в Microsoft Store. **Не
   готова стати запланованим батчем — потребує власного kickoff-раунду (`AskUserQuestion`), не
   просто "почати кодити":** чи вже є Partner Center developer-акаунт (свій чи той самий, що для

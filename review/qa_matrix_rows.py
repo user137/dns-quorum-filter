@@ -78,7 +78,7 @@ R("A-dns-query-HP2", "A", "POST /dns-query", "HP",
   ["serve_answers_a_valid_post_request_with_200"])
 R("A-dns-query-SB", "A", "GET|POST /dns-query", "SB",
   "POST тіло 65536 байт; GET `dns=` невалідний base64; POST з `Content-Type: text/plain`",
-  "413 / 400 / 415, без звернення до апстрімів",
+  "413 / 400 / 400 (`text/plain` на /dns-query -- 400 за задумом, тест `serve_returns_400_for_a_post_with_the_wrong_content_type`), без звернення до апстрімів",
   ["serve_returns_413_for_an_oversized_post_body", "serve_returns_400_for_a_malformed_get_query_string",
    "serve_returns_400_for_a_post_with_the_wrong_content_type", FUZZ_ALL])
 R("A-dns-query-MF", "A", "GET|POST /dns-query", "MF",
@@ -141,7 +141,7 @@ get_route("admin-overrides", "/admin/overrides",
           ["serve_admin_overrides_returns_the_current_lists_and_conflicts"],
           "`Origin` чужого сайту", "200 без CORS")
 post_route("admin-overrides-add", "/admin/overrides/add",
-           "`{pattern:\"qa-block.test\", list:\"BLOCKLIST\"}`, потім DoH-запит на нього, потім remove",
+           "`{pattern:\"qa-block.test\", list:\"blocklist\"}`, потім DoH-запит на нього, потім remove",
            "200, `persisted:true`, домен -> `0.0.0.0`, рядок `BLOCKLIST` у лозі, кешований вердикт інвалідовано",
            ["serve_admin_overrides_add_appends_a_new_entry_and_it_is_visible_on_the_next_get",
             "serve_admin_overrides_add_invalidates_a_cached_verdict_for_the_newly_blocked_domain"],
