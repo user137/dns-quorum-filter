@@ -1618,6 +1618,12 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   … 4 artifacts», а код (`local_state.rs:60`, DTO) звітує 5 артефактів: cert + 4 секрети, включно з
   `tls_key`; (4) пункт `KNOWN-LIMITATIONS.md` «The stored TLS private key (T-67) is never removed on
   uninstall yet» застарів — `local_state::remove_all` видаляє `tls_key_entry` (`local_state.rs:107`).
+  (5) Рядок `config` у `CLAUDE.md` — «`[limits]` … `0`/`>1_000_000` = fatal load error» читається як межа
+  для всіх трьох полів, а верхня межа є лише в `max_concurrent_connections`
+  (`MAX_CONCURRENT_CONNECTIONS_CEILING`); `handshake_timeout_ms`/`idle_timeout_ms = 1000001` приймаються
+  (перевірено `/admin/reset`), `CONFIGURATION.md` це й документує правильно. (6) `CONFIGURATION.md`
+  не називає ліміт розміру `overrides.toml` (10 МБ, `overrides.rs:177`), хоча для `resolver_config.toml`
+  (64 КБ) його описано.
 - [ ] T-246 — **Заведено 2026-10-03, QA-прохід (поверхня E).** CLI `--help` (T-235) на встановленому
   MSIX 0.8.0, три спостереження: (1) `dnsqb-service.exe`/`dnsqb-tray.exe` з `WindowsApps\` напряму
   (PowerShell 7, Windows PowerShell 5.1, `cmd`) — «Access is denied», ACL ідентичні з
@@ -1659,6 +1665,28 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   пише жодного рядка в `tray.log`, тоді як відновлення пише `filtering resumed by the user` і невдалий
   запис `stop.flag` пише `warn`. Діагностична асиметрія: з логу не видно, коли й ким фільтрацію
   вимкнено. Помічено ще в смоуку v0.7.0 #11, не заводилось; підтверджено на 0.8.0. Низька тяжкість.
+- [ ] T-252 — **Заведено 2026-10-03, QA-прохід (рядок `H-logs-privacy`).** Невдале перезавантаження
+  `resolver_config.toml` пише в `service.log` повний текст помилки `toml` разом із цитатою рядка файлу
+  (напр. `3 | timeout_mode = "degraded"`, `32 | blocked_countries = "KP"`). Доменів запитів там немає
+  (перевірено grep'ом тестових доменів проходу — 0 збігів у всіх трьох логах), і `overrides.toml`
+  свої помилки вже редагує («failed to parse override list TOML»). Але рядок власного провайдера
+  `url = "https://<account-id>.dns.nextdns.io/dns-query"` при помилці поряд потрапить у лог разом з
+  ідентифікатором акаунта. Не відтворено саме з таким URL — висновок з форми повідомлення. Низька
+  тяжкість (приватність, локальний лог).
+- [ ] T-253 — **Заведено 2026-10-03, QA-прохід (рядок `D-tooltip-suffixes`).** Tooltip трею обрізається
+  до 64 символів, тож усі суфікси (`tooltip.degradedSuffixTemplate`, `tooltip.ratingFilterSuffix`,
+  `tooltip.certWarningSuffix`) в українській ніколи не видно. Спостережено наживо на 0.8.0: з
+  `degraded_events = 1/16` і окремо з активною бульбашкою (`rating_filter.active = true`) справжня
+  підказка Windows (наведення миші, скріншот) і UIA-ім'я кнопки закінчуються на «…запитів зараз: 0 »
+  — рівно 64 символи, з пробілом перед відрізаним «—». Код суфіксів (`status.rs`
+  `TrayStatus::tooltip`, `compose_tooltip`) правильний. **Діагноз:** залежність `tray-icon 0.21.3`,
+  `src/platform_impl/windows/mod.rs` — усі `NOTIFYICONDATAW` (рядки 150, 201, 553, 568) створюються
+  через `..std::mem::zeroed()` без `cbSize`, тож `Shell_NotifyIconW` трактує структуру як
+  `NOTIFYICONDATA_V1` з `szTip[64]` (крейт копіює до 128). Висновок про `cbSize` — з коду крейта й
+  64-символьного обрізання, не перевірено патчем. Остання версія крейта — 0.26.0 (не перевіряв, чи
+  там виправлено). Три Б: user safety — попередження «сертифікат не встановлено» на станах
+  Paused/Offline/NoActiveProvider і сигнал деградації кворуму, задумані саме як tooltip, користувач
+  не бачить; Lower-layer — дефект у залежності.
 - [ ] T-250 — **Заведено 2026-10-03, QA-прохід (шаблонні рядки `B-*-EP`).** Обробка помилок `/admin/ui`
   при невдалому POST (відтворено підміною `fetch` у chrome-devtools: reject «Failed to fetch»):
   (1) `#timeout-config-body` — `onConfigChanged()` (`main.js:654`) кидає будь-яку помилку в
