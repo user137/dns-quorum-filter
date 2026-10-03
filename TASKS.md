@@ -1650,9 +1650,15 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   ні `<label>`, ні `title`), поле вводу — лише `placeholder`; `bd77dae` цю картку оминув. Консоль
   Chrome: «A form field element should have an id or name attribute (count: 9)» — решта полів
   мають `aria-label`/`<label>`. (2) Після вибору radio у `#timeout-config-body` картка перебудовує
-  поля — фокус клавіатури губиться. (3) Меню трею (owner-draw `#32768`) невидиме для UI Automation /
-  Narrator (смоук v0.7.0 #11, ще не заведено). (4) Косметика: кожне завантаження `/admin/ui` дає в
-  консолі `GET /favicon.ico 404` — немає `<link rel="icon">`.
+  поля — фокус клавіатури губиться. (3) Косметика: кожне завантаження `/admin/ui` дає в консолі
+  `GET /favicon.ico 404` — немає `<link rel="icon">`. (Меню трею для UI Automation перевірено на
+  0.8.0 / ОС 26300 — 12 `MenuItem` з назвами видно; висновок смоуку v0.7.0 #11 «жодного пункту» не
+  підтвердився.)
+- [ ] T-251 — **Заведено 2026-10-03, QA-прохід (рядок `C-PAUSE_RESUME_ID-SB`).** Вдала пауза з трею
+  (`TogglePause` → `confirm_pause` → `set_stop_flag`, `crates/dnsqb-tray/src/main.rs:617-627`) не
+  пише жодного рядка в `tray.log`, тоді як відновлення пише `filtering resumed by the user` і невдалий
+  запис `stop.flag` пише `warn`. Діагностична асиметрія: з логу не видно, коли й ким фільтрацію
+  вимкнено. Помічено ще в смоуку v0.7.0 #11, не заводилось; підтверджено на 0.8.0. Низька тяжкість.
 - [ ] T-250 — **Заведено 2026-10-03, QA-прохід (шаблонні рядки `B-*-EP`).** Обробка помилок `/admin/ui`
   при невдалому POST (відтворено підміною `fetch` у chrome-devtools: reject «Failed to fetch»):
   (1) `#timeout-config-body` — `onConfigChanged()` (`main.js:654`) кидає будь-яку помилку в

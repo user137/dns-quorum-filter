@@ -10,7 +10,7 @@ import re
 import sys
 
 MATRIX = pathlib.Path(__file__).resolve().parent / "QA-MATRIX.md"
-VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT RUN", "USER-MANUAL", "N/A-IN-BUILD", "N/A"}
+VERDICTS = {"PASS", "FAIL", "BLOCKED", "NOT RUN", "USER-MANUAL", "N/A-IN-BUILD", "N/A", "CODE-ONLY"}
 
 
 def cell(text):
