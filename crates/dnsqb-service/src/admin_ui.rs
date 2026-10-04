@@ -1190,12 +1190,12 @@ mod tests {
             "render function must exist"
         );
         assert!(
-            MAIN_JS.contains("async function refreshBlocklistBundles()"),
+            MAIN_JS.contains("async function refreshBlocklistBundles(mode)"),
             "must have its own refresh cycle, not ride the shared 2s poll \
              (a mid-click checkbox must never revert under an unrelated re-render)"
         );
         assert!(
-            MAIN_JS.contains("refreshBlocklistBundles();"),
+            MAIN_JS.contains("refreshBlocklistBundles(BACKGROUND);"),
             "must actually be called once on load"
         );
     }
@@ -1263,13 +1263,13 @@ mod tests {
             "render function must exist"
         );
         assert!(
-            MAIN_JS.contains("async function refreshCctldBlock()"),
+            MAIN_JS.contains("async function refreshCctldBlock(mode)"),
             "must have its own refresh cycle, not ride the shared 2s poll \
              (a search box being typed into must never revert under an \
              unrelated re-render)"
         );
         assert!(
-            MAIN_JS.contains("refreshCctldBlock();"),
+            MAIN_JS.contains("refreshCctldBlock(BACKGROUND);"),
             "must actually be called (see the next test for exactly where)"
         );
     }
@@ -1290,18 +1290,18 @@ mod tests {
         // nothing else fails (hit once during the batch: refreshMaxmind()).
         for call in [
             "applyStaticTranslations()",
+            "rebuildTimeoutCard()",
             "refresh()",
-            "refreshRatingFilter()",
-            "refreshBlocklistBundles()",
-            "refreshOverrides()",
-            "refreshCacheConfig()",
-            "refreshMaxmind()",
-            "refreshProviders()",
+            "refreshRatingFilter(BACKGROUND)",
+            "refreshBlocklistBundles(BACKGROUND)",
+            "refreshOverrides(BACKGROUND)",
+            "refreshCacheConfig(BACKGROUND)",
+            "refreshMaxmind(BACKGROUND)",
+            "refreshProviders(BACKGROUND)",
             "retranslateCustomProviderForm()",
-            "refreshGeoip()",
-            "refreshCctldBlock()",
-            "buildLogFilterRow()",
-            "refreshLog()",
+            "refreshGeoip(BACKGROUND)",
+            "refreshCctldBlock(BACKGROUND)",
+            "rebuildLogCard()",
         ] {
             assert!(
                 body.contains(call),
@@ -1309,13 +1309,13 @@ mod tests {
             );
         }
         assert!(
-            body.contains("refreshCctldBlock()"),
+            body.contains("refreshCctldBlock(BACKGROUND)"),
             "renderTranslatedCards() must call refreshCctldBlock() - its \
              labels come from regionLabel()/Intl.DisplayNames, which \
              depends on CURRENT_LOCALE just like a t()/tPlural() card"
         );
         assert!(
-            body.contains("refreshGeoip()"),
+            body.contains("refreshGeoip(BACKGROUND)"),
             "renderTranslatedCards() must call refreshGeoip() too - its \
              datalist labels have the same CURRENT_LOCALE dependency since \
              the COUNTRY_NAMES -> Intl.DisplayNames migration"
@@ -1324,10 +1324,26 @@ mod tests {
         // refreshGeoip()/refreshCctldBlock() above - the advisor caught this
         // one missing from the list while planning the batch.
         assert!(
-            body.contains("refreshMaxmind()"),
+            body.contains("refreshMaxmind(BACKGROUND)"),
             "renderTranslatedCards() must call refreshMaxmind() too - its \
              render path calls t() since Батч 5.4"
         );
+        // T-277: the log card's two steps moved into rebuildLogCard(); the
+        // filter row must still be built before the first refreshLog().
+        let Some(log_start) = MAIN_JS.find("function rebuildLogCard() {") else {
+            panic!("rebuildLogCard must exist");
+        };
+        let Some(log_end) = MAIN_JS[log_start..].find("\n}") else {
+            panic!("rebuildLogCard must be closed");
+        };
+        let log_body = &MAIN_JS[log_start..log_start + log_end];
+        match (
+            log_body.find("buildLogFilterRow"),
+            log_body.find("refreshLog(BACKGROUND)"),
+        ) {
+            (Some(build), Some(fill)) => assert!(build < fill, "filter row must be built first"),
+            _ => panic!("rebuildLogCard() must build the filter row, then refreshLog(BACKGROUND)"),
+        }
         // Батч 5.3 removed the old unconditional module-scope `refreshGeoip();`
         // call - calling both it and renderTranslatedCards()'s copy on first
         // load would double-fetch /admin/geoip. Батч 5.4 removed the same

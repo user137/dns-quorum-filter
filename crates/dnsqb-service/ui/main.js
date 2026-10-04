@@ -193,21 +193,38 @@ function applyDocumentLanguage() {
 // refreshProviders()'s render path, because that node is intentionally
 // never rebuilt (T-47, in-progress input survives every other re-render
 // too) - see its own comment for why.
+// T-248: every card here re-renders through the BACKGROUND path, so a locale
+// switch keeps typed-but-unsent text and open "?" help (see paint()).
 function renderTranslatedCards() {
   applyStaticTranslations();
-  buildTimeoutConfigHeading();
+  rebuildTimeoutCard();
   refresh();
-  refreshRatingFilter();
-  refreshBlocklistBundles();
-  refreshOverrides();
-  refreshCacheConfig();
-  refreshMaxmind();
-  refreshProviders();
+  refreshRatingFilter(BACKGROUND);
+  refreshBlocklistBundles(BACKGROUND);
+  refreshOverrides(BACKGROUND);
+  refreshCacheConfig(BACKGROUND);
+  refreshMaxmind(BACKGROUND);
+  refreshProviders(BACKGROUND);
   retranslateCustomProviderForm();
-  refreshGeoip();
-  refreshCctldBlock();
-  buildLogFilterRow();
-  refreshLog(); // must come after buildLogFilterRow() - see its own comment
+  refreshGeoip(BACKGROUND);
+  refreshCctldBlock(BACKGROUND);
+  rebuildLogCard();
+}
+
+// A deferred heading rebuild leaves the fields empty, so it refills them.
+function rebuildTimeoutCard() {
+  renderInBackground(timeoutConfigBody, buildTimeoutConfigHeading, () => {
+    rebuildTimeoutCard();
+    refresh();
+  });
+}
+
+// buildLogFilterRow() must run before refreshLog() - see its own comment. A
+// busy log card defers both together, never the rows alone.
+function rebuildLogCard() {
+  if (renderInBackground(logBody, buildLogFilterRow, rebuildLogCard)) {
+    refreshLog(BACKGROUND);
+  }
 }
 
 // Батч 5.4: index.html text that no render function ever rewrites
@@ -291,6 +308,7 @@ async function setLocale(requested) {
 function helpDetails(key) {
   const details = document.createElement("details");
   details.className = "field-help";
+  details.dataset.stateKey = `help:${key}`;
   const summary = document.createElement("summary");
   summary.textContent = "?";
   summary.setAttribute("aria-label", t("common.helpAriaLabel"));
@@ -314,6 +332,121 @@ function cardHeading(text, helpKey) {
   row.appendChild(heading);
   row.appendChild(helpDetails(helpKey));
   return row;
+}
+
+// T-277 / T-248: a re-render nobody asked for (a locale switch; the server
+// push in a later commit) must not wipe what the user is in the middle of.
+// Such renders go through paint(container, BACKGROUND, ...). A card is busy
+// while focus sits in one of its text fields or selects (a checkbox or radio
+// saves on change, so focus left on one is not editing), or while it shows
+// unsaved local state: an element marked [data-pending] that is not hidden
+// (picked but unsaved codes, an armed confirm, an expanded log row). An open
+// combobox menu needs no mark - it is open only while its input has focus.
+// A busy card's render waits until a focusout/click/keyup inside it finds
+// the card idle, and then re-fetches rather than painting the data it was
+// held with (a user action may have rendered fresher data meanwhile). An
+// idle card renders at once but keeps text typed into its fields and its
+// open "?" help. Any other mode - a user action, or the Event a refreshX
+// listener receives - renders straight away: its result must replace the
+// DOM, typed text included.
+const BACKGROUND = Symbol("background");
+const FIELD_SELECTOR = "input, select, textarea";
+const deferredRenders = new Map();
+
+function cardBusy(container) {
+  const active = document.activeElement;
+  if (
+    document.hasFocus() &&
+    active &&
+    container.contains(active) &&
+    active.matches(FIELD_SELECTOR) &&
+    active.type !== "checkbox" &&
+    active.type !== "radio"
+  ) {
+    return true;
+  }
+  return Array.from(container.querySelectorAll("[data-pending]")).some((el) => !el.hidden);
+}
+
+// Only fields the user typed into (marked by watchCard) are carried over - a
+// field still showing the server's value must take the new server value.
+function captureCardState(container) {
+  const fields = new Map();
+  container.querySelectorAll(FIELD_SELECTOR).forEach((el) => {
+    const key = el.id || el.name;
+    if (key && el.dataset.edited && el.type !== "checkbox" && el.type !== "radio") {
+      fields.set(key, el.value);
+    }
+  });
+  const open = new Set();
+  container.querySelectorAll("details[data-state-key]").forEach((el) => {
+    if (el.open) {
+      open.add(el.dataset.stateKey);
+    }
+  });
+  return { fields, open };
+}
+
+function restoreCardState(container, saved) {
+  container.querySelectorAll(FIELD_SELECTOR).forEach((el) => {
+    const key = el.id || el.name;
+    if (!key || !saved.fields.has(key)) {
+      return;
+    }
+    const value = saved.fields.get(key);
+    if (el.matches("select") && !Array.from(el.options).some((opt) => opt.value === value)) {
+      return;
+    }
+    el.value = value;
+    el.dataset.edited = "1";
+  });
+  container.querySelectorAll("details[data-state-key]").forEach((el) => {
+    if (saved.open.has(el.dataset.stateKey)) {
+      el.open = true;
+    }
+  });
+}
+
+// Returns false when the render was deferred.
+function renderInBackground(container, render, refetch) {
+  if (cardBusy(container)) {
+    deferredRenders.set(container, refetch);
+    return false;
+  }
+  deferredRenders.delete(container);
+  const saved = captureCardState(container);
+  render();
+  restoreCardState(container, saved);
+  return true;
+}
+
+function paint(container, mode, render, refetch) {
+  if (mode === BACKGROUND) {
+    renderInBackground(container, render, refetch);
+  } else {
+    render();
+  }
+}
+
+// Called once per card container at bootstrap (the containers outlive every
+// render, so delegated listeners survive re-renders).
+function watchCard(container) {
+  container.addEventListener("input", (event) => {
+    if (event.target && event.target.dataset) {
+      event.target.dataset.edited = "1";
+    }
+  });
+  const flush = () =>
+    // After the event's own handlers ran: a click that hides the confirm row
+    // has to land before the card is re-checked.
+    setTimeout(() => {
+      const refetch = deferredRenders.get(container);
+      if (refetch && !cardBusy(container)) {
+        deferredRenders.delete(container);
+        refetch();
+      }
+    }, 0);
+  ["focusout", "click", "keyup"].forEach((type) => container.addEventListener(type, flush));
 }
 
 // T-176 / T-204: the basic view's one large element. The decisive priority
@@ -638,7 +771,7 @@ function render(status) {
   const personalZoneWarning = status.rating_filter.personal_zone_enabled
     ? `<div class="notice warn">${t("app.personalZonePersistWarning")}</div>`
     : "";
-  appBody.innerHTML = `
+  const appBodyHtml = `
     ${persistWarning}
     ${cachePersistWarning}
     ${personalZoneWarning}
@@ -664,6 +797,12 @@ function render(status) {
       </div>
     </div>
   `;
+  // T-277: an unchanged poll leaves the stats card alone, so a number being
+  // selected for copying is not wiped every 2 s.
+  if (appBody.dataset.rendered !== appBodyHtml) {
+    appBody.innerHTML = appBodyHtml;
+    appBody.dataset.rendered = appBodyHtml;
+  }
 }
 
 function renderError(err) {
@@ -676,6 +815,7 @@ function renderError(err) {
   // failure.
   renderProtectionHero(heroPresentation("SERVICE_UNREACHABLE"));
   appBody.textContent = "";
+  delete appBody.dataset.rendered;
   const panel = document.createElement("div");
   panel.className = "error-panel";
   panel.textContent = t("error.generic", {
@@ -716,6 +856,10 @@ async function refresh() {
   applyDocumentLanguage();
   populateLocaleSelect();
   localeSelect.addEventListener("change", (event) => setLocale(event.target.value));
+  [
+    timeoutConfigBody, overridesBody, cacheConfigBody, geoipBody, geoipMaxmindBody, logBody,
+    providersBody, ratingFilterBody, blocklistBundlesBody, cctldBlockBody,
+  ].forEach(watchCard);
   renderTranslatedCards();
   // T-204: cert-trust used to be its own GET here (+ a visibilitychange
   // re-fetch). It is now a field of `status.hero_state`, computed server-side
@@ -922,11 +1066,13 @@ function renderOverridesError(err) {
   overridesBody.appendChild(panel);
 }
 
-async function refreshOverrides() {
+async function refreshOverrides(mode) {
+  const again = () => refreshOverrides(BACKGROUND);
   try {
-    renderOverrides(await getOverrides());
+    const data = await getOverrides();
+    paint(overridesBody, mode, () => renderOverrides(data), again);
   } catch (err) {
-    renderOverridesError(err);
+    paint(overridesBody, mode, () => renderOverridesError(err), again);
   }
 }
 
@@ -1058,11 +1204,13 @@ function renderCacheConfigError(err) {
   cacheConfigBody.appendChild(panel);
 }
 
-async function refreshCacheConfig() {
+async function refreshCacheConfig(mode) {
+  const again = () => refreshCacheConfig(BACKGROUND);
   try {
-    renderCacheConfig(await getCacheConfig());
+    const data = await getCacheConfig();
+    paint(cacheConfigBody, mode, () => renderCacheConfig(data), again);
   } catch (err) {
-    renderCacheConfigError(err);
+    paint(cacheConfigBody, mode, () => renderCacheConfigError(err), again);
   }
 }
 
@@ -1242,6 +1390,7 @@ function renderCctldBlock(status) {
   const confirmRow = document.createElement("div");
   confirmRow.className = "rf-confirm-row cc-confirm-row";
   confirmRow.hidden = true;
+  confirmRow.dataset.pending = "";
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = t("common.cancel");
@@ -1296,6 +1445,7 @@ function renderCctldBlock(status) {
   saveBtn.className = "rf-save cc-save";
   saveBtn.textContent = t("common.save");
   saveBtn.hidden = true;
+  saveBtn.dataset.pending = "";
   card.appendChild(saveBtn);
 
   let activeIndex = -1;
@@ -1536,11 +1686,13 @@ function renderCctldBlockError(err) {
   cctldBlockBody.appendChild(panel);
 }
 
-async function refreshCctldBlock() {
+async function refreshCctldBlock(mode) {
+  const again = () => refreshCctldBlock(BACKGROUND);
   try {
-    renderCctldBlock(await getStatus());
+    const data = await getStatus();
+    paint(cctldBlockBody, mode, () => renderCctldBlock(data), again);
   } catch (err) {
-    renderCctldBlockError(err);
+    paint(cctldBlockBody, mode, () => renderCctldBlockError(err), again);
   }
 }
 
@@ -1741,6 +1893,7 @@ function renderGeoip(data) {
   cancelBtn.type = "button";
   cancelBtn.textContent = t("common.cancel");
   cancelBtn.hidden = true;
+  cancelBtn.dataset.pending = "";
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
   const warningLine = document.createElement("div");
@@ -1830,11 +1983,13 @@ function renderGeoipError(err) {
   geoipBody.appendChild(panel);
 }
 
-async function refreshGeoip() {
+async function refreshGeoip(mode) {
+  const again = () => refreshGeoip(BACKGROUND);
   try {
-    renderGeoip(await getGeoip());
+    const data = await getGeoip();
+    paint(geoipBody, mode, () => renderGeoip(data), again);
   } catch (err) {
-    renderGeoipError(err);
+    paint(geoipBody, mode, () => renderGeoipError(err), again);
   }
 }
 
@@ -2043,11 +2198,13 @@ function renderMaxmindError(err) {
   geoipMaxmindBody.appendChild(panel);
 }
 
-async function refreshMaxmind() {
+async function refreshMaxmind(mode) {
+  const again = () => refreshMaxmind(BACKGROUND);
   try {
-    renderMaxmind(await getMaxmind());
+    const data = await getMaxmind();
+    paint(geoipMaxmindBody, mode, () => renderMaxmind(data), again);
   } catch (err) {
-    renderMaxmindError(err);
+    paint(geoipMaxmindBody, mode, () => renderMaxmindError(err), again);
   }
 }
 
@@ -2288,6 +2445,7 @@ function logItem(entry) {
     detailBtn.textContent = t("log.detailsButton");
     const detail = voterDetailList(entry.voters);
     detail.hidden = true;
+    detail.dataset.pending = "";
     detailBtn.addEventListener("click", () => {
       detail.hidden = !detail.hidden;
       detailBtn.textContent = detail.hidden
@@ -2479,11 +2637,13 @@ function renderLogError(err) {
   logResults.appendChild(panel);
 }
 
-async function refreshLog() {
+async function refreshLog(mode) {
+  const again = () => refreshLog(BACKGROUND);
   try {
-    renderLog(await getLog(currentLogQuery()));
+    const data = await getLog(currentLogQuery());
+    paint(logBody, mode, () => renderLog(data), again);
   } catch (err) {
-    renderLogError(err);
+    paint(logBody, mode, () => renderLogError(err), again);
   }
 }
 
@@ -2948,11 +3108,13 @@ function renderProvidersError(err) {
   filterControlsBody.appendChild(basicPanel);
 }
 
-async function refreshProviders() {
+async function refreshProviders(mode) {
+  const again = () => refreshProviders(BACKGROUND);
   try {
-    renderProviders(await getProviders());
+    const data = await getProviders();
+    paint(providersBody, mode, () => renderProviders(data), again);
   } catch (err) {
-    renderProvidersError(err);
+    paint(providersBody, mode, () => renderProvidersError(err), again);
   }
 }
 
@@ -3660,6 +3822,7 @@ function renderRatingFilter(status) {
   const confirmRow = document.createElement("div");
   confirmRow.className = "rf-confirm-row";
   confirmRow.hidden = true;
+  confirmRow.dataset.pending = "";
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = t("common.cancel");
@@ -3762,6 +3925,7 @@ function renderRatingFilter(status) {
   saveBtn.className = "rf-save";
   saveBtn.textContent = t("rating.saveZonesButton");
   saveBtn.hidden = true;
+  saveBtn.dataset.pending = "";
   // T-228: same reasoning as confirmBtn above - saving a changed zone set
   // wakes the same updater for whichever picked zone isn't cached yet.
   if (lastNetworkStatus === "OFFLINE") {
@@ -4047,11 +4211,13 @@ function renderRatingFilterError(err) {
   ratingFilterBody.appendChild(panel);
 }
 
-async function refreshRatingFilter() {
+async function refreshRatingFilter(mode) {
+  const again = () => refreshRatingFilter(BACKGROUND);
   try {
-    renderRatingFilter(await getStatus());
+    const data = await getStatus();
+    paint(ratingFilterBody, mode, () => renderRatingFilter(data), again);
   } catch (err) {
-    renderRatingFilterError(err);
+    paint(ratingFilterBody, mode, () => renderRatingFilterError(err), again);
   }
 }
 
@@ -4339,6 +4505,7 @@ function renderBlocklistBundles(status) {
 
   const sourcesDetails = document.createElement("details");
   sourcesDetails.className = "bl-sources";
+  sourcesDetails.dataset.stateKey = "bl-sources";
   const summary = document.createElement("summary");
   const summaryLabel = document.createElement("span");
   summaryLabel.textContent = t("blocklist.sourcesSummaryTemplate", {
@@ -4478,11 +4645,13 @@ function renderBlocklistBundlesError(err) {
   blocklistBundlesBody.appendChild(panel);
 }
 
-async function refreshBlocklistBundles() {
+async function refreshBlocklistBundles(mode) {
+  const again = () => refreshBlocklistBundles(BACKGROUND);
   try {
-    renderBlocklistBundles(await getStatus());
+    const data = await getStatus();
+    paint(blocklistBundlesBody, mode, () => renderBlocklistBundles(data), again);
   } catch (err) {
-    renderBlocklistBundlesError(err);
+    paint(blocklistBundlesBody, mode, () => renderBlocklistBundlesError(err), again);
   }
 }
 

@@ -287,6 +287,97 @@ for (const [fn, data] of xssCalls) {
   release(true);
   await pending;
   check("vivaldi", "manual pick vs late isBrave");
+
+  // T-277 / T-248: a background re-render (locale switch, server push) keeps
+  // what the user typed and opened, and waits while the card is in use. A
+  // user-action render (any mode other than BACKGROUND) is never held back.
+  const FIELDS = ["input", "select", "textarea"];
+  const fel = (tag, props) => Object.assign({ tag, dataset: {}, hidden: false, value: "", open: false, matches(sel) { return sel.split(",").map((s) => s.trim()).includes(this.tag); } }, props);
+  const card = (kids) => ({
+    kids, listeners: {},
+    contains(el) { return this.kids.includes(el); },
+    querySelectorAll(sel) {
+      if (sel === "[data-pending]") return this.kids.filter((k) => "pending" in k.dataset);
+      if (sel === "details[data-state-key]") return this.kids.filter((k) => k.tag === "details" && k.dataset.stateKey);
+      if (sel === "input, select, textarea") return this.kids.filter((k) => FIELDS.includes(k.tag));
+      throw new Error(`fake card: unexpected selector ${sel}`);
+    },
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
+    fire(type, event) { (this.listeners[type] || []).forEach((fn) => fn(event || {})); },
+  });
+  const guard = (label, ok) => { if (!ok) { failures++; console.log(`[guard] ${label}`); } };
+  ctx.setTimeout = (fn) => { fn(); return 0; };
+  let focused = true;
+  doc.hasFocus = () => focused;
+  doc.activeElement = null;
+  const freshOverrides = () => [fel("input", { name: "override-pattern" }), fel("select", { name: "override-list", value: "allowlist", options: [{ value: "allowlist" }, { value: "blocklist" }] }), fel("details", { dataset: { stateKey: "help:overrides" } })];
+
+  // Happy: typed text, a changed select and an open "?" survive a re-render.
+  let c = card([fel("input", { name: "override-pattern", value: "foo.com" }), fel("select", { name: "override-list", value: "blocklist" }), fel("details", { open: true, dataset: { stateKey: "help:overrides" } })]);
+  vm.runInContext("watchCard", ctx)(c);
+  c.fire("input", { target: c.kids[0] });
+  c.fire("input", { target: c.kids[1] });
+  vm.runInContext("renderInBackground", ctx)(c, () => { c.kids = freshOverrides(); }, () => {});
+  guard("typed text lost on background render", c.kids[0].value === "foo.com");
+  guard("changed select lost on background render", c.kids[1].value === "blocklist");
+  guard("open help closed by background render", c.kids[2].open === true);
+
+  // Misuse: a field the user never touched takes the new server value, a
+  // carried select value that no longer exists as an option is not forced in.
+  c = card([fel("input", { name: "max-capacity", value: "5" }), fel("select", { name: "override-list", value: "gone", dataset: { edited: "1" } })]);
+  vm.runInContext("renderInBackground", ctx)(c, () => { c.kids = [fel("input", { name: "max-capacity", value: "7" }), fel("select", { name: "override-list", value: "allowlist", options: [{ value: "allowlist" }] })]; }, () => {});
+  guard("untouched field resurrected a stale value", c.kids[0].value === "7");
+  guard("carried a select value with no matching option", c.kids[1].value === "allowlist");
+
+  // Busy by focus: held back, then run once focus leaves the card.
+  let renders = 0;
+  let refetches = 0;
+  c = card(freshOverrides());
+  vm.runInContext("watchCard", ctx)(c);
+  doc.activeElement = c.kids[0];
+  vm.runInContext("renderInBackground", ctx)(c, () => { renders++; }, () => { refetches++; });
+  guard("rendered under a focused field", renders === 0);
+  c.fire("focusout");
+  guard("deferred render ran while focus was still in the card", refetches === 0);
+  doc.activeElement = null;
+  c.fire("focusout");
+  guard("deferred render never ran after focus left", refetches === 1);
+  c.fire("focusout");
+  guard("deferred render ran twice", refetches === 1);
+
+  // Focus left on a checkbox (it saves on change) is not editing.
+  const box = fel("input", { type: "checkbox", name: "provider-x" });
+  c = card([box]);
+  doc.activeElement = box;
+  vm.runInContext("renderInBackground", ctx)(c, () => { renders++; }, () => {});
+  guard("held back by focus on a checkbox", renders === 1);
+  renders = 0;
+
+  // A window in the background does not count as editing.
+  focused = false;
+  doc.activeElement = c.kids[0];
+  vm.runInContext("renderInBackground", ctx)(c, () => { renders++; }, () => {});
+  guard("held back while the window had no focus", renders === 1);
+  focused = true;
+  doc.activeElement = null;
+
+  // Busy by visible unsaved state ([data-pending]): released by a click that hides it.
+  const save = fel("button", { dataset: { pending: "" } });
+  c = card([save]);
+  vm.runInContext("watchCard", ctx)(c);
+  refetches = 0;
+  vm.runInContext("renderInBackground", ctx)(c, () => { renders++; }, () => { refetches++; });
+  guard("rendered over unsaved picks", renders === 1);
+  save.hidden = true;
+  c.fire("click");
+  guard("unsaved-state deferral never released", refetches === 1);
+
+  // A user action (refreshX called from a click handler gets an Event) always renders.
+  c = card(freshOverrides());
+  doc.activeElement = c.kids[0];
+  vm.runInContext("paint", ctx)(c, { type: "click" }, () => { renders++; }, () => {});
+  guard("user-action render was held back", renders === 2);
+  doc.activeElement = null;
   console.log(`locales=${Object.keys(dicts).length} calls=${calls.length} xss=${xssCalls.length} failures=${failures}`);
   process.exit(failures ? 1 : 0);
 })();
