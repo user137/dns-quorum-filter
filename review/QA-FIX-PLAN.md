@@ -271,6 +271,11 @@ T-NNN їм призначає власник при перенесенні в `T
 - Коміти: по задачі. Re-test: `B-maxmind-HP`, `B-overrides-SB`, `B-app-body-SB`, `C-menu-a11y`,
   `B-browser-setup-firefox-MF`, `B-firefox-render-HP`, `B-browser-setup-edge-MF`,
   `B-browser-setup-opera-MF`, `B-browser-setup-vivaldi-MF`.
+- **Виконано 2026-10-04:** `cf02c6f` (T-247), `65ffa88` (T-249 + favicon-маршрут), `ae83579` (T-260/T-258,
+  текст T-257, пояснення T-261, ARCH-05 «перевірка» в README). Тести: Rust — MaxMind-рядок у 37 локалях,
+  блок і адреса на кожен браузер, ключі Firefox/Edge у 37 локалях, favicon; `smoke.js` — кожне JS-поле має
+  id/name і доступне ім'я, вибір браузера показує рівно один блок і свій абзац перевірки, ручний вибір
+  переживає пізній `isBrave()`. Live re-test рядків вище — **чекає артефакту GitHub**.
 
 ### Хвиля 11 — документація (T-245; T-246 п. 1)
 - Шість пунктів T-245 — як у задачі. T-246 (1) — записати в `KNOWN-LIMITATIONS.md` як обмеження
