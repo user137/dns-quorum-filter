@@ -40,6 +40,7 @@ use crate::baseline_selector::BaselineSelector;
 use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
+use crate::change_bus::{ChangeBus, Topic};
 use crate::config::{
     validate_cctld_codes, validate_country_code, BlocklistBundlesConfig, CctldBlockConfig,
     ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
@@ -87,7 +88,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{watch, Notify};
+use tokio::sync::{watch, Notify, Semaphore};
 
 /// The largest a DNS wire message is allowed to be, GET or POST alike — the
 /// classic DNS-over-TCP 2-byte length prefix this project doesn't use still
@@ -137,6 +138,10 @@ const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
 const ADMIN_UI_FAVICON_PATH: &str = "/admin/ui/favicon.png";
+/// T-277 — the `/admin/ui` push stream. Served by
+/// `events::serve_streaming` before [`serve`] is reached; [`serve`]'s own
+/// arm only answers a caller that bypasses that wrapper (tests, fuzzing).
+pub(crate) const ADMIN_EVENTS_PATH: &str = "/admin/events";
 
 /// T-53/T-59: the single source of truth for which paths [`serve`] routes at
 /// all and which method(s) each one accepts — `serve` checks a request
@@ -181,6 +186,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
     (ADMIN_UI_FAVICON_PATH, &[Method::GET]),
+    (ADMIN_EVENTS_PATH, &[Method::GET]),
 ];
 
 /// T-236 — the i18n locale routes live in their own table, not spliced into
@@ -723,6 +729,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
                     resolved_ip_country: meta.resolved_ip_country,
                     latency_ms,
                 });
+                state.change_bus.bump(Topic::Log);
             }
             message
         }
@@ -938,6 +945,24 @@ pub struct AppState<C: DohClient + Sync> {
     /// needs is internal to the gate (around its `Semaphore`), not a second
     /// wrapper here.
     gate: ConnectionGate,
+    /// T-277 — per-topic change versions behind `GET /admin/events`. Bumped
+    /// centrally in [`serve`] after every accepted write route
+    /// ([`route_topics`]) and by the setters of state that changes without a
+    /// route (updater swaps, `MaxMind` health, the personal zone). Setters
+    /// that run on a timer whether or not anything changed (reachability,
+    /// pause flag, cert trust, baseline) never bump: their data reaches the
+    /// page through the sampled `Status` topic.
+    change_bus: ChangeBus,
+    /// T-277 — the latest sampled `AdminStatusResponse` JSON, written only by
+    /// `events::run_status_sampler`; each open `/admin/events` stream holds a
+    /// receiver (so `receiver_count() == 0` parks the sampler). Empty until
+    /// the first sample.
+    status_feed: watch::Sender<Arc<str>>,
+    /// T-277 — wakes the parked status sampler when a stream opens.
+    status_subscriber_arrived: Notify,
+    /// T-277 — one permit per open `/admin/events` stream,
+    /// `events::MAX_EVENT_SUBSCRIBERS` in total.
+    event_slots: Arc<Semaphore>,
     /// The shutdown signal `POST /admin/shutdown` sends (T-149) — `false`
     /// until that route fires `send(true)`. `main.rs`'s accept loop holds
     /// the one long-lived [`watch::Receiver`] it `tokio::select!`s against
@@ -1098,6 +1123,10 @@ impl<C: DohClient + Sync> AppState<C> {
             query_log,
             // Read the `Copy` cap out of `persist` before it moves on the next line.
             gate: ConnectionGate::new(persist.limits.max_concurrent_connections),
+            change_bus: ChangeBus::default(),
+            status_feed: watch::Sender::new(Arc::from("")),
+            status_subscriber_arrived: Notify::new(),
+            event_slots: Arc::new(Semaphore::new(crate::events::MAX_EVENT_SUBSCRIBERS)),
             persist,
             in_flight: AtomicU64::new(0),
             shutdown_tx,
@@ -1117,6 +1146,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// that field's own doc comment.
     pub(crate) fn update_geoip(&self, new: GeoipState) {
         *self.geoip.write() = Arc::new(new);
+        self.change_bus.bump(Topic::Geoip);
     }
 
     /// Swaps in a new `GeoIP` blocked-country list — called by
@@ -1127,6 +1157,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// (the loaded database) — see that field's own doc comment.
     pub(crate) fn update_geoip_countries(&self, blocked_countries: Vec<String>) {
         *self.geoip_countries.write() = Arc::new(blocked_countries);
+        self.change_bus.bump(Topic::Geoip);
     }
 
     /// One `Arc::clone` snapshot of the live `[cctld_block]` blocked-code
@@ -1144,6 +1175,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// `RwLock` directly.
     pub(crate) fn update_cctld_block(&self, blocked_codes: Vec<String>) {
         *self.cctld_block.write() = Arc::new(blocked_codes);
+        self.change_bus.bump(Topic::Cctld);
     }
 
     /// A snapshot of the current `GeoIP` database source (T-163) —
@@ -1166,6 +1198,7 @@ impl<C: DohClient + Sync> AppState<C> {
             GeoipSource::DbIpLite | GeoipSource::UserCountry => MaxmindHealth::NotApplicable,
         };
         *self.geoip_source.write() = Arc::new(source);
+        self.change_bus.bump(Topic::Maxmind);
         self.update_maxmind_health(health);
     }
 
@@ -1179,7 +1212,12 @@ impl<C: DohClient + Sync> AppState<C> {
     /// `run_geoip_updater` after each refresh and by [`Self::update_geoip_source`]
     /// on a source change.
     pub(crate) fn update_maxmind_health(&self, health: MaxmindHealth) {
-        *self.maxmind_health.write() = Arc::new(health);
+        // Written after every scheduled refresh; only a real change is news
+        // to the `/admin/ui` card (T-277).
+        let previous = std::mem::replace(&mut *self.maxmind_health.write(), Arc::new(health));
+        if *previous != health {
+            self.change_bus.bump(Topic::Maxmind);
+        }
     }
 
     /// Publishes the latest network-reachability verdict (T-152) — the sole
@@ -1241,6 +1279,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// removal overlay — each has its own single writer.
     pub(crate) fn update_rating_filter_config(&self, config: RatingFilterConfig) {
         *self.rating_filter_config.write() = Arc::new(config);
+        self.change_bus.bump(Topic::RatingFilter);
     }
 
     /// One `Arc::clone` snapshot of the availability-zone bubble (T-124) —
@@ -1256,6 +1295,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// `rating_filter_removed` (its own separate writer).
     pub(crate) fn update_rating_filter_zone(&self, zone: ZoneLists) {
         *self.rating_filter_zone.write() = Arc::new(zone);
+        self.change_bus.bump(Topic::RatingFilter);
     }
 
     /// One `Arc::clone` snapshot of the public blocklist-bundle set (T-218
@@ -1271,6 +1311,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// `orchestrate::spawn_public_http_tasks` as of Батч 7.3.
     pub(crate) fn update_blocklist_bundles(&self, bundle: BlocklistBundleState) {
         *self.blocklist_bundles.write() = Arc::new(bundle);
+        self.change_bus.bump(Topic::BlocklistBundles);
     }
 
     /// One `Arc::clone` snapshot of the live `[blocklist_bundles]` config
@@ -1285,6 +1326,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// startup (`orchestrate::run`) and by `apply_admin_reset`.
     pub(crate) fn update_blocklist_bundles_config(&self, config: BlocklistBundlesConfig) {
         *self.blocklist_bundles_config.write() = Arc::new(config);
+        self.change_bus.bump(Topic::BlocklistBundles);
     }
 
     /// Wakes `run_blocklist_updater` out of its inter-cycle sleep (T-218
@@ -1355,6 +1397,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// up the new thresholds on its own next cycle after being woken.
     pub(crate) fn update_personal_zone_config(&self, config: PersonalZoneConfig) {
         *self.personal_zone_config.write() = Arc::new(config);
+        self.change_bus.bump(Topic::RatingFilter);
     }
 
     /// Wakes the personal-zone task out of its inter-cycle sleep (T-138),
@@ -1414,6 +1457,7 @@ impl<C: DohClient + Sync> AppState<C> {
     ) {
         *self.personal_zone_stats.write() = stats;
         *self.rating_filter_personal_zone.write() = Arc::new(zone);
+        self.change_bus.bump(Topic::RatingFilter);
         self.update_personal_zone_config(config);
     }
 
@@ -1432,11 +1476,17 @@ impl<C: DohClient + Sync> AppState<C> {
         let mut guard = self.personal_zone_stats.write();
         guard.rotate_day(today);
         let qualifying = guard.derive_qualifying_domains(&cfg);
-        *self.rating_filter_personal_zone.write() =
-            Arc::new(ZoneLists::new(vec![ZoneSource::new(
-                ZoneSourceKind::Personal,
-                qualifying,
-            )]));
+        let zone = ZoneLists::new(vec![ZoneSource::new(ZoneSourceKind::Personal, qualifying)]);
+        // T-277: this runs every cycle; the `/admin/ui` rating card shows only
+        // the personal zone's size, so only a size change is pushed.
+        let zone_size = |z: &ZoneLists| z.sources().iter().map(ZoneSource::len).sum::<usize>();
+        let previous = std::mem::replace(
+            &mut *self.rating_filter_personal_zone.write(),
+            Arc::new(zone),
+        );
+        if zone_size(&previous) != zone_size(&self.rating_filter_personal_zone_snapshot()) {
+            self.change_bus.bump(Topic::RatingFilter);
+        }
         guard.clone()
     }
 
@@ -1478,6 +1528,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// directly.
     pub(crate) fn update_providers(&self, providers: Vec<ProviderEntry>) {
         *self.providers.write() = Arc::new(providers);
+        self.change_bus.bump(Topic::Providers);
     }
 
     /// A snapshot of the configured voter list, for a handler that needs to
@@ -1502,6 +1553,32 @@ impl<C: DohClient + Sync> AppState<C> {
     #[must_use]
     pub fn connection_gate(&self) -> &ConnectionGate {
         &self.gate
+    }
+
+    /// T-277 — the change-version bus the `/admin/events` stream subscribes to.
+    pub(crate) fn change_bus(&self) -> &ChangeBus {
+        &self.change_bus
+    }
+
+    /// T-277 — see the `status_feed` field.
+    pub(crate) fn status_feed(&self) -> &watch::Sender<Arc<str>> {
+        &self.status_feed
+    }
+
+    /// T-277 — see the `status_subscriber_arrived` field.
+    pub(crate) fn status_subscriber_arrived(&self) -> &Notify {
+        &self.status_subscriber_arrived
+    }
+
+    /// T-277 — see the `event_slots` field.
+    pub(crate) fn event_slots(&self) -> &Arc<Semaphore> {
+        &self.event_slots
+    }
+
+    /// T-277 — the same JSON `GET /admin/status` returns, for the status
+    /// sampler. `None` only if serialization fails (not expected for this DTO).
+    pub(crate) fn status_json(&self) -> Option<String> {
+        serde_json::to_string(&admin_status(self, true)).ok()
     }
 
     /// The current query-log contents, age-bounded to `now` (T-146) — the
@@ -4034,7 +4111,12 @@ where
     if !allowed_methods.contains(req.method()) {
         return Ok(status_response(StatusCode::METHOD_NOT_ALLOWED));
     }
-    Ok(match path {
+    let changed_topics = if req.method() == Method::POST {
+        route_topics(path)
+    } else {
+        None
+    };
+    let response = match path {
         DNS_QUERY_PATH => serve_dns_query(req, &state).await,
         HEALTH_PATH => serve_health(&state).await,
         ADMIN_STATUS_PATH => serve_admin_status(&state),
@@ -4070,6 +4152,9 @@ where
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
         ADMIN_UI_FAVICON_PATH => admin_ui::serve_favicon(req.method()),
+        // The stream needs a streaming body this function's `Full<Bytes>`
+        // can't carry; the accept loop answers it in `events::serve_streaming`.
+        ADMIN_EVENTS_PATH => status_response(StatusCode::BAD_REQUEST),
         // T-236 — one guard arm for all of I18N_ROUTES, not 37 literal arms:
         // the guard is a membership check against the same compile-time
         // table `I18N_ROUTES` itself is built from (still exact-string
@@ -4106,11 +4191,56 @@ where
         // explicit, safe (404) fallback because the match itself has no way
         // to prove that correspondence to the compiler.
         _ => status_response(StatusCode::NOT_FOUND),
-    })
+    };
+    // T-277: a 4xx (CSRF gate, oversize body, validation) was rejected before
+    // any change; everything else - `persisted: false` and 5xx included -
+    // may have changed live state, and a spurious bump costs one re-fetch
+    // where a missed one is the stale card this exists to fix. Every write
+    // can move the hero/counters too, so `Status` is always bumped with it
+    // (the stream then samples it at once instead of on its next tick).
+    if let Some(topics) = changed_topics {
+        if !response.status().is_client_error() {
+            for &topic in topics {
+                state.change_bus.bump(topic);
+            }
+            state.change_bus.bump(Topic::Status);
+        }
+    }
+    Ok(response)
+}
+
+/// T-277 — the `/admin/events` topics a `POST` to `path` changes, or `None`
+/// for a write that changes nothing a page shows (`/admin/shutdown`) or that
+/// bumps at its own write site (`/dns-query` → `Topic::Log` where the entry
+/// is pushed). Consulted by [`serve`] for `POST` only — `GET` on a dual-method
+/// route never bumps. `dispatch::tests::every_post_route_has_its_topics`
+/// fails a new `POST` route until it is listed here or deliberately exempted.
+fn route_topics(path: &str) -> Option<&'static [Topic]> {
+    match path {
+        ADMIN_CONFIG_PATH | ADMIN_INSTALL_CERT_PATH => Some(&[Topic::Status]),
+        ADMIN_RESET_PATH => Some(&Topic::ALL),
+        ADMIN_OVERRIDES_ADD_PATH | ADMIN_OVERRIDES_REMOVE_PATH => Some(&[Topic::Overrides]),
+        ADMIN_CACHE_CONFIG_APPLY_PATH => Some(&[Topic::CacheConfig]),
+        ADMIN_GEOIP_ADD_PATH | ADMIN_GEOIP_REMOVE_PATH => Some(&[Topic::Geoip]),
+        // The GeoIP card names the database source the credentials select.
+        ADMIN_GEOIP_MAXMIND_PATH | ADMIN_GEOIP_MAXMIND_CLEAR_PATH => {
+            Some(&[Topic::Maxmind, Topic::Geoip])
+        }
+        ADMIN_RATING_FILTER_PATH => Some(&[Topic::RatingFilter]),
+        ADMIN_BLOCKLIST_BUNDLES_PATH => Some(&[Topic::BlocklistBundles]),
+        ADMIN_CCTLD_BLOCK_PATH => Some(&[Topic::Cctld]),
+        ADMIN_PROVIDERS_ADD_PATH
+        | ADMIN_PROVIDERS_REMOVE_PATH
+        | ADMIN_PROVIDERS_SET_ENABLED_PATH
+        | ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH => Some(&[Topic::Providers]),
+        ADMIN_LOG_CLEAR_PATH => Some(&[Topic::Log]),
+        ADMIN_UNINSTALL_LOCAL_STATE_PATH => Some(&[Topic::Maxmind, Topic::Status]),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         admin_status, blocklist_bundles_is_active, blocklist_bundles_status_view,
         content_type_is_dns_message, parse_log_query, rating_filter_is_active, read_watchdog_view,
@@ -4120,6 +4250,7 @@ mod tests {
         ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, BLOCKLIST_SOURCES,
         DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
+    use super::{route_topics, ADMIN_SHUTDOWN_PATH};
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, BlocklistSourceStatusView, CacheConfigUpdate,
         CacheConfigView, CategoryToggleState, CertStatusResponse, CertTrustView, DecisionView,
@@ -4130,13 +4261,16 @@ mod tests {
     };
     use crate::blocklist_updater::{BlocklistBundleState, BlocklistSourceStatus};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
+    use crate::change_bus::Topic;
     use crate::config::{
         BlocklistBundlesConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig,
         ResolverConfig,
     };
+    use crate::geoip_updater::MaxmindHealth;
     use crate::overrides::{ListKind, OverrideEntry, OverrideLists};
     use crate::query_log::{DecisionSource, LogEntry, QueryLog};
     use crate::quorum::{VoterRecord, VoterVerdict};
+    use crate::reachability::NetworkReachability;
     use crate::upstream::{doh_get_url, Category, DohClient, ProviderEntry, UpstreamError};
     use crate::watchdog::state::{WatchdogStateFile, WatchdogTarget, STATE_SCHEMA_VERSION};
     use crate::write_watchdog_state;
@@ -4506,7 +4640,7 @@ mod tests {
     }
 
     #[derive(Clone)]
-    enum MockResponse {
+    pub(crate) enum MockResponse {
         Instant(Message),
         Panic,
         /// Never resolves (T-56) — same idea as `quorum.rs`'s own
@@ -4520,7 +4654,7 @@ mod tests {
         Pending,
     }
 
-    struct MockClient {
+    pub(crate) struct MockClient {
         baseline: MockResponse,
         quorum: MockResponse,
         calls: AtomicU32,
@@ -4620,6 +4754,11 @@ mod tests {
 
         let entries = state.query_log.snapshot(std::time::SystemTime::now());
         assert_eq!(entries.len(), 1, "exactly one query must have been logged");
+        assert_eq!(
+            state.change_bus().version(crate::change_bus::Topic::Log),
+            1,
+            "the new entry must be pushed to open log cards (T-277)"
+        );
         assert_eq!(entries[0].domain, "example.com");
         assert_eq!(entries[0].decision, crate::query_log::Decision::Allowed);
         assert_eq!(
@@ -4726,7 +4865,7 @@ mod tests {
         assert_eq!(state.client.calls.load(Ordering::SeqCst), 1);
     }
 
-    fn state_with(client: MockClient) -> Arc<AppState<MockClient>> {
+    pub(crate) fn state_with(client: MockClient) -> Arc<AppState<MockClient>> {
         state_with_persist(
             client,
             PersistTarget {
@@ -4857,7 +4996,7 @@ mod tests {
         ))
     }
 
-    fn no_op_client() -> MockClient {
+    pub(crate) fn no_op_client() -> MockClient {
         MockClient {
             baseline: MockResponse::Panic,
             quorum: MockResponse::Panic,
@@ -9501,6 +9640,7 @@ mod tests {
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),
         ("/admin/ui/favicon.png", &[Method::GET]),
+        ("/admin/events", &[Method::GET]),
     ];
 
     #[test]
@@ -9763,7 +9903,7 @@ mod tests {
         req
     }
 
-    fn admin_post_json(uri: &str, body: &serde_json::Value) -> Request<Full<Bytes>> {
+    pub(crate) fn admin_post_json(uri: &str, body: &serde_json::Value) -> Request<Full<Bytes>> {
         let Ok(json) = serde_json::to_vec(body) else {
             panic!("fixture body must serialize");
         };
@@ -10310,6 +10450,158 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// T-277 — a `POST` route added without a topic would leave its card
+    /// stale on every other open page; this fails until it is listed in
+    /// `route_topics` or deliberately exempted here.
+    #[test]
+    fn every_post_route_has_its_topics() {
+        const EXEMPT: [&str; 2] = [DNS_QUERY_PATH, ADMIN_SHUTDOWN_PATH];
+        for &(path, methods) in ROUTES.iter().chain(I18N_ROUTES) {
+            let topics = route_topics(path);
+            if EXEMPT.contains(&path) {
+                assert!(topics.is_none(), "{path} is exempt, it must not also bump");
+            } else if methods.contains(&Method::POST) {
+                assert!(
+                    topics.is_some_and(|t| !t.is_empty()),
+                    "POST {path} must name the topics it changes in route_topics"
+                );
+            } else {
+                assert!(
+                    topics.is_none(),
+                    "GET-only {path} must not be in route_topics"
+                );
+            }
+        }
+    }
+
+    async fn serve_on(state: &Arc<AppState<MockClient>>, req: Request<Full<Bytes>>) -> StatusCode {
+        match serve(req, Arc::clone(state)).await {
+            Ok(response) => response.status(),
+            Err(err) => match err {},
+        }
+    }
+
+    #[tokio::test]
+    async fn an_accepted_post_bumps_its_topic_and_status_only() {
+        let state = state_with(no_op_client());
+        let status = serve_on(
+            &state,
+            admin_post_json(
+                "/admin/overrides/add",
+                &serde_json::json!({ "pattern": "example.com", "list": "blocklist" }),
+            ),
+        )
+        .await;
+        assert!(
+            status.is_success(),
+            "fixture add must be accepted, got {status}"
+        );
+        let bus = state.change_bus();
+        assert_eq!(bus.version(Topic::Overrides), 1);
+        assert_eq!(bus.version(Topic::Status), 1);
+        for topic in Topic::ALL {
+            if !matches!(topic, Topic::Overrides | Topic::Status) {
+                assert_eq!(bus.version(topic), 0, "{topic:?} must not move");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rejected_post_bumps_nothing() {
+        let state = state_with(no_op_client());
+        let Ok(wrong_type) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/overrides/add")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Full::new(Bytes::from_static(b"{}")))
+        else {
+            panic!("fixture request must build");
+        };
+        assert_eq!(
+            serve_on(&state, wrong_type).await,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE
+        );
+        let invalid = admin_post_json(
+            "/admin/overrides/add",
+            &serde_json::json!({ "pattern": "not a domain!", "list": "blocklist" }),
+        );
+        assert!(serve_on(&state, invalid).await.is_client_error());
+        for topic in Topic::ALL {
+            assert_eq!(
+                state.change_bus().version(topic),
+                0,
+                "{topic:?} moved on a 4xx"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_get_on_a_dual_method_route_bumps_nothing() {
+        let state = state_with(no_op_client());
+        let Ok(req) = Request::builder()
+            .method(Method::GET)
+            .uri("/admin/geoip/maxmind")
+            .body(Full::new(Bytes::new()))
+        else {
+            panic!("fixture request must build");
+        };
+        assert!(serve_on(&state, req).await.is_success());
+        for topic in Topic::ALL {
+            assert_eq!(
+                state.change_bus().version(topic),
+                0,
+                "{topic:?} moved on a GET"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_reset_bumps_every_topic() {
+        let state = state_with(no_op_client());
+        let status = serve_on(
+            &state,
+            admin_post_json("/admin/reset", &serde_json::json!({})),
+        )
+        .await;
+        assert!(
+            !status.is_client_error(),
+            "fixture reset must be accepted, got {status}"
+        );
+        for topic in Topic::ALL {
+            assert!(
+                state.change_bus().version(topic) >= 1,
+                "{topic:?} not bumped by reset"
+            );
+        }
+    }
+
+    /// Timer-driven setters rewrite the same value over and over; a bump from
+    /// any of them would bring the 2 s refresh back through the push stream.
+    #[test]
+    fn periodic_setters_do_not_bump_unless_the_card_data_changed() {
+        let state = state_with(no_op_client());
+        state.update_filtering_paused(false);
+        state.update_reachability(NetworkReachability::default());
+        state.update_cert_trust(CertTrustView::Trusted);
+        state.update_maxmind_health(MaxmindHealth::NotApplicable);
+        state.rotate_and_republish_personal_zone(
+            crate::personal_zone_stats::DayIndex::from_system_time(SystemTime::now()),
+        );
+        for topic in Topic::ALL {
+            assert_eq!(
+                state.change_bus().version(topic),
+                0,
+                "{topic:?} moved on a no-op tick"
+            );
+        }
+        state.update_maxmind_health(MaxmindHealth::Pending);
+        assert_eq!(
+            state.change_bus().version(Topic::Maxmind),
+            1,
+            "a real change is pushed"
+        );
     }
 
     /// `state_with` sets `paths: None`, so a live-applied provider change

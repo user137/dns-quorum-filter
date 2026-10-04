@@ -43,9 +43,10 @@ use crate::cache_persist::{load_persisted_cache, run_cache_persister, CacheInit}
 use crate::cert_watch::run_cert_trust_watch;
 use crate::config::{LimitsConfig, ResolverConfig};
 use crate::dispatch::{
-    serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths,
-    PersistTarget, RuntimeInit,
+    AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistPaths, PersistTarget,
+    RuntimeInit,
 };
+use crate::events::{run_status_sampler, serve_streaming};
 use crate::geoip::GeoipReader;
 use crate::geoip_credentials::{load as load_maxmind_credentials, migrate_legacy_credentials_file};
 use crate::geoip_updater::{run_geoip_updater, GeoipSource};
@@ -270,6 +271,8 @@ pub async fn run() {
     spawn_zone_removal_persister(&state, zone_removals_flusher);
     spawn_personal_zone_task(&state, personal_zone_flusher);
     spawn_public_http_tasks(&state, geoip_path, app_data.clone());
+    // T-277: parks until an `/admin/ui` page opens `/admin/events`.
+    tokio::spawn(run_status_sampler(Arc::clone(&state)));
 
     let port = resolver_config.port;
     tracing::info!("dns-quorum-filter listening on https://127.0.0.1:{port}/dns-query");
@@ -892,7 +895,7 @@ async fn serve_until_shutdown(
                         }
                     };
                     let io = TokioIo::new(tls_stream);
-                    let service = service_fn(move |req| serve(req, Arc::clone(&state)));
+                    let service = service_fn(move |req| serve_streaming(req, Arc::clone(&state)));
                     // T-169: idle/read deadlines so a peer that finishes the
                     // handshake but never sends a request is reaped too —
                     // HTTP/1 header-read timeout, plus HTTP/2 keep-alive PINGs
