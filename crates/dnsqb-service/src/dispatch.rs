@@ -9665,6 +9665,66 @@ mod tests {
         }
     }
 
+    /// QA pass (rows `A-*-MF`): a GET route that takes no query parameters
+    /// must answer an unknown, repeated and 8 KB query string exactly as it
+    /// answers the bare path — same status, same content type, and for the
+    /// static `/admin/ui*` assets the same bytes. `/dns-query` and
+    /// `/admin/log` are excluded: they parse their query string, and their
+    /// own tests cover that (`serve_returns_400_for_a_malformed_get_query_string`,
+    /// `parse_log_query_*`).
+    #[tokio::test]
+    async fn get_routes_ignore_unknown_repeated_and_oversized_query_strings() {
+        let junk = format!("qa=1&qa=2&{}=x", "a".repeat(8 * 1024));
+        let state = state_with(no_op_client());
+        let get_routes = ROUTES
+            .iter()
+            .chain(I18N_ROUTES.iter())
+            .filter(|(path, methods)| {
+                methods.contains(&Method::GET)
+                    && ![DNS_QUERY_PATH, super::ADMIN_LOG_PATH].contains(path)
+            });
+        let mut checked = 0;
+        for (path, _) in get_routes {
+            let mut answers = Vec::new();
+            for uri in [(*path).to_owned(), format!("{path}?{junk}")] {
+                let Ok(req) = Request::builder()
+                    .method(Method::GET)
+                    .uri(&uri)
+                    .body(Full::new(Bytes::new()))
+                else {
+                    panic!("fixture request must build");
+                };
+                let response = match serve(req, Arc::clone(&state)).await {
+                    Ok(response) => response,
+                    Err(err) => match err {},
+                };
+                let status = response.status();
+                let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
+                answers.push((status, content_type, body_bytes(response).await));
+            }
+            let (bare, junked) = (&answers[0], &answers[1]);
+            assert_eq!(
+                bare.0, junked.0,
+                "{path}: status changed by the query string"
+            );
+            assert_eq!(
+                bare.1, junked.1,
+                "{path}: content type changed by the query string"
+            );
+            if path.starts_with("/admin/ui") {
+                assert_eq!(
+                    bare.2, junked.2,
+                    "{path}: static body changed by the query string"
+                );
+            }
+            checked += 1;
+        }
+        assert!(
+            checked > 40,
+            "expected every GET route plus the 37 locales, got {checked}"
+        );
+    }
+
     // T-72/T-73: the `/admin/providers/*` route group.
 
     fn providers_state() -> (tempfile::TempDir, Arc<AppState<MockClient>>) {

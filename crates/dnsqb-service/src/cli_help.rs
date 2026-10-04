@@ -210,6 +210,16 @@ mod tests {
         }
     }
 
+    /// QA pass (rows `E-*-help-SB`): a 10 KB argument next to the flag
+    /// neither hides it nor counts as one on its own.
+    #[test]
+    fn wants_help_is_unaffected_by_a_10_kb_argument() {
+        let long = "x".repeat(10 * 1024);
+        assert!(wants_help([long.as_str(), "--help"]));
+        assert!(wants_help(["--help", long.as_str()]));
+        assert!(!wants_help([long.as_str()]));
+    }
+
     #[test]
     fn wants_help_is_false_for_no_args_or_unrelated_args() {
         assert!(!wants_help(Vec::<&str>::new()));

@@ -2457,4 +2457,150 @@ mod tests {
         };
         assert_eq!(loaded.limits, config.limits);
     }
+
+    /// QA pass (rows `H-cfg-*-MF`/`-SB`): a fully written default config, the
+    /// shape a fresh install persists — the base every mutation below edits.
+    const QA_BASE_CONFIG: &str = concat!(
+        "\nport = 8443\ntimeout_mode = \"fail_open\"\ntimeout_ms = 2000\n",
+        "serve_baseline_when_filters_unreachable = false\npersist_query_log = false\n",
+        "persist_cache = false\n\n",
+        "[[providers]]\nid = \"quad9\"\nenabled = true\n\n",
+        "[cache]\nclamp_min_secs = 30\nclamp_max_secs = 86400\nblock_verdict_ttl_secs = 86400\n",
+        "stale_grace_secs = 86400\nmax_capacity = 10000\n\n",
+        "[geoip]\nblocked_countries = []\n\n",
+        "[rating_filter]\nenabled = false\nlists = []\n\n",
+        "[personal_zone]\nenabled = false\nfrequency_window_days = 30\nfrequency_top_n = 200\n",
+        "regularity_window_days = 14\nregularity_min_days = 5\n\n",
+        "[blocklist_bundles]\nenabled = false\n\n",
+        "[cctld_block]\nblocked_codes = []\n\n",
+        "[limits]\nmax_concurrent_connections = 4096\nhandshake_timeout_ms = 10000\n",
+        "idle_timeout_ms = 30000\n",
+    );
+
+    #[derive(Clone, Copy)]
+    enum QaFieldKind {
+        Unsigned,
+        Bool,
+        EnumString,
+        IdString,
+        StringArray,
+    }
+
+    /// `(section header, key, kind)` for every scalar/array field of
+    /// `resolver_config.toml`; `""` = top level, `"[[providers]]"` = the
+    /// first provider entry.
+    const QA_FIELDS: &[(&str, &str, QaFieldKind)] = &[
+        ("", "port", QaFieldKind::Unsigned),
+        ("", "timeout_mode", QaFieldKind::EnumString),
+        ("", "timeout_ms", QaFieldKind::Unsigned),
+        (
+            "",
+            "serve_baseline_when_filters_unreachable",
+            QaFieldKind::Bool,
+        ),
+        ("", "persist_query_log", QaFieldKind::Bool),
+        ("", "persist_cache", QaFieldKind::Bool),
+        ("[[providers]]", "id", QaFieldKind::IdString),
+        ("[[providers]]", "enabled", QaFieldKind::Bool),
+        ("[cache]", "clamp_min_secs", QaFieldKind::Unsigned),
+        ("[cache]", "clamp_max_secs", QaFieldKind::Unsigned),
+        ("[cache]", "block_verdict_ttl_secs", QaFieldKind::Unsigned),
+        ("[cache]", "stale_grace_secs", QaFieldKind::Unsigned),
+        ("[cache]", "max_capacity", QaFieldKind::Unsigned),
+        ("[geoip]", "blocked_countries", QaFieldKind::StringArray),
+        ("[rating_filter]", "enabled", QaFieldKind::Bool),
+        ("[rating_filter]", "lists", QaFieldKind::StringArray),
+        ("[personal_zone]", "enabled", QaFieldKind::Bool),
+        (
+            "[personal_zone]",
+            "frequency_window_days",
+            QaFieldKind::Unsigned,
+        ),
+        ("[personal_zone]", "frequency_top_n", QaFieldKind::Unsigned),
+        (
+            "[personal_zone]",
+            "regularity_window_days",
+            QaFieldKind::Unsigned,
+        ),
+        (
+            "[personal_zone]",
+            "regularity_min_days",
+            QaFieldKind::Unsigned,
+        ),
+        ("[blocklist_bundles]", "enabled", QaFieldKind::Bool),
+        ("[cctld_block]", "blocked_codes", QaFieldKind::StringArray),
+        (
+            "[limits]",
+            "max_concurrent_connections",
+            QaFieldKind::Unsigned,
+        ),
+        ("[limits]", "handshake_timeout_ms", QaFieldKind::Unsigned),
+        ("[limits]", "idle_timeout_ms", QaFieldKind::Unsigned),
+    ];
+
+    /// `QA_BASE_CONFIG` with the `key = ...` line under `section` replaced
+    /// by `replacement` (a whole line, or several).
+    fn qa_with_line(section: &str, key: &str, replacement: &str) -> String {
+        let start = QA_BASE_CONFIG.find(section).unwrap_or(0);
+        let needle = format!("\n{key} = ");
+        let Some(offset) = QA_BASE_CONFIG[start..].find(&needle) else {
+            panic!("{section} {key} must be in QA_BASE_CONFIG");
+        };
+        let line_start = start + offset + 1;
+        let line_end = QA_BASE_CONFIG[line_start..]
+            .find('\n')
+            .map_or(QA_BASE_CONFIG.len(), |end| line_start + end);
+        format!(
+            "{}{replacement}{}",
+            &QA_BASE_CONFIG[..line_start],
+            &QA_BASE_CONFIG[line_end..]
+        )
+    }
+
+    #[test]
+    fn every_config_field_rejects_wrong_type_bad_case_negative_and_duplicate_key() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, QA_BASE_CONFIG) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        if let Err(err) = ResolverConfig::load(&path) {
+            panic!("the unmutated base must load: {err}");
+        }
+        let mut cases = 0;
+        for &(section, key, kind) in QA_FIELDS {
+            let original = qa_with_line(section, key, "");
+            let original_line = &QA_BASE_CONFIG[QA_BASE_CONFIG.find(section).unwrap_or(0)..]
+                .lines()
+                .find(|line| line.starts_with(&format!("{key} = ")))
+                .unwrap_or_default();
+            assert!(!original_line.is_empty() && original.len() < QA_BASE_CONFIG.len());
+            let mut bad_values = vec![format!("{original_line}\n{original_line}")];
+            bad_values.extend(
+                match kind {
+                    QaFieldKind::Unsigned => vec!["\"30\"", "-1", "1.5", "true"],
+                    QaFieldKind::Bool => vec!["True", "1", "\"false\""],
+                    QaFieldKind::EnumString => vec!["42", "\"Fail_Open\"", "[]"],
+                    QaFieldKind::IdString => vec!["42", "[]"],
+                    QaFieldKind::StringArray => vec!["\"ua\"", "[1]", "true"],
+                }
+                .into_iter()
+                .map(|value| format!("{key} = {value}")),
+            );
+            for bad in bad_values {
+                let toml = qa_with_line(section, key, &bad);
+                if let Err(err) = fs::write(&path, &toml) {
+                    panic!("must be able to write the fixture file: {err}");
+                }
+                assert!(
+                    ResolverConfig::load(&path).is_err(),
+                    "{section} `{bad}` must be a load error"
+                );
+                cases += 1;
+            }
+        }
+        assert!(
+            cases > 100,
+            "expected the full field table to run, got {cases}"
+        );
+    }
 }

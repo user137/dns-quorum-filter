@@ -158,5 +158,42 @@ for (const loc of Object.keys(dicts).sort()) {
     }
   }
 }
-console.log(`locales=${Object.keys(dicts).length} calls=${calls.length} failures=${failures}`);
+// QA pass (rows B-*-SB): every server-supplied string carries an HTML payload;
+// it may reach the DOM only as text, never through an HTML-parsing sink.
+// renderCctldBlock is left out: its only server strings are validated 2-letter
+// codes (validate_cctld_codes), fed to Intl.DisplayNames, which rejects anything else.
+const XSS = `<img src=x onerror=qaXss()>`;
+const xssDeep = (v) => typeof v === "string" ? v + XSS
+  : Array.isArray(v) ? v.map(xssDeep)
+  : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, xssDeep(x)])) : v;
+const HTML_SINK = /\.(innerHTML|outerHTML)$|\.insertAdjacentHTML\(\)$|\.write\(\)$/;
+const xssCalls = [
+  ["renderOverrides", { allowlist: [{ domain: "a.com", is_wildcard: false }], blocklist: [{ domain: "b.com", is_wildcard: true }], conflicts: ["a.com"], persisted: false }],
+  ["renderProviders", providersData],
+  ["renderLog", logData],
+  ["renderMaxmind", { configured: true, account_id: "1", persisted: false, refresh_health: "OK", check: "OK" }],
+  ["renderGeoip", { database_loaded: true, database_built_at_ms: 1700000000000, database_source: "USER_COUNTRY", blocked_countries: ["SE"], persisted: false }],
+  ["renderRatingFilter", status({ rating_filter: { enabled: true, active: true, lists: ["ua"], available_lists: ["ua"], loaded: [{ list: "ua", domains: 5 }], suggested_list: "ua", personal_zone_enabled: false } })],
+  ["renderBlocklistBundles", status({ blocklist_bundles: { enabled: true, active: true, sources: null, available_sources: ["hagezi-tif"], loaded: [{ id: "hagezi-tif", last_updated: Date.now(), last_error: "e" }] } })],
+  ["renderTimeoutConfig", status({ timeout_mode: "fail_open", serve_baseline_when_filters_unreachable: false })],
+];
+vm.runInContext(`DICT = __dict; CURRENT_LOCALE = "uk";`, Object.assign(ctx, { __dict: dicts.uk }));
+for (const [fn, data] of xssCalls) {
+  assigned.length = 0;
+  try {
+    vm.runInContext(`${fn}(${JSON.stringify(xssDeep(data))})`, ctx);
+  } catch (e) {
+    failures++;
+    console.log(`[xss] ${fn}: THREW ${e && e.message}`);
+    continue;
+  }
+  for (const [where, val] of assigned) {
+    if (HTML_SINK.test(where) && val.includes(XSS)) { failures++; console.log(`[xss] ${fn}: payload reached ${where}`); }
+  }
+  if (!assigned.some(([, val]) => val.includes(XSS)) && fn !== "renderTimeoutConfig") {
+    failures++;
+    console.log(`[xss] ${fn}: payload never rendered at all - the probe stopped observing`);
+  }
+}
+console.log(`locales=${Object.keys(dicts).length} calls=${calls.length} xss=${xssCalls.length} failures=${failures}`);
 process.exit(failures ? 1 : 0);
