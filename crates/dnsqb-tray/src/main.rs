@@ -47,8 +47,9 @@ mod status;
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
-    set_quit_flag, set_stop_flag, stop_flag_is_set, write_pid_file, AdminClient, AdminClientError,
-    GuardError, InstanceGuard, InstanceRole, ResolverConfig,
+    set_quit_flag, set_reset_config_flag, set_retry_flag, set_stop_flag, stop_flag_is_set,
+    write_pid_file, AdminClient, AdminClientError, GuardError, InstanceGuard, InstanceRole,
+    ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -123,6 +124,8 @@ const INSTALL_CERT_ID: &str = "install-cert";
 const UNINSTALL_CERT_ID: &str = "uninstall-cert";
 const ROTATE_CERT_ID: &str = "rotate-cert";
 const REMOVE_ALL_ID: &str = "remove-all-local-state";
+const RETRY_SERVICE_ID: &str = "retry-service";
+const RESET_CONFIG_ID: &str = "reset-config";
 
 /// Re-check cadence for `muda`'s global menu-event channel (see the module
 /// doc comment for why this loop drives it rather than `tao` itself) —
@@ -239,7 +242,8 @@ fn main() {
     let status_handle = status::spawn(app_data.clone(), port);
     let trust = status::spawn_trust_watch(app_data.join("cert.pem"));
 
-    let (tray_icon, icons, pause_resume_item) = build_tray_icon(&app_data, locale);
+    let (tray_icon, icons, menu_items) = build_tray_icon(&app_data, locale);
+    let mut last_recovery = (false, false);
 
     let menu_channel = MenuEvent::receiver();
     let mut refresh_state = TrayRefreshState {
@@ -269,6 +273,7 @@ fn main() {
 
         let observed = status_handle.current();
         let trusted = trust.is_trusted();
+        menu_items.sync_recovery(observed, &mut last_recovery);
         refresh_tray(
             &tray_icon,
             &icons,
@@ -307,7 +312,7 @@ fn main() {
                 } else {
                     i18n::t(locale, "menu.pause")
                 };
-                pause_resume_item.set_text(&label);
+                menu_items.pause_resume.set_text(&label);
                 last_paused = paused;
             }
         }
@@ -374,14 +379,14 @@ fn refresh_tray(
 /// clippy's line-count lint (same "cohesive extracted helper" discipline as
 /// [`bootstrap`]), not a behaviour change. Exits the process on any
 /// unrecoverable failure, exactly as this code did inline.
-fn build_tray_icon(app_data: &Path, locale: &str) -> (TrayIcon, TrayIcons, MenuItem) {
+fn build_tray_icon(app_data: &Path, locale: &str) -> (TrayIcon, TrayIcons, MenuItems) {
     let Some(icons) = TrayIcons::build() else {
         tracing::error!(
             "an embedded tray icon failed to decode - these are build-time assets, not user input"
         );
         std::process::exit(1);
     };
-    let (menu, pause_resume_item) = build_menu(app_data, locale);
+    let (menu, menu_items) = build_menu(app_data, locale);
     // Start on red, matching the initial `TrayStatus::Unreachable` tooltip
     // below — icon and tooltip agree from the first frame.
     let tray_icon = match TrayIconBuilder::new()
@@ -396,14 +401,37 @@ fn build_tray_icon(app_data: &Path, locale: &str) -> (TrayIcon, TrayIcons, MenuI
             std::process::exit(1);
         }
     };
-    (tray_icon, icons, pause_resume_item)
+    (tray_icon, icons, menu_items)
+}
+
+/// The menu items the event loop changes after the menu is built: the
+/// pause/resume label (T-185) and the two хвиля 13b recovery items' enabled
+/// state.
+struct MenuItems {
+    pause_resume: MenuItem,
+    retry: MenuItem,
+    reset_config: MenuItem,
+}
+
+impl MenuItems {
+    /// Хвиля 13b: the recovery items are live only while the service is down
+    /// for good (`GaveUp`); the reset only for an invalid config. `last` keeps
+    /// the native menu from being touched on every 100 ms tick.
+    fn sync_recovery(&self, status: TrayStatus, last: &mut (bool, bool)) {
+        let wanted = status::recovery_actions(status);
+        if wanted != *last {
+            self.retry.set_enabled(wanted.0);
+            self.reset_config.set_enabled(wanted.1);
+            *last = wanted;
+        }
+    }
 }
 
 /// Builds the tray menu and returns it together with a handle to the
 /// pause/resume item, whose label the event loop flips between
 /// `t(locale, "menu.pause")` and `t(locale, "menu.resume")` as `stop.flag`
 /// comes and goes (T-185; T-151 Батч 5.5 — used to be two fixed constants).
-fn build_menu(app_data: &Path, locale: &str) -> (Menu, MenuItem) {
+fn build_menu(app_data: &Path, locale: &str) -> (Menu, MenuItems) {
     let menu = Menu::new();
     let open_settings = MenuItem::with_id(
         OPEN_SETTINGS_ID,
@@ -453,6 +481,14 @@ fn build_menu(app_data: &Path, locale: &str) -> (Menu, MenuItem) {
         i18n::t(locale, "menu.pause")
     };
     let pause_resume = MenuItem::with_id(PAUSE_RESUME_ID, pause_resume_label, true, None);
+    // Хвиля 13b: disabled until the status poll reports the service down.
+    let retry = MenuItem::with_id(RETRY_SERVICE_ID, i18n::t(locale, "menu.retry"), false, None);
+    let reset_config = MenuItem::with_id(
+        RESET_CONFIG_ID,
+        i18n::t(locale, "menu.resetConfig"),
+        false,
+        None,
+    );
     let restore_supervision = MenuItem::with_id(
         RESTORE_SUPERVISION_ID,
         i18n::t(locale, "menu.restoreSupervision"),
@@ -474,6 +510,8 @@ fn build_menu(app_data: &Path, locale: &str) -> (Menu, MenuItem) {
         &PredefinedMenuItem::separator(),
         &remove_all,
         &PredefinedMenuItem::separator(),
+        &retry,
+        &reset_config,
         &pause_resume,
         &restore_supervision,
         &PredefinedMenuItem::separator(),
@@ -482,7 +520,14 @@ fn build_menu(app_data: &Path, locale: &str) -> (Menu, MenuItem) {
     ]) {
         tracing::warn!("failed to build the full tray menu: {err}");
     }
-    (menu, pause_resume)
+    (
+        menu,
+        MenuItems {
+            pause_resume,
+            retry,
+            reset_config,
+        },
+    )
 }
 
 /// Which menu item was clicked — the pure `id -> intent` half of
@@ -512,6 +557,11 @@ enum MenuAction {
     TogglePause,
     /// Relaunch the watchdog if it stopped.
     RestoreSupervision,
+    /// Хвиля 13b: ask the watcher to reset its budget and start the service.
+    RetryService,
+    /// Хвиля 13b: move an invalid `resolver_config.toml` aside (behind a
+    /// confirm), then retry.
+    ResetConfig,
     /// Stop the service, the watchdog and this tray.
     QuitApp,
     /// Exit only this tray process; leave the service filtering.
@@ -534,6 +584,8 @@ fn menu_action_for(id: &str) -> MenuAction {
         REMOVE_ALL_ID => MenuAction::RemoveAllLocalState,
         PAUSE_RESUME_ID => MenuAction::TogglePause,
         RESTORE_SUPERVISION_ID => MenuAction::RestoreSupervision,
+        RETRY_SERVICE_ID => MenuAction::RetryService,
+        RESET_CONFIG_ID => MenuAction::ResetConfig,
         QUIT_APP_ID => MenuAction::QuitApp,
         CLOSE_ID => MenuAction::HideIcon,
         _ => MenuAction::Unknown,
@@ -641,6 +693,8 @@ fn handle_menu_event(
         MenuAction::RestoreSupervision => {
             ensure_sibling_running(app_data, InstanceRole::Watcher);
         }
+        MenuAction::RetryService => request_service_retry(app_data),
+        MenuAction::ResetConfig => reset_config_and_retry(app_data, locale),
         // T-185: quit the whole app. Write both flags and exit the tray; the
         // watcher picks up `quit.flag` on its next tick, stops the service and
         // exits itself. `stop.flag` covers the gap so nothing is respawned in
@@ -1131,6 +1185,38 @@ fn confirm_pause(locale: &str) -> bool {
     )
 }
 
+/// Хвиля 13b / T-266: the watcher consumes `retry.flag` on its next tick
+/// (fresh budget, service started); also make sure a watcher is there to
+/// read it.
+fn request_service_retry(app_data: &Path) {
+    if let Err(err) = set_retry_flag(app_data) {
+        tracing::warn!("could not write retry.flag: {err}");
+    }
+    ensure_sibling_running(app_data, InstanceRole::Watcher);
+}
+
+/// Хвиля 13b: the service itself moves the file aside on its next start, and
+/// only if that start follows a `ConfigInvalid` failure — `resolver_config.toml`
+/// keeps a single writer.
+fn reset_config_and_retry(app_data: &Path, locale: &str) {
+    if confirm_reset_config(locale) {
+        if let Err(err) = set_reset_config_flag(app_data) {
+            tracing::warn!("could not write reset-config.flag: {err}");
+        }
+        request_service_retry(app_data);
+    }
+}
+
+/// Native confirm dialog before «Скинути налаштування» (хвиля 13b) — the
+/// settings file is renamed aside, not deleted.
+fn confirm_reset_config(locale: &str) -> bool {
+    confirm(
+        &i18n::t(locale, "menu.resetConfig"),
+        &i18n::t(locale, "confirm.resetConfig.description"),
+        rfd::MessageLevel::Warning,
+    )
+}
+
 /// Native confirm dialog before quitting the whole app (T-185) — this stops
 /// the service, the watchdog and the tray. Same blast-radius warning shape as
 /// [`confirm_pause`], stronger wording.
@@ -1229,6 +1315,8 @@ mod tests {
             ("remove-all-local-state", MenuAction::RemoveAllLocalState),
             ("pause-resume-filtering", MenuAction::TogglePause),
             ("restore-supervision", MenuAction::RestoreSupervision),
+            ("retry-service", MenuAction::RetryService),
+            ("reset-config", MenuAction::ResetConfig),
             ("quit-app", MenuAction::QuitApp),
             ("close", MenuAction::HideIcon),
         ];

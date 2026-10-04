@@ -8,7 +8,8 @@
 
 use crate::i18n;
 use dnsqb_service::{
-    AdminClient, AdminStatusResponse, NetworkStatusView, WatchdogState, WATCHDOG_STATE_STALE_AFTER,
+    AdminClient, AdminStatusResponse, NetworkStatusView, StartupFailure, WatchdogState,
+    WATCHDOG_STATE_STALE_AFTER,
 };
 use parking_lot::RwLock;
 use std::path::{Path, PathBuf};
@@ -34,15 +35,24 @@ pub enum TrayStatus {
     /// Ranked above `NoActiveProvider` (user's priority decision 2026-09-02).
     ServiceRestarting,
     /// The watchdog's restart budget is spent — `dnsqb-service` is stopped,
-    /// awaiting manual recovery (T-95, `GaveUp`).
+    /// awaiting the user's retry (T-95, `GaveUp`; «Спробувати ще раз» since
+    /// хвиля 13b).
     ServiceGaveUp,
+    /// Хвиля 13b: `GaveUp` because the service recorded a deterministic
+    /// startup failure (`startup-error.json`) — the reason is named in the
+    /// tooltip, with its one action. Ranked, like `ServiceGaveUp`, **above**
+    /// `Paused`: since T-193 a pause keeps the service up, so a dead service
+    /// during a pause is a real failure the grey icon must not hide.
+    ServiceStartupFailed(StartupFailure),
     /// Filtering is paused on purpose (T-185) — the user clicked "Призупинити
     /// фільтрацію". Since T-193 `dnsqb-service` **stays up** and serves every
     /// query through the unfiltered baseline; the watchdog keeps supervising it
     /// normally. The presence of `stop.flag` is still the whole signal, read
-    /// straight off disk here. Ranked **above** every watchdog and admin state
-    /// — a pause is a deliberate choice the user needs named as such, not as a
-    /// failure. (The pipeline and the `/admin/ui` hero rank `Offline` above
+    /// straight off disk here. Ranked **above** `ServiceRestarting` and every
+    /// admin state — a pause is a deliberate choice the user needs named as
+    /// such, not as a failure — but **below** `ServiceGaveUp` /
+    /// `ServiceStartupFailed` since хвиля 13b (a dead service is a real failure
+    /// even during a pause; see [`local_status`]). (The pipeline and the `/admin/ui` hero rank `Offline` above
     /// `Paused`; the tray ranks `Paused` first. Both are correct — the tray's
     /// is the actionable reading. Intentional, not to be "reconciled".)
     Paused,
@@ -130,6 +140,7 @@ impl TrayStatus {
             Self::Unreachable => i18n::t(locale, "tooltip.unreachable"),
             Self::ServiceRestarting => i18n::t(locale, "tooltip.restarting"),
             Self::ServiceGaveUp => i18n::t(locale, "tooltip.gaveUp"),
+            Self::ServiceStartupFailed(reason) => startup_failure_tooltip(*reason, locale),
             Self::Paused => i18n::t(locale, "tooltip.paused"),
             Self::Offline => i18n::t(locale, "tooltip.offline"),
             Self::NoActiveProvider { in_flight } => i18n::t_args(
@@ -210,7 +221,9 @@ pub enum IconColour {
 #[must_use]
 pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
     match status {
-        TrayStatus::Unreachable | TrayStatus::ServiceGaveUp => IconColour::Red,
+        TrayStatus::Unreachable
+        | TrayStatus::ServiceGaveUp
+        | TrayStatus::ServiceStartupFailed(_) => IconColour::Red,
         TrayStatus::ServiceRestarting | TrayStatus::Offline => IconColour::Amber,
         // "Filtering off on purpose" — SPEC.md §3/§8.1 requires this be shown
         // as a distinct, non-failure state, so an untrusted cert does not
@@ -233,6 +246,62 @@ pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
                 IconColour::Green
             }
         }
+    }
+}
+
+/// The i18n key naming `reason` (and its one action) in the tooltip. Every
+/// rendered text must fit the 63 UTF-16 units `tray-icon` 0.21 leaves visible
+/// (T-253) — tested per locale.
+fn startup_failure_tooltip_key(reason: StartupFailure) -> &'static str {
+    match reason {
+        StartupFailure::PortInUse { .. } => "tooltip.startupFailed.portInUseTemplate",
+        StartupFailure::BindFailed => "tooltip.startupFailed.bindFailed",
+        StartupFailure::ConfigInvalid => "tooltip.startupFailed.configInvalid",
+        StartupFailure::ConfigUnreadable => "tooltip.startupFailed.configUnreadable",
+        StartupFailure::CertificateUnavailable => "tooltip.startupFailed.certificateUnavailable",
+        StartupFailure::UpstreamClientFailed => "tooltip.startupFailed.upstreamClientFailed",
+        StartupFailure::InstanceLockFailed => "tooltip.startupFailed.instanceLockFailed",
+    }
+}
+
+fn startup_failure_tooltip(reason: StartupFailure, locale: &str) -> String {
+    match reason {
+        StartupFailure::PortInUse { port } => i18n::t_args(
+            locale,
+            startup_failure_tooltip_key(reason),
+            &[("port", &port.to_string())],
+        ),
+        _ => i18n::t(locale, startup_failure_tooltip_key(reason)),
+    }
+}
+
+/// Which recovery menu items are enabled for `status`: («Спробувати ще раз»,
+/// «Скинути налаштування»). Хвиля 13b — the reset only answers an invalid
+/// config.
+#[must_use]
+pub fn recovery_actions(status: TrayStatus) -> (bool, bool) {
+    match status {
+        TrayStatus::ServiceGaveUp => (true, false),
+        TrayStatus::ServiceStartupFailed(reason) => (true, reason == StartupFailure::ConfigInvalid),
+        TrayStatus::Unreachable
+        | TrayStatus::ServiceRestarting
+        | TrayStatus::Paused
+        | TrayStatus::Offline
+        | TrayStatus::NoActiveProvider { .. }
+        | TrayStatus::Filtering { .. } => (false, false),
+    }
+}
+
+/// The locally-read part of the status ladder, ranked: a given-up service
+/// (with or without a recorded reason) outranks a pause; a pause outranks
+/// a restarting service; `None` falls through to the admin channel.
+fn local_status(paused: bool, watchdog: Option<TrayStatus>) -> Option<TrayStatus> {
+    match watchdog {
+        Some(down @ (TrayStatus::ServiceGaveUp | TrayStatus::ServiceStartupFailed(_))) => {
+            Some(down)
+        }
+        _ if paused => Some(TrayStatus::Paused),
+        other => other,
     }
 }
 
@@ -269,7 +338,119 @@ pub fn compose_tooltip(status: TrayStatus, cert_trusted: bool, locale: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{watchdog_override, TrayStatus};
+    use super::{
+        local_status, recovery_actions, startup_failure_tooltip, startup_failure_tooltip_key,
+        watchdog_override, TrayStatus,
+    };
+    use crate::i18n::I18N_DICTS;
+    use dnsqb_service::{StartupFailure, STARTUP_ERROR_FILE_NAME};
+
+    const EVERY_FAILURE: [StartupFailure; 7] = [
+        StartupFailure::PortInUse { port: 65535 },
+        StartupFailure::BindFailed,
+        StartupFailure::ConfigInvalid,
+        StartupFailure::ConfigUnreadable,
+        StartupFailure::CertificateUnavailable,
+        StartupFailure::UpstreamClientFailed,
+        StartupFailure::InstanceLockFailed,
+    ];
+
+    // Хвиля 13b: GaveUp + a recorded reason names the reason; without one it
+    // stays the plain GaveUp.
+    #[test]
+    fn watchdog_override_names_a_recorded_startup_failure() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        write_watchdog_fixture(dir.path(), WatchdogState::GaveUp);
+        assert_eq!(
+            watchdog_override(dir.path()),
+            Some(TrayStatus::ServiceGaveUp)
+        );
+        // The on-disk contract dnsqb-service writes (startup_failure.rs).
+        let record = br#"{"schema_version":1,"reason":{"kind":"port_in_use","port":4443}}"#;
+        if let Err(err) = std::fs::write(dir.path().join(STARTUP_ERROR_FILE_NAME), record) {
+            panic!("fixture write must succeed: {err}");
+        }
+        assert_eq!(
+            watchdog_override(dir.path()),
+            Some(TrayStatus::ServiceStartupFailed(
+                StartupFailure::PortInUse { port: 4443 }
+            ))
+        );
+    }
+
+    // Хвиля 13b: a dead service outranks a pause (T-193 keeps the service up
+    // while paused); a restarting one does not.
+    #[test]
+    fn local_status_ranks_gave_up_above_paused_above_restarting() {
+        let failed = TrayStatus::ServiceStartupFailed(StartupFailure::ConfigInvalid);
+        for paused in [true, false] {
+            assert_eq!(
+                local_status(paused, Some(TrayStatus::ServiceGaveUp)),
+                Some(TrayStatus::ServiceGaveUp)
+            );
+            assert_eq!(local_status(paused, Some(failed)), Some(failed));
+        }
+        assert_eq!(
+            local_status(true, Some(TrayStatus::ServiceRestarting)),
+            Some(TrayStatus::Paused)
+        );
+        assert_eq!(local_status(true, None), Some(TrayStatus::Paused));
+        assert_eq!(
+            local_status(false, Some(TrayStatus::ServiceRestarting)),
+            Some(TrayStatus::ServiceRestarting)
+        );
+        assert_eq!(local_status(false, None), None);
+    }
+
+    #[test]
+    fn recovery_actions_offer_retry_when_down_and_reset_only_for_a_bad_config() {
+        assert_eq!(recovery_actions(TrayStatus::ServiceGaveUp), (true, false));
+        for reason in EVERY_FAILURE {
+            let want_reset = reason == StartupFailure::ConfigInvalid;
+            assert_eq!(
+                recovery_actions(TrayStatus::ServiceStartupFailed(reason)),
+                (true, want_reset),
+                "{reason:?}"
+            );
+        }
+        for other in [
+            TrayStatus::Unreachable,
+            TrayStatus::ServiceRestarting,
+            TrayStatus::Paused,
+            TrayStatus::Offline,
+            TrayStatus::NoActiveProvider { in_flight: 0 },
+        ] {
+            assert_eq!(recovery_actions(other), (false, false), "{other:?}");
+        }
+    }
+
+    // T-253: tray-icon 0.21 shows only 63 UTF-16 units of a tooltip. Every
+    // failure tooltip (worst-case port) must fit in every locale, and each
+    // reason has its own text.
+    #[test]
+    fn every_failure_tooltip_fits_the_visible_limit_in_every_locale() {
+        let mut keys: Vec<&str> = EVERY_FAILURE
+            .iter()
+            .map(|r| startup_failure_tooltip_key(*r))
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), EVERY_FAILURE.len(), "one key per reason");
+        for &(code, _) in I18N_DICTS {
+            let mut texts: Vec<String> = EVERY_FAILURE
+                .iter()
+                .map(|r| startup_failure_tooltip(*r, code))
+                .collect();
+            texts.push(TrayStatus::ServiceGaveUp.tooltip(code));
+            for text in texts {
+                let units = text.encode_utf16().count();
+                assert!(units <= 63, "{code}: {units} units: {text}");
+                assert!(!text.contains('{'), "{code}: unfilled placeholder: {text}");
+            }
+        }
+    }
     use dnsqb_service::{
         write_watchdog_state, AdminStats, AdminStatusResponse, ProviderStatusView, TimeoutMode,
         WatchdogState, WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
@@ -598,6 +779,10 @@ mod tests {
         let cases = [
             (TrayStatus::Unreachable, IconColour::Red),
             (TrayStatus::ServiceGaveUp, IconColour::Red),
+            (
+                TrayStatus::ServiceStartupFailed(dnsqb_service::StartupFailure::BindFailed),
+                IconColour::Red,
+            ),
             (TrayStatus::ServiceRestarting, IconColour::Amber),
             (TrayStatus::Offline, IconColour::Amber),
             (TrayStatus::Paused, IconColour::Grey),
@@ -733,7 +918,10 @@ fn watchdog_override(app_data_dir: &Path) -> Option<TrayStatus> {
         WatchdogState::Restarting | WatchdogState::BackoffWait => {
             Some(TrayStatus::ServiceRestarting)
         }
-        WatchdogState::GaveUp => Some(TrayStatus::ServiceGaveUp),
+        WatchdogState::GaveUp => Some(match dnsqb_service::read_startup_failure(app_data_dir) {
+            Ok(reason) => TrayStatus::ServiceStartupFailed(reason),
+            Err(_) => TrayStatus::ServiceGaveUp,
+        }),
         WatchdogState::Healthy
         | WatchdogState::ChannelDegraded
         | WatchdogState::SuspectDead
@@ -781,19 +969,17 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
                 // would report a healthy, filtering-looking service — this
                 // check is what still surfaces the pause. Checked on this 2s
                 // poll cadence, not on the main thread's 100ms event-loop tick.
-                if dnsqb_service::stop_flag_is_set(&app_data_dir) {
-                    *current.write() = TrayStatus::Paused;
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    continue;
-                }
+                //
                 // T-95: the watchdog's own state file wins over anything the
                 // admin channel could say — a restarting or given-up service is
                 // unreachable on that channel by definition, so the still-alive
                 // watcher's `watchdog-state.json` is the only place the status
                 // is visible. Ranked above `NoActiveProvider` (user's priority
-                // decision 2026-09-02: watchdog above 0-voters).
-                if let Some(watchdog_status) = watchdog_override(&app_data_dir) {
-                    *current.write() = watchdog_status;
+                // decision 2026-09-02: watchdog above 0-voters). Хвиля 13b: a
+                // given-up service now outranks the pause ([`local_status`]).
+                let paused = dnsqb_service::stop_flag_is_set(&app_data_dir);
+                if let Some(local) = local_status(paused, watchdog_override(&app_data_dir)) {
+                    *current.write() = local;
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
