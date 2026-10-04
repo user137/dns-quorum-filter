@@ -1,6 +1,6 @@
 # QA-REPORT — фінальний звіт повного QA-проходу `dns-quorum-filter` 0.8.0
 
-Процес — `review/QA-PROMPT.md`; стан і докази по кожному рядку — `review/QA-MATRIX.md`; план
+Процес — `plans/QA-PROMPT.md`; стан і докази по кожному рядку — `review/QA-MATRIX.md`; план
 виправлень — `review/QA-FIX-PLAN.md`. Цей файл — підсумок, без нових фактів, яких немає в матриці.
 
 ## Що перевірялось

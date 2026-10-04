@@ -5,7 +5,7 @@
 радиш. Патч пропонуєш лише на явний запит. Кожна фаза — окрема сесія; на старті сесії перечитай
 цей файл і звіти попередніх фаз (`review/arch/0N-*.md`).
 
-Цей огляд — **наступник** `review/REVIEW-PROMPT.md` (Rust-аудит, 2026-09-10, звіти
+Цей огляд — **наступник** `plans/REVIEW-PROMPT.md` (Rust-аудит, 2026-09-10, звіти
 `review/00-MAP.md`…`05-BACKLOG.md`, ремедіація — Батч RV у `TASKS.md`) і **QA-проходу 0.8.0**
 (`review/QA-REPORT.md`, `QA-MATRIX.md`, `QA-FIX-PLAN.md`, 2026-10-04). Від того ревʼю — 181 коміт і
 ~30k рядків у `crates/` (фази 4, 5, 7: рейтинг-фільтр, персональна зона, ccTLD, public blocklist
@@ -122,7 +122,7 @@ T-242…T-270 і Батч QA-FIX), `review/QA-REPORT.md`, `review/05-BACKLOG.md`
 
 ## ІНСТРУМЕНТИ
 
-Baseline-команди (як на CI, з `--locked`) — `review/REVIEW-PROMPT.md` розділ «ІНСТРУМЕНТИ» і
+Baseline-команди (як на CI, з `--locked`) — `plans/REVIEW-PROMPT.md` розділ «ІНСТРУМЕНТИ» і
 CLAUDE.md «Commands». Додатково для цього огляду:
 - **Встановлений артефакт:** `packaging/smoke-installed.ps1` (read-only), `GET /admin/status`,
   `/health`, файли `%LOCALAPPDATA%\Packages\<PFN>\LocalCache\Local\dns-quorum-filter\logs\`.
