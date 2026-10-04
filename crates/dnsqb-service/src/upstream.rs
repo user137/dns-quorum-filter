@@ -457,10 +457,12 @@ pub enum ProviderUrlError {
     /// No host component.
     #[error("provider URL has no host")]
     NoHost,
-    /// The host is a literal loopback / private / link-local IP address — a
-    /// custom provider URL must point at a public resolver, never back at
-    /// this machine or an internal service (SSRF). **Stated gap:** a
-    /// *hostname* that later resolves to such an address is not caught here.
+    /// The host is a literal loopback / private / link-local IP address
+    /// (including one wrapped in an IPv4-mapped or IPv4-compatible IPv6
+    /// literal) or an RFC 6761 `localhost` name — a custom provider URL must
+    /// point at a public resolver, never back at this machine or an internal
+    /// service (SSRF). **Stated gap:** any other *hostname* that later
+    /// resolves to such an address is not caught here.
     #[error("provider URL host is a loopback, private, or link-local address")]
     NonPublicHost,
 }
@@ -478,30 +480,50 @@ pub fn validate_provider_url(url: &str) -> Result<(), ProviderUrlError> {
     if parsed.scheme() != "https" {
         return Err(ProviderUrlError::NotHttps);
     }
-    match parsed.host() {
-        None => Err(ProviderUrlError::NoHost),
-        Some(url::Host::Domain(_)) => Ok(()),
-        Some(url::Host::Ipv4(ip)) => {
-            if ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified() {
-                Err(ProviderUrlError::NonPublicHost)
-            } else {
-                Ok(())
-            }
+    let non_public = match parsed.host() {
+        None => return Err(ProviderUrlError::NoHost),
+        Some(url::Host::Domain(domain)) => {
+            // RFC 6761 §6.3: `localhost` and every name under it is loopback
+            // by definition, no lookup needed to know it.
+            domain
+                .trim_end_matches('.')
+                .rsplit('.')
+                .next()
+                .is_some_and(|tld| tld.eq_ignore_ascii_case("localhost"))
         }
+        Some(url::Host::Ipv4(ip)) => is_non_public_v4(ip),
         Some(url::Host::Ipv6(ip)) => {
             // `Ipv6Addr::is_unique_local`/`is_unicast_link_local` are unstable;
             // check the documented prefixes directly. fc00::/7 (ULA),
-            // fe80::/10 (link-local).
+            // fe80::/10 (link-local), ::ffff:0:0/96 (IPv4-mapped) and the
+            // deprecated ::/96 IPv4-compatible form, both of which carry an
+            // IPv4 address that must pass the same IPv4 checks.
             let seg = ip.segments();
             let ula = (seg[0] & 0xfe00) == 0xfc00;
             let link_local = (seg[0] & 0xffc0) == 0xfe80;
-            if ip.is_loopback() || ip.is_unspecified() || ula || link_local {
-                Err(ProviderUrlError::NonPublicHost)
-            } else {
-                Ok(())
-            }
+            let [.., a, b, c, d] = ip.octets();
+            let wrapped_v4 = ip
+                .to_ipv4_mapped()
+                .or_else(|| (seg[..6] == [0; 6]).then(|| Ipv4Addr::new(a, b, c, d)));
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ula
+                || link_local
+                || wrapped_v4.is_some_and(is_non_public_v4)
         }
+    };
+    if non_public {
+        Err(ProviderUrlError::NonPublicHost)
+    } else {
+        Ok(())
     }
+}
+
+/// **Stated gap:** `100.64.0.0/10` (shared CGNAT), `0.0.0.0/8` beyond the
+/// unspecified address, broadcast, and NAT64 `64:ff9b::/96` are not treated
+/// as non-public here.
+fn is_non_public_v4(ip: Ipv4Addr) -> bool {
+    ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
 }
 
 /// The baseline (non-filtering) resolver's `DoH` endpoint (SPEC.md §3.4) —
@@ -738,6 +760,38 @@ mod tests {
                 Err(ProviderUrlError::NonPublicHost),
                 "{ssrf} must be rejected"
             );
+        }
+    }
+
+    /// T-271 (T-270 audit): an IPv4 loopback/private address wrapped in an
+    /// IPv6 literal, and the RFC 6761 `localhost` names, reach this machine
+    /// just like the bare forms above — on Windows the mapped form fails to
+    /// connect only because of the `IPV6_V6ONLY` socket default, which Фаза 6
+    /// targets don't share.
+    #[test]
+    fn validate_provider_url_rejects_wrapped_ipv4_and_localhost_names() {
+        for ssrf in [
+            "https://[::ffff:127.0.0.1]/dns-query",
+            "https://[::ffff:c0a8:101]/dns-query",
+            "https://[::ffff:10.0.0.5]/dns-query",
+            "https://[::ffff:169.254.169.254]/latest/meta-data",
+            "https://[::127.0.0.1]/dns-query",
+            "https://localhost/dns-query",
+            "https://LOCALHOST./dns-query",
+            "https://dns.localhost/dns-query",
+        ] {
+            assert_eq!(
+                validate_provider_url(ssrf),
+                Err(ProviderUrlError::NonPublicHost),
+                "{ssrf} must be rejected"
+            );
+        }
+        for public in [
+            "https://[::ffff:8.8.8.8]/dns-query",
+            "https://[2606:4700:4700::1111]/dns-query",
+            "https://notlocalhost.example/dns-query",
+        ] {
+            assert_eq!(validate_provider_url(public), Ok(()), "{public} must pass");
         }
     }
 
