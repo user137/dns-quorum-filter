@@ -140,7 +140,7 @@ T-NNN їм призначає власник при перенесенні в `T
 | 10 | параметри `/admin/log` (`domain_contains`, `decision`, `voter`, `limit`) | фільтр у пам'яті, рядок логу | percent-decode UTF-8, enum, `voter` проти відомих id; у лог — лише статична мітка | `serve_admin_log_rejects_an_unrecognized_*`, `serve_admin_log_filters_by_domain_contains` |
 | 11 | **ARCH-15 (1):** QNAME з DNS wire (будь-який клієнт loopback) → домен журналу | таблиця журналу, «додати в blocklist» з рядка, `query-log.enc` | `Name::to_ascii` — presentation-форма: керівні й RTL-байти → `\DDD`, `<`/`"` лишаються з `\`; рендер `textContent`; `with_entry_added` такі рядки відкидає (400); `.enc` — serde_json | `smoke.js` xss `renderLog`, тест з рядка 1 (wire-форми) |
 | 12 | **ARCH-15 (2):** `geoip_country` / `resolved_ip_country` з `.mmdb` | бейдж журналу | `textContent`; `geoip_country` у UI не рендериться | `smoke.js` xss `logData` з обома полями (нов.) |
-| 13 | рядки логів служби (`tracing`) | `logs\*.log` | жодне поле запиту не потрапляє в лог; помилки конфігу — `{0:?}` (Debug-екранування `\n`); текст помилки `toml` цитує рядок файлу — **T-252, хвиля 13a** | already-filed |
+| 13 | рядки логів служби (`tracing`) | `logs\*.log` | жодне поле запиту не потрапляє в лог; помилки конфігу — `{0:?}` (Debug-екранування `\n`); текст помилки `toml` цитував рядок файлу — **T-252, виправлено в хвилі 13a (`be12847`)** | fixed |
 | 14 | тіло `/dns-query` (`POST` — лише `application/dns-message`, тобто з preflight; `GET ?dns=` — без) | парсер DNS wire; **стан, що пише кожен запит:** журнал, кеш вердиктів, `personal_zone_stats` (якщо зону ввімкнено) | `hickory-proto`, ліміт тіла; перевірки `Origin`/`Sec-Fetch-Site` немає | `serve_never_panics_on_arbitrary_input_for_any_documented_route`; **читання таймінгом і запис у цей стан з чужої сторінки через `GET` — чекає ARCH-14** |
 | 15 | командні рядки: `certutil` (шлях `cert.pem` з app-data), `rundll32` (`format!` з `u16`-портом), PowerShell-витирач (шлях профілю) | аргументи процесу | `.arg()` без shell; PowerShell — одинарні лапки. **T-272:** подвоювався лише `'`, а PowerShell закриває рядок і на U+2018/2019/201A/201B (ін'єкцію підтверджено на 5.1) — виправлено | `wipe_script_doubles_a_single_quote_in_the_path`, `…_every_powershell_single_quote_character` (нов.) |
 | 16 | статичні HTML-шаблони (`main.js:528`, `:608`, `data-i18n-html`) | `innerHTML` | підставляють лише числа, enum і first-party словники; CSP `default-src 'self'` | `smoke.js` (футер, токени, сирі ключі) |
@@ -299,6 +299,8 @@ T-NNN їм призначає власник при перенесенні в `T
   `cmdkey /list` до/після `cargo test`.
 
 ### Хвиля 13a — конфіг: атомарний запис і приватна помилка розбору (ARCH-01, T-252)
+**Виконано 2026-10-04:** `23f9742` (ARCH-01 → T-273), `be12847` (T-252), нотатки в `TASKS-DONE.md`.
+Живу перевірку `service.log` (T-252) — на наступному артефакті GitHub.
 - **ARCH-01:** `ResolverConfig::save` (`config.rs:847`) і `OverrideLists::save` (`overrides.rs:515`) пишуть
   `fs::write` (truncate + write), хоча `paths::write_atomic` (temp + `sync_all` + `rename`) уже є й
   використовується для всіх `.enc` і фідів. `ResolverConfigFile` має `#[serde(default,

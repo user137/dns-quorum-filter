@@ -404,11 +404,11 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   (`overrides.toml`'s domain names, this project's own "no domain names in service logs" rule) —
   wrapping this error type directly in a `thiserror` variant and logging it is an automatic leak; the
   fix is a payload-free error variant with a fixed message (`overrides::OverrideError::Parse`, T-145
-  — same shape as `InvalidReason`), not redacting a field after the fact. A file that structurally
-  cannot contain sensitive text (`config.rs`'s `resolver_config.toml`, no domains) can keep the real
-  `toml::de::Error` payload — the rich snippet is a genuine UX win there with no privacy cost, so the
-  two error types are deliberately shaped differently on purpose, not an inconsistency to "fix" into
-  matching each other later.
+  — same shape as `InvalidReason`), not redacting a field after the fact. **`message()` alone leaks
+  too** — serde's `invalid type: string "..."` echoes the value. `resolver_config.toml` used to keep
+  the full payload ("no domains, no privacy cost"); T-252 reversed that (DECISIONS.md 2026-10-04): a
+  custom provider URL can carry an account id. It now keeps only `config::ParseLocation` (closed
+  error kind + line/column from `span()`).
 - **General lesson (third instance of this shape — `IsCa::NoCa`, the `icacls` substring denylist,
   now this): a test that passes today doesn't prove the property its name claims unless the
   property is something the test can actually observe changing.** T-59's first draft

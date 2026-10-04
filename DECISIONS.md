@@ -2578,3 +2578,19 @@ guard-тест в `admin_ui.rs` (`locale_switcher_options_name_themselves_not_th
 додає поле автозапуску в той самий бамп DTO. T-266 змінює логіку watcher-а (`main.rs` resume +
 другий запуск при `GaveUp`) — власний plan+advisor. T-268 потребує нового сигналу служба → трей —
 власна хвиля 14, plan+advisor. Розкладка — `review/QA-FIX-PLAN.md`.
+
+## 2026-10-04 — T-252: помилка розбору `resolver_config.toml` більше не цитує файл
+
+**Що змінено:** запис 2026-08-26 (T-145, «`resolver_config.toml` доменів не містить, тому там багатий
+TOML-снепшот помилки — чистий виграш для UX без ціни приватності») скасовано в частині
+`resolver_config.toml`. `ConfigError::Toml` тепер несе лише `ParseLocation` — закритий рід помилки
+(`unknown field`, `invalid type`, …) плюс рядок і колонку.
+
+**Причина:** файл містить URL власного провайдера, а такий URL може нести ідентифікатор акаунта
+(`https://<id>.dns.nextdns.io/dns-query`). Витікав не лише фрагмент рядка в `Display`/`Debug`, а й
+сам `message()`: serde повторює значення (`invalid type: string "..."`). Помилку логують старт служби,
+`/admin/reset`, трей і watcher.
+
+**Наслідки:** оператор бачить рід помилки й позицію, але не текст рядка — для ручного виправлення
+цього достатньо. Розкол «`overrides.toml` без payload / `resolver_config.toml` з payload» більше не
+діє: жоден із двох файлів не потрапляє в лог. `RUST-GOTCHAS.md` і `SECURITY.md` оновлено.
