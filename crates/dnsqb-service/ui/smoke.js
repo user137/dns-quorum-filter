@@ -154,6 +154,8 @@ const logData = {
     voters: [{ provider_name: "quad9", status: { status: "ERROR", message: "x" } }, { provider_name: "z", status: { status: "ALLOW", ip_count: 2 } }],
     resolved_ip_country: "SE", geoip_country: "RU" }], truncated: true,
 };
+// T-279: 120 entries = 3 pages of LOG_PAGE_SIZE 50.
+const bigLogData = { entries: Array.from({ length: 120 }, (_, i) => Object.assign({}, logData.entries[0], { domain: `d${i}.com`, timestamp_ms: i })), truncated: false };
 const calls = [
   ["renderProtectionHero", `renderProtectionHero(heroPresentation("PROTECTED", {blocked: 3}))`],
   ["renderProtectionHeroCert", `renderProtectionHero(heroPresentation("CERT_NOT_TRUSTED", {blocked: 0}))`],
@@ -166,6 +168,7 @@ const calls = [
   ["renderMaxmind", `renderMaxmind(${JSON.stringify({ configured: true, account_id: "1", persisted: false, refresh_health: "AUTH_REJECTED", check: "REJECTED" })})`],
   ["renderProviders", `renderProviders(${JSON.stringify(providersData)})`],
   ["buildLogFilterRow+renderLog", `buildLogFilterRow(); renderLog(${JSON.stringify(logData)})`],
+  ["logPagerAndLiveMarker", `pushLive = true; renderLogLiveMarker(); logPage = 1; renderLog(${JSON.stringify(bigLogData)}); pushLive = false; logPage = 0; renderLogLiveMarker()`],
   ["renderRatingFilterOff", `renderRatingFilter(${JSON.stringify(status({ rating_filter: { enabled: false, active: false, lists: ["ua", "gov-pl", "xx"], available_lists: ["ua", "us", "de", "pl", "gb", "global", "gov-ua", "gov-us", "gov-pl", "gov-gb", "edu"], loaded: [{ list: "ua", domains: 5 }, { list: "gov-pl", domains: 1 }], suggested_list: "gb", personal_zone_enabled: false } }))})`],
   ["renderRatingFilterOn", `renderRatingFilter(${JSON.stringify(status({ rating_filter: { enabled: true, active: false, lists: ["ua"], available_lists: ["ua", "global", "edu"], loaded: [], suggested_list: null, personal_zone_enabled: false } }))})`],
   ["renderRatingFilterBadge", `renderRatingFilterBadge({enabled: true, active: false})`],
@@ -378,6 +381,104 @@ for (const [fn, data] of xssCalls) {
   vm.runInContext("paint", ctx)(c, { type: "click" }, () => { renders++; }, () => {});
   guard("user-action render was held back", renders === 2);
   doc.activeElement = null;
+
+  // T-279: pager - 50 rows per page, newest first, page clamped to the data.
+  const logRows = () => created.filter((r) => r.tag === "li" && r.props.className === "log-item");
+  const pagerText = () => assigned.filter(([w]) => w === "<span>.textContent").map(([, v]) => v);
+  const run = (code) => vm.runInContext(code, ctx);
+  created.length = 0; assigned.length = 0;
+  run(`logPage = 0; renderLog(${JSON.stringify(bigLogData)})`);
+  guard(`page 1 shows ${logRows().length} rows, want 50`, logRows().length === 50);
+  guard("page 1 is not newest-first", logRows()[0] && created.some((r) => r.props.textContent === "d119.com"));
+  guard("pager status missing on page 1", pagerText().some((v) => v.includes("1") && v.includes("3")));
+  created.length = 0; assigned.length = 0;
+  run(`logPage = 2; renderLogPage(document.createElement("div"))`);
+  guard(`last page shows ${logRows().length} rows, want 20`, logRows().length === 20);
+  created.length = 0;
+  run(`logPage = 2; renderLog(${JSON.stringify(logData)})`);
+  guard("page not clamped when the data shrank", run("logPage") === 0 && logRows().length === 1);
+  run("logPage = 0");
+
+  // T-277: the push-stream client.
+  const timers = [];
+  let timerId = 1;
+  ctx.setTimeout = (fn, ms) => { const id = timerId++; timers.push({ id, fn, ms }); return id; };
+  ctx.clearTimeout = (id) => { const i = timers.findIndex((tm) => tm.id === id); if (i >= 0) timers.splice(i, 1); };
+  const intervals = new Map();
+  ctx.setInterval = (fn, ms) => { const id = timerId++; intervals.set(id, { fn, ms }); return id; };
+  ctx.clearInterval = (id) => intervals.delete(id);
+  const fire = (ms) => { const due = timers.filter((tm) => tm.ms === ms); due.forEach((tm) => { ctx.clearTimeout(tm.id); tm.fn(); }); return due.length; };
+  const sources = [];
+  class FakeEventSource {
+    constructor(url) { this.url = url; this.readyState = 0; this.listeners = {}; sources.push(this); }
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+    emit(type, data) { (this.listeners[type] || []).forEach((fn) => fn({ data })); }
+    close() { this.readyState = 2; }
+  }
+  FakeEventSource.CONNECTING = 0; FakeEventSource.OPEN = 1; FakeEventSource.CLOSED = 2;
+  ctx.EventSource = FakeEventSource;
+  const spied = ["render", "renderProtectionHero", "refresh", "refreshOverrides", "refreshProviders", "refreshCacheConfig", "refreshGeoip", "refreshMaxmind", "refreshCctldBlock", "refreshRatingFilter", "refreshBlocklistBundles", "refreshLog"];
+  const spy = {};
+  for (const name of spied) { spy[name] = []; ctx[name] = (...args) => { spy[name].push(args); }; }
+  const BG = run("BACKGROUND");
+  const unreachableCls = run(`heroPresentation("SERVICE_UNREACHABLE").cls`);
+  const heroDown = () => spy.renderProtectionHero.filter(([p]) => p && p.cls === unreachableCls).length;
+  const topicCards = { overrides: "refreshOverrides", providers: "refreshProviders", "cache-config": "refreshCacheConfig", geoip: "refreshGeoip", maxmind: "refreshMaxmind", cctld: "refreshCctldBlock", "rating-filter": "refreshRatingFilter", "blocklist-bundles": "refreshBlocklistBundles" };
+
+  run("startLiveUpdates()");
+  let es = sources[0];
+  guard("stream not opened at /admin/events", es && es.url === "/admin/events");
+  es.readyState = 1; es.emit("open");
+  guard("first open re-fetched every card (bootstrap already did)", spy.refreshOverrides.length === 0);
+  guard("polling running while the stream is open", intervals.size === 0);
+  es.emit("status", JSON.stringify({ marker: 7 }));
+  guard("status event not rendered", spy.render.length === 1 && spy.render[0][0].marker === 7);
+  for (const [topic, fn] of Object.entries(topicCards)) {
+    es.emit(topic, "1");
+    guard(`event ${topic} did not re-fetch its card in BACKGROUND mode`, spy[fn].length === 1 && spy[fn][0][0] === BG);
+  }
+  es.emit("log", "1"); es.emit("log", "2"); es.emit("log", "3");
+  guard("log refreshed before the throttle window", spy.refreshLog.length === 0);
+  fire(1000);
+  guard("three log events must give one log re-fetch", spy.refreshLog.length === 1 && spy.refreshLog[0][0] === BG);
+  run("logPage = 1");
+  es.emit("log", "4");
+  guard("a log event re-fetched while reading an older page", fire(1000) === 0 && spy.refreshLog.length === 1);
+  run("logPage = 0");
+
+  // Silence: hero says unreachable at once, the poll takes over, a reconnect is scheduled.
+  es.emit("ping", "");
+  guard("silence fired too early", fire(25000) === 1);
+  guard("silent stream not closed", es.readyState === 2);
+  guard("silence did not show SERVICE_UNREACHABLE", heroDown() === 1);
+  guard("silence did not start the poll", intervals.size === 1 && spy.refresh.length === 1);
+  guard("no reconnect after silence", fire(5000) === 1 && sources.length === 2);
+
+  // Reconnect: poll stops, every card catches up on what it missed.
+  es = sources[1];
+  es.readyState = 1; es.emit("open");
+  guard("poll kept running after reconnect", intervals.size === 0);
+  guard("reconnect did not re-fetch every card", Object.values(topicCards).every((fn) => spy[fn].length === 2));
+
+  // A non-200 answer (503) closes the stream without calling the service down.
+  es.readyState = 2; es.emit("error");
+  guard("503 shown as SERVICE_UNREACHABLE", heroDown() === 1);
+  guard("503 did not fall back to polling", intervals.size === 1);
+  guard("503: no reconnect scheduled", fire(5000) === 1 && sources.length === 3);
+
+  // A dropped connection (browser retrying) is the service being gone.
+  es = sources[2];
+  es.readyState = 0; es.emit("error");
+  guard("dropped connection not shown as SERVICE_UNREACHABLE", heroDown() === 2);
+  guard("events from a stream already given up on still act", (() => { const before = spy.render.length; es.emit("status", "{}"); return spy.render.length === before; })());
+  guard("backoff did not grow", fire(10000) === 1);
+  run("pushLost(false); stopPolling()");
+  timers.length = 0;
+
+  // No EventSource at all: the old poll.
+  delete ctx.EventSource;
+  run("eventSource = null; pollTimer = null; startLiveUpdates()");
+  guard("no EventSource: poll not started", intervals.size >= 1);
   console.log(`locales=${Object.keys(dicts).length} calls=${calls.length} xss=${xssCalls.length} failures=${failures}`);
   process.exit(failures ? 1 : 0);
 })();

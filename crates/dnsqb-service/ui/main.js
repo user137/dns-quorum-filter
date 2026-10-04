@@ -842,6 +842,154 @@ async function refresh() {
   }
 }
 
+// T-277: GET /admin/events pushes "topic X changed" (and the status JSON
+// itself) instead of a 2 s timer re-fetching everything; each topic re-fetches
+// only its own card, through the BACKGROUND path (see paint()). The stream
+// sends a `ping` every 10 s, so silence for EVENT_SILENCE_MS - or a dropped
+// connection - means the service is gone: the hero says so at once (the
+// SERVICE_UNREACHABLE a failed poll used to produce) and the old poll takes
+// over until a reconnect succeeds. A non-200 answer (503: too many open
+// tabs) closes the stream without saying the service is down - the poll's
+// first answer shows the real state.
+const EVENT_SILENCE_MS = 25000;
+const POLL_INTERVAL_MS = 2000;
+const RECONNECT_MIN_MS = 5000;
+const RECONNECT_MAX_MS = 60000;
+const LOG_PUSH_THROTTLE_MS = 1000;
+const TOPIC_REFRESH = {
+  overrides: () => refreshOverrides(BACKGROUND),
+  providers: () => refreshProviders(BACKGROUND),
+  "cache-config": () => refreshCacheConfig(BACKGROUND),
+  geoip: () => refreshGeoip(BACKGROUND),
+  maxmind: () => refreshMaxmind(BACKGROUND),
+  cctld: () => refreshCctldBlock(BACKGROUND),
+  "rating-filter": () => refreshRatingFilter(BACKGROUND),
+  "blocklist-bundles": () => refreshBlocklistBundles(BACKGROUND),
+  log: scheduleLogRefresh,
+};
+let eventSource = null;
+let pushLive = false;
+let pushEverOpened = false;
+let pollTimer = null;
+let silenceTimer = null;
+let reconnectTimer = null;
+let reconnectDelay = RECONNECT_MIN_MS;
+let logRefreshTimer = null;
+
+function startPolling() {
+  if (pollTimer === null) {
+    refresh();
+    pollTimer = setInterval(refresh, POLL_INTERVAL_MS);
+  }
+}
+
+function stopPolling() {
+  if (pollTimer !== null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function setPushLive(live) {
+  pushLive = live;
+  renderLogLiveMarker();
+}
+
+function armSilenceWatchdog() {
+  clearTimeout(silenceTimer);
+  silenceTimer = setTimeout(() => pushLost(true), EVENT_SILENCE_MS);
+}
+
+function pushLost(unreachable) {
+  clearTimeout(silenceTimer);
+  if (eventSource !== null) {
+    eventSource.close();
+    eventSource = null;
+  }
+  setPushLive(false);
+  if (unreachable) {
+    renderProtectionHero(heroPresentation("SERVICE_UNREACHABLE"));
+  }
+  startPolling();
+  if (reconnectTimer === null) {
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectEvents();
+    }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+  }
+}
+
+// Throttled, not per entry: while browsing, entries arrive many times a second.
+function scheduleLogRefresh() {
+  if (logPage > 0) {
+    renderLogLiveMarker();
+    return;
+  }
+  if (logRefreshTimer !== null) {
+    return;
+  }
+  logRefreshTimer = setTimeout(() => {
+    logRefreshTimer = null;
+    if (logPage === 0) {
+      refreshLog(BACKGROUND);
+    }
+  }, LOG_PUSH_THROTTLE_MS);
+}
+
+function connectEvents() {
+  const source = new EventSource("/admin/events");
+  eventSource = source;
+  const live = (handler) => (event) => {
+    if (eventSource !== source) {
+      return; // a stream already given up on
+    }
+    armSilenceWatchdog();
+    handler(event);
+  };
+  source.addEventListener(
+    "open",
+    live(() => {
+      stopPolling();
+      reconnectDelay = RECONNECT_MIN_MS;
+      setPushLive(true);
+      // Changes made while disconnected sent no event: catch every card up.
+      if (pushEverOpened) {
+        Object.values(TOPIC_REFRESH).forEach((refreshTopic) => refreshTopic());
+      }
+      pushEverOpened = true;
+    })
+  );
+  source.addEventListener(
+    "status",
+    live((event) => {
+      try {
+        render(JSON.parse(event.data));
+      } catch (err) {
+        renderError(err);
+      }
+    })
+  );
+  Object.entries(TOPIC_REFRESH).forEach(([topic, refreshTopic]) =>
+    source.addEventListener(topic, live(refreshTopic))
+  );
+  source.addEventListener("ping", live(() => {}));
+  source.addEventListener("error", () => {
+    if (eventSource === source) {
+      pushLost(source.readyState !== EventSource.CLOSED);
+    }
+  });
+  armSilenceWatchdog();
+}
+
+function startLiveUpdates() {
+  if (typeof EventSource === "function") {
+    connectEvents();
+  } else {
+    startPolling();
+  }
+}
+
 // T-151 Батч 5.2: wait for DICTIONARY_READY first - every card in
 // renderTranslatedCards() calls t()/tPlural(), so the first paint must not
 // race the dictionary fetch. This is now the single top-level kickoff for
@@ -870,10 +1018,10 @@ async function refresh() {
   // that only re-renders on user action would show it near-permanently 0,
   // reading as "the resolver is idle" even while it's busy (the same
   // honesty failure this project already corrected twice: T-66's cold/warm
-  // relabel, T-52's "never a fake 0/0 stat"). Polling every 2s keeps every
-  // rendered value the server's actual live response, same "no local
-  // optimistic state" philosophy as every other render() call here.
-  setInterval(refresh, 2000);
+  // relabel, T-52's "never a fake 0/0 stat"). T-277: the server now pushes
+  // every status change (startLiveUpdates()); the 2 s poll remains only as
+  // the fallback when the push stream is unavailable.
+  startLiveUpdates();
 })();
 
 // T-47: the override-list editor. Deliberately NOT part of refresh()/render()
@@ -2462,8 +2610,18 @@ function logItem(entry) {
   return li;
 }
 
+// T-279: the whole matching window comes back in one request (the service's
+// MAX_LOG_LIMIT, = its 1000-entry ring capacity, checked by an admin_ui.rs
+// test) and is paged here, LOG_PAGE_SIZE rows at a time, so neither the
+// list nor the card grows with the log.
+const LOG_FETCH_LIMIT = 1000;
+const LOG_PAGE_SIZE = 50;
+let logPage = 0; // 0 = newest
+let logEntriesNewestFirst = [];
+
 function currentLogQuery() {
   const params = new URLSearchParams();
+  params.set("limit", String(LOG_FETCH_LIMIT));
   const domain = document.getElementById("log-search").value.trim();
   if (domain) {
     params.set("domain_contains", domain);
@@ -2493,6 +2651,9 @@ function currentLogQuery() {
 // (entries/empty-state/truncated-notice/error) is data-dependent and gets
 // rebuilt; the filter chrome around it is permanent.
 const logResults = document.createElement("div");
+// T-242: says whether new entries appear on their own (see logLiveText()).
+const logLiveLine = document.createElement("p");
+logLiveLine.className = "log-live";
 
 function buildLogFilterRow() {
   logBody.textContent = "";
@@ -2598,11 +2759,29 @@ function buildLogFilterRow() {
   filterRow.appendChild(clearBtn);
 
   logBody.appendChild(filterRow);
+  logBody.appendChild(logLiveLine);
   logBody.appendChild(logResults);
+  renderLogLiveMarker();
+}
+
+// T-242: new entries are pushed only to the first page (an older page
+// would shift under the reader) and only while the push stream is up.
+function logLiveText() {
+  if (!pushLive) {
+    return t("log.liveOff", { button: t("log.refreshButton") });
+  }
+  return logPage > 0 ? t("log.livePaused") : t("log.liveOn");
+}
+
+function renderLogLiveMarker() {
+  logLiveLine.textContent = logLiveText();
 }
 
 function renderLog(data) {
   logResults.textContent = "";
+  // Newest first for reading, even though the backend returns oldest-first
+  // within the kept window (dispatch::serve_admin_log's own doc comment).
+  logEntriesNewestFirst = [...data.entries].reverse();
 
   if (data.entries.length === 0) {
     const empty = document.createElement("p");
@@ -2619,12 +2798,57 @@ function renderLog(data) {
     logResults.appendChild(truncatedNotice);
   }
 
+  const pageSlot = document.createElement("div");
+  logResults.appendChild(pageSlot);
+  renderLogPage(pageSlot);
+}
+
+function logPageCount() {
+  return Math.max(1, Math.ceil(logEntriesNewestFirst.length / LOG_PAGE_SIZE));
+}
+
+// T-279: one page of the already-fetched window, plus the pager.
+function renderLogPage(slot) {
+  logPage = Math.min(Math.max(logPage, 0), logPageCount() - 1);
+  slot.textContent = "";
   const list = document.createElement("ul");
   list.className = "log-list";
-  // Newest first for reading, even though the backend returns oldest-first
-  // within the kept window (dispatch::serve_admin_log's own doc comment).
-  [...data.entries].reverse().forEach((entry) => list.appendChild(logItem(entry)));
-  logResults.appendChild(list);
+  logEntriesNewestFirst
+    .slice(logPage * LOG_PAGE_SIZE, (logPage + 1) * LOG_PAGE_SIZE)
+    .forEach((entry) => list.appendChild(logItem(entry)));
+  slot.appendChild(list);
+  const pages = logPageCount();
+  if (pages > 1) {
+    const pager = document.createElement("div");
+    pager.className = "log-pager";
+    const newer = document.createElement("button");
+    newer.type = "button";
+    newer.textContent = t("log.pageNewer");
+    newer.disabled = logPage === 0;
+    const status = document.createElement("span");
+    status.textContent = t("log.pageStatus", { page: logPage + 1, pages });
+    const older = document.createElement("button");
+    older.type = "button";
+    older.textContent = t("log.pageOlder");
+    older.disabled = logPage >= pages - 1;
+    newer.addEventListener("click", () => showLogPage(logPage - 1, slot));
+    older.addEventListener("click", () => showLogPage(logPage + 1, slot));
+    pager.appendChild(newer);
+    pager.appendChild(status);
+    pager.appendChild(older);
+    slot.appendChild(pager);
+  }
+  renderLogLiveMarker();
+}
+
+function showLogPage(page, slot) {
+  logPage = page;
+  if (logPage <= 0) {
+    // Back on the newest page: catch up on whatever arrived meanwhile.
+    refreshLog();
+    return;
+  }
+  renderLogPage(slot);
 }
 
 function renderLogError(err) {
@@ -2638,6 +2862,10 @@ function renderLogError(err) {
 }
 
 async function refreshLog(mode) {
+  // A user action (filter, search, "Оновити", clear) starts from the newest page.
+  if (mode !== BACKGROUND) {
+    logPage = 0;
+  }
   const again = () => refreshLog(BACKGROUND);
   try {
     const data = await getLog(currentLogQuery());

@@ -1183,6 +1183,24 @@ mod tests {
         );
     }
 
+    /// T-279: the log pager pages one fetched window; asking for less than
+    /// the whole ring would silently hide its oldest pages.
+    #[test]
+    fn log_card_fetches_the_whole_log_ring_for_its_pager() {
+        let expected = format!(
+            "const LOG_FETCH_LIMIT = {};",
+            crate::query_log::DEFAULT_MAX_ENTRIES
+        );
+        assert!(
+            MAIN_JS.contains(&expected),
+            "main.js must declare {expected} - the service's MAX_LOG_LIMIT"
+        );
+        assert!(
+            MAIN_JS.contains("params.set(\"limit\", String(LOG_FETCH_LIMIT));"),
+            "currentLogQuery() must send it"
+        );
+    }
+
     #[test]
     fn blocklist_bundles_card_has_its_own_fetch_render_cycle_off_the_2s_poll() {
         assert!(
