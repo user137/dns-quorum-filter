@@ -60,6 +60,10 @@ pub struct ChannelObs {
     /// The PID-check result the shell ran because last cycle's state was
     /// [`WatchdogState::VerifyingPid`]. `None` at every other time.
     pub pid: Option<PidCheck>,
+    /// Хвиля 13b: the peer recorded a deterministic startup failure
+    /// (`startup-error.json`). Only meaningful for
+    /// [`Direction::WatcherToService`]; the driver ignores it otherwise.
+    pub startup_failed: bool,
 }
 
 /// A side-effect [`LoopDriver::tick`] asks the I/O shell to run this cycle.
@@ -115,6 +119,9 @@ pub struct LoopDriver {
     spawn_issued: bool,
     last_transition_at: Option<SystemTime>,
     last_error: Option<WatchdogErrorLabel>,
+    /// Хвиля 13b: the current `GaveUp` came from a recorded startup failure,
+    /// not an exhausted budget — decides its `last_error` label.
+    gave_up_on_startup_failure: bool,
 }
 
 impl LoopDriver {
@@ -133,6 +140,7 @@ impl LoopDriver {
             spawn_issued: false,
             last_transition_at: None,
             last_error: None,
+            gave_up_on_startup_failure: false,
         }
     }
 
@@ -140,8 +148,16 @@ impl LoopDriver {
     /// state and the restart budget are carried over (§7.1 #7); the miss
     /// counters and the backoff deadline start fresh (the process was just
     /// (re)started, it has no channel history).
+    ///
+    /// **A `GaveUp` record is not resumed** (T-266, хвиля 13b): a watcher only
+    /// starts because the user launched the app (the retry the record asks for)
+    /// or because a live service respawned it — either way the record is stale,
+    /// so this returns [`Self::new`].
     #[must_use]
     pub fn restored(direction: Direction, file: &WatchdogStateFile) -> Self {
+        if file.state == WatchdogState::GaveUp {
+            return Self::new(direction);
+        }
         Self {
             direction,
             miss_ipc: 0,
@@ -157,7 +173,14 @@ impl LoopDriver {
             spawn_issued: false,
             last_transition_at: Some(file.last_transition_at),
             last_error: file.last_error,
+            gave_up_on_startup_failure: false,
         }
+    }
+
+    /// The coarse label of the latest error, as written to the state file.
+    #[must_use]
+    pub fn last_error(&self) -> Option<WatchdogErrorLabel> {
+        self.last_error
     }
 
     /// The current automaton state.
@@ -211,6 +234,7 @@ impl LoopDriver {
             pid,
             budget,
             backoff_elapsed,
+            startup_failed: self.direction == Direction::WatcherToService && obs.startup_failed,
         };
         let next = transition(self.state, input);
 
@@ -240,6 +264,8 @@ impl LoopDriver {
         }
 
         if next == WatchdogState::GaveUp && self.state != WatchdogState::GaveUp {
+            // The only VerifyingPid -> GaveUp edge is the startup-failure one.
+            self.gave_up_on_startup_failure = self.state == WatchdogState::VerifyingPid;
             effects.push(Effect::LogGaveUp);
         }
 
@@ -255,7 +281,11 @@ impl LoopDriver {
             self.last_transition_at = Some(now);
         }
         self.state = next;
-        self.last_error = derive_last_error(next, ipc_status, health_status);
+        self.last_error = if next == WatchdogState::GaveUp && self.gave_up_on_startup_failure {
+            Some(WatchdogErrorLabel::StartupFailed)
+        } else {
+            derive_last_error(next, ipc_status, health_status)
+        };
 
         if self.direction == Direction::WatcherToService {
             effects.push(Effect::WriteState(self.state_file(now)));
@@ -337,6 +367,7 @@ mod tests {
             file_signal: true,
             health_signal: Some(true),
             pid: None,
+            startup_failed: false,
         }
     }
 
@@ -346,6 +377,7 @@ mod tests {
             file_signal: false,
             health_signal: Some(false),
             pid,
+            startup_failed: false,
         }
     }
 
@@ -355,6 +387,103 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, Effect::Spawn))
             .count()
+    }
+
+    fn last_written(outcome: &super::TickOutcome) -> Option<WatchdogStateFile> {
+        outcome.effects.iter().rev().find_map(|e| match e {
+            Effect::WriteState(file) => Some(file.clone()),
+            _ => None,
+        })
+    }
+
+    /// Drives a silent peer to `VerifyingPid`, then feeds a dead PID with the
+    /// given `startup_failed` reading; returns (spawns seen, last outcome).
+    fn dead_peer_with_startup_record(
+        direction: Direction,
+        startup_failed: bool,
+    ) -> (usize, super::TickOutcome) {
+        let mut driver = LoopDriver::new(direction);
+        let silent = ChannelObs {
+            ipc_signal: false,
+            file_signal: false,
+            health_signal: match direction {
+                Direction::WatcherToService => Some(false),
+                Direction::ServiceToWatcher => None,
+            },
+            pid: None,
+            startup_failed,
+        };
+        let mut total_spawns = 0;
+        let mut tick = 0;
+        total_spawns += spawns(&driver.tick(at(0), &silent));
+        while driver.state() != WatchdogState::VerifyingPid && tick < 20 {
+            tick += 1;
+            total_spawns += spawns(&driver.tick(at(tick * 5), &silent));
+        }
+        tick += 1;
+        let out = driver.tick(
+            at(tick * 5),
+            &ChannelObs {
+                pid: Some(PidCheck::Gone),
+                ..silent
+            },
+        );
+        total_spawns += spawns(&out);
+        // One more tick so a Restarting path would have issued its spawn.
+        tick += 1;
+        let next = driver.tick(at(tick * 5), &silent);
+        total_spawns += spawns(&next);
+        (total_spawns, next)
+    }
+
+    // Хвиля 13b: a recorded startup failure never costs a restart.
+    #[test]
+    fn a_recorded_startup_failure_gives_up_with_no_spawn_and_no_budget_spent() {
+        let (spawned, out) = dead_peer_with_startup_record(Direction::WatcherToService, true);
+        assert_eq!(out.state, WatchdogState::GaveUp);
+        assert_eq!(spawned, 0);
+        let Some(file) = last_written(&out) else {
+            panic!("the watcher direction writes its state every tick");
+        };
+        assert_eq!(file.last_error, Some(WatchdogErrorLabel::StartupFailed));
+        assert_eq!(file.restart_attempts_in_window, 0);
+    }
+
+    // The service never reads startup-error.json for the watcher: the new edge
+    // must not fire in the service -> watcher direction.
+    #[test]
+    fn the_startup_failure_edge_never_fires_service_to_watcher() {
+        let (spawned, out) = dead_peer_with_startup_record(Direction::ServiceToWatcher, true);
+        assert_ne!(out.state, WatchdogState::GaveUp);
+        assert_eq!(spawned, 1, "a dead watcher is still respawned");
+    }
+
+    // T-266: a fresh watcher never resumes GaveUp - its launch is the user's
+    // retry (tile) or a respawn by a live service.
+    #[test]
+    fn restoring_a_gave_up_record_starts_fresh() {
+        for last_error in [
+            Some(WatchdogErrorLabel::BudgetExhausted),
+            Some(WatchdogErrorLabel::StartupFailed),
+        ] {
+            let file = WatchdogStateFile {
+                schema_version: STATE_SCHEMA_VERSION,
+                state: WatchdogState::GaveUp,
+                target: WatchdogTarget::Service,
+                restart_attempts_in_window: 5,
+                window_started_at: Some(base()),
+                last_transition_at: base(),
+                last_error,
+            };
+            let mut driver = LoopDriver::restored(Direction::WatcherToService, &file);
+            assert_eq!(driver.state(), WatchdogState::Healthy);
+            let out = driver.tick(at(1), &all_signal());
+            let Some(written) = last_written(&out) else {
+                panic!("state written");
+            };
+            assert_eq!(written.restart_attempts_in_window, 0, "budget reset");
+            assert_eq!(written.last_error, None);
+        }
     }
 
     fn write_states(outcome: &super::TickOutcome) -> usize {
@@ -393,6 +522,7 @@ mod tests {
             file_signal: true,
             health_signal: Some(true),
             pid: None,
+            startup_failed: false,
         };
         let mut total_spawns = 0;
         for i in 0..8 {
@@ -425,6 +555,7 @@ mod tests {
             file_signal: false,
             health_signal: Some(true),
             pid: None,
+            startup_failed: false,
         };
         for i in 0..3 {
             driver.tick(at(i * 5), &dead);
@@ -468,6 +599,7 @@ mod tests {
             file_signal: true,
             health_signal: None,
             pid: None,
+            startup_failed: false,
         };
         for i in 0..6 {
             let out = driver.tick(at(i * 5), &one_silent);

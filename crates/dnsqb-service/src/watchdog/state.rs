@@ -73,6 +73,10 @@ pub enum WatchdogErrorLabel {
     /// The restart budget for the window is exhausted.
     #[error("restart budget exhausted")]
     BudgetExhausted,
+    /// Хвиля 13b: the service recorded a deterministic startup failure
+    /// (`startup-error.json`); no restart was attempted.
+    #[error("service startup failed")]
+    StartupFailed,
 }
 
 /// Schema version stamped into every written record.

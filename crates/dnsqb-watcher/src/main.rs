@@ -221,6 +221,7 @@ fn observe(
         },
         health_signal: Some(health_ok),
         pid,
+        startup_failed: false,
     }
 }
 

@@ -630,6 +630,7 @@ async fn run_service_to_watcher_watchdog(dir: std::path::PathBuf, last_ping_at: 
             file_signal,
             health_signal: None,
             pid,
+            startup_failed: false,
         };
         for effect in driver.tick(now, &obs).effects {
             match effect {

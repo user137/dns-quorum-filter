@@ -29,6 +29,9 @@ pub struct TransitionInput {
     /// Whether the backoff wait has elapsed — consulted only in
     /// [`WatchdogState::BackoffWait`].
     pub backoff_elapsed: bool,
+    /// Хвиля 13b: the peer recorded a deterministic startup failure — consulted
+    /// only in [`WatchdogState::VerifyingPid`] on a dead PID.
+    pub startup_failed: bool,
 }
 
 /// The next automaton state, given `current` and this cycle's `input`. Total —
@@ -58,6 +61,9 @@ pub fn transition(current: WatchdogState, input: TransitionInput) -> WatchdogSta
                     S::Healthy
                 }
             }
+            // Хвиля 13b: the peer recorded a deterministic startup failure — a
+            // restart cannot fix it, so give up now without spending budget.
+            Some(PidCheck::Gone | PidCheck::IdentityMismatch) if input.startup_failed => S::GaveUp,
             Some(PidCheck::Gone | PidCheck::IdentityMismatch) => S::Restarting,
             None => S::VerifyingPid,
         },
@@ -103,6 +109,7 @@ mod tests {
             pid: None,
             budget: None,
             backoff_elapsed: false,
+            startup_failed: false,
         }
     }
 
@@ -341,6 +348,39 @@ mod tests {
         );
     }
 
+    // Хвиля 13b: a dead PID after a recorded startup failure goes straight to
+    // GaveUp — no Restarting, so the budget is never spent on a failure a
+    // restart cannot fix. A live PID ignores the flag.
+    #[test]
+    fn verifying_pid_with_a_recorded_startup_failure_gives_up_without_restarting() {
+        for pid in [PidCheck::Gone, PidCheck::IdentityMismatch] {
+            assert_eq!(
+                transition(
+                    S::VerifyingPid,
+                    TransitionInput {
+                        vote: Liveness::Dead,
+                        pid: Some(pid),
+                        startup_failed: true,
+                        ..input()
+                    }
+                ),
+                S::GaveUp,
+                "{pid:?}"
+            );
+        }
+        assert_eq!(
+            transition(
+                S::VerifyingPid,
+                TransitionInput {
+                    pid: Some(PidCheck::Alive),
+                    startup_failed: true,
+                    ..input()
+                }
+            ),
+            S::Healthy
+        );
+    }
+
     // GaveUp is terminal — every input holds it there.
     #[test]
     fn gave_up_is_terminal() {
@@ -352,6 +392,7 @@ mod tests {
                 budget: Some(BudgetVerdict::Allowed),
                 backoff_elapsed: true,
                 any_channel_degraded: false,
+                startup_failed: true,
             },
         ] {
             assert_eq!(transition(S::GaveUp, observed), S::GaveUp);
