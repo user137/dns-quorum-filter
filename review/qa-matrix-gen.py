@@ -52,7 +52,8 @@ def parse_existing(text):
     for line in body.splitlines():
         if not line.startswith("| ") or line.startswith("| ID ") or line.startswith("|---"):
             continue
-        parts = [p.strip() for p in re.split(r"(?<!\\)\|", line)[1:-1]]
+        # cell() escapes on write, so unescape here or every run adds a backslash.
+        parts = [re.sub(r"\\+\|", "|", p.strip()) for p in re.split(r"(?<!\\)\|", line)[1:-1]]
         if len(parts) == len(HEADER):
             kept[parts[0]] = parts
     return kept

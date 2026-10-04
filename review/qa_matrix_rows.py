@@ -811,3 +811,43 @@ for stem, info in _stems.items():
         if steps.startswith("CODE-ONLY"):
             who = "CODE"
         R(f"{stem}-{cat}", base["surf"], base["point"], cat, f"[шаблон {base['surf']}] {steps}", expect, [], who)
+
+# Phase 3a (QA pass): coverage added for behaviour already observed as PASS.
+# Selection rule: a row gets a new test only when its live verdict is PASS and
+# the check is reproducible without the installed app, OS dialogs or network.
+# Left uncovered on purpose: FAIL/CODE-ONLY rows (they belong to the fix
+# waves in QA-FIX-PLAN.md, regression test first), tray/watcher/browser rows
+# (need a desktop session), and config fields outside QA_FIELDS -- provider
+# url/display_name/category/block_signature, blocklist_bundles.sources (each
+# already has its own validator tests), maxmind.* and overrides.* (other files).
+QUERY_ALL = "get_routes_ignore_unknown_repeated_and_oversized_query_strings"
+CFG_ALL = "every_config_field_rejects_wrong_type_bad_case_negative_and_duplicate_key"
+HELP_LONG = "wants_help_is_unaffected_by_a_10_kb_argument"
+XSS_ALL = "~`ui/smoke.js` XSS-прогін (рядки сервера з HTML-ін'єкцією не доходять до HTML-синків)"
+CFG_TESTED = {"port", "timeout_mode", "timeout_ms", "serve_baseline_when_filters_unreachable",
+              "persist_query_log", "persist_cache", "providers.id", "providers.enabled",
+              "cache.clamp_min_secs", "cache.clamp_max_secs", "cache.block_verdict_ttl_secs",
+              "cache.stale_grace_secs", "cache.max_capacity", "geoip.blocked_countries",
+              "rating_filter.enabled", "rating_filter.lists", "personal_zone.enabled",
+              "personal_zone.frequency_window_days", "personal_zone.frequency_top_n",
+              "personal_zone.regularity_window_days", "personal_zone.regularity_min_days",
+              "blocklist_bundles.enabled", "cctld_block.blocked_codes",
+              "limits.max_concurrent_connections", "limits.handshake_timeout_ms",
+              "limits.idle_timeout_ms"}
+CFG_UNSIGNED = {"port", "timeout_ms", "cache.clamp_min_secs", "cache.clamp_max_secs",
+                "cache.block_verdict_ttl_secs", "cache.stale_grace_secs", "cache.max_capacity",
+                "personal_zone.frequency_window_days", "personal_zone.frequency_top_n",
+                "personal_zone.regularity_window_days", "personal_zone.regularity_min_days",
+                "limits.max_concurrent_connections", "limits.handshake_timeout_ms",
+                "limits.idle_timeout_ms"}
+EXTRA_COV = {f"A-{s}-MF": [QUERY_ALL] for s in (
+    "health", "admin-overrides", "admin-cache-config", "admin-geoip", "admin-geoip-maxmind-GET",
+    "admin-providers", "admin-cert-status", "admin-ui", "admin-ui-js", "admin-ui-css", "i18n")}
+EXTRA_COV.update({f"H-cfg-{f}-MF": [CFG_ALL] for f in CFG_TESTED})
+EXTRA_COV.update({f"H-cfg-{f}-SB": [CFG_ALL] for f in CFG_UNSIGNED})
+EXTRA_COV.update({f"E-{b}-help-SB": [HELP_LONG] for b in ("service", "tray", "watcher")})
+EXTRA_COV.update({f"B-{s}-SB": [XSS_ALL] for s in (
+    "overrides", "providers", "log", "maxmind", "geoip", "rating", "blocklist", "timeout")})
+_by_id = {r["id"]: r for r in ROWS}
+for _rid, _extra in EXTRA_COV.items():
+    _by_id[_rid]["cov"].extend(c for c in _extra if c not in _by_id[_rid]["cov"])
