@@ -4,9 +4,9 @@
 хвилі починається за окремим «так» користувача. Вхід: усі `FAIL` з `review/QA-MATRIX.md` + відкриті
 задачі, заведені або зачеплені проходом (T-242…T-256, T-243 і відкладене з T-238).
 
-**Стан входу:** Firefox-прохід (рядки `I-firefox-*`, `B-*` у Firefox) ще **не виконано** — MCP для
-Firefox на момент складання недоступний. Будь-який його FAIL доповнить цей план перед фінальним
-звітом. Деструктивний блок (ребут T-243, «Вийти», `/admin/shutdown`, «Повністю видалити»,
+**Стан входу:** Firefox-прохід виконано 2026-10-04 (рядки `I-firefox-*`, `B-firefox-*`,
+`B-browser-setup-firefox-*`): дві нові знахідки — T-257 («спершу діагноз») і T-258 (хвиля 10).
+Деструктивний блок (ребут T-243, «Вийти», `/admin/shutdown`, «Повністю видалити»,
 деінсталяція+перевстановлення) теж ще попереду і може додати знахідки.
 
 ## Таблиця хвиль
@@ -25,7 +25,7 @@ Firefox на момент складання недоступний. Будь-я
 | 7 | Приватність логу конфігу | T-252 | Точковий privacy-фікс | `config.rs` / `orchestrate.rs` (місце логування помилки `toml`) | хвиля 1 (спільний `config.rs`) | ні | помилка розбору → у тексті логу немає цитати рядка файлу | CI + наживо: битий `resolver_config.toml` + `/admin/reset` | S | ні |
 | 8 | Помилки POST у `/admin/ui` | T-250 | Один клас бага: невдалий POST руйнує картку/hero | `ui/main.js` (`onConfigChanged` :654, `renderError`, картки категорій і провайдерів) | — | ні | `ui/smoke.js`: reject `fetch` → картка лишає контроли, видно рядок помилки, hero не `SERVICE_UNREACHABLE` | CI (`ui-smoke`) + chrome-devtools/Firefox на артефакті | M | ні |
 | 9 | Перемальовування не стирає ввід | T-248 (+T-242 після рішення) | Один клас: ре-рендер скидає те, що користувач редагує; T-242 — нове опитування логу, яке не має скидати той самий стан | `ui/main.js` (`renderTranslatedCards`, `refreshLog`) | хвиля 8 (той самий `main.js`) | ні | `ui/smoke.js`: зміна локалі зберігає ввід overrides/пошуку й відкриті `?` | CI + браузер на артефакті | M | ні |
-| 10 | i18n і доступність | T-247, T-249 | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
+| 10 | i18n і доступність | T-247, T-249, T-258 | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
 | 11 | Розбіжності документації | T-245, T-246 (1) як обмеження платформи | Лише документи, без коду | `UI-SPEC.md`, `CLAUDE.md`, `KNOWN-LIMITATIONS.md`, `CONFIGURATION.md` | — (паралельно з усіма) | ні | — | перечитування + `qa-matrix-check.py`; CI для `.md` не запускається | S | ні |
 | 12 | Тест-покриття без зміни поведінки | рядки `CODE-ONLY` «кандидат у Фазу 3» | Лише нові тести | `watchdog/*` (transition/loop_driver), `persist_dto`, `cache_persist_dto`, `personal_zone_stats`, `dnsqb-tray` nudge | після 1-10 | ні | — | CI | M | ні |
 
@@ -122,11 +122,15 @@ Firefox на момент складання недоступний. Будь-я
   деталях за рішенням користувача; хвиля відвантажується й без T-242.
 - Коміти: по задачі. Re-test: `B-locale-MF`, `B-log-autorefresh-HP`.
 
-### Хвиля 10 — i18n і доступність (T-247, T-249)
-- T-247: `maxmind.notConfiguredStatus` у 37 словниках → типове джерело `user-country`.
+### Хвиля 10 — i18n і доступність (T-247, T-249, T-258)
+- T-247: `maxmind.notConfiguredStatus` у 37 словниках → типове джерело `user-country`; граматика
+  `en.json` `filterControls.fanoutSummary` («query see» → «sees»).
+- T-258: `browserSetup.verify` розвести за браузером (UA-детекція T-189 уже є): для Firefox —
+  очікувати «не вдається знайти сайт», плюс попередження про «Посилений захист» (T-257).
 - T-249: доступне ім'я для `<select>`/input у `#overrides-body`, фокус після radio в
   `#timeout-config-body`, `<link rel="icon">`.
-- Коміти: по задачі. Re-test: `B-maxmind-HP`, `B-overrides-SB`, `B-app-body-SB`, `C-menu-a11y`.
+- Коміти: по задачі. Re-test: `B-maxmind-HP`, `B-overrides-SB`, `B-app-body-SB`, `C-menu-a11y`,
+  `B-browser-setup-firefox-MF`, `B-firefox-render-HP`.
 
 ### Хвиля 11 — документація (T-245; T-246 п. 1)
 - Шість пунктів T-245 — як у задачі. T-246 (1) — записати в `KNOWN-LIMITATIONS.md` як обмеження
@@ -140,6 +144,13 @@ Firefox на момент складання недоступний. Будь-я
 - Re-test: лише перегенерація матриці (`qa-matrix-gen.py` + `qa-matrix-check.py`).
 
 ## Спершу діагноз (у хвилі не входять)
+
+- **T-257 — Firefox TRR mode 2 обходить фільтр на кожному блокуванні (user safety).** Спостереження
+  повне (`I-firefox-mode2-block`), механізм — ні: Firefox відкидає нульову адресу як
+  `TRR_DECODE_FAILED`. Експеримент: чи приймає Firefox mode 2 без fallback іншу форму блок-відповіді
+  (NXDOMAIN, NODATA, адреса не `0.0.0.0`) — і що це зламає в Chrome (SPEC §3.2 обрав `0.0.0.0` саме
+  проти ретраїв). Рішення про форму відповіді — архітектурне, через plan+advisor і DECISIONS.md;
+  до того — пом'якшення текстом у T-258.
 
 - **T-243 — автозапуск після ребуту. Блокер релізу (від нього залежить T-239).** Стан запису вже
   спостережено: `HKCU\…\AppModel\SystemAppData\<PFN>\DnsqbWatcherStartup` `State=2` (Enabled).

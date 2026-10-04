@@ -812,6 +812,41 @@ for stem, info in _stems.items():
             who = "CODE"
         R(f"{stem}-{cat}", base["surf"], base["point"], cat, f"[шаблон {base['surf']}] {steps}", expect, [], who)
 
+# Firefox pass (2026-10-04): MCP-launched Firefox with a throwaway geckodriver profile; DoH via
+# network.trr.* prefs at runtime. No template rows -- each Firefox row states its own category.
+FF = "Firefox (MCP, тимчасовий профіль)"
+R("I-firefox-cert", "I", f"{FF}: довіра до leaf-сертифіката", "HP",
+  "свіжий профіль, без ручного імпорту -> https://127.0.0.1:<port>/admin/ui",
+  "сторінка без попередження (security.enterprise_roots.enabled бере CurrentUser Root)")
+R("I-firefox-mode3", "I", f"{FF}: TRR mode 3 («Максимальний захист»)", "HP",
+  "trr.mode=3 + uri локального DoH; домен у blocklist і дозволений домен",
+  "заблокований -> сторінка помилки, лог BLOCKED; дозволений -> відкривається, лог ALLOWED")
+R("I-firefox-mode2-block", "I", f"{FF}: TRR mode 2 («Посилений захист») на блокуванні", "SB",
+  "trr.mode=2, служба жива, домен у blocklist",
+  "домен лишається заблокованим (передумова SPEC §3.2: на 0.0.0.0 клієнт не ретраїться)")
+R("I-firefox-dead-doh", "I", f"{FF}: недоступний локальний DoH", "EP",
+  "trr.uri на закритий порт; mode 3 і mode 2",
+  "mode 3 -> жорстка відмова; mode 2 -> зафіксувати тихий fallback (SPEC відкрите питання 10)")
+R("I-firefox-https-rr", "I", f"{FF}: HTTPS/SVCB pass-through і ECH", "HP",
+  "mode 3; HTTPS RR для домену з ECH; сторінка /cdn-cgi/trace того ж домену",
+  "HTTPS RR з ech-параметром приходить через локальний DoH; sni=encrypted")
+ui("firefox-render", "/admin/ui у Firefox", "HP",
+   "відкрити /admin/ui; усі *-body картки; перемкнути мову uk / ar / en",
+   "усі картки з контролами без помилок; lang/dir міняються (ar -> rtl)")
+ui("browser-setup-firefox", "#browser-setup-body у Firefox", "MF",
+   "прочитати інструкцію й крок перевірки для Firefox (UA-детекція, T-189)",
+   "кроки ведуть до режиму 3; очікувана ознака блокування відповідає Firefox")
+
+_FF_NA = "N/A -- точка Firefox-проходу перевіряє одну поведінку браузера; інші категорії покривають рядки I-browser-real-*, B-* (Chrome) і A-*"
+_ff_done = {}
+for _r in list(ROWS):
+    if _r["id"].startswith(("I-firefox-", "B-firefox-", "B-browser-setup-firefox")):
+        _ff_done.setdefault(re.sub(r"-(HP|SB|MF|EP)$", "", _r["id"]), (_r, set()))[1].add(_r["cat"])
+for _stem, (_r, _cats) in _ff_done.items():
+    for _cat in ("HP", "SB", "MF", "EP"):
+        if _cat not in _cats:
+            R(f"{_stem}-{_cat}", _r["surf"], _r["point"], _cat, _FF_NA, "—", [], "CODE")
+
 # Phase 3a (QA pass): coverage added for behaviour already observed as PASS.
 # Selection rule: a test covers only behaviour observed live as PASS and
 # reproducible without the installed app, OS dialogs or network. B-overrides-SB
