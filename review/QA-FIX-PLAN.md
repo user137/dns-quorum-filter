@@ -21,13 +21,13 @@
 | 3 | Hero при мертвих фільтрах | T-254 | Зміна DTO з бампом `schema_version` — окремо; **лише після рішення користувача** | `admin.rs` (`compute_hero_state`, `HeroStateView`), `ui/main.js`, `ui/i18n/*.json`, `UI-SPEC.md`, `diagrams/ui-status-indicator*` | рішення користувача | так | `admin::hero_and_category_tests` — новий вхід деградації; DTO-тест бампу | CI + наживо hosts-деградація (UAC) | M | на рішення користувача (false-safe — рекомендую так) |
 | 4 | Стійкість CLI | T-246 (2), (4) | Ті самі три `main.rs` + `cli_help.rs`, одна перевірка | `dnsqb-service/src/main.rs:23`, `dnsqb-tray/src/main.rs:193`, `dnsqb-watcher/src/main.rs:61`, `cli_help.rs` | — | ні | `wants_help` над `OsString` з непарним сурогатом; друк довідки у writer, що повертає `BrokenPipe` → без паніки | CI + `smoke-installed.ps1` + ручний `--help \| Select -First 1` | S | ні |
 | 5 | Tooltip трею (залежність) | T-253 | Оновлення/патч `tray-icon` — lower-layer, окремо | `crates/dnsqb-tray/Cargo.toml`, `Cargo.lock`, `SECURITY.md`, можливо `dnsqb-tray/src/main.rs` | — | так | `compose_tooltip` уже покрито; довжину нативного tooltip — лише наживо | `cargo deny`/`audit` у CI + наведення миші на іконку з артефакту GitHub | M | ні (рекомендую до релізу) |
-| 6 | Дрібниці трею | T-255, T-251 | Обидва — `dnsqb-tray`, один артефакт для перевірки | `dnsqb-tray/src/status.rs` (`spawn_trust_watch`), `dnsqb-tray/src/main.rs:617-627` | хвиля 5 (той самий крейт) | ні | перехід cert `NOT_TRUSTED→TRUSTED` у `/admin/status` викликає recheck; рядок логу паузи | CI + наживо: install-cert з `/admin/ui` → трей зелений ≤ 5 с | S | ні |
+| 6 | Дрібниці трею | T-255, T-251, T-263, T-264 | Обидва — `dnsqb-tray`, один артефакт для перевірки | `dnsqb-tray/src/status.rs` (`spawn_trust_watch`), `dnsqb-tray/src/main.rs:617-627` | хвиля 5 (той самий крейт) | ні | перехід cert `NOT_TRUSTED→TRUSTED` у `/admin/status` викликає recheck; рядок логу паузи | CI + наживо: install-cert з `/admin/ui` → трей зелений ≤ 5 с | S | ні |
 | 7 | Приватність логу конфігу | T-252 | Точковий privacy-фікс | `config.rs` / `orchestrate.rs` (місце логування помилки `toml`) | хвиля 1 (спільний `config.rs`) | ні | помилка розбору → у тексті логу немає цитати рядка файлу | CI + наживо: битий `resolver_config.toml` + `/admin/reset` | S | ні |
 | 8 | Помилки POST у `/admin/ui` | T-250 | Один клас бага: невдалий POST руйнує картку/hero | `ui/main.js` (`onConfigChanged` :654, `renderError`, картки категорій і провайдерів) | — | ні | `ui/smoke.js`: reject `fetch` → картка лишає контроли, видно рядок помилки, hero не `SERVICE_UNREACHABLE` | CI (`ui-smoke`) + chrome-devtools/Firefox на артефакті | M | ні |
 | 9 | Перемальовування не стирає ввід | T-248 (+T-242 після рішення) | Один клас: ре-рендер скидає те, що користувач редагує; T-242 — нове опитування логу, яке не має скидати той самий стан | `ui/main.js` (`renderTranslatedCards`, `refreshLog`) | хвиля 8 (той самий `main.js`) | ні | `ui/smoke.js`: зміна локалі зберігає ввід overrides/пошуку й відкриті `?` | CI + браузер на артефакті | M | ні |
 | 10 | i18n і доступність | T-247, T-249, T-258 | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
 | 11 | Розбіжності документації | T-245, T-246 (1) як обмеження платформи | Лише документи, без коду | `UI-SPEC.md`, `CLAUDE.md`, `KNOWN-LIMITATIONS.md`, `CONFIGURATION.md` | — (паралельно з усіма) | ні | — | перечитування + `qa-matrix-check.py`; CI для `.md` не запускається | S | ні |
-| 12 | Тест-покриття без зміни поведінки | рядки `CODE-ONLY` «кандидат у Фазу 3» | Лише нові тести | `watchdog/*` (transition/loop_driver), `persist_dto`, `cache_persist_dto`, `personal_zone_stats`, `dnsqb-tray` nudge | після 1-10 | ні | — | CI | M | ні |
+| 12 | Тест-покриття без зміни поведінки | рядки `CODE-ONLY` «кандидат у Фазу 3», T-265 | Лише нові тести | `watchdog/*` (transition/loop_driver), `persist_dto`, `cache_persist_dto`, `personal_zone_stats`, `dnsqb-tray` nudge | після 1-10 | ні | — | CI | M | ні |
 
 Порядок: хвиля 0 першою (security). Паралельність: 1, 2, 4, 11 не мають спільних файлів — можна паралельно. 5→6 послідовно (`dnsqb-tray`).
 1→7 послідовно (`config.rs`). 8→9→10 послідовно (`main.js`). Хвиля 3 чіпає `main.js` і словники —
@@ -102,11 +102,16 @@
 - Коміт: 1-2. Артефакт: так — перевірка лише наведенням миші (CI нативний tooltip не бачить).
 - Re-test: `D-tooltip-suffixes`, `D-icon-Filtering-cert-untrusted`, `D-icon-Filtering-cert-untrusted-SB`.
 
-### Хвиля 6 — дрібниці трею (T-255, T-251)
+### Хвиля 6 — дрібниці трею (T-255, T-251, T-263, T-264)
 - T-255: сигнал зі служби перетинає межу процесу — трей бачить зміну cert-стану в `/admin/status`
   (2 с опитування) і смикає `request_recheck()`; маршрут служби не змінюється.
 - T-251: рядок `info` у `tray.log` при вдалій паузі.
-- Коміти: 2 (по задачі). Артефакт: так. Re-test: `A-admin-install-cert-HP`, `C-PAUSE_RESUME_ID-SB`.
+- T-263: текст діалогу «Вийти» (37 локалей трею) — назвати обидва наслідки: тихий обхід фільтра в
+  автоматичному режимі браузера і непрацюючі сайти в режимі secure.
+- T-264: UIA-ім'я іконки — склейка зі стартовим «service unreachable»; спершу діагноз (`szTip` у
+  `tray-icon`), потім фікс або обмеження.
+- Коміти: 4 (по задачі). Артефакт: так. Re-test: `A-admin-install-cert-HP`, `C-PAUSE_RESUME_ID-SB`,
+  `C-QUIT_APP_ID-HP`, `D-tooltip-suffixes`.
 
 ### Хвиля 7 — приватність логу конфігу (T-252)
 - Логувати тип/рядок/колонку помилки `toml`, не цитату рядка файлу (як уже робить `overrides.toml`).
@@ -146,7 +151,11 @@
 - Рядки `CODE-ONLY` з «автотестів НЕМАЄ — кандидат у Фазу 3», де є чисте ядро: `F-state-*`
   (`watchdog::transition`, `loop_driver`), `F-start-flags-*`, `F-launcher-order-*` (`launcher::plan_launch`),
   `H-file-*` (формати `persist_dto`/`cache_persist_dto`), `D-browser-nudge-*`, `DIAG-rf-*`.
-- Re-test: лише перегенерація матриці (`qa-matrix-gen.py` + `qa-matrix-check.py`).
+- T-265: тести, що пишуть у `keyring`, прибирають за собою через `Drop`-guard (у справжньому
+  Credential Manager 7 записів `test:*` і десятки ключів скретч-тек); текст danger-zone і рядок
+  `local_state` у CLAUDE.md — 4 секрети, не 3.
+- Re-test: лише перегенерація матриці (`qa-matrix-gen.py` + `qa-matrix-check.py`); для T-265 —
+  `cmdkey /list` до/після `cargo test`.
 
 ## Спершу діагноз (у хвилі не входять)
 
@@ -157,15 +166,24 @@
   проти ретраїв). Рішення про форму відповіді — архітектурне, через plan+advisor і DECISIONS.md;
   до того — пом'якшення текстом у T-258.
 
-- **T-261 — Edge з будь-якою політикою блокує Secure DNS.** Спостережено (`I-edge-secure-dns`):
-  15 політик приватності, жодної про DNS, перемикач сірий «керується організацією». Перевірити в
-  `edge://policy` / `edge://management`, чи це загальна логіка Chromium, і чи знімає блок політика
-  `DnsOverHttpsMode`. Результат іде в текст T-260; служба політики за користувача не міняє.
+- **T-261 — Edge з будь-якою політикою блокує Secure DNS.** Діагностовано (`I-edge-secure-dns`,
+  2026-10-04): `edge://management` — «керує ваша організація», `edge://policy` — 15 політик
+  приватності, `DnsOverHttpsMode` не задано. Не перевірено (зміна політик заборонена), чи знімає
+  блок явна `DnsOverHttpsMode`. Результат іде в текст T-260; служба політики за користувача не міняє.
 
 - **T-243 — автозапуск після ребуту. Блокер релізу (від нього залежить T-239).** Стан запису вже
   спостережено: `HKCU\…\AppModel\SystemAppData\<PFN>\DnsqbWatcherStartup` `State=2` (Enabled).
-  Лишається ребут у деструктивному блоці: чи стартує watcher при логіні (`logs\watcher.log`,
-  процеси, `/health`). Хвиля — після діагнозу.
+  Ребут 2026-10-04 (`G-autostart-reboot` PASS): watcher стартує сам через ~175 с після
+  завантаження. Лишаються гіпотези: стан запису одразу після свіжого інсталу (перевірити при
+  перевстановленні, до кліку плитки) і «користувач перевіряє раніше за 3 хв». Хвиля — після діагнозу.
+- **T-266 — GaveUp без шляху ручного відновлення (user safety).** Спостережено наживо (`F-gaveup`):
+  tooltip «open the app to restart it» не працює (другий watcher лише показує трей), а
+  перезапущений watcher <90 с успадковує `GaveUp` при робочій службі. Спершу тест на «запуск плитки
+  при GaveUp», потім рішення, що саме скидає бюджет. Ймовірно власна хвиля (watchdog — архітектурне).
+- **T-267 — відновлений `cache.enc` не дає CACHE-попадань** (`H-enc-persist`, `H-enc-persist-HP`). «restored 2 cache entries», але той
+  самий домен іде через QUORUM. Спершу тест «restore → get», потім фікс у `cache_persist`.
+- **T-262 — систематичні `kind="http"` від Quad9** (`I-quad9-http-errors`) (7–67 на день, інші провайдери ~0). Спершу
+  підтип помилки в лозі (без доменів), потім рішення.
 - **T-246 (1) — «Access is denied» на `dnsqb-service.exe`/`dnsqb-tray.exe` поза пакетом.** Гіпотеза
   (не оголошені в маніфесті exe не запускаються ззовні) не підтверджена документацією. Знайти
   документ або експеримент → тоді або фікс маніфесту, або обмеження в хвилі 11.
@@ -188,15 +206,16 @@
 - **Свідомо без автотестів (CLAUDE.md):** `local_state::remove_all`/`remove_cert` (реальний
   `CurrentUser\Root`), живі маршрути з `FUZZ_EXCLUDED_ROUTES`, I/O-оболонки watchdog у `main.rs`,
   `G-direct-remove-*` (деінсталяція ОС) — у хвилю 12 не входять.
-- **`D-icon-ServiceGaveUp*`, `F-gaveup*`, `F-state-GaveUp*`** — наживо не відтворюються без
-  навмисного зламу сервісу користувача; покриті unit-тестами `watchdog::budget`/`transition` і
-  `every_tray_status_maps_to_a_colour_…`.
+- **`D-icon-ServiceGaveUp*`, `F-gaveup*`, `F-state-GaveUp*`** — 2026-10-04 GaveUp досягнуто
+  ненавмисно (6 рестартів через `/admin/shutdown`); колір і стан — PASS, відновлення — FAIL (T-266,
+  «Спершу діагноз»). Решта шаблонних рядків — unit-тести `watchdog::budget`/`transition`.
 - **T-239** (публікація в Store) — поза проходом, власний kickoff.
 
 ## Ще не пройдено (не вхід Фази 4, але має потрапити у фінальний звіт)
 
-- Firefox-прохід (див. «Стан входу»).
-- Деструктивний блок: `A-admin-shutdown-*`, `A-admin-uninstall-local-state-*`, `C-REMOVE_ALL_ID-*`,
-  `C-QUIT_APP_ID-*`, ребут T-243, деінсталяція + перевстановлення + повтор `smoke-installed.ps1`.
+- Деструктивний блок, лише руками користувача (класифікатор режиму auto відхилив незворотне
+  видалення): `A-admin-uninstall-local-state-*`, `B-danger-*`, `C-REMOVE_ALL_ID-*`, деінсталяція +
+  перевстановлення + повтор `smoke-installed.ps1`. Firefox, інші браузери, ребут, «Вийти»,
+  `/admin/shutdown` — пройдено.
 - `B-hero-HP`, `I-*-SB` (automatic secure DNS при мертвому DoH), шаблонні cert MF/EP та решта
   рядків зі вердиктом `NOT RUN`/порожнім — перелік у фінальному звіті.
