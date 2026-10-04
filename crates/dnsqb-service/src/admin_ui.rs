@@ -1673,6 +1673,24 @@ mod tests {
         }
     }
 
+    // T-247: since T-226(б) the default GeoIP source is `user-country`; the
+    // MaxMind card's "not configured" line kept naming DB-IP Lite in every locale.
+    #[test]
+    fn every_locale_maxmind_not_configured_names_the_real_default_source() {
+        for &(code, json) in I18N_DICTS {
+            let Ok(dict) = serde_json::from_str::<serde_json::Value>(json) else {
+                panic!("{code}.json must be valid JSON");
+            };
+            let Some(text) = dict["maxmind.notConfiguredStatus"].as_str() else {
+                panic!("{code}.json must define maxmind.notConfiguredStatus");
+            };
+            assert!(
+                text.contains("user-country") && !text.contains("DB-IP"),
+                "{code}.maxmind.notConfiguredStatus must name user-country, not DB-IP: {text:?}"
+            );
+        }
+    }
+
     // TASKS.md's own reconciliation requirement: a ccTLD code set is not a
     // reprint of GeoIP's ISO 3166-1 code set.
     #[test]

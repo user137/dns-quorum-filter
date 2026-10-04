@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "\"{code}\" जोड़ने में विफल: {message}",
   "maxmind.heading": "GeoIP स्रोत: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "कॉन्फ़िगर किया गया। Account ID: {accountId}। तुरंत प्रभावी।",
-  "maxmind.notConfiguredStatus": "कॉन्फ़िगर नहीं किया गया - DB-IP Lite (डिफ़ॉल्ट) का उपयोग किया जा रहा है।",
+  "maxmind.notConfiguredStatus": "कॉन्फ़िगर नहीं किया गया - user-country (डिफ़ॉल्ट) का उपयोग किया जा रहा है।",
   "maxmind.authRejectedWarning": "MaxMind अब निर्धारित डेटाबेस अपडेट पर सहेजे गए क्रेडेंशियल स्वीकार नहीं करता - account ID और लाइसेंस कुंजी फिर से सहेजें।",
   "maxmind.check.verified": "MaxMind ने इन क्रेडेंशियल की पुष्टि की।",
   "maxmind.check.rejected": "MaxMind ने क्रेडेंशियल अस्वीकार कर दिए (401/403) - account ID और लाइसेंस कुंजी जांचें।",

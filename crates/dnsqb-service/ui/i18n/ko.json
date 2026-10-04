@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "\"{code}\" 추가 실패: {message}",
   "maxmind.heading": "GeoIP 소스: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "구성됨. Account ID: {accountId}. 즉시 적용됩니다.",
-  "maxmind.notConfiguredStatus": "구성되지 않음 - DB-IP Lite(기본값) 사용 중.",
+  "maxmind.notConfiguredStatus": "구성되지 않음 - user-country(기본값) 사용 중.",
   "maxmind.authRejectedWarning": "MaxMind가 예정된 데이터베이스 갱신 시 저장된 자격 증명을 더 이상 받아들이지 않습니다 - account ID와 라이선스 키를 다시 저장하세요.",
   "maxmind.check.verified": "MaxMind가 이 자격 증명을 확인했습니다.",
   "maxmind.check.rejected": "MaxMind가 자격 증명을 거부했습니다(401/403) - account ID와 라이선스 키를 확인하세요.",

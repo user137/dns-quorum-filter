@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Не вдалося додати \"{code}\": {message}",
   "maxmind.heading": "Джерело GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Налаштовано. Account ID: {accountId}. Діє одразу.",
-  "maxmind.notConfiguredStatus": "Не налаштовано - використовується DB-IP Lite (за замовчуванням).",
+  "maxmind.notConfiguredStatus": "Не налаштовано - використовується user-country (за замовчуванням).",
   "maxmind.authRejectedWarning": "MaxMind більше не приймає збережені креденшели на плановому оновленні бази - перезбережіть account ID та ліцензійний ключ.",
   "maxmind.check.verified": "MaxMind підтвердив ці креденшели.",
   "maxmind.check.rejected": "MaxMind відхилив креденшели (401/403) - перевірте account ID та ліцензійний ключ.",

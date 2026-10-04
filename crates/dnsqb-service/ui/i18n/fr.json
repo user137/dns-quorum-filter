@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Échec de l'ajout de « {code} » : {message}",
   "maxmind.heading": "Source GeoIP : MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Configuré. Account ID : {accountId}. Prend effet immédiatement.",
-  "maxmind.notConfiguredStatus": "Non configuré - utilise DB-IP Lite (par défaut).",
+  "maxmind.notConfiguredStatus": "Non configuré - utilise user-country (par défaut).",
   "maxmind.authRejectedWarning": "MaxMind n'accepte plus les identifiants enregistrés lors de la mise à jour planifiée de la base de données - réenregistrez l'account ID et la clé de licence.",
   "maxmind.check.verified": "MaxMind a confirmé ces identifiants.",
   "maxmind.check.rejected": "MaxMind a rejeté les identifiants (401/403) - vérifiez l'account ID et la clé de licence.",

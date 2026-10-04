@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Dodajanje \"{code}\" ni uspelo: {message}",
   "maxmind.heading": "Vir GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Konfigurirano. Account ID: {accountId}. Začne veljati takoj.",
-  "maxmind.notConfiguredStatus": "Ni konfigurirano - uporablja se DB-IP Lite (privzeto).",
+  "maxmind.notConfiguredStatus": "Ni konfigurirano - uporablja se user-country (privzeto).",
   "maxmind.authRejectedWarning": "MaxMind ne sprejema več shranjenih poverilnic ob načrtovani posodobitvi zbirke podatkov - znova shranite account ID in licenčni ključ.",
   "maxmind.check.verified": "MaxMind je potrdil te poverilnice.",
   "maxmind.check.rejected": "MaxMind je zavrnil poverilnice (401/403) - preverite account ID in licenčni ključ.",

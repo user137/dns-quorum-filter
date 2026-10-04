@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Nu s-a putut adăuga „{code}\": {message}",
   "maxmind.heading": "Sursă GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Configurat. Account ID: {accountId}. Intră în vigoare imediat.",
-  "maxmind.notConfiguredStatus": "Neconfigurat - se folosește DB-IP Lite (implicit).",
+  "maxmind.notConfiguredStatus": "Neconfigurat - se folosește user-country (implicit).",
   "maxmind.authRejectedWarning": "MaxMind nu mai acceptă acreditările salvate la actualizarea programată a bazei de date - salvați din nou account ID-ul și cheia de licență.",
   "maxmind.check.verified": "MaxMind a confirmat aceste acreditări.",
   "maxmind.check.rejected": "MaxMind a respins acreditările (401/403) - verificați account ID-ul și cheia de licență.",

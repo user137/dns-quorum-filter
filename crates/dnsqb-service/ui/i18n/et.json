@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "\"{code}\" lisamine ebaõnnestus: {message}",
   "maxmind.heading": "GeoIP allikas: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Seadistatud. Account ID: {accountId}. Jõustub kohe.",
-  "maxmind.notConfiguredStatus": "Pole seadistatud - kasutatakse DB-IP Lite (vaikimisi).",
+  "maxmind.notConfiguredStatus": "Pole seadistatud - kasutatakse user-country (vaikimisi).",
   "maxmind.authRejectedWarning": "MaxMind ei aktsepteeri enam salvestatud mandaate plaanilisel andmebaasi värskendusel - salvestage account ID ja litsentsivõti uuesti.",
   "maxmind.check.verified": "MaxMind kinnitas need mandaadid.",
   "maxmind.check.rejected": "MaxMind lükkas mandaadid tagasi (401/403) - kontrollige account ID-d ja litsentsivõtit.",

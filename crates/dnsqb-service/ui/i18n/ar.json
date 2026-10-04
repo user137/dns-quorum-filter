@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "فشلت إضافة \"{code}\": {message}",
   "maxmind.heading": "مصدر GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "تم التكوين. معرف الحساب: {accountId}. يسري فورًا.",
-  "maxmind.notConfiguredStatus": "غير مُهيأ - يُستخدم DB-IP Lite (الافتراضي).",
+  "maxmind.notConfiguredStatus": "غير مُهيأ - يُستخدم user-country (الافتراضي).",
   "maxmind.authRejectedWarning": "لم يعد MaxMind يقبل بيانات الاعتماد المخزنة عند التحديث المجدول لقاعدة البيانات - أعد حفظ معرف الحساب ومفتاح الترخيص.",
   "maxmind.check.verified": "أكد MaxMind هذه البيانات.",
   "maxmind.check.rejected": "رفض MaxMind بيانات الاعتماد (401/403) - تحقق من معرف الحساب ومفتاح الترخيص.",

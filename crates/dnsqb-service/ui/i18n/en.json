@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Failed to add \"{code}\": {message}",
   "maxmind.heading": "GeoIP source: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Configured. Account ID: {accountId}. Takes effect immediately.",
-  "maxmind.notConfiguredStatus": "Not configured - using DB-IP Lite (default).",
+  "maxmind.notConfiguredStatus": "Not configured - using user-country (default).",
   "maxmind.authRejectedWarning": "MaxMind no longer accepts the stored credentials on the scheduled database refresh - re-save the account ID and license key.",
   "maxmind.check.verified": "MaxMind confirmed these credentials.",
   "maxmind.check.rejected": "MaxMind rejected the credentials (401/403) - check the account ID and license key.",
@@ -165,7 +165,7 @@
   "filterControls.fanoutSummary": "Every non-cached query {partiesClause}: {checksClause} + the baseline resolver.",
   "filterControls.fanoutPartiesClause": {
     "one": "sees {n} party",
-    "other": "see {n} parties"
+    "other": "sees {n} parties"
   },
   "filterControls.fanoutChecksClause": {
     "one": "{n} enabled check",

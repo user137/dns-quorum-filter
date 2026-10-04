@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "הוספת \"{code}\" נכשלה: {message}",
   "maxmind.heading": "מקור GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "מוגדר. Account ID: {accountId}. נכנס לתוקף מיד.",
-  "maxmind.notConfiguredStatus": "לא מוגדר - נעשה שימוש ב-DB-IP Lite (ברירת מחדל).",
+  "maxmind.notConfiguredStatus": "לא מוגדר - נעשה שימוש ב-user-country (ברירת מחדל).",
   "maxmind.authRejectedWarning": "MaxMind כבר לא מקבל את פרטי ההזדהות השמורים בעדכון המתוזמן של מסד הנתונים - שמרו מחדש את ה-account ID ומפתח הרישיון.",
   "maxmind.check.verified": "MaxMind אישר את פרטי ההזדהות האלה.",
   "maxmind.check.rejected": "MaxMind דחה את פרטי ההזדהות (401/403) - בדקו את ה-account ID ומפתח הרישיון.",

@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Αποτυχία προσθήκης \"{code}\": {message}",
   "maxmind.heading": "Πηγή GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Έχει διαμορφωθεί. Account ID: {accountId}. Ισχύει άμεσα.",
-  "maxmind.notConfiguredStatus": "Δεν έχει διαμορφωθεί - χρησιμοποιείται το DB-IP Lite (προεπιλογή).",
+  "maxmind.notConfiguredStatus": "Δεν έχει διαμορφωθεί - χρησιμοποιείται το user-country (προεπιλογή).",
   "maxmind.authRejectedWarning": "Το MaxMind δεν αποδέχεται πλέον τα αποθηκευμένα διαπιστευτήρια στην προγραμματισμένη ενημέρωση βάσης δεδομένων - αποθηκεύστε ξανά το account ID και το κλειδί άδειας.",
   "maxmind.check.verified": "Το MaxMind επιβεβαίωσε αυτά τα διαπιστευτήρια.",
   "maxmind.check.rejected": "Το MaxMind απέρριψε τα διαπιστευτήρια (401/403) - ελέγξτε το account ID και το κλειδί άδειας.",

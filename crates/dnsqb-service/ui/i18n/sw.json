@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Imeshindwa kuongeza \"{code}\": {message}",
   "maxmind.heading": "Chanzo cha GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Imesanidiwa. Account ID: {accountId}. Inaanza kutumika mara moja.",
-  "maxmind.notConfiguredStatus": "Haijasanidiwa - inatumia DB-IP Lite (chaguo-msingi).",
+  "maxmind.notConfiguredStatus": "Haijasanidiwa - inatumia user-country (chaguo-msingi).",
   "maxmind.authRejectedWarning": "MaxMind haikubali tena taarifa za uthibitisho zilizohifadhiwa wakati wa sasisho la hifadhidata lililopangwa - hifadhi tena account ID na ufunguo wa leseni.",
   "maxmind.check.verified": "MaxMind imethibitisha taarifa hizi za uthibitisho.",
   "maxmind.check.rejected": "MaxMind imekataa taarifa za uthibitisho (401/403) - kagua account ID na ufunguo wa leseni.",

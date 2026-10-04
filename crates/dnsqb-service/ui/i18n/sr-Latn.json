@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Nije uspelo dodavanje \"{code}\": {message}",
   "maxmind.heading": "Izvor GeoIP-a: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Konfigurisano. Account ID: {accountId}. Odmah stupa na snagu.",
-  "maxmind.notConfiguredStatus": "Nije konfigurisano - koristi se DB-IP Lite (podrazumevano).",
+  "maxmind.notConfiguredStatus": "Nije konfigurisano - koristi se user-country (podrazumevano).",
   "maxmind.authRejectedWarning": "MaxMind više ne prihvata sačuvane akreditive pri planiranom ažuriranju baze podataka - ponovo sačuvajte account ID i licencni ključ.",
   "maxmind.check.verified": "MaxMind je potvrdio ove akreditive.",
   "maxmind.check.rejected": "MaxMind je odbio akreditive (401/403) - proverite account ID i licencni ključ.",

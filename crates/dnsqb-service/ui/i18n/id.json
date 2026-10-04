@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Gagal menambahkan \"{code}\": {message}",
   "maxmind.heading": "Sumber GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Dikonfigurasi. Account ID: {accountId}. Berlaku segera.",
-  "maxmind.notConfiguredStatus": "Tidak dikonfigurasi - menggunakan DB-IP Lite (default).",
+  "maxmind.notConfiguredStatus": "Tidak dikonfigurasi - menggunakan user-country (default).",
   "maxmind.authRejectedWarning": "MaxMind tidak lagi menerima kredensial yang tersimpan pada pembaruan basis data terjadwal - simpan ulang account ID dan kunci lisensi.",
   "maxmind.check.verified": "MaxMind mengonfirmasi kredensial ini.",
   "maxmind.check.rejected": "MaxMind menolak kredensial (401/403) - periksa account ID dan kunci lisensi.",

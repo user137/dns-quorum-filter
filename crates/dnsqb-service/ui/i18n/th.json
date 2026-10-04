@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "เพิ่ม \"{code}\" ไม่สำเร็จ: {message}",
   "maxmind.heading": "แหล่งที่มาของ GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "กำหนดค่าแล้ว Account ID: {accountId} มีผลทันที",
-  "maxmind.notConfiguredStatus": "ยังไม่ได้กำหนดค่า - ใช้ DB-IP Lite (ค่าเริ่มต้น)",
+  "maxmind.notConfiguredStatus": "ยังไม่ได้กำหนดค่า - ใช้ user-country (ค่าเริ่มต้น)",
   "maxmind.authRejectedWarning": "MaxMind ไม่ยอมรับข้อมูลรับรองที่บันทึกไว้อีกต่อไปเมื่อมีการอัปเดตฐานข้อมูลตามกำหนดการ - บันทึก account ID และคีย์ใบอนุญาตอีกครั้ง",
   "maxmind.check.verified": "MaxMind ยืนยันข้อมูลรับรองเหล่านี้แล้ว",
   "maxmind.check.rejected": "MaxMind ปฏิเสธข้อมูลรับรอง (401/403) - ตรวจสอบ account ID และคีย์ใบอนุญาต",

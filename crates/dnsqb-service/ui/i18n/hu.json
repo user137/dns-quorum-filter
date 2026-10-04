@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "\"{code}\" hozzáadása sikertelen: {message}",
   "maxmind.heading": "GeoIP forrás: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Konfigurálva. Account ID: {accountId}. Azonnal érvénybe lép.",
-  "maxmind.notConfiguredStatus": "Nincs konfigurálva - a DB-IP Lite van használatban (alapértelmezett).",
+  "maxmind.notConfiguredStatus": "Nincs konfigurálva - a user-country van használatban (alapértelmezett).",
   "maxmind.authRejectedWarning": "A MaxMind már nem fogadja el a tárolt hitelesítő adatokat az ütemezett adatbázis-frissítéskor - mentse el újra az account ID-t és a licenckulcsot.",
   "maxmind.check.verified": "A MaxMind megerősítette ezeket a hitelesítő adatokat.",
   "maxmind.check.rejected": "A MaxMind elutasította a hitelesítő adatokat (401/403) - ellenőrizze az account ID-t és a licenckulcsot.",

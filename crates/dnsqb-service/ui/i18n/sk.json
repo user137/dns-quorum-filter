@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Nepodarilo sa pridať „{code}\": {message}",
   "maxmind.heading": "Zdroj GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Nakonfigurované. Account ID: {accountId}. Platí okamžite.",
-  "maxmind.notConfiguredStatus": "Nenakonfigurované - používa sa DB-IP Lite (predvolené).",
+  "maxmind.notConfiguredStatus": "Nenakonfigurované - používa sa user-country (predvolené).",
   "maxmind.authRejectedWarning": "MaxMind už neprijíma uložené prihlasovacie údaje pri plánovanej aktualizácii databázy - znova uložte account ID a licenčný kľúč.",
   "maxmind.check.verified": "MaxMind potvrdil tieto prihlasovacie údaje.",
   "maxmind.check.rejected": "MaxMind odmietol prihlasovacie údaje (401/403) - skontrolujte account ID a licenčný kľúč.",

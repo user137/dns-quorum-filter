@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Kohteen \"{code}\" lisääminen epäonnistui: {message}",
   "maxmind.heading": "GeoIP-lähde: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Määritetty. Account ID: {accountId}. Astuu voimaan heti.",
-  "maxmind.notConfiguredStatus": "Ei määritetty - käytetään DB-IP Lite -tietokantaa (oletus).",
+  "maxmind.notConfiguredStatus": "Ei määritetty - käytetään user-country -tietokantaa (oletus).",
   "maxmind.authRejectedWarning": "MaxMind ei enää hyväksy tallennettuja tunnuksia ajastetussa tietokannan päivityksessä - tallenna account ID ja lisenssiavain uudelleen.",
   "maxmind.check.verified": "MaxMind vahvisti nämä tunnukset.",
   "maxmind.check.rejected": "MaxMind hylkäsi tunnukset (401/403) - tarkista account ID ja lisenssiavain.",

@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Neizdevās pievienot \"{code}\": {message}",
   "maxmind.heading": "GeoIP avots: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Konfigurēts. Account ID: {accountId}. Stājas spēkā nekavējoties.",
-  "maxmind.notConfiguredStatus": "Nav konfigurēts - tiek izmantots DB-IP Lite (noklusējums).",
+  "maxmind.notConfiguredStatus": "Nav konfigurēts - tiek izmantots user-country (noklusējums).",
   "maxmind.authRejectedWarning": "MaxMind vairs nepieņem saglabātos akreditācijas datus plānotajā datubāzes atjaunināšanā - saglabājiet account ID un licences atslēgu no jauna.",
   "maxmind.check.verified": "MaxMind apstiprināja šos akreditācijas datus.",
   "maxmind.check.rejected": "MaxMind noraidīja akreditācijas datus (401/403) - pārbaudiet account ID un licences atslēgu.",

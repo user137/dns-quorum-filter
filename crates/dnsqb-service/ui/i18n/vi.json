@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Không thể thêm \"{code}\": {message}",
   "maxmind.heading": "Nguồn GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Đã cấu hình. Account ID: {accountId}. Có hiệu lực ngay lập tức.",
-  "maxmind.notConfiguredStatus": "Chưa cấu hình - đang sử dụng DB-IP Lite (mặc định).",
+  "maxmind.notConfiguredStatus": "Chưa cấu hình - đang sử dụng user-country (mặc định).",
   "maxmind.authRejectedWarning": "MaxMind không còn chấp nhận thông tin xác thực đã lưu khi cập nhật cơ sở dữ liệu theo lịch trình - hãy lưu lại account ID và khóa giấy phép.",
   "maxmind.check.verified": "MaxMind đã xác nhận thông tin xác thực này.",
   "maxmind.check.rejected": "MaxMind đã từ chối thông tin xác thực (401/403) - kiểm tra account ID và khóa giấy phép.",

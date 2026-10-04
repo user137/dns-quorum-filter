@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "\"{code}\" شامل کرنے میں ناکام: {message}",
   "maxmind.heading": "GeoIP ماخذ: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "تشکیل شدہ۔ Account ID: {accountId}۔ فوری طور پر نافذ ہوتا ہے۔",
-  "maxmind.notConfiguredStatus": "تشکیل شدہ نہیں - DB-IP Lite (ڈیفالٹ) استعمال ہو رہا ہے۔",
+  "maxmind.notConfiguredStatus": "تشکیل شدہ نہیں - user-country (ڈیفالٹ) استعمال ہو رہا ہے۔",
   "maxmind.authRejectedWarning": "MaxMind اب مقررہ ڈیٹا بیس اپ ڈیٹ پر محفوظ شدہ کریڈینشلز قبول نہیں کرتا - account ID اور لائسنس کلید دوبارہ محفوظ کریں۔",
   "maxmind.check.verified": "MaxMind نے ان کریڈینشلز کی تصدیق کی۔",
   "maxmind.check.rejected": "MaxMind نے کریڈینشلز مسترد کر دیے (401/403) - account ID اور لائسنس کلید چیک کریں۔",

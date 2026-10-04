@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Kan \"{code}\" niet toevoegen: {message}",
   "maxmind.heading": "GeoIP-bron: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Geconfigureerd. Account ID: {accountId}. Direct van kracht.",
-  "maxmind.notConfiguredStatus": "Niet geconfigureerd - gebruikt DB-IP Lite (standaard).",
+  "maxmind.notConfiguredStatus": "Niet geconfigureerd - gebruikt user-country (standaard).",
   "maxmind.authRejectedWarning": "MaxMind accepteert de opgeslagen inloggegevens niet meer bij de geplande database-update - sla het account ID en de licentiesleutel opnieuw op.",
   "maxmind.check.verified": "MaxMind heeft deze inloggegevens bevestigd.",
   "maxmind.check.rejected": "MaxMind heeft de inloggegevens geweigerd (401/403) - controleer het account ID en de licentiesleutel.",

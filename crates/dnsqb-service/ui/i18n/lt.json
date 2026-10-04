@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Nepavyko pridėti „{code}\": {message}",
   "maxmind.heading": "GeoIP šaltinis: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Sukonfigūruota. Account ID: {accountId}. Įsigalioja iš karto.",
-  "maxmind.notConfiguredStatus": "Nesukonfigūruota - naudojama DB-IP Lite (numatytoji).",
+  "maxmind.notConfiguredStatus": "Nesukonfigūruota - naudojama user-country (numatytoji).",
   "maxmind.authRejectedWarning": "MaxMind nebepriima išsaugotų prisijungimo duomenų per planinį duomenų bazės atnaujinimą - iš naujo išsaugokite account ID ir licencijos raktą.",
   "maxmind.check.verified": "MaxMind patvirtino šiuos prisijungimo duomenis.",
   "maxmind.check.rejected": "MaxMind atmetė prisijungimo duomenis (401/403) - patikrinkite account ID ir licencijos raktą.",

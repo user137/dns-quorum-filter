@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "\"{code}\" の追加に失敗しました: {message}",
   "maxmind.heading": "GeoIPソース: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "設定済み。Account ID: {accountId}。即座に有効になります。",
-  "maxmind.notConfiguredStatus": "未設定 — DB-IP Lite(デフォルト)を使用しています。",
+  "maxmind.notConfiguredStatus": "未設定 — user-country(デフォルト)を使用しています。",
   "maxmind.authRejectedWarning": "MaxMindは、予定されているデータベース更新時に保存された認証情報を受け付けなくなりました — account IDとライセンスキーを再保存してください。",
   "maxmind.check.verified": "MaxMindはこれらの認証情報を確認しました。",
   "maxmind.check.rejected": "MaxMindは認証情報を拒否しました(401/403) — account IDとライセンスキーを確認してください。",

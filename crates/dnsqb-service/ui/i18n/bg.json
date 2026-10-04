@@ -88,7 +88,7 @@
   "geoip.addFailedTemplate": "Неуспешно добавяне на \"{code}\": {message}",
   "maxmind.heading": "Източник на GeoIP: MaxMind GeoLite2",
   "maxmind.configuredStatusTemplate": "Конфигурирано. Account ID: {accountId}. Влиза в сила незабавно.",
-  "maxmind.notConfiguredStatus": "Не е конфигурирано - използва се DB-IP Lite (по подразбиране).",
+  "maxmind.notConfiguredStatus": "Не е конфигурирано - използва се user-country (по подразбиране).",
   "maxmind.authRejectedWarning": "MaxMind вече не приема запазените credentials при планираното обновяване на базата данни - запазете отново account ID и лицензионния ключ.",
   "maxmind.check.verified": "MaxMind потвърди тези credentials.",
   "maxmind.check.rejected": "MaxMind отхвърли credentials (401/403) - проверете account ID и лицензионния ключ.",
