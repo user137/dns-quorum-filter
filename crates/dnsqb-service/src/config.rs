@@ -1500,6 +1500,34 @@ mod tests {
         ));
     }
 
+    /// T-270 (хвиля 0): the two free-text custom-provider fields are the only
+    /// `resolver_config.toml` strings with no shape validation, so a value
+    /// built to close its string and open a new table must come back
+    /// byte-identical, and `[cache]` must keep its default.
+    #[test]
+    fn save_then_load_keeps_a_table_injection_payload_inside_its_string() {
+        let (_dir, path) = temp_config_path();
+        let payload =
+            "x\"]\n[cache]\nmax_capacity = 1\n#'''\"\"\"\u{202e}\u{0}`<img src=x onerror=a()>&|;%=";
+        let Some(mut custom) = builtin_preset("quad9") else {
+            panic!("quad9 is a builtin preset");
+        };
+        custom.id = "payload".to_string();
+        custom.display_name = payload.to_string();
+        custom.doh_url = format!("https://dns.example/{payload}");
+        let mut config = ResolverConfig::default();
+        config.providers.push(ProviderEntry {
+            spec: custom,
+            enabled: true,
+        });
+        assert!(config.save(&path).is_ok(), "must be able to save");
+        let Ok(loaded) = ResolverConfig::load(&path) else {
+            panic!("must be able to load what was just saved");
+        };
+        assert_eq!(loaded, config);
+        assert_eq!(loaded.cache, ResolverConfig::default().cache);
+    }
+
     #[test]
     fn save_then_load_round_trips_a_non_default_config() {
         let (_dir, path) = temp_config_path();

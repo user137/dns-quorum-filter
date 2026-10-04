@@ -97,7 +97,7 @@ const providersData = {
 const logData = {
   entries: [{ timestamp_ms: 0, domain: "a.com", qtype: "A", decision: "BLOCKED", decision_source: "CCTLD_BLOCK", latency_ms: 5,
     voters: [{ provider_name: "quad9", status: { status: "ERROR", message: "x" } }, { provider_name: "z", status: { status: "ALLOW", ip_count: 2 } }],
-    resolved_ip_country: "SE" }], truncated: true,
+    resolved_ip_country: "SE", geoip_country: "RU" }], truncated: true,
 };
 const calls = [
   ["renderProtectionHero", `renderProtectionHero(heroPresentation("PROTECTED", {blocked: 3}))`],

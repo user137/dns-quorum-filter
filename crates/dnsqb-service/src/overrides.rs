@@ -1015,6 +1015,65 @@ mod tests {
         assert_eq!(loaded_invalid[0].list, ListKind::Blocklist);
     }
 
+    /// T-270 (хвиля 0): `InvalidEntry.raw` is written back verbatim, so a
+    /// hand-edited line built to close the blocklist array and open an
+    /// allowlist must stay one inert blocklist string after save → load.
+    #[test]
+    fn save_then_load_keeps_an_invalid_line_injection_payload_in_its_own_list() {
+        let invalid = vec![InvalidEntry {
+            raw: "*.*.x\"]\nallowlist = [\"evil.example\"]\n#".to_string(),
+            list: ListKind::Blocklist,
+            reason: InvalidReason::UnexpectedWildcard,
+        }];
+        let file = match tempfile::NamedTempFile::new() {
+            Ok(file) => file,
+            Err(err) => panic!("failed to create temp file: {err}"),
+        };
+        assert!(OverrideLists::empty().save(file.path(), &invalid).is_ok());
+        let Ok((loaded, loaded_invalid)) = OverrideLists::load(file.path()) else {
+            panic!("must be able to load what was just saved");
+        };
+        assert!(loaded.entries().is_empty());
+        assert_eq!(loaded_invalid.len(), 1);
+        assert_eq!(loaded_invalid[0].raw, invalid[0].raw);
+        assert_eq!(loaded_invalid[0].list, ListKind::Blocklist);
+    }
+
+    /// T-270 (хвиля 0), ARCH-15: a log row's domain is `Name::to_ascii()`
+    /// presentation form, which keeps `<`/`"` as `\`-escapes and turns
+    /// control/RTL bytes into `\DDD` - «додати з журналу» sends it as-is, so
+    /// every such shape (and the raw payloads behind them) must be refused,
+    /// never stored as a rule.
+    #[test]
+    fn with_entry_added_rejects_injection_payloads_and_wire_presentation_forms() {
+        for pattern in [
+            r"\<img\040src\=x\040onerror\=a\(\)\>.com",
+            r"a\012b.com",
+            r#"a\"b.com"#,
+            r"a\342\200\256b.com",
+            "<img src=x onerror=a()>.com",
+            "a\"b.com",
+            "a'b.com",
+            "a]b.com",
+            "a\nb.com",
+            "a\r\nb.com",
+            "a\0b.com",
+            "a\u{202e}b.com",
+            "a;b.com",
+            "a|b.com",
+            "a%b.com",
+        ] {
+            for list in [ListKind::Allowlist, ListKind::Blocklist] {
+                assert!(
+                    OverrideLists::empty()
+                        .with_entry_added(pattern, list)
+                        .is_err(),
+                    "an injection payload must not become an override rule"
+                );
+            }
+        }
+    }
+
     #[test]
     fn save_rejects_when_serialized_result_exceeds_the_size_limit() {
         // Uses a single huge `InvalidEntry.raw` (arbitrary text, no domain
