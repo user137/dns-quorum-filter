@@ -18,7 +18,7 @@
 //! one layer up.
 
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
@@ -479,6 +479,9 @@ impl OverrideLists {
     /// The caller (`dispatch.rs`'s `AppState`) is the one that actually
     /// tracks `invalid` across reloads.
     ///
+    /// Written via [`crate::paths::write_atomic`] (ARCH-01): an interrupted
+    /// write leaves the previous file, never a truncated one.
+    ///
     /// # Errors
     ///
     /// Returns [`OverrideError::Serialize`] if serialization fails (not
@@ -512,7 +515,7 @@ impl OverrideLists {
         if u64::try_from(toml.len()).unwrap_or(u64::MAX) > MAX_OVERRIDES_FILE_SIZE {
             return Err(OverrideError::TooLarge);
         }
-        fs::write(path, toml).map_err(OverrideError::Io)
+        crate::paths::write_atomic(path, toml.as_bytes()).map_err(OverrideError::Io)
     }
 }
 
@@ -1159,5 +1162,29 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new()?;
         file.write_all(contents.as_bytes())?;
         Ok(file)
+    }
+
+    /// ARCH-01 (хвиля 13a): same property as `config.rs`'s
+    /// `save_that_cannot_complete_leaves_the_original_file_intact`.
+    #[test]
+    fn save_that_cannot_complete_leaves_the_original_file_intact() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("overrides.toml");
+        let original = "blocklist = [\"keep.example\"]\n";
+        if let Err(err) = std::fs::write(&path, original) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        if let Err(err) = std::fs::create_dir(&tmp) {
+            panic!("must be able to create the blocking directory: {err}");
+        }
+        assert!(OverrideLists::empty().save(&path, &[]).is_err());
+        match std::fs::read_to_string(&path) {
+            Ok(got) => assert_eq!(got, original),
+            Err(err) => panic!("original must still be readable: {err}"),
+        }
     }
 }

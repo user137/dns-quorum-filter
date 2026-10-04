@@ -41,7 +41,7 @@
 //! validating constructor" precedent `cache::CacheConfig::from_secs`
 //! already set (T-153).
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use std::time::Duration;
@@ -793,6 +793,10 @@ impl ResolverConfig {
     /// This does blocking file I/O — call from a place that's already
     /// accepted that cost (T-52's admin handler), not a per-query hot path.
     ///
+    /// Written via [`crate::paths::write_atomic`] (ARCH-01): an interrupted
+    /// write leaves the previous file, never a truncated one that `load`
+    /// would silently read back as defaults.
+    ///
     /// # Errors
     ///
     /// Returns [`ConfigError::TomlSerialize`] if serialization fails (not
@@ -843,7 +847,7 @@ impl ResolverConfig {
             },
         };
         let toml = toml::to_string(&file).map_err(ConfigError::TomlSerialize)?;
-        fs::write(path, toml).map_err(ConfigError::Io)
+        crate::paths::write_atomic(path, toml.as_bytes()).map_err(ConfigError::Io)
     }
 }
 
@@ -2630,5 +2634,27 @@ mod tests {
             cases > 100,
             "expected the full field table to run, got {cases}"
         );
+    }
+
+    /// ARCH-01 (хвиля 13a): `save` must never truncate the live file in
+    /// place. A directory squatting on `<path>.tmp` makes the temp-file step
+    /// fail before any rename — the original must survive byte for byte.
+    #[test]
+    fn save_that_cannot_complete_leaves_the_original_file_intact() {
+        let (_dir, path) = temp_config_path();
+        let original = "port = 4443\n";
+        if let Err(err) = fs::write(&path, original) {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".tmp");
+        if let Err(err) = fs::create_dir(&tmp) {
+            panic!("must be able to create the blocking directory: {err}");
+        }
+        assert!(ResolverConfig::default().save(&path).is_err());
+        match fs::read_to_string(&path) {
+            Ok(got) => assert_eq!(got, original),
+            Err(err) => panic!("original must still be readable: {err}"),
+        }
     }
 }
