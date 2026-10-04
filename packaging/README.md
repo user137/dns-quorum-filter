@@ -48,6 +48,15 @@
   themselves, so an update never needs a manual "Exit" from the tray first. `Trust-TestCert.ps1
   -Install` already passes it.
 
+## Post-install smoke test
+
+`pwsh -File packaging\smoke-installed.ps1` checks an installed package before a release: the three
+processes, the `DnsqbWatcherStartup` startup-task state, every JSON GET route (TLS pinned to the
+package's `cert.pem`), the static site and all 37 dictionaries, one DoH query, `--help` of each
+binary run inside the package identity, and a `POST /admin/config` round trip that must leave
+`resolver_config.toml` byte-identical. Exit code 1 on any failure (`-InjectFailure` proves it). It
+never prints a `/admin/log` body and never calls a destructive route.
+
 ## The icon lives outside this directory
 
 `../assets/gen-icon.py` (Pillow) is the single source for the project's icon everywhere it's
