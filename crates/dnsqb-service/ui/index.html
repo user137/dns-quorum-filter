@@ -73,34 +73,86 @@
       Показати покрокову інструкцію
     </button>
     <div id="browser-setup-steps" hidden>
-      <!-- T-189: Chromium family (Chrome / Edge / Brave / Opera). main.js sets
-           #chromium-settings-url to the right scheme and unhides this block. -->
-      <ol id="browser-steps-chromium" class="setup-steps" hidden>
+      <!-- T-260: main.js names the browser it detected here and unhides that
+           browser's block; the picker below overrides the detection (Vivaldi
+           reports itself as Chrome, so the UA alone can't tell). -->
+      <p id="browser-detected" class="setup-detected"></p>
+      <div class="browser-picker">
+        <span data-i18n="browserSetup.otherBrowser">Інший браузер?</span>
+        <button type="button" class="link-button" data-browser="chrome" aria-pressed="false">Chrome</button>
+        <button type="button" class="link-button" data-browser="edge" aria-pressed="false">Edge</button>
+        <button type="button" class="link-button" data-browser="firefox" aria-pressed="false">Firefox</button>
+        <button type="button" class="link-button" data-browser="brave" aria-pressed="false">Brave</button>
+        <button type="button" class="link-button" data-browser="opera" aria-pressed="false">Opera</button>
+        <button type="button" class="link-button" data-browser="vivaldi" aria-pressed="false">Vivaldi</button>
+      </div>
+      <ol id="browser-steps-chrome" class="setup-steps" hidden>
         <li>
-          <span data-i18n-html="browserSetup.chromium.step1">Відкрийте новий таб і вставте в адресний рядок (посилання на
-          <code>chrome://</code>-сторінки з веб-сторінки не працюють — тільки вручну):</span>
+          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
           <span class="setup-copy-row">
-            <code id="chromium-settings-url">chrome://settings/security</code>
-            <button type="button" id="chromium-settings-copy" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            <code id="settings-url-chrome">chrome://settings/security</code>
+            <button type="button" id="settings-copy-chrome" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
           </span>
         </li>
         <li data-i18n="browserSetup.chromium.step2">«Використовувати безпечний DNS» → «Власний» → вставте адресу зверху.</li>
       </ol>
-      <!-- T-189: Firefox. -->
+      <ol id="browser-steps-edge" class="setup-steps" hidden>
+        <li>
+          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+          <span class="setup-copy-row">
+            <code id="settings-url-edge">edge://settings/privacy/security</code>
+            <button type="button" id="settings-copy-edge" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+          </span>
+        </li>
+        <li data-i18n="browserSetup.edge.step2">Увімкніть «Використовувати захищену службу DNS» → «Виберіть постачальника послуг» → вставте адресу зверху.</li>
+        <li data-i18n="browserSetup.edge.managedNote">Якщо перемикач сірий і поруч значок портфеля — Edge вважає себе керованим організацією: на комп'ютері є хоча б одна політика Edge (часто її лишають програми «оптимізації» Windows). Тоді змінити DNS у налаштуваннях Edge не вийде; список політик — на сторінці edge://policy.</li>
+      </ol>
+      <ol id="browser-steps-brave" class="setup-steps" hidden>
+        <li>
+          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+          <span class="setup-copy-row">
+            <code id="settings-url-brave">brave://settings/security</code>
+            <button type="button" id="settings-copy-brave" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+          </span>
+        </li>
+        <li data-i18n="browserSetup.brave.step2">«Використовувати захищений DNS-сервер» уже ввімкнено → у списку постачальників виберіть «Додати власного постачальника» → вставте адресу зверху.</li>
+      </ol>
+      <ol id="browser-steps-opera" class="setup-steps" hidden>
+        <li>
+          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+          <span class="setup-copy-row">
+            <code id="settings-url-opera">opera://settings/system</code>
+            <button type="button" id="settings-copy-opera" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+          </span>
+        </li>
+        <li data-i18n="browserSetup.opera.step2">Увімкніть «Використовуйте DNS-поверх-HTTPS замість параметрів DNS системи» (Opera одразу вибере Cloudflare) → виберіть останній пункт списку, без назви, з полем вводу → вставте адресу зверху.</li>
+      </ol>
+      <ol id="browser-steps-vivaldi" class="setup-steps" hidden>
+        <li>
+          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+          <span class="setup-copy-row">
+            <code id="settings-url-vivaldi">vivaldi:settings/network/</code>
+            <button type="button" id="settings-copy-vivaldi" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+          </span>
+        </li>
+        <li data-i18n="browserSetup.vivaldi.step2">Розділ «DNS через HTTPS» → «Інший провайдер DNS» → вставте адресу зверху; зелена галочка означає, що Vivaldi прийняв адресу.</li>
+      </ol>
       <ol id="browser-steps-firefox" class="setup-steps" hidden>
         <li>
           <span data-i18n="browserSetup.firefox.step1">Відкрийте новий таб і вставте в адресний рядок:</span>
           <span class="setup-copy-row">
-            <code id="firefox-settings-url">about:preferences#privacy</code>
-            <button type="button" id="firefox-settings-copy" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            <code id="settings-url-firefox">about:preferences#privacy</code>
+            <button type="button" id="settings-copy-firefox" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
           </span>
         </li>
         <li data-i18n="browserSetup.firefox.step2">
           Розділ «DNS через HTTPS» → «Максимальний захист» → «Обрати постачальника» →
           «Власний» → вставте адресу зверху.
         </li>
+        <li data-i18n="browserSetup.firefox.mode2Warning">Саме «Максимальний захист», не «Посилений захист»: у «Посиленому» Firefox на кожному заблокованому сайті тихо переходить на системний DNS — і сайт відкривається.</li>
+        <li data-i18n="browserSetup.firefox.librewolf">LibreWolf не підтримується: він не довіряє сертифікатам зі сховища Windows, тож не може під'єднатися до служби.</li>
       </ol>
-      <!-- T-189: unknown / other browser. -->
+      <!-- Unknown / other browser. -->
       <ol id="browser-steps-other" class="setup-steps" hidden>
         <li data-i18n="browserSetup.other.step1">
           У налаштуваннях браузера знайдіть «DNS через HTTPS» / «Secure DNS» /
@@ -108,12 +160,18 @@
         </li>
         <li data-i18n="browserSetup.other.step2">Оберіть режим «Власний» / «Custom» і вставте адресу зверху.</li>
       </ol>
-      <p class="setup-verify" data-i18n-html="browserSetup.verify">
+      <p id="browser-verify-chromium" class="setup-verify" data-i18n-html="browserSetup.verify">
         Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок
         <code>ALLOWED</code>. Що браузер справді резолвить саме через цю службу —
         перевіряється окремо: заблокуйте домен і відкрийте його, має бути
         <code>ERR_ADDRESS_INVALID</code> (не <code>ERR_NAME_NOT_RESOLVED</code>);
         повна процедура — у README, секція «Перевірка: браузер → локальний DoH».
+      </p>
+      <p id="browser-verify-firefox" class="setup-verify" data-i18n="browserSetup.verifyFirefox" hidden>
+        Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок ALLOWED. Що Firefox справді
+        резолвить саме через цю службу — перевіряється окремо: заблокуйте домен і відкрийте його — Firefox
+        покаже «Не вдається знайти сайт», а в логу з'явиться рядок BLOCKED для цього домену; повна процедура —
+        у README, секція «Перевірка: браузер → локальний DoH».
       </p>
     </div>
     <div id="browser-setup-result"></div>

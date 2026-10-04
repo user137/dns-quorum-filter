@@ -259,5 +259,34 @@ for (const [fn, data] of xssCalls) {
     console.log(`[xss] ${fn}: payload never rendered at all - the probe stopped observing`);
   }
 }
-console.log(`locales=${Object.keys(dicts).length} calls=${calls.length} xss=${xssCalls.length} failures=${failures}`);
-process.exit(failures ? 1 : 0);
+// T-258/T-260: the picker shows exactly one browser's steps plus the matching
+// verify paragraph, and a manual pick survives the async Brave refinement.
+(async () => {
+  const byId = {};
+  doc.getElementById = (id) => (byId[id] = byId[id] || { id, hidden: true, textContent: "" });
+  const pickers = ["chrome", "edge", "firefox", "brave", "opera", "vivaldi"].map((b) => ({ dataset: { browser: b }, attrs: {}, setAttribute(a, v) { this.attrs[a] = v; } }));
+  doc.querySelectorAll = (sel) => (sel === "[data-browser]" ? pickers : byAttr[sel] || []);
+  const families = ["chrome", "edge", "brave", "opera", "vivaldi", "firefox", "other"];
+  const check = (want, label) => {
+    const shown = families.filter((f) => byId[`browser-steps-${f}`] && !byId[`browser-steps-${f}`].hidden);
+    if (shown.join() !== want) { failures++; console.log(`[browser] ${label}: shown [${shown}] want [${want}]`); }
+    const ff = want === "firefox";
+    if (byId["browser-verify-firefox"].hidden === ff || byId["browser-verify-chromium"].hidden !== ff) { failures++; console.log(`[browser] ${label}: wrong verify paragraph`); }
+    const pressed = pickers.filter((p) => p.attrs["aria-pressed"] === "true").map((p) => p.dataset.browser);
+    if (pressed.join() !== (want === "other" ? "" : want)) { failures++; console.log(`[browser] ${label}: aria-pressed [${pressed}]`); }
+    const text = byId["browser-detected"].textContent;
+    if (!text || RAW_KEY.test(text) || TOKEN.test(text)) { failures++; console.log(`[browser] ${label}: bad label ${text}`); }
+  };
+  vm.runInContext(`DICT = __dict; CURRENT_LOCALE = "en";`, Object.assign(ctx, { __dict: dicts.en }));
+  for (const f of families) { vm.runInContext(`applyBrowserFamily(${JSON.stringify(f)})`, ctx); check(f, `apply ${f}`); }
+  let release;
+  ctx.navigator.brave = { isBrave: () => new Promise((r) => { release = r; }) };
+  const pending = vm.runInContext(`revealBrowserSteps()`, ctx);
+  check("chrome", "UA chrome before isBrave resolves");
+  vm.runInContext(`pickBrowserFamily("vivaldi")`, ctx);
+  release(true);
+  await pending;
+  check("vivaldi", "manual pick vs late isBrave");
+  console.log(`locales=${Object.keys(dicts).length} calls=${calls.length} xss=${xssCalls.length} failures=${failures}`);
+  process.exit(failures ? 1 : 0);
+})();

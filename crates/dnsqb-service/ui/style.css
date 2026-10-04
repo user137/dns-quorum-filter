@@ -358,6 +358,13 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
   margin-left: 0.15rem;
 }
+/* T-260: "Instructions for: X" + the manual browser picker. */
+.setup-detected { margin: 0.5rem 0 0.2rem; font-size: 12px; font-weight: 600; }
+.browser-picker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem;
+  font-size: 11.5px; color: var(--text-muted);
+}
+.browser-picker [aria-pressed="true"] { font-weight: 600; text-decoration: none; }
 .setup-verify {
   margin: 0.6rem 0 0; font-size: 11.5px; color: var(--text-muted);
   padding-top: 0.5rem; border-top: 1px dashed var(--line);

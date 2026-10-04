@@ -705,29 +705,80 @@ mod tests {
     }
 
     // T-189 — the browser-setup card carries a static step block per browser
-    // family (advisor: keep them in markup, main.js only unhides one), Firefox
-    // included, with the real settings-page string, and the detector wires
-    // Brave's async refinement.
+    // (advisor: keep them in markup, main.js only unhides one). T-260: one
+    // block per browser with that browser's own settings URL (the QA pass
+    // found Edge/Opera/Vivaldi landing on the wrong page), a manual picker
+    // for what the UA can't tell apart (Vivaldi reports as Chrome), and a
+    // per-family verify paragraph (T-258: Firefox's block page differs).
     #[test]
-    fn browser_setup_card_has_a_static_step_block_per_browser_family() {
-        for id in [
-            "browser-steps-chromium",
-            "browser-steps-firefox",
-            "browser-steps-other",
+    fn browser_setup_card_has_a_static_step_block_per_browser() {
+        for (family, url) in [
+            ("chrome", "chrome://settings/security"),
+            ("edge", "edge://settings/privacy/security"),
+            ("brave", "brave://settings/security"),
+            ("opera", "opera://settings/system"),
+            ("vivaldi", "vivaldi:settings/network/"),
+            ("firefox", "about:preferences#privacy"),
         ] {
             assert!(
-                INDEX_HTML.contains(id),
-                "the {id} step block must be present in static markup"
+                INDEX_HTML.contains(&format!("id=\"browser-steps-{family}\"")),
+                "the {family} step block must be present in static markup"
+            );
+            assert!(
+                INDEX_HTML.contains(&format!("<code id=\"settings-url-{family}\">{url}</code>")),
+                "the {family} block must name its own settings page {url}"
+            );
+            assert!(
+                INDEX_HTML.contains(&format!("id=\"settings-copy-{family}\"")),
+                "the {family} settings URL needs its own copy button"
+            );
+            assert!(
+                INDEX_HTML.contains(&format!("data-browser=\"{family}\"")),
+                "the picker must offer {family}"
             );
         }
-        assert!(
-            INDEX_HTML.contains("about:preferences#privacy"),
-            "the Firefox block must name the real settings page"
-        );
-        for token in ["detectBrowserFamily", "isBrave", "edge://settings"] {
+        assert!(INDEX_HTML.contains("id=\"browser-steps-other\""));
+        for id in ["browser-verify-chromium", "browser-verify-firefox"] {
+            assert!(INDEX_HTML.contains(&format!("id=\"{id}\"")), "{id} missing");
+        }
+        for token in ["detectBrowserFamily", "isBrave", "browserFamilyPinned"] {
             assert!(
                 MAIN_JS.contains(token),
                 "the browser detector must handle {token}"
+            );
+        }
+    }
+
+    // T-257/T-258 — the Firefox block must steer away from "Increased
+    // Protection" (it silently falls back to system DNS on every block) and
+    // say LibreWolf is unsupported; its verify text must not use Chrome codes.
+    #[test]
+    fn every_locale_firefox_setup_warns_about_mode_2_and_has_its_own_verify() {
+        for &(code, json) in I18N_DICTS {
+            let Ok(dict) = serde_json::from_str::<serde_json::Value>(json) else {
+                panic!("{code}.json must be valid JSON");
+            };
+            for key in [
+                "browserSetup.firefox.mode2Warning",
+                "browserSetup.firefox.librewolf",
+                "browserSetup.edge.managedNote",
+                "browserSetup.verifyFirefox",
+            ] {
+                assert!(dict[key].is_string(), "{code}.json must define {key}");
+            }
+            let Some(verify) = dict["browserSetup.verifyFirefox"].as_str() else {
+                panic!("{code}: verifyFirefox");
+            };
+            assert!(
+                !verify.contains("ERR_ADDRESS_INVALID"),
+                "{code}: Firefox has no ERR_ADDRESS_INVALID page"
+            );
+            let Some(verify_chromium) = dict["browserSetup.verify"].as_str() else {
+                panic!("{code}: verify");
+            };
+            assert!(
+                verify_chromium.contains("<code>ERR_ADDRESS_INVALID</code>"),
+                "{code}: the Chromium verify keeps its <code> markup"
             );
         }
     }

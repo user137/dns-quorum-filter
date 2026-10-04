@@ -254,6 +254,7 @@ function applyStaticTranslations() {
     el.setAttribute(attr, t(key));
   });
   syncBrowserSetupToggleLabel();
+  syncBrowserFamilyLabel();
   syncUninstallButtonLabel();
 }
 
@@ -3233,31 +3234,58 @@ function detectBrowserFamily() {
   return "other";
 }
 
-const CHROMIUM_SETTINGS_URL = {
-  chrome: "chrome://settings/security",
-  edge: "edge://settings/privacy",
-  brave: "brave://settings/security",
-  opera: "opera://settings",
+// T-260: one static step block per browser (index.html), so each one names
+// that browser's own settings page and labels. Brand names stay untranslated.
+const BROWSER_NAMES = {
+  chrome: "Chrome",
+  edge: "Microsoft Edge",
+  brave: "Brave",
+  opera: "Opera",
+  vivaldi: "Vivaldi",
+  firefox: "Firefox",
 };
+const BROWSER_FAMILIES = [...Object.keys(BROWSER_NAMES), "other"];
 
-// T-189: unhide the one static step block for `family`, hide the rest, set the
-// Chromium settings-URL. Synchronous - so a block is visible at every point.
-function applyBrowserFamily(family) {
-  const chromium = document.getElementById("browser-steps-chromium");
-  const firefox = document.getElementById("browser-steps-firefox");
-  const other = document.getElementById("browser-steps-other");
-  const urlCode = document.getElementById("chromium-settings-url");
-  [chromium, firefox, other].forEach((el) => {
-    if (el) el.hidden = true;
-  });
-  if (family === "firefox") {
-    if (firefox) firefox.hidden = false;
-  } else if (CHROMIUM_SETTINGS_URL[family]) {
-    if (urlCode) urlCode.textContent = CHROMIUM_SETTINGS_URL[family];
-    if (chromium) chromium.hidden = false;
-  } else if (other) {
-    other.hidden = false;
+let currentBrowserFamily = "other";
+// Set once the user picks a browser by hand: the async Brave check below must
+// not overwrite that choice when it resolves later.
+let browserFamilyPinned = false;
+
+// Re-run after every dictionary (re)load (applyStaticTranslations()), like the
+// toggle label: the sentence is translated, the browser name is not.
+function syncBrowserFamilyLabel() {
+  const label = document.getElementById("browser-detected");
+  if (label) {
+    label.textContent =
+      currentBrowserFamily === "other"
+        ? t("browserSetup.forOtherBrowser")
+        : t("browserSetup.forBrowserTemplate", { browser: BROWSER_NAMES[currentBrowserFamily] });
   }
+}
+
+// T-189: unhide the one static step block for `family`, hide the rest.
+// Synchronous - so a block is visible at every point. T-258: the verify
+// paragraph follows the family too (Firefox's block page differs).
+function applyBrowserFamily(family) {
+  currentBrowserFamily = BROWSER_FAMILIES.includes(family) ? family : "other";
+  BROWSER_FAMILIES.forEach((f) => {
+    const block = document.getElementById(`browser-steps-${f}`);
+    if (block) block.hidden = f !== currentBrowserFamily;
+  });
+  const isFirefox = currentBrowserFamily === "firefox";
+  const verifyChromium = document.getElementById("browser-verify-chromium");
+  const verifyFirefox = document.getElementById("browser-verify-firefox");
+  if (verifyChromium) verifyChromium.hidden = isFirefox;
+  if (verifyFirefox) verifyFirefox.hidden = !isFirefox;
+  document.querySelectorAll("[data-browser]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.browser === currentBrowserFamily));
+  });
+  syncBrowserFamilyLabel();
+}
+
+function pickBrowserFamily(family) {
+  browserFamilyPinned = true;
+  applyBrowserFamily(family);
 }
 
 // Apply the UA-detected family synchronously first (so the first-visit
@@ -3273,7 +3301,7 @@ async function revealBrowserSteps() {
     typeof navigator.brave.isBrave === "function"
   ) {
     try {
-      if (await navigator.brave.isBrave()) {
+      if ((await navigator.brave.isBrave()) && !browserFamilyPinned) {
         applyBrowserFamily("brave");
       }
     } catch (_err) {
@@ -3299,8 +3327,6 @@ function initBrowserSetup() {
   const steps = document.getElementById("browser-setup-steps");
   const toggle = document.getElementById("browser-setup-toggle");
   const field = document.getElementById("doh-url");
-  const chromiumUrl = document.getElementById("chromium-settings-url");
-  const firefoxUrl = document.getElementById("firefox-settings-url");
 
   if (toggle && steps) {
     toggle.addEventListener("click", () => {
@@ -3313,12 +3339,15 @@ function initBrowserSetup() {
   wireCopyButton(document.getElementById("doh-url-copy"), () =>
     field ? field.value : "",
   );
-  wireCopyButton(document.getElementById("chromium-settings-copy"), () =>
-    chromiumUrl ? chromiumUrl.textContent : "",
-  );
-  wireCopyButton(document.getElementById("firefox-settings-copy"), () =>
-    firefoxUrl ? firefoxUrl.textContent : "",
-  );
+  Object.keys(BROWSER_NAMES).forEach((family) => {
+    const url = document.getElementById(`settings-url-${family}`);
+    wireCopyButton(document.getElementById(`settings-copy-${family}`), () =>
+      url ? url.textContent : "",
+    );
+  });
+  document.querySelectorAll("[data-browser]").forEach((button) => {
+    button.addEventListener("click", () => pickBrowserFamily(button.dataset.browser));
+  });
   revealBrowserSteps();
 
   // First visit: open the steps so a new user is walked through setup. The
