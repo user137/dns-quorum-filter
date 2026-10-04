@@ -40,7 +40,10 @@ def main():
                       bug=sys.argv[4] if len(sys.argv) > 4 else None)]
     for it in items:
         apply(lines, it["id"], it["verdict"], it["evidence"], it.get("bug"))
-    MATRIX.write_text("\n".join(lines), encoding="utf-8")
+    data = "\n".join(lines).encode("utf-8")
+    tmp = MATRIX.with_suffix(".md.tmp")
+    tmp.write_bytes(data)
+    tmp.replace(MATRIX)
     print(f"updated {len(items)} row(s)")
 
 

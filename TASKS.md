@@ -1638,7 +1638,12 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   у PowerShell 7 лишає порожній файл (PowerShell не чекає GUI-subsystem процес); `Start-Process
   -Wait -RedirectStandardOutput` і `| Out-String` працюють. Низька тяжкість, не блокує реліз.
   Принагідно: другий екземпляр `dnsqb-service` логує `ERROR … not starting a second one`, але
-  виходить з кодом 0 — зафіксовано, не досліджено.
+  виходить з кодом 0 — зафіксовано, не досліджено. (4) **Доповнено 2026-10-04:** усі три `main.rs`
+  (`dnsqb-service/src/main.rs:23`, `dnsqb-tray/src/main.rs:193`, `dnsqb-watcher/src/main.rs:61`)
+  передають у `wants_help` `std::env::args()`, який панікує на аргументі, що не є коректним
+  Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
+  сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
+  код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
 - [ ] T-247 — **Заведено 2026-10-03, QA-прохід (рядок `B-maxmind-*`).** Картка `#geoip-maxmind-body`
   без кредів показує «Не налаштовано - використовується DB-IP Lite (за замовчуванням).»
   (`maxmind.notConfiguredStatus`, `main.js:1872`), хоча з T-226(б) типове джерело — `user-country`
@@ -1673,6 +1678,19 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   `url = "https://<account-id>.dns.nextdns.io/dns-query"` при помилці поряд потрапить у лог разом з
   ідентифікатором акаунта. Не відтворено саме з таким URL — висновок з форми повідомлення. Низька
   тяжкість (приватність, локальний лог).
+- [ ] T-256 — **Заведено 2026-10-04, QA-прохід (рядок `A-admin-cache-config-apply-SB2`).** Поля
+  `[cache]` не мають верхньої межі, і значення біля `u64::MAX` панікують на гарячому шляху.
+  Відтворено одноразовим in-process тестом (не закомічено): `CacheConfig::from_secs`
+  (`cache.rs:170`, той самий шлях для `[cache]` у `config.rs` і `CacheConfigUpdate::into_config`,
+  `admin.rs:1036`) приймає `u64::MAX`; `CacheEntry::new` (`cache.rs:84`, `Instant::now() + ttl`)
+  панікує «overflow when adding duration to instant» при `block_verdict_ttl_secs = u64::MAX`;
+  `CacheExpiry::expire_after_create` (`cache.rs:303`, `value.ttl + self.stale_grace`) панікує
+  «overflow when adding durations» при `stale_grace_secs = u64::MAX` і будь-якому ttl > 0 — тобто
+  на кожній вставці в кеш. Поріг — лише біля `u64::MAX` (`u64::MAX/2` с через moka проходить).
+  Паніка — у задачі з'єднання (release без `panic = "abort"`), процес живий, `in_flight`
+  зменшує RAII `InFlightGuard` (`dispatch.rs:578`). Три Б: software safety (необмежений ввід із
+  `/admin/*` і файлу), user safety (кожен DoH-запит рве з'єднання → браузер у режимі automatic
+  secure DNS може тихо піти повз фільтр). Наживо не ганялось, щоб не класти сервіс користувача.
 - [ ] T-255 — **Заведено 2026-10-04, QA-прохід (рядок `A-admin-install-cert-HP`).** Після
   встановлення сертифіката через `POST /admin/install-cert` (кнопка hero `/admin/ui`, T-188) іконка
   трею лишається червоною ~3.5 хв: спостережено на 0.8.0 — `cert-status` `TRUSTED` і hero
@@ -1681,14 +1699,17 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   лише пункти меню трею (`spawn_cert_action`), не адмін-маршрут. Hero й трей розходяться в той
   самий момент. Три Б: user safety — хибна тривога (червоний при робочому захисті), не false-safe;
   низька серйозність.
-- [ ] T-254 — **Заведено 2026-10-04, QA-прохід (рядок `I-degraded`).** Hero `/admin/ui` показує
-  `PROTECTED` («Захищено»), коли жоден фільтр не відповідає. Спостережено наживо на 0.8.0: hosts
+- [ ] T-254 — **Заведено 2026-10-04, QA-прохід (рядок `I-degraded`). Прогалина дизайну — потрібне
+  рішення користувача, не баг реалізації.** Hero `/admin/ui` показує `PROTECTED` («Захищено»), коли
+  жоден фільтр не відповідає. Спостережено наживо на 0.8.0: hosts
   перенаправив адреси всіх трьох дефолтних voter-ів у TEST-NET-3, кожен DoH-запит → SERVFAIL за
   ~530 мс, `degraded_events = 20/20`; трей правильно жовтий (T-196), а hero 90+ с тримав
   `PROTECTED`. Причина — `admin::compute_hero_state(watchdog, network, paused,
   has_active_provider, cert)` не має входу деградації, а `HeroStateView` — варіанту для неї.
-  UI-SPEC §4 п.6 / `diagrams/ui-status-indicator.md` кажуть, що hero і трей несуть «ті самі
-  умови й той самий порядок» — зараз вони розходяться саме на умові 5. Три Б: user safety —
+  Реалізація відповідає документації: діаграма `ui-status-indicator` робить умову 5 суфіксом
+  tooltip/amber трею, не станом hero (T-56), тож hero і трей розходяться на ній за дизайном.
+  Вирішити: чи потрібен hero-варіант для «усі фільтри мовчать» (новий `HeroStateView` = зміна
+  DTO з бампом `schema_version`). Три Б: user safety —
   сторінка налаштувань стверджує захист, коли фільтрація повністю не працює (false-safe).
   Окремо: hosts не перевів сервіс у `OFFLINE`, доки він не перезапустився — проба доступності
   тримає keep-alive з'єднання до маркерів, тож OFFLINE через hosts відтворюється лише на свіжому
