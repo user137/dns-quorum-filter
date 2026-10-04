@@ -526,8 +526,30 @@ function renderTimeoutConfig(status) {
     configPersistFailed || status.persisted === false
       ? `<div class="notice warn">${t("warning.notPersisted")}</div>`
       : "";
-  // T-249: the 2s poll and the post-change refresh rebuild these inputs; put
-  // keyboard focus back on the same control instead of dropping it to <body>.
+  // T-249: rebuild only when what the inputs show changed - an unchanged 2s
+  // poll must not replace (and re-focus, scrolling back to) the control the
+  // user is on. A locale switch builds a fresh `fields`, so it still renders.
+  const signature = [
+    status.timeout_mode,
+    status.serve_baseline_when_filters_unreachable,
+    configWarning !== "",
+    CURRENT_LOCALE,
+  ].join("|");
+  // ...and only while the DOM still shows the server's state: a radio clicked
+  // whose POST failed without changing the server must still be reverted.
+  const checkedMode = fields.querySelector('input[name="timeout-mode"]:checked');
+  const baselineToggle = fields.querySelector("#baseline-fallback-toggle");
+  const domMatchesServer =
+    checkedMode !== null &&
+    checkedMode.value === status.timeout_mode &&
+    baselineToggle !== null &&
+    baselineToggle.checked === Boolean(status.serve_baseline_when_filters_unreachable);
+  if (fields.dataset.rendered === signature && domMatchesServer) {
+    return;
+  }
+  fields.dataset.rendered = signature;
+  // A real change still rebuilds: put keyboard focus back on the same control
+  // instead of dropping it to <body>.
   const focused = fields.contains(document.activeElement) ? document.activeElement : null;
   const refocus =
     focused &&
@@ -559,7 +581,7 @@ function renderTimeoutConfig(status) {
   }
   const refocusTarget = refocus ? fields.querySelector(refocus) : null;
   if (refocusTarget) {
-    refocusTarget.focus();
+    refocusTarget.focus({ preventScroll: true });
   }
 }
 
