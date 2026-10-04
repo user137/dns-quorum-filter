@@ -191,6 +191,13 @@ pub enum ConfigError {
     /// not after.
     #[error("resolver config file exceeds the {MAX_CONFIG_FILE_SIZE}-byte size limit")]
     TooLarge,
+    /// The file exists but is empty or whitespace-only (хвиля 13b, DECISIONS.md
+    /// 2026-10-04): a loud error, not a silent reset to defaults — with atomic
+    /// saves (ARCH-01) no writer of this project leaves such a file, so it is
+    /// damage. A comments-only file is still a valid all-defaults config; a
+    /// missing file is still the first-run default.
+    #[error("resolver config file is empty")]
+    Empty,
     /// The `[cache]` table's `clamp_min_secs` exceeds `clamp_max_secs`
     /// (T-153) — rejected at load, same as `ZeroPort`/`ZeroTimeout` above,
     /// rather than constructing a `CacheConfig` that would later make
@@ -731,23 +738,9 @@ impl ResolverConfig {
     /// / [`ConfigError::ZeroHandshakeTimeout`] / [`ConfigError::ZeroIdleTimeout`]
     /// for an out-of-range `[limits]` field.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let mut handle = match File::open(path) {
-            Ok(handle) => handle,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(err) => return Err(ConfigError::Io(err)),
+        let Some(raw) = read_config_text(path)? else {
+            return Ok(Self::default());
         };
-        // Bounded read, not metadata-then-read - see overrides::OverrideLists
-        // ::load's own comment for why a size check has to be enforced by
-        // the call that actually allocates, not measured by a separate one.
-        let mut raw = String::new();
-        let read = handle
-            .by_ref()
-            .take(MAX_CONFIG_FILE_SIZE + 1)
-            .read_to_string(&mut raw)
-            .map_err(ConfigError::Io)?;
-        if u64::try_from(read).unwrap_or(u64::MAX) > MAX_CONFIG_FILE_SIZE {
-            return Err(ConfigError::TooLarge);
-        }
         // Legacy-sibling presence check (T-72, same pattern as T-144/T-145/
         // T-148): a bare `[providers]` table header is the pre-T-72 format;
         // `[[providers]]` (array of tables) is the new one. Checked before
@@ -921,6 +914,32 @@ impl ResolverConfig {
         let toml = toml::to_string(&file).map_err(ConfigError::TomlSerialize)?;
         crate::paths::write_atomic(path, toml.as_bytes()).map_err(ConfigError::Io)
     }
+}
+
+/// The file's text, or `None` when it does not exist (first run). Split out of
+/// [`ResolverConfig::load`] (хвиля 13b, `too_many_lines`).
+fn read_config_text(path: &Path) -> Result<Option<String>, ConfigError> {
+    let mut handle = match File::open(path) {
+        Ok(handle) => handle,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(ConfigError::Io(err)),
+    };
+    // Bounded read, not metadata-then-read - see overrides::OverrideLists
+    // ::load's own comment for why a size check has to be enforced by
+    // the call that actually allocates, not measured by a separate one.
+    let mut raw = String::new();
+    let read = handle
+        .by_ref()
+        .take(MAX_CONFIG_FILE_SIZE + 1)
+        .read_to_string(&mut raw)
+        .map_err(ConfigError::Io)?;
+    if u64::try_from(read).unwrap_or(u64::MAX) > MAX_CONFIG_FILE_SIZE {
+        return Err(ConfigError::TooLarge);
+    }
+    if raw.trim().is_empty() {
+        return Err(ConfigError::Empty);
+    }
+    Ok(Some(raw))
 }
 
 /// Validates and uppercases one `[geoip] blocked_countries` entry (T-76,
@@ -2768,5 +2787,28 @@ mod tests {
             }
             other => panic!("expected a parse error, got {:?}", other.map(|_| ())),
         }
+    }
+
+    /// Хвиля 13b: an empty or whitespace-only file is damage, not "all
+    /// defaults"; a comments-only file still is a valid all-defaults config.
+    #[test]
+    fn load_rejects_an_empty_file_but_accepts_a_comments_only_one() {
+        for empty in ["", "\n  \n\t"] {
+            let (_dir, path) = temp_config_path();
+            if let Err(err) = fs::write(&path, empty) {
+                panic!("must be able to write the fixture file: {err}");
+            }
+            assert!(
+                matches!(ResolverConfig::load(&path), Err(ConfigError::Empty)),
+                "{empty:?}"
+            );
+        }
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "# hand-written, all defaults\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        assert!(
+            matches!(ResolverConfig::load(&path), Ok(config) if config == ResolverConfig::default())
+        );
     }
 }

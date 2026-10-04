@@ -61,6 +61,7 @@ use crate::personal_zone_persist::{
 use crate::personal_zone_stats::PersonalZoneStats;
 use crate::rating_filter::ZoneLists;
 use crate::reachability::run_reachability_prober;
+use crate::startup_failure::{self, StartupFailure};
 use crate::timeout::TimeoutConfig;
 use crate::tls::load_or_generate_server_config;
 use crate::topn_updater::{load_zone_from_disk, run_topn_updater};
@@ -135,7 +136,7 @@ pub async fn run() {
         Ok(config) => config,
         Err(err) => {
             tracing::error!("failed to obtain a TLS certificate: {err}");
-            std::process::exit(1);
+            fail_startup(app_data.as_deref(), StartupFailure::CertificateUnavailable);
         }
     };
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
@@ -151,11 +152,11 @@ pub async fn run() {
                 "port {port} is already in use - not falling back to a different port \
                  (SPEC.md §1); stop the conflicting process, or edit resolver_config.toml"
             );
-            std::process::exit(1);
+            fail_startup(app_data.as_deref(), StartupFailure::PortInUse { port });
         }
         Err(err) => {
             tracing::error!("failed to bind the DoH listener: {err}");
-            std::process::exit(1);
+            fail_startup(app_data.as_deref(), StartupFailure::from_bind_error(&err));
         }
     };
 
@@ -163,7 +164,7 @@ pub async fn run() {
         Ok(client) => client,
         Err(err) => {
             tracing::error!("failed to build the upstream DoH client: {err}");
-            std::process::exit(1);
+            fail_startup(app_data.as_deref(), StartupFailure::UpstreamClientFailed);
         }
     };
 
@@ -667,27 +668,46 @@ fn acquire_service_guard(app_data: Option<&Path>) -> Option<InstanceGuard> {
             if let Err(err) = write_pid_file(dir, InstanceRole::Service) {
                 tracing::warn!("could not write the pid file: {err}");
             }
+            // Хвиля 13b: only the guard holder clears the last failure record
+            // and may honour reset-config.flag (never a second instance).
+            startup_failure::begin_attempt(dir);
             Some(guard)
         }
+        // T-246 (хвиля 13b): not a failure - the running instance is the one
+        // that serves; exit 0 and leave its startup record alone.
         Err(GuardError::AlreadyRunning(role)) => {
-            tracing::error!(
+            tracing::info!(
                 "another {role} instance is already running on this app-data directory - \
                  not starting a second one (SPEC.md §7.1 #2)"
             );
-            std::process::exit(1);
+            std::process::exit(0);
         }
         Err(GuardError::Io(err)) => {
             tracing::error!("could not acquire the single-instance lock: {err}");
-            std::process::exit(1);
+            fail_startup(Some(dir), StartupFailure::InstanceLockFailed);
         }
         // Unreachable on the only build target (deny.toml `targets` =
         // windows-msvc); named for exhaustiveness, never `unreachable!()`
         // (rust.md "Panic-Free Production Code").
         Err(GuardError::UnsupportedPlatform) => {
             tracing::error!("single-instance guard is unavailable on this platform");
-            std::process::exit(1);
+            fail_startup(Some(dir), StartupFailure::InstanceLockFailed);
         }
     }
+}
+
+/// Хвиля 13b (ARCH-03): record why this start failed, then `exit(1)`. The
+/// watcher reads the record and does not spend its restart budget on a
+/// failure a restart cannot fix; the tray shows the reason and the one
+/// action. A failed write is only logged - the watchdog then falls back to
+/// its pre-13b behaviour (restarts until `GaveUp`).
+fn fail_startup(app_data: Option<&Path>, reason: StartupFailure) -> ! {
+    if let Some(dir) = app_data {
+        if let Err(err) = startup_failure::write(dir, reason) {
+            tracing::warn!("could not record the startup failure: {err}");
+        }
+    }
+    std::process::exit(1)
 }
 
 /// Loads a `GeoIP` database a previous run already persisted, if any (T-75).
@@ -986,7 +1006,7 @@ fn load_resolver_config(app_data: Option<&Path>) -> ResolverConfig {
         Ok(config) => config,
         Err(err) => {
             tracing::error!("failed to load resolver_config.toml: {err}");
-            std::process::exit(1);
+            fail_startup(Some(dir), StartupFailure::from_config_error(&err));
         }
     }
 }

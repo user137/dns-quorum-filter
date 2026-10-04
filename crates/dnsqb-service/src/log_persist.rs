@@ -97,16 +97,23 @@ enum LoadError {
 /// flush does not overwrite (and destroy) whatever it held — a key might
 /// resurface. Best-effort: a failed rename is logged, not fatal.
 pub(crate) fn rename_orphan(path: &Path) {
+    match move_aside(path) {
+        Ok(orphan) => tracing::warn!("moved an un-decryptable query-log file aside to {orphan:?}"),
+        Err(err) => tracing::warn!("could not move the un-decryptable query-log file aside: {err}"),
+    }
+}
+
+/// Renames `path` to `<path>.orphaned-<unix_ts>` and returns the new path.
+/// Shared by [`rename_orphan`] and the хвиля 13b config reset.
+pub(crate) fn move_aside(path: &Path) -> std::io::Result<PathBuf> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let mut orphan = path.as_os_str().to_owned();
     orphan.push(format!(".orphaned-{ts}"));
     let orphan = PathBuf::from(orphan);
-    match std::fs::rename(path, &orphan) {
-        Ok(()) => tracing::warn!("moved an un-decryptable query-log file aside to {orphan:?}"),
-        Err(err) => tracing::warn!("could not move the un-decryptable query-log file aside: {err}"),
-    }
+    std::fs::rename(path, &orphan)?;
+    Ok(orphan)
 }
 
 /// Reads, decrypts and parses `path`, seeding `log` with what it held.

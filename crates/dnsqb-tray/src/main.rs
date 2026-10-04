@@ -175,14 +175,24 @@ fn bootstrap(app_data: &Path) -> Option<(InstanceGuard, u16)> {
     // when a watcher is already running.
     ensure_sibling_running(app_data, InstanceRole::Watcher);
 
-    let port = match ResolverConfig::load(&app_data.join("resolver_config.toml")) {
+    Some((guard, configured_port(app_data)))
+}
+
+/// The `DoH`/admin port from `resolver_config.toml`, or the default with a
+/// warning. Хвиля 13b: an invalid config must not stop the tray - it is the
+/// one place that shows the startup failure and offers «Скинути
+/// налаштування» (same fallback shape as `dnsqb-watcher`'s `load_port`).
+fn configured_port(app_data: &Path) -> u16 {
+    match ResolverConfig::load(&app_data.join("resolver_config.toml")) {
         Ok(config) => config.port,
         Err(err) => {
-            tracing::error!("failed to load resolver_config.toml: {err}");
-            std::process::exit(1);
+            let fallback = ResolverConfig::default().port;
+            tracing::warn!(
+                "could not load resolver_config.toml ({err}); using the default port {fallback}"
+            );
+            fallback
         }
-    };
-    Some((guard, port))
+    }
 }
 
 fn main() {
@@ -1135,10 +1145,29 @@ fn confirm_quit(locale: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        about_dialog_text, format_uninstall_report, menu_action_for, trust_store_outcome_text,
-        MenuAction,
+        about_dialog_text, configured_port, format_uninstall_report, menu_action_for,
+        trust_store_outcome_text, MenuAction,
     };
-    use dnsqb_service::{ArtifactOutcome, TrustStoreOutcome, UninstallReport};
+    use dnsqb_service::{ArtifactOutcome, ResolverConfig, TrustStoreOutcome, UninstallReport};
+
+    // Хвиля 13b: the tray must come up on a broken config - it is the only
+    // place the cause and «Скинути налаштування» can be shown.
+    #[test]
+    fn configured_port_falls_back_to_the_default_on_a_broken_or_empty_config() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir must be creatable");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let default = ResolverConfig::default().port;
+        assert_eq!(configured_port(dir.path()), default, "missing");
+        for body in ["", "port = \"broken\"", "port = 9443"] {
+            if let Err(err) = std::fs::write(&path, body) {
+                panic!("fixture: {err}");
+            }
+            let expected = if body == "port = 9443" { 9443 } else { default };
+            assert_eq!(configured_port(dir.path()), expected, "{body:?}");
+        }
+    }
 
     // Found in live smoke-testing (2026-09-22): the About dialog's settings
     // URL used to be a literal with no port, hitting 443 instead of the

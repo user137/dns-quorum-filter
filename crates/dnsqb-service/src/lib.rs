@@ -160,6 +160,7 @@ mod query_log;
 mod quorum;
 mod rating_filter;
 mod reachability;
+mod startup_failure;
 mod timeout;
 mod tls;
 mod topn_download;
@@ -188,8 +189,8 @@ pub use dispatch::{
 };
 pub use geoip_updater::GeoipSource;
 pub use lifecycle::{
-    clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_stop_flag,
-    stop_flag_is_set,
+    clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_reset_config_flag,
+    set_retry_flag, set_stop_flag, stop_flag_is_set, take_retry_flag,
 };
 pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
 pub use logging::init as init_logging;
@@ -200,6 +201,7 @@ pub use public_suffix::{Psl, PSL_DAT, PSL_PINNED_COMMIT};
 pub use query_log::QueryLog;
 pub use quorum::{is_blocked, requires_quorum};
 pub use rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
+pub use startup_failure::{read as read_startup_failure, StartupFailure, STARTUP_ERROR_FILE_NAME};
 pub use timeout::TimeoutMode;
 pub use trust_store::{
     ensure_installed, is_trusted, uninstall, TrustStoreError, TrustStoreOutcome,
