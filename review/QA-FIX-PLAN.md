@@ -21,7 +21,7 @@
 | 3 | Hero при мертвих фільтрах | T-254 | Зміна DTO з бампом `schema_version` — окремо; **лише після рішення користувача** | `admin.rs` (`compute_hero_state`, `HeroStateView`), `ui/main.js`, `ui/i18n/*.json`, `UI-SPEC.md`, `diagrams/ui-status-indicator*` | рішення користувача | так | `admin::hero_and_category_tests` — новий вхід деградації; DTO-тест бампу | CI + наживо hosts-деградація (UAC) | M | на рішення користувача (false-safe — рекомендую так) |
 | 4 | Стійкість CLI | T-246 (2), (4) | Ті самі три `main.rs` + `cli_help.rs`, одна перевірка | `dnsqb-service/src/main.rs:23`, `dnsqb-tray/src/main.rs:193`, `dnsqb-watcher/src/main.rs:61`, `cli_help.rs` | — | ні | `wants_help` над `OsString` з непарним сурогатом; друк довідки у writer, що повертає `BrokenPipe` → без паніки | CI + `smoke-installed.ps1` + ручний `--help \| Select -First 1` | S | ні |
 | 5 | Tooltip трею (залежність) | T-253 | Оновлення/патч `tray-icon` — lower-layer, окремо | `crates/dnsqb-tray/Cargo.toml`, `Cargo.lock`, `SECURITY.md`, можливо `dnsqb-tray/src/main.rs` | — | так | `compose_tooltip` уже покрито; довжину нативного tooltip — лише наживо | `cargo deny`/`audit` у CI + наведення миші на іконку з артефакту GitHub | M | ні (рекомендую до релізу) |
-| 6 | Дрібниці трею | T-255, T-251, T-263, T-264 | Обидва — `dnsqb-tray`, один артефакт для перевірки | `dnsqb-tray/src/status.rs` (`spawn_trust_watch`), `dnsqb-tray/src/main.rs:617-627` | хвиля 5 (той самий крейт) | ні | перехід cert `NOT_TRUSTED→TRUSTED` у `/admin/status` викликає recheck; рядок логу паузи | CI + наживо: install-cert з `/admin/ui` → трей зелений ≤ 5 с | S | ні |
+| 6 | Дрібниці трею | T-255, T-251, T-263, T-264, T-269 | Обидва — `dnsqb-tray`, один артефакт для перевірки | `dnsqb-tray/src/status.rs` (`spawn_trust_watch`), `dnsqb-tray/src/main.rs:617-627` | хвиля 5 (той самий крейт) | ні | перехід cert `NOT_TRUSTED→TRUSTED` у `/admin/status` викликає recheck; рядок логу паузи | CI + наживо: install-cert з `/admin/ui` → трей зелений ≤ 5 с | S | ні |
 | 7 | Приватність логу конфігу | T-252 | Точковий privacy-фікс | `config.rs` / `orchestrate.rs` (місце логування помилки `toml`) | хвиля 1 (спільний `config.rs`) | ні | помилка розбору → у тексті логу немає цитати рядка файлу | CI + наживо: битий `resolver_config.toml` + `/admin/reset` | S | ні |
 | 8 | Помилки POST у `/admin/ui` | T-250 | Один клас бага: невдалий POST руйнує картку/hero | `ui/main.js` (`onConfigChanged` :654, `renderError`, картки категорій і провайдерів) | — | ні | `ui/smoke.js`: reject `fetch` → картка лишає контроли, видно рядок помилки, hero не `SERVICE_UNREACHABLE` | CI (`ui-smoke`) + chrome-devtools/Firefox на артефакті | M | ні |
 | 9 | Перемальовування не стирає ввід | T-248 (+T-242 після рішення) | Один клас: ре-рендер скидає те, що користувач редагує; T-242 — нове опитування логу, яке не має скидати той самий стан | `ui/main.js` (`renderTranslatedCards`, `refreshLog`) | хвиля 8 (той самий `main.js`) | ні | `ui/smoke.js`: зміна локалі зберігає ввід overrides/пошуку й відкриті `?` | CI + браузер на артефакті | M | ні |
@@ -102,12 +102,14 @@
 - Коміт: 1-2. Артефакт: так — перевірка лише наведенням миші (CI нативний tooltip не бачить).
 - Re-test: `D-tooltip-suffixes`, `D-icon-Filtering-cert-untrusted`, `D-icon-Filtering-cert-untrusted-SB`.
 
-### Хвиля 6 — дрібниці трею (T-255, T-251, T-263, T-264)
+### Хвиля 6 — дрібниці трею (T-255, T-251, T-263, T-264, T-269)
 - T-255: сигнал зі служби перетинає межу процесу — трей бачить зміну cert-стану в `/admin/status`
   (2 с опитування) і смикає `request_recheck()`; маршрут служби не змінюється.
 - T-251: рядок `info` у `tray.log` при вдалій паузі.
 - T-263: текст діалогу «Вийти» (37 локалей трею) — назвати обидва наслідки: тихий обхід фільтра в
   автоматичному режимі браузера і непрацюючі сайти в режимі secure.
+- T-269: майстер «Welcome» відкривається позаду інших вікон після першого запуску — спершу
+  діагноз (обмеження фокусу для фонового процесу), потім фікс.
 - T-264: UIA-ім'я іконки — склейка зі стартовим «service unreachable»; спершу діагноз (`szTip` у
   `tray-icon`), потім фікс або обмеження.
 - Коміти: 4 (по задачі). Артефакт: так. Re-test: `A-admin-install-cert-HP`, `C-PAUSE_RESUME_ID-SB`,
