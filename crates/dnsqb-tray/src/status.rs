@@ -276,15 +276,16 @@ fn startup_failure_tooltip(reason: StartupFailure, locale: &str) -> String {
 }
 
 /// Which recovery menu items are enabled for `status`: («Спробувати ще раз»,
-/// «Скинути налаштування»). Хвиля 13b — the reset only answers an invalid
-/// config.
+/// «Скинути налаштування»). Хвиля 13b — retry is live whenever the service is
+/// not answering (`Unreachable` included: a dead watcher leaves the state file
+/// stale, and the retry click also relaunches the watcher); the reset only
+/// answers an invalid config.
 #[must_use]
 pub fn recovery_actions(status: TrayStatus) -> (bool, bool) {
     match status {
-        TrayStatus::ServiceGaveUp => (true, false),
+        TrayStatus::ServiceGaveUp | TrayStatus::Unreachable => (true, false),
         TrayStatus::ServiceStartupFailed(reason) => (true, reason == StartupFailure::ConfigInvalid),
-        TrayStatus::Unreachable
-        | TrayStatus::ServiceRestarting
+        TrayStatus::ServiceRestarting
         | TrayStatus::Paused
         | TrayStatus::Offline
         | TrayStatus::NoActiveProvider { .. }
@@ -407,6 +408,7 @@ mod tests {
     #[test]
     fn recovery_actions_offer_retry_when_down_and_reset_only_for_a_bad_config() {
         assert_eq!(recovery_actions(TrayStatus::ServiceGaveUp), (true, false));
+        assert_eq!(recovery_actions(TrayStatus::Unreachable), (true, false));
         for reason in EVERY_FAILURE {
             let want_reset = reason == StartupFailure::ConfigInvalid;
             assert_eq!(
@@ -416,7 +418,6 @@ mod tests {
             );
         }
         for other in [
-            TrayStatus::Unreachable,
             TrayStatus::ServiceRestarting,
             TrayStatus::Paused,
             TrayStatus::Offline,

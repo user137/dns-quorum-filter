@@ -133,16 +133,17 @@ pub(crate) fn take_reset_config_flag(app_data_dir: &Path) -> bool {
     take(&flag_path(app_data_dir, RESET_CONFIG_FLAG_NAME))
 }
 
-/// One-shot consume. A flag that exists but cannot be removed still counts as
-/// present (logged) — both consumers are idempotent, so acting twice is safe,
-/// while ignoring a real request is not.
+/// One-shot consume. A flag that exists but cannot be removed counts as **not**
+/// taken (logged): acting on it would repeat every tick — for `retry.flag` a
+/// silent restart loop, exactly what SPEC §7 forbids — while ignoring it only
+/// leaves the user's click without effect, which they can see and retry.
 fn take(path: &Path) -> bool {
     match std::fs::remove_file(path) {
         Ok(()) => true,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
         Err(err) => {
-            tracing::warn!("could not remove {}: {err}", path.display());
-            true
+            tracing::warn!("could not remove {}, ignoring it: {err}", path.display());
+            false
         }
     }
 }
