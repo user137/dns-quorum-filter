@@ -407,8 +407,9 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   `stop.flag`). «Відновити» прибирає `stop.flag` + `ensure_sibling_running(Service)` (ідемпотентно).
   `/admin/status.paused` несе цей стан, hero `/admin/ui` показує окремий сірий «Фільтрацію
   призупинено».
-- **Спробувати ще раз** / **Скинути налаштування** (хвиля 13b) — активні лише коли служба лежить
-  (`GAVE_UP`). Перший пише `retry.flag` (+ `ensure_sibling_running(Watcher)`): watcher на наступному
+- **Спробувати ще раз** / **Скинути налаштування** (хвиля 13b) — перший активний, коли служба не
+  відповідає (`GAVE_UP` або `Unreachable` — мертвий watcher лишає застарілий стан-файл), другий —
+  лише при причині `ConfigInvalid`. Перший пише `retry.flag` (+ `ensure_sibling_running(Watcher)`): watcher на наступному
   тіку бере новий бюджет і піднімає службу. Другий — лише для причини `ConfigInvalid`, за
   confirm-діалогом: пише `reset-config.flag` + `retry.flag`; сам файл відкладає служба на старті.
   Tooltip називає причину (`startup-error.json`; для зайнятого порту — номер) і цю дію; ранжується

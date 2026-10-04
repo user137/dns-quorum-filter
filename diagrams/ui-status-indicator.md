@@ -5,7 +5,8 @@ T-128, T-152, T-176, T-188, T-191, T-193, T-196, T-204, T-211; SERVICES.md §dns
 `crates/dnsqb-service/src/admin.rs` (`compute_hero_state`, `HeroStateView`);
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08, 2026-09-10 (T-191 — колір іконки; T-188 — онбординг +
 hero cert-гілка; T-193 — пауза = нефільтрований baseline + `AdminStatusResponse.paused`;
-T-204 — сходи hero обчислюються на сервері як `AdminStatusResponse.hero_state`).
+T-204 — сходи hero обчислюються на сервері як `AdminStatusResponse.hero_state`); DECISIONS.md
+2026-10-04 «Хвиля 13b» і «трей: GaveUp вище паузи».
 
 # Індикатор стану — умови, не автомат переходів
 
@@ -35,8 +36,9 @@ automaton — примусове зведення в один stateDiagram бу�
 0-voters** — DECISIONS.md 2026-09-02; **офлайн між watchdog і 0-voters** — DECISIONS.md
 2026-09-03; **пауза (3a) між офлайн і 0-voters** у конвеєрі/hero — DECISIONS.md 2026-09-08 (T-193;
 офлайн виграє, бо baseline теж недосяжний). **У трей-tooltip'і `Paused` навпаки ранжується вище
-за все** (свідома дія має читатись як така, не як збій) — навмисна розбіжність, як з cert-override
-нижче.
+за все, крім `ServiceGaveUp` / `ServiceStartupFailed`** (свідома дія має читатись як така, не як
+збій; але мертва служба під час паузи — справжній збій, хвиля 13b, `status::local_status`) —
+навмисна розбіжність, як з cert-override нижче.
 
 ```mermaid
 flowchart TD
@@ -108,8 +110,9 @@ flowchart TD
   нефільтрований baseline тією ж гілкою, що й «0 voters» (без кешу). `GET /admin/status.paused`
   несе стан. **T-204:** `compute_hero_state` ставить `PAUSED` **між** `OFFLINE` (умова 3) і
   `NO_PROVIDERS` (умова 4). Трей-tooltip `TrayStatus::Paused` (читається прямо з `stop.flag`)
-  навпаки ранжується вище за все — свідома пауза не має читатись як збій; навмисна розбіжність
-  порядку hero-vs-tray (DECISIONS.md 2026-09-08). `hero_state` **не** консумується треєм.
+  навпаки ранжується вище за все, крім `GaveUp` (хвиля 13b: після T-193 пауза не гасить службу, тож
+  мертва служба під час паузи — збій, і сірий «Призупинено» сховав би «Спробувати ще раз»);
+  навмисна розбіжність порядку hero-vs-tray (DECISIONS.md 2026-09-08, 2026-10-04). `hero_state` **не** консумується треєм.
 - **Cert-гілка hero (T-188, Батч 3.13; T-204/T-211)** — `compute_hero_state` ставить дві гілки
   **після** умови 4 (0 voters), **перед** `PROTECTED`: `cert == Some(NotTrusted)` →
   `CERT_NOT_TRUSTED` (`is-bad` «Сертифікат не встановлено» + кнопка → `POST /admin/install-cert`);
@@ -143,7 +146,7 @@ flowchart TD
 | `Filtering` (`degraded_events == degraded_window > 0` — всі останні quorum-запити деградували, T-196) | так | 🟡 amber |
 | `ServiceRestarting` / `Offline` | будь-яке | 🟡 amber |
 | `NoActiveProvider` / `Paused` | так | ⚪ grey |
-| `Unreachable` / `ServiceGaveUp` | будь-яке | 🔴 red |
+| `Unreachable` / `ServiceGaveUp` / `ServiceStartupFailed` (хвиля 13b) | будь-яке | 🔴 red |
 | `Filtering` (будь-яка degraded) | **ні** | 🔴 red (override) |
 | `NoActiveProvider` / `Paused` / `Offline` / watchdog | **ні** | без override — колір рядка вище |
 
