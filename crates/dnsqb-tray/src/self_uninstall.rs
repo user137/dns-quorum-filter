@@ -159,10 +159,16 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path) -> Option<String> {
     if dir.file_name()?.to_str()? != "dns-quorum-filter" {
         return None;
     }
-    // Single-quoted in the script, so only a literal `'` needs escaping
-    // (doubled). `%LOCALAPPDATA%` paths don't contain one in practice; guard
-    // anyway.
-    let quoted = dir.to_str()?.replace('\'', "''");
+    // Single-quoted in the script. PowerShell closes such a string on `'`
+    // *and* on the typographic quotes U+2018/2019/201A/201B, so each of the
+    // four is escaped by doubling (T-272) - a profile named O’Brien is real.
+    let mut quoted = String::new();
+    for ch in dir.to_str()?.chars() {
+        quoted.push(ch);
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(ch);
+        }
+    }
     // 1. Wait up to 20 s (well past the watcher's 5 s tick) for every DNS-QF
     //    process to exit. 2. If any survived the wait, `exit` *without*
     //    deleting — removing `stop.flag` / `quit.flag` from under a live
@@ -358,6 +364,29 @@ mod tests {
         };
         assert!(script.contains("o''brien"));
         assert!(!script.contains("o'brien'"));
+    }
+
+    /// T-272 (T-270 audit): PowerShell also ends a single-quoted string on
+    /// the typographic quotes U+2018/U+2019/U+201A/U+201B (verified on 5.1:
+    /// `'a’; Write-Output X; #'` runs `Write-Output X`), and `’` is what
+    /// autocorrect puts into names like O’Brien.
+    #[test]
+    fn wipe_script_doubles_every_powershell_single_quote_character() {
+        for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
+            let lad = format!("C:\\Users\\o{quote}brien\\AppData\\Local");
+            let dir = format!("{lad}\\dns-quorum-filter");
+            let Some(script) = build_wipe_script_for(Path::new(&dir), Path::new(&lad)) else {
+                panic!("a valid app-data path must produce a script");
+            };
+            assert!(script.contains(&format!("o{quote}{quote}brien")));
+            assert!(
+                !script
+                    .replace(&format!("{quote}{quote}"), "")
+                    .contains(quote),
+                "U+{:04X} must never appear undoubled",
+                u32::from(quote)
+            );
+        }
     }
 
     #[test]
