@@ -837,10 +837,46 @@ ui("browser-setup-firefox", "#browser-setup-body у Firefox", "MF",
    "прочитати інструкцію й крок перевірки для Firefox (UA-детекція, T-189)",
    "кроки ведуть до режиму 3; очікувана ознака блокування відповідає Firefox")
 
+# Other-browser pass (user request 2026-10-04): Edge/Brave/Opera/Vivaldi (Chromium, own settings UI
+# and UA) and LibreWolf (hardened Firefox fork -- may not read the Windows Root store, so the cert
+# row can legitimately differ from Firefox). Brave and Vivaldi report a plain Chrome UA; Brave is
+# still told apart by navigator.brave.
+for _key, _name, _url, _ua in (
+    ("edge", "Microsoft Edge", "edge://settings/privacy", "edge"),
+    ("brave", "Brave", "brave://settings/security", "brave (navigator.brave.isBrave(), main.js)"),
+    ("opera", "Opera", "opera://settings", "opera (гілка OPR/)"),
+    ("vivaldi", "Vivaldi", "vivaldi://settings/privacy", "chrome (Vivaldi не видає себе в UA)"),
+    ("librewolf", "LibreWolf", "about:preferences#privacy", "firefox"),
+):
+    _B = f"{_name} (справжній профіль користувача)"
+    R(f"I-{_key}-cert", "I", f"{_B}: довіра до leaf-сертифіката", "HP",
+      "без ручного імпорту -> https://127.0.0.1:<port>/admin/ui",
+      "сторінка без попередження (CurrentUser Root; для LibreWolf зафіксувати, чи бере його взагалі)")
+    R(f"I-{_key}-secure-dns", "I", f"{_B}: Secure DNS з власним провайдером", "HP",
+      f"{_url} -> власний провайдер = локальний DoH; домен у blocklist і дозволений домен",
+      "заблокований -> сторінка помилки, лог BLOCKED; дозволений -> відкривається, лог ALLOWED")
+    R(f"I-{_key}-block-holds", "I", f"{_B}: блокування не обходиться fallback-ом", "SB",
+      "домен у blocklist; перевірити, що браузер не дістає справжню адресу іншим шляхом (аналог T-257)",
+      "домен лишається заблокованим, лог BLOCKED для A/AAAA/HTTPS")
+    R(f"I-{_key}-dead-doh", "I", f"{_B}: недоступний локальний DoH", "EP",
+      "власний провайдер на закритий порт (службу не чіпати)",
+      "зафіксувати: жорстка відмова чи тихий fallback (SPEC відкрите питання 10)")
+    ui(f"{_key}-render", f"/admin/ui у {_name}", "HP",
+       "відкрити /admin/ui; усі *-body картки; перемкнути мову uk / ar / en",
+       "усі картки з контролами без помилок; lang/dir міняються (ar -> rtl)")
+    ui(f"browser-setup-{_key}", f"#browser-setup-body у {_name}", "MF",
+       "прочитати інструкцію й крок перевірки (UA-детекція, T-189)",
+       f"детекція = {_ua}; адреса налаштувань відкривається в цьому браузері; ознака блокування відповідає цьому браузеру")
+
 _FF_NA = "N/A -- точка Firefox-проходу перевіряє одну поведінку браузера; інші категорії покривають рядки I-browser-real-*, B-* (Chrome) і A-*"
 _ff_done = {}
 for _r in list(ROWS):
-    if _r["id"].startswith(("I-firefox-", "B-firefox-", "B-browser-setup-firefox")):
+    if _r["id"].startswith(("I-firefox-", "B-firefox-", "B-browser-setup-firefox",
+                            "I-edge-", "B-edge-", "B-browser-setup-edge",
+                            "I-brave-", "B-brave-", "B-browser-setup-brave",
+                            "I-opera-", "B-opera-", "B-browser-setup-opera",
+                            "I-vivaldi-", "B-vivaldi-", "B-browser-setup-vivaldi",
+                            "I-librewolf-", "B-librewolf-", "B-browser-setup-librewolf")):
         _ff_done.setdefault(re.sub(r"-(HP|SB|MF|EP)$", "", _r["id"]), (_r, set()))[1].add(_r["cat"])
 for _stem, (_r, _cats) in _ff_done.items():
     for _cat in ("HP", "SB", "MF", "EP"):

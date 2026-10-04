@@ -122,15 +122,20 @@
   деталях за рішенням користувача; хвиля відвантажується й без T-242.
 - Коміти: по задачі. Re-test: `B-locale-MF`, `B-log-autorefresh-HP`.
 
-### Хвиля 10 — i18n і доступність (T-247, T-249, T-258)
+### Хвиля 10 — i18n, доступність і інструкції браузерів (T-247, T-249, T-258, T-260)
 - T-247: `maxmind.notConfiguredStatus` у 37 словниках → типове джерело `user-country`; граматика
   `en.json` `filterControls.fanoutSummary` («query see» → «sees»).
 - T-258: `browserSetup.verify` розвести за браузером (UA-детекція T-189 уже є): для Firefox —
   очікувати «не вдається знайти сайт», плюс попередження про «Посилений захист» (T-257).
+- T-260: інструкції картки «Підключення браузера» й README під кожен браузер (Chrome, Brave,
+  Firefox, Edge, Vivaldi, Opera, LibreWolf) за знахідками проходу інших браузерів — повний перелік у
+  задачі. Робиться разом із T-258 (та сама картка, ті самі 37 словників). Перед реалізацією —
+  рішення користувача, чи додавати ручний вибір браузера (Vivaldi за UA не відрізнити від Chrome).
 - T-249: доступне ім'я для `<select>`/input у `#overrides-body`, фокус після radio в
   `#timeout-config-body`, `<link rel="icon">`.
 - Коміти: по задачі. Re-test: `B-maxmind-HP`, `B-overrides-SB`, `B-app-body-SB`, `C-menu-a11y`,
-  `B-browser-setup-firefox-MF`, `B-firefox-render-HP`.
+  `B-browser-setup-firefox-MF`, `B-firefox-render-HP`, `B-browser-setup-edge-MF`,
+  `B-browser-setup-opera-MF`, `B-browser-setup-vivaldi-MF`.
 
 ### Хвиля 11 — документація (T-245; T-246 п. 1)
 - Шість пунктів T-245 — як у задачі. T-246 (1) — записати в `KNOWN-LIMITATIONS.md` як обмеження
@@ -152,6 +157,11 @@
   проти ретраїв). Рішення про форму відповіді — архітектурне, через plan+advisor і DECISIONS.md;
   до того — пом'якшення текстом у T-258.
 
+- **T-261 — Edge з будь-якою політикою блокує Secure DNS.** Спостережено (`I-edge-secure-dns`):
+  15 політик приватності, жодної про DNS, перемикач сірий «керується організацією». Перевірити в
+  `edge://policy` / `edge://management`, чи це загальна логіка Chromium, і чи знімає блок політика
+  `DnsOverHttpsMode`. Результат іде в текст T-260; служба політики за користувача не міняє.
+
 - **T-243 — автозапуск після ребуту. Блокер релізу (від нього залежить T-239).** Стан запису вже
   спостережено: `HKCU\…\AppModel\SystemAppData\<PFN>\DnsqbWatcherStartup` `State=2` (Enabled).
   Лишається ребут у деструктивному блоці: чи стартує watcher при логіні (`logs\watcher.log`,
@@ -166,6 +176,10 @@
 
 ## Свідомо не плануються
 
+- **LibreWolf — не підтримується (рішення користувача 2026-10-04).** `I-librewolf-cert` FAIL:
+  не довіряє сертифікату з Windows Root, що відомо як T-132 (окрема NSS-база Firefox-родини, поза
+  MVP). Решта рядків `I-librewolf-*`/`B-*-librewolf` заблоковані тим самим. У T-260 — лише чесне
+  «не підтримується» в інструкції.
 - **Already-filed у `KNOWN-LIMITATIONS.md`** (рядки `KL-*` з `CODE-ONLY`): `KL-geoip-voters-empty`,
   `KL-fuzz-scope`, `KL-rating-e`, `KL-rating-f`, `KL-maxmind-health-live`, `KL-status-indicator`,
   `KL-t160-geoip-startup`, `KL-enc-log`, `KL-markers-config`, `KL-t169-limits`, `KL-user-country-url`,
