@@ -226,8 +226,9 @@ pub use watchdog::pid_check::{verify_pid_alive, PidCheck};
 pub use watchdog::pipe::HeartbeatPipeClient;
 pub use watchdog::spawn::spawn_sibling;
 pub use watchdog::state::{
-    read as read_watchdog_state, write as write_watchdog_state, WatchdogState, WatchdogStateFile,
-    WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION, WATCHDOG_STATE_STALE_AFTER,
+    read as read_watchdog_state, write as write_watchdog_state, WatchdogErrorLabel, WatchdogState,
+    WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
+    WATCHDOG_STATE_STALE_AFTER,
 };
 pub use wire::{
     attach_edns, decode_wire_message, encode_wire_message, forward_response, EDNS_UDP_PAYLOAD_SIZE,

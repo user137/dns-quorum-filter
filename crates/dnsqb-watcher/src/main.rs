@@ -36,15 +36,15 @@ use std::time::Duration;
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_quit_flag, clear_stop_flag, ensure_sibling_running,
-    init_logging, read_pid_file, spawn_sibling, verify_pid_alive, GuardError, InstanceGuard,
-    InstanceRole, ResolverConfig,
+    init_logging, read_pid_file, read_startup_failure, set_retry_flag, spawn_sibling,
+    take_retry_flag, verify_pid_alive, GuardError, InstanceGuard, InstanceRole, ResolverConfig,
 };
 
 #[cfg(windows)]
 use dnsqb_service::{
     is_stale, quit_flag_is_set, read_heartbeat_file, read_watchdog_state, touch_heartbeat_file,
     write_watchdog_state, AdminClient, ChannelObs, Direction, Effect, HeartbeatFile,
-    HeartbeatPipeClient, LoopDriver, PidCheck, WatchdogState, STATE_FILE_NAME,
+    HeartbeatPipeClient, LoopDriver, PidCheck, WatchdogErrorLabel, WatchdogState, STATE_FILE_NAME,
 };
 #[cfg(windows)]
 use std::time::SystemTime;
@@ -114,7 +114,9 @@ async fn main() {
 /// launches this binary; when a watcher is already running, the second
 /// instance's only job is to make sure the tray is up (it may have been
 /// closed) and then exit cleanly — `exit(0)`, not `exit(1)`. It never touches
-/// the service or the watchdog state. It also clears a pending `quit.flag`
+/// the service or the watchdog state directly — except that from a fresh
+/// `GaveUp` it writes `retry.flag` for the running watcher (T-266, хвиля 13b;
+/// [`request_retry_if_gave_up`]). It also clears a pending `quit.flag`
 /// (T-185): the user relaunching the app cancels a quit that hasn't taken
 /// effect yet. It leaves `stop.flag` alone — a re-click to see the icon must
 /// not silently un-pause a deliberate pause.
@@ -126,6 +128,7 @@ fn acquire_watcher_guard(app_data: &Path) -> InstanceGuard {
                 "a watcher is already running — ensuring the tray is up, then exiting (T-187)"
             );
             clear_quit_flag(app_data);
+            request_retry_if_gave_up(app_data);
             ensure_sibling_running(app_data, InstanceRole::Tray);
             std::process::exit(0);
         }
@@ -135,6 +138,22 @@ fn acquire_watcher_guard(app_data: &Path) -> InstanceGuard {
         }
     }
 }
+
+/// T-266: from `GaveUp`, a tile re-click is the user's retry - hand it to the
+/// running watcher through `retry.flag` (that watcher stays the single writer
+/// of `watchdog-state.json`).
+#[cfg(windows)]
+fn request_retry_if_gave_up(app_data: &Path) {
+    let state = read_watchdog_state(app_data).ok().map(|file| file.state);
+    if tile_requests_retry(state, watchdog_state_is_fresh(app_data)) {
+        if let Err(err) = set_retry_flag(app_data) {
+            tracing::warn!("could not write retry.flag: {err}");
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn request_retry_if_gave_up(_app_data: &Path) {}
 
 /// The `DoH` port `GET /health` and the admin channel live on. A missing or
 /// unreadable `resolver_config.toml` falls back to the default port with a
@@ -187,6 +206,30 @@ fn watchdog_state_is_fresh(app_data: &Path) -> bool {
     match std::fs::metadata(app_data.join(STATE_FILE_NAME)).and_then(|meta| meta.modified()) {
         Ok(mtime) => !is_stale(SystemTime::now(), mtime, Duration::from_secs(90)),
         Err(_) => false,
+    }
+}
+
+/// T-266: a tile re-click (second watcher instance) asks the running watcher
+/// to retry only when its fresh record says `GaveUp` — any other state is the
+/// watchdog still doing its job.
+#[cfg(windows)]
+fn tile_requests_retry(state: Option<WatchdogState>, fresh: bool) -> bool {
+    fresh && state == Some(WatchdogState::GaveUp)
+}
+
+/// The PID check for a `VerifyingPid` tick. A missing pid file means no
+/// recorded live process — `Gone` (хвиля 13b: a service that failed before
+/// writing it would otherwise pin the driver in `VerifyingPid` forever). Any
+/// other read error waits for the next tick.
+#[cfg(windows)]
+fn pid_observation<T>(
+    read: std::io::Result<T>,
+    verify: impl FnOnce(T) -> PidCheck,
+) -> Option<PidCheck> {
+    match read {
+        Ok(record) => Some(verify(record)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(PidCheck::Gone),
+        Err(_) => None,
     }
 }
 
@@ -263,6 +306,17 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
             std::process::exit(0);
         }
 
+        // Хвиля 13b / T-266: the user asked to retry (tray «Спробувати ще раз»
+        // or a tile re-click from GaveUp). Fresh driver = fresh budget; drop
+        // the pinned clients and start the service now (idempotent).
+        if take_retry_flag(&app_data) {
+            tracing::info!("watchdog: retry requested - resetting the restart budget");
+            driver = LoopDriver::new(Direction::WatcherToService);
+            pipe = None;
+            admin = None;
+            ensure_sibling_running(&app_data, InstanceRole::Service);
+        }
+
         // T-193: a pause (`stop.flag`) no longer freezes supervision. The
         // service now *stays up* while paused — it reads the flag itself
         // (`pause_watch`) and serves the unfiltered baseline — so the normal
@@ -307,16 +361,19 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
         };
 
         let pid = if driver.state() == WatchdogState::VerifyingPid {
-            read_pid_file(&app_data, InstanceRole::Service)
-                .ok()
-                .map(|record| verify_pid_alive(record.pid, &record.exe_path))
+            pid_observation(read_pid_file(&app_data, InstanceRole::Service), |record| {
+                verify_pid_alive(record.pid, &record.exe_path)
+            })
         } else {
             None
         };
 
-        let obs = observe(ipc_signal, &file_read, health_signal, pid, now);
+        let mut obs = observe(ipc_signal, &file_read, health_signal, pid, now);
+        obs.startup_failed = read_startup_failure(&app_data).is_ok();
+        let effects = driver.tick(now, &obs).effects;
         apply_watchdog_effects(
-            driver.tick(now, &obs).effects,
+            effects,
+            driver.last_error(),
             &app_data,
             &mut pipe,
             &mut admin,
@@ -331,6 +388,7 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
 #[cfg(windows)]
 fn apply_watchdog_effects(
     effects: Vec<Effect>,
+    last_error: Option<WatchdogErrorLabel>,
     app_data: &Path,
     pipe: &mut Option<HeartbeatPipeClient>,
     admin: &mut Option<AdminClient>,
@@ -354,6 +412,12 @@ fn apply_watchdog_effects(
                     tracing::error!("watchdog: failed to respawn dnsqb-service: {err}");
                 }
             },
+            Effect::LogGaveUp if last_error == Some(WatchdogErrorLabel::StartupFailed) => {
+                tracing::error!(
+                    "watchdog: dnsqb-service recorded a startup failure - not restarting it; \
+                     waiting for the user's retry (startup-error.json has the reason)"
+                );
+            }
             Effect::LogGaveUp => tracing::error!(
                 "watchdog: gave up restarting dnsqb-service after the retry budget - \
                  manual recovery needed"
@@ -380,10 +444,50 @@ async fn run_watcher_to_service_watchdog(_app_data: std::path::PathBuf, _port: u
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::{observe, peer_heartbeat_path, WATCHDOG_CHANNEL_FRESH};
-    use dnsqb_service::{HeartbeatFile, PidCheck};
+    use super::{
+        observe, peer_heartbeat_path, pid_observation, tile_requests_retry, WATCHDOG_CHANNEL_FRESH,
+    };
+    use dnsqb_service::{HeartbeatFile, PidCheck, WatchdogState};
     use std::path::Path;
     use std::time::{Duration, SystemTime};
+
+    // T-266: a tile re-click restarts the service only from a fresh GaveUp.
+    #[test]
+    fn tile_requests_a_retry_only_from_a_fresh_gave_up() {
+        assert!(tile_requests_retry(Some(WatchdogState::GaveUp), true));
+        assert!(
+            !tile_requests_retry(Some(WatchdogState::GaveUp), false),
+            "stale"
+        );
+        assert!(!tile_requests_retry(None, true));
+        for state in [
+            WatchdogState::Healthy,
+            WatchdogState::ChannelDegraded,
+            WatchdogState::SuspectDead,
+            WatchdogState::VerifyingPid,
+            WatchdogState::Restarting,
+            WatchdogState::BackoffWait,
+        ] {
+            assert!(!tile_requests_retry(Some(state), true), "{state:?}");
+        }
+    }
+
+    // Хвиля 13b: a service that failed before writing its pid file must not
+    // pin the driver in VerifyingPid forever.
+    #[test]
+    fn a_missing_pid_file_reads_as_gone_and_other_errors_wait() {
+        let missing: std::io::Result<u32> = Err(std::io::ErrorKind::NotFound.into());
+        assert_eq!(
+            pid_observation(missing, |_| PidCheck::Alive),
+            Some(PidCheck::Gone)
+        );
+        let garbled: std::io::Result<u32> = Err(std::io::ErrorKind::InvalidData.into());
+        assert_eq!(pid_observation(garbled, |_| PidCheck::Alive), None);
+        assert_eq!(
+            pid_observation(Ok(7_u32), |_| PidCheck::Alive),
+            Some(PidCheck::Alive)
+        );
+    }
 
     // review 1.4-B: the one silent-bug risk is reading the wrong `.hb`. This
     // loop is the `watcher -> service` direction: it must read the *service's*
