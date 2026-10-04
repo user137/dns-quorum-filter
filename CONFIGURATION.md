@@ -94,7 +94,7 @@ block_signature = "NULL_IP_OR_NXDOMAIN"  # опційно; NULL_IP | NXDOMAIN_VS
 |---|---|---|---|
 | `id` | рядок (`[a-z0-9-]{1,64}`) | так | Унікальний ідентифікатор. Для preset — з таблиці §3.4 (`quad9`, `adguard`, `cloudflare-malware`, `cleanbrowsing-security`, `dns4eu-protective`, `cloudflare-family`, `adguard-family`, `cleanbrowsing-adult`, `opendns-familyshield`, `dns4eu-child`). |
 | `enabled` | `bool` | ні (дефолт `true`) | Чи опитується цей voter. |
-| `url` | рядок | лише для кастомного `id` | `DoH`-ендпоінт. Тільки `https`; літеральний loopback/private/link-local хост відхиляється (SSRF). Для preset-`id` **не** вказувати. |
+| `url` | рядок | лише для кастомного `id` | `DoH`-ендпоінт. Тільки `https`; літеральний loopback/private/link-local хост відхиляється (SSRF) — також загорнутий в IPv6 (`[::ffff:127.0.0.1]`) і `localhost`; така URL у файлі — помилка завантаження. Для preset-`id` **не** вказувати. |
 | `display_name` | рядок | лише для кастомного `id` | Назва для `/admin/ui`. |
 | `category` | enum | лише для кастомного `id` | Група в `/admin/ui`. |
 | `block_signature` | enum | ні (дефолт `NULL_IP_OR_NXDOMAIN`) | Як quorum читає блок-відповіді цього провайдера. |

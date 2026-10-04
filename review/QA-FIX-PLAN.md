@@ -119,6 +119,36 @@ T-NNN їм призначає власник при перенесенні в `T
   самим docs-комітом, що й таблицю аудиту.
 - Коміти: тести окремо від фіксів. Re-test: усі `A-*-MF`, `A-*-SB`, `B-*-SB`, `H-cfg-*-SB`.
 
+#### Результат аудиту (виконано 2026-10-04; коміти `0994410` тести, `7d55877` T-271, `461c465` T-272)
+
+Метод: читання коду кожного шляху «поле → sink» + пробні тести на справжньому коді (видалені після
+виміру; що лишилось як регресія — у колонці «Тест»). Payload-набір: HTML `<img src=x onerror=…>`,
+`"`, `'`, `` ` ``, `]`, `=`, `;`, `&`, `|`, `%`, CR/LF, NUL, RTL-override U+202E. **Знайдено 2 вади
+(T-271, T-272), обидві виправлено з тестом першим; решта клітинок тримається.**
+
+| # | Джерело / поле | Sink | Захист | Тест |
+|---|---|---|---|---|
+| 1 | overrides `pattern` / `domain` (`/admin/overrides/add`, `/remove`; рядки `overrides.toml`) | TOML, HTML, правило фільтра | `normalize_domain` (hickory `Name::from_utf8`, IDNA) відкидає кожен символ payload-набору; запис — serde `toml` | `with_entry_added_rejects_injection_payloads_and_wire_presentation_forms` (нов.), `smoke.js` xss `renderOverrides` |
+| 2 | невалідний рядок `overrides.toml` (`InvalidEntry.raw`, пишеться назад дослівно) | TOML | serde — рядок масиву, не склейка | `save_then_load_keeps_an_invalid_line_injection_payload_in_its_own_list` (нов.) |
+| 3 | провайдер `id` | TOML, фасет `?voter=`, HTML | `is_valid_provider_id` — `[a-z0-9-]{1,64}` | `is_valid_provider_id_matches_the_wire_shape`, `serve_admin_providers_add_rejects_ssrf_and_duplicate_and_bad_id` |
+| 4 | провайдер `display_name` | TOML, HTML | форми не перевіряється (власний текст людини, тіло ≤ 4 KiB); `toml` екранує, рендер `textContent`. RTL/керівні символи приймаються — лише косметичний самоспуфінг, прийнято | `save_then_load_keeps_a_table_injection_payload_inside_its_string` (нов.), `smoke.js` xss `renderProviders` |
+| 5 | провайдер `url` | HTTP-запит до апстріму (SSRF), TOML, HTML | `validate_provider_url`: лише `https`, непублічний літеральний хост → 400. **T-271:** IPv4-mapped/-compatible IPv6 і `localhost` проходили — виправлено. Лишається задокументований gap: ім'я, що резолвиться в loopback (`KL-ssrf-literal`), CGNAT `100.64/10`, `0/8`, broadcast, NAT64 | `validate_provider_url_rejects_non_https_and_ssrf_hosts`, `…_rejects_wrapped_ipv4_and_localhost_names` (нов.), TOML-тест з рядка 4 |
+| 6 | `category`, `block_signature`, `list`, `decision`, `timeout_mode` | serde → enum | закриті enum, інше → 400 | serde-десеріалізація; `every_config_field_rejects_wrong_type_bad_case_negative_and_duplicate_key` |
+| 7 | коди GeoIP, ccTLD; `lists` рейтинг-фільтра; `sources` бандлів | TOML, HTML, **шлях файлу** (`topn/<list>.txt`, `blocklists/<id>.txt`) | 2 ASCII-літери або закриті множини `AVAILABLE_TOPN_LISTS` / `BLOCKLIST_SOURCES` — path traversal неможливий структурно | `load_rejects_a_non_alphabetic_country_code`, `…_cctld_code`, `load_rejects_a_bad_rating_filter_list_entry`, `load_rejects_an_unknown_blocklist_bundle_source` |
+| 8 | MaxMind `account_id`, `license_key` | заголовок Basic auth, JSON у Credential Manager, HTML (`account_id`) | `reqwest::basic_auth` → base64 (CRLF до заголовка не доходить); serde_json; `textContent`; ключ ніколи не відлунюється. `:` в `account_id` → відмова автентифікації, не ін'єкція | `maxmind_post_with_a_blank_field_is_400_before_any_probe`, `smoke.js` xss `renderMaxmind` |
+| 9 | числові поля `/admin/config`, `/admin/cache-config/apply` | TOML, кеш | типізовані `bool`/`u64`; `u64::MAX` → паніка — **T-256, хвиля 1** | `every_config_field_rejects_…`; хвиля 1 |
+| 10 | параметри `/admin/log` (`domain_contains`, `decision`, `voter`, `limit`) | фільтр у пам'яті, рядок логу | percent-decode UTF-8, enum, `voter` проти відомих id; у лог — лише статична мітка | `serve_admin_log_rejects_an_unrecognized_*`, `serve_admin_log_filters_by_domain_contains` |
+| 11 | **ARCH-15 (1):** QNAME з DNS wire (будь-який клієнт loopback) → домен журналу | таблиця журналу, «додати в blocklist» з рядка, `query-log.enc` | `Name::to_ascii` — presentation-форма: керівні й RTL-байти → `\DDD`, `<`/`"` лишаються з `\`; рендер `textContent`; `with_entry_added` такі рядки відкидає (400); `.enc` — serde_json | `smoke.js` xss `renderLog`, тест з рядка 1 (wire-форми) |
+| 12 | **ARCH-15 (2):** `geoip_country` / `resolved_ip_country` з `.mmdb` | бейдж журналу | `textContent`; `geoip_country` у UI не рендериться | `smoke.js` xss `logData` з обома полями (нов.) |
+| 13 | рядки логів служби (`tracing`) | `logs\*.log` | жодне поле запиту не потрапляє в лог; помилки конфігу — `{0:?}` (Debug-екранування `\n`); текст помилки `toml` цитує рядок файлу — **T-252, хвиля 13a** | already-filed |
+| 14 | тіло `/dns-query` | парсер DNS wire | `hickory-proto`, ліміт тіла | `serve_never_panics_on_arbitrary_input_for_any_documented_route`; **таймінг кешу з чужої сторінки — чекає ARCH-14** |
+| 15 | командні рядки: `certutil` (шлях `cert.pem` з app-data), `rundll32` (`format!` з `u16`-портом), PowerShell-витирач (шлях профілю) | аргументи процесу | `.arg()` без shell; PowerShell — одинарні лапки. **T-272:** подвоювався лише `'`, а PowerShell закриває рядок і на U+2018/2019/201A/201B (ін'єкцію підтверджено на 5.1) — виправлено | `wipe_script_doubles_a_single_quote_in_the_path`, `…_every_powershell_single_quote_character` (нов.) |
+| 16 | статичні HTML-шаблони (`main.js:528`, `:608`, `data-i18n-html`) | `innerHTML` | підставляють лише числа, enum і first-party словники; CSP `default-src 'self'` | `smoke.js` (футер, токени, сирі ключі) |
+| 17 | CSRF на 20 POST `/admin/*` | — | `Content-Type: application/json` | `every_json_post_route_rejects_a_missing_or_wrong_content_type` (ітерує `ROUTES`) |
+
+Перевірка на встановленому артефакті для T-271/T-272 неможлива на 0.8.0 — чекає наступного
+артефакту GitHub (`A-admin-providers-add-EP`, `C-REMOVE_ALL_ID-HP`).
+
 ### Хвиля 1 — межі `[cache]` (T-256)
 - **Форма фіксу (визначає тип хвилі):** верхня межа на поля `[cache]` у `config.rs` і в
   `CacheConfigUpdate::into_config` (`admin.rs:1036`) → раніше завантажуваний конфіг з величезним

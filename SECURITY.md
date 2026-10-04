@@ -56,23 +56,30 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   not listed there can never reach a handler no matter what arm a future `match` edit adds
   (T-59, verified empirically — an unlisted arm added to the `match` without a `ROUTES` entry stays
   unreachable; `serve_matches_the_documented_admin_route_allowlist` fails if `ROUTES` itself drifts
-  from its own hand-written expected copy). Every mutating
-  route (`POST /admin/config`, `POST /admin/reset`, `POST /admin/shutdown`) requires
-  `Content-Type: application/json` (`dispatch::content_type_is_json`) as its whole CSRF defense:
-  not a CORS-simple content type, so a cross-origin write forces a preflight this service never
-  answers. DNS-rebinding is closed independently by the leaf cert's narrow SAN set
+  from its own hand-written expected copy). Every one of the 20 `POST /admin/*` routes
+  requires `Content-Type: application/json` (`dispatch::content_type_is_json`) as its whole CSRF
+  defense — enforced per route by `every_json_post_route_rejects_a_missing_or_wrong_content_type`,
+  which iterates `ROUTES` itself, so a new POST route is covered without editing the test: not a
+  CORS-simple content type, so a cross-origin write forces a preflight this service never
+  answers. (`POST /dns-query` is the one POST outside this gate — RFC 8484 fixes its content type
+  as `application/dns-message`; whether a foreign page can time the cache through it is ARCH-14,
+  `review/arch/04-SECURITY.md`.) Every field these routes accept, with the sink it reaches and the
+  test that pins it, is tabulated in the T-270 injection audit (`review/QA-FIX-PLAN.md`, wave 0). DNS-rebinding is closed independently by the leaf cert's narrow SAN set
   (`127.0.0.1`/`::1`/`localhost` only, T-48), not by this gate. `POST /admin/reset` (T-149) reloads
   both on-disk TOML files and clears the cache + query log — a malformed file on disk fails closed
   (500, live state untouched), never a partial apply. **`POST /admin/shutdown` (T-149) is the
   highest blast-radius route on this whole channel** — it terminates the entire `dnsqb-service`
   process (a graceful drain via `hyper_util::server::graceful::GracefulShutdown`, never
-  `std::process::exit`), meaning DNS resolution for the whole machine goes silently unfiltered
-  (the browser falls back to system DNS, SPEC.md "Відкриті питання" п.10) until a human manually
-  restarts the service — `dnsqb-watcher` (Фаза 3) is the only thing that would ever auto-recover
-  this, and it doesn't exist yet. Reachable only from this same loopback-only, CSRF-gated,
-  cert-pinned channel; the one shipped caller (`dnsqb-tray`'s "Зупинити фільтрацію" menu item)
-  gates it behind a native confirm dialog naming this exact consequence before ever sending the
-  request. The embedded web UI (`GET /admin/ui`, T-149) ships `Content-Security-Policy: default-src
+  `std::process::exit`). What the browser does next depends on its DoH mode: Chrome in `secure`
+  mode fails hard (no resolution at all, QA rows `I-*-dead-doh`), an automatic/fallback mode
+  silently drops to system DNS, unfiltered (SPEC.md "Відкриті питання" п.10). `dnsqb-watcher`
+  (Фаза 3, shipped) respawns a service it finds dead within its 5/600 s restart budget — measured
+  ≈37 s in the 0.8.0 QA pass — so a shutdown from anyone but the watcher itself is an outage, not
+  a stop. The only shipped caller is the watcher (`dnsqb-watcher/src/main.rs`), on seeing
+  `quit.flag` (tray «Вийти з DNS Quorum Filter», behind a confirm dialog); the tray's pause no
+  longer touches this route at all — it writes `stop.flag`, and the running service serves the
+  unfiltered baseline itself (`pause_watch`). Reachable only from this same loopback-only,
+  CSRF-gated, cert-pinned channel. The embedded web UI (`GET /admin/ui`, T-149) ships `Content-Security-Policy: default-src
   'self'; frame-ancestors 'none'` — the latter specifically to keep the page from becoming
   iframe-able/clickjackable once T-49 installs the cert and the current incidental
   untrusted-cert protection against framing goes away.

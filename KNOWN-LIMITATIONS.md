@@ -79,7 +79,9 @@ TASKS-DONE.md, never here.
   filtered one. The one shipped caller (`pipeline::handle_query`) gates this out via
   `ProviderEntry::any_enabled`.
 - **Custom provider URL SSRF check is literal-host only (T-72)** — `validate_provider_url` rejects
-  a non-`https` scheme and a loopback/private/link-local *literal IP* host, but a hostname that
+  a non-`https` scheme and a loopback/private/link-local *literal IP* host (since T-271 also one
+  wrapped in an IPv4-mapped/-compatible IPv6 literal, and RFC 6761 `localhost` names; CGNAT
+  `100.64/10`, `0/8`, broadcast and NAT64 are still accepted), but a hostname that
   *resolves* to such an address at request time is not caught (resolve-then-pin is a bigger
   mechanism). Stated gap.
 - **`GET /admin/log?voter=<id>` for a *removed custom* provider is a 400 (T-72/T-73)** —
