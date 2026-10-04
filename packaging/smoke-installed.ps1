@@ -42,7 +42,9 @@ Check 'package' $true "$($pkg.Version)"
 $appData = Join-Path $env:LOCALAPPDATA "Packages\$($pkg.PackageFamilyName)\LocalCache\Local\dns-quorum-filter"
 $configPath = Join-Path $appData 'resolver_config.toml'
 $port = 8443
-if ((Get-Content $configPath -Raw) -match '(?m)^port\s*=\s*(\d+)') { $port = [int]$Matches[1] }
+# A fresh install runs on built-in defaults until the first settings write creates the file.
+$configExisted = Test-Path $configPath
+if ($configExisted -and (Get-Content $configPath -Raw) -match '(?m)^port\s*=\s*(\d+)') { $port = [int]$Matches[1] }
 
 # --- processes -----------------------------------------------------------------------------
 foreach ($name in 'dnsqb-service', 'dnsqb-tray', 'dnsqb-watcher') {
@@ -139,7 +141,7 @@ if ($InjectFailure) {
 }
 
 # --- mutation round trip: POST /admin/config with the current values -----------------------
-$before = [IO.File]::ReadAllBytes($configPath)
+$before = if ($configExisted) { [IO.File]::ReadAllBytes($configPath) } else { $null }
 $status = Read-Json (Invoke-Route GET '/admin/status')
 if ($status) {
     $body = @{
@@ -149,10 +151,17 @@ if ($status) {
     $r = Invoke-Route POST '/admin/config' ([Text.Encoding]::UTF8.GetBytes($body)) 'application/json'
     $resp = Read-Json $r
     Check 'POST /admin/config (same values)' ($r.Status -eq 200 -and $resp -and $resp.persisted -eq $true) "status=$($r.Status) persisted=$($resp.persisted)"
-    $after = [IO.File]::ReadAllBytes($configPath)
-    $same = [Linq.Enumerable]::SequenceEqual($before, $after)
-    if (-not $same) { [IO.File]::WriteAllBytes($configPath, $before) }
-    Check 'resolver_config.toml byte-identical after round trip' $same "bytes=$($before.Length)->$($after.Length)"
+    if ($configExisted) {
+        $after = [IO.File]::ReadAllBytes($configPath)
+        $same = [Linq.Enumerable]::SequenceEqual($before, $after)
+        if (-not $same) { [IO.File]::WriteAllBytes($configPath, $before) }
+        Check 'resolver_config.toml byte-identical after round trip' $same "bytes=$($before.Length)->$($after.Length)"
+    } else {
+        # The write created the file; remove it so the install goes back to running on defaults.
+        $created = Test-Path $configPath
+        if ($created) { Remove-Item -LiteralPath $configPath }
+        Check 'resolver_config.toml absent again after round trip' (-not (Test-Path $configPath)) "created=$created"
+    }
 } else {
     Check 'POST /admin/config (same values)' $false 'status unreadable'
 }
