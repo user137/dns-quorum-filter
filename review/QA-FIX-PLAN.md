@@ -18,18 +18,19 @@
 `/`]`/`=`/`;`/`&`/`\|`/`%`/NUL/RTL-override) | CI + `smoke-installed.ps1` + браузер | M | так |
 | 1 | Межі `[cache]` | T-256 | Security-чутлива зміна формату конфігу — окремо за правилом | `cache.rs`, `config.rs`, `admin.rs`, `dispatch.rs`, `CONFIGURATION.md` | — | так | рядок `u64::MAX` у `every_config_field_rejects_…`; `CacheConfigUpdate` з `u64::MAX` → 400; `CacheEntry::new`/`expire_after_create` без паніки | CI + `smoke-installed.ps1` | M | так |
 | 2 | Апгрейд MSIX | T-244 | Процесна модель (spawn-прапорці watchdog) — архітектурна, окремо | `watchdog/spawn.rs`, `dnsqb-watcher/src/main.rs`, `packaging/Trust-TestCert.ps1`, `packaging/README.md` | — | так | чисте ядро вибору прапорців spawn; поведінку апгрейду — лише наживо | артефакт GitHub: апгрейд 0.8.0 → нова версія руками користувача (UAC) | L | так |
-| 3 | Hero при мертвих фільтрах | T-254 | Зміна DTO з бампом `schema_version` — окремо; **лише після рішення користувача** | `admin.rs` (`compute_hero_state`, `HeroStateView`), `ui/main.js`, `ui/i18n/*.json`, `UI-SPEC.md`, `diagrams/ui-status-indicator*` | рішення користувача | так | `admin::hero_and_category_tests` — новий вхід деградації; DTO-тест бампу | CI + наживо hosts-деградація (UAC) | M | на рішення користувача (false-safe — рекомендую так) |
+| 3 | Hero при мертвих фільтрах + стан автозапуску | T-254, T-243 (варіант Б) | Одна зміна DTO з бампом `schema_version` — окремо; рішення прийнято 2026-10-04 | `admin.rs` (`compute_hero_state`, `HeroStateView`), `ui/main.js`, `ui/i18n/*.json`, `UI-SPEC.md`, `diagrams/ui-status-indicator*` | — | так | `admin::hero_and_category_tests` — новий вхід деградації; DTO-тест бампу; поле автозапуску | CI + наживо hosts-деградація (UAC) + свіжий інстал без запуску | M | так (false-safe) |
 | 4 | Стійкість CLI | T-246 (2), (4) | Ті самі три `main.rs` + `cli_help.rs`, одна перевірка | `dnsqb-service/src/main.rs:23`, `dnsqb-tray/src/main.rs:193`, `dnsqb-watcher/src/main.rs:61`, `cli_help.rs` | — | ні | `wants_help` над `OsString` з непарним сурогатом; друк довідки у writer, що повертає `BrokenPipe` → без паніки | CI + `smoke-installed.ps1` + ручний `--help \| Select -First 1` | S | ні |
 | 5 | Tooltip трею (залежність) | T-253 | Оновлення/патч `tray-icon` — lower-layer, окремо | `crates/dnsqb-tray/Cargo.toml`, `Cargo.lock`, `SECURITY.md`, можливо `dnsqb-tray/src/main.rs` | — | так | `compose_tooltip` уже покрито; довжину нативного tooltip — лише наживо | `cargo deny`/`audit` у CI + наведення миші на іконку з артефакту GitHub | M | ні (рекомендую до релізу) |
 | 6 | Дрібниці трею | T-255, T-251, T-263, T-264, T-269 | Обидва — `dnsqb-tray`, один артефакт для перевірки | `dnsqb-tray/src/status.rs` (`spawn_trust_watch`), `dnsqb-tray/src/main.rs:617-627` | хвиля 5 (той самий крейт) | ні | перехід cert `NOT_TRUSTED→TRUSTED` у `/admin/status` викликає recheck; рядок логу паузи | CI + наживо: install-cert з `/admin/ui` → трей зелений ≤ 5 с | S | ні |
 | 7 | Приватність логу конфігу | T-252 | Точковий privacy-фікс | `config.rs` / `orchestrate.rs` (місце логування помилки `toml`) | хвиля 1 (спільний `config.rs`) | ні | помилка розбору → у тексті логу немає цитати рядка файлу | CI + наживо: битий `resolver_config.toml` + `/admin/reset` | S | ні |
 | 8 | Помилки POST у `/admin/ui` | T-250 | Один клас бага: невдалий POST руйнує картку/hero | `ui/main.js` (`onConfigChanged` :654, `renderError`, картки категорій і провайдерів) | — | ні | `ui/smoke.js`: reject `fetch` → картка лишає контроли, видно рядок помилки, hero не `SERVICE_UNREACHABLE` | CI (`ui-smoke`) + chrome-devtools/Firefox на артефакті | M | ні |
-| 9 | Перемальовування не стирає ввід | T-248 (+T-242 після рішення) | Один клас: ре-рендер скидає те, що користувач редагує; T-242 — нове опитування логу, яке не має скидати той самий стан | `ui/main.js` (`renderTranslatedCards`, `refreshLog`) | хвиля 8 (той самий `main.js`) | ні | `ui/smoke.js`: зміна локалі зберігає ввід overrides/пошуку й відкриті `?` | CI + браузер на артефакті | M | ні |
-| 10 | i18n і доступність | T-247, T-249, T-258, T-260; T-268, якщо обрано перейменування (37 словників) | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
+| 9 | Перемальовування не стирає ввід | T-248, T-242 | Один клас: ре-рендер скидає те, що користувач редагує; T-242 — нове опитування логу, яке не має скидати той самий стан | `ui/main.js` (`renderTranslatedCards`, `refreshLog`) | хвиля 8 (той самий `main.js`) | ні | `ui/smoke.js`: зміна локалі зберігає ввід overrides/пошуку й відкриті `?` | CI + браузер на артефакті | M | ні |
+| 10 | i18n, доступність, інструкції браузерів | T-247, T-249, T-258, T-260 (+T-257 текст) | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
 | 11 | Розбіжності документації | T-245, T-246 (1) як обмеження платформи | Лише документи, без коду | `UI-SPEC.md`, `CLAUDE.md`, `KNOWN-LIMITATIONS.md`, `CONFIGURATION.md` | — (паралельно з усіма) | ні | — | перечитування + `qa-matrix-check.py`; CI для `.md` не запускається | S | ні |
 | 12 | Тест-покриття без зміни поведінки | рядки `CODE-ONLY` «кандидат у Фазу 3», T-265 | Лише нові тести | `watchdog/*` (transition/loop_driver), `persist_dto`, `cache_persist_dto`, `personal_zone_stats`, `dnsqb-tray` nudge | після 1-10 | ні | — | CI | M | ні |
 
-Порядок: хвиля 0 першою (security). Паралельність: 1, 2, 4, 11 не мають спільних файлів — можна паралельно. 5→6 послідовно (`dnsqb-tray`).
+Порядок (рішення користувача 2026-10-04, DECISIONS.md): 0 → 13 → 10 → 3 → решта; кожна хвиля — за окремим «так».
+Технічні обмеження порядку: Паралельність: 1, 2, 4, 11 не мають спільних файлів — можна паралельно. 5→6 послідовно (`dnsqb-tray`).
 1→7 послідовно (`config.rs`). 8→9→10 послідовно (`main.js`). Хвиля 3 чіпає `main.js` і словники —
 не паралельно з 8-10.
 
@@ -78,10 +79,13 @@
 - Re-test: `G-upgrade`, `F-respawn*`, `F-launcher-order*`.
 - Документи: `packaging/README.md`, `RUST-GOTCHAS.md` (якщо підтвердиться), `TASKS-DONE.md`.
 
-### Хвиля 3 — hero при мертвих фільтрах (T-254)
-- Гейт: рішення користувача, чи потрібен варіант hero для «усі фільтри мовчать» (зараз by design
-  за діаграмою `ui-status-indicator`, умова 5 — лише суфікс/amber трею).
-- Якщо так: новий `HeroStateView` + вхід у `compute_hero_state` + бамп `ADMIN_DTO_SCHEMA_VERSION` +
+### Хвиля 3 — hero при мертвих фільтрах + стан автозапуску (T-254, T-243)
+- Рішення 2026-10-04: так — жовтий стан hero лише коли деградовані всі останні запити; змінює
+  діаграму `ui-status-indicator` (умова 5 стає й станом hero).
+- T-243 (варіант Б): поле стану автозапуску (`DnsqbWatcherStartup` `State` через `winreg`) у тому
+  самому бампі DTO + рядок на `/admin/ui` з кнопкою «Параметри → Автозавантаження»; README і
+  сторінка релізу — «запустіть один раз».
+- Реалізація T-254: новий `HeroStateView` + вхід у `compute_hero_state` + бамп `ADMIN_DTO_SCHEMA_VERSION` +
   `#[serde(default)]`; трей не чіпати (окремий авторитет, CLAUDE.md).
 - Коміти: 1 код + 1 docs/діаграма. Артефакт: так. Re-test: `I-degraded`, `DIAG-status-S5`, `B-hero-*`.
 - Документи: `UI-SPEC.md`, діаграма + ритуал ground-truth, `DECISIONS.md`.
@@ -125,19 +129,19 @@
 - Коміт: 1. Re-test: `B-timeout-EP`, `B-filter-controls-EP`, `B-providers-EP`.
 
 ### Хвиля 9 — перемальовування не стирає ввід (T-248, T-242)
-- T-248 — без рішень. T-242 (автооновлення логу) — нова поведінка, інтервал і пауза при відкритих
-  деталях за рішенням користувача; хвиля відвантажується й без T-242.
+- T-248 — без рішень. T-242 (рішення 2026-10-04): автооновлення журналу кожні 2–5 с, пауза поки
+  вводиться фільтр / розгорнуто рядок / відкрито `?`; позначка «оновлюється автоматично / пауза».
 - Коміти: по задачі. Re-test: `B-locale-MF`, `B-log-autorefresh-HP`.
 
-### Хвиля 10 — i18n, доступність і інструкції браузерів (T-247, T-249, T-258, T-260)
+### Хвиля 10 — i18n, доступність і інструкції браузерів (T-247, T-249, T-258, T-260, T-257 текст)
 - T-247: `maxmind.notConfiguredStatus` у 37 словниках → типове джерело `user-country`; граматика
   `en.json` `filterControls.fanoutSummary` («query see» → «sees»).
 - T-258: `browserSetup.verify` розвести за браузером (UA-детекція T-189 уже є): для Firefox —
   очікувати «не вдається знайти сайт», плюс попередження про «Посилений захист» (T-257).
 - T-260: інструкції картки «Підключення браузера» й README під кожен браузер (Chrome, Brave,
   Firefox, Edge, Vivaldi, Opera, LibreWolf) за знахідками проходу інших браузерів — повний перелік у
-  задачі. Робиться разом із T-258 (та сама картка, ті самі 37 словників). Перед реалізацією —
-  рішення користувача, чи додавати ручний вибір браузера (Vivaldi за UA не відрізнити від Chrome).
+  задачі. Робиться разом із T-258 (та сама картка, ті самі 37 словників). Рішення 2026-10-04:
+  автовизначення + ряд кнопок «Інший браузер?»; Firefox — «лише Максимальний захист» (T-257).
 - T-249: доступне ім'я для `<select>`/input у `#overrides-body`, фокус після radio в
   `#timeout-config-body`, `<link rel="icon">`.
 - Коміти: по задачі. Re-test: `B-maxmind-HP`, `B-overrides-SB`, `B-app-body-SB`, `C-menu-a11y`,
@@ -164,11 +168,18 @@
   (`crates/dnsqb-watcher/src/main.rs:233-239`), `GaveUp` термінальний (`watchdog/transition.rs:85-86`),
   а другий запуск плитки при живому watcher-і лише перевіряє трей і виходить (T-187). Tooltip радить
   «open the app» — це не відновлює службу.
-- Архітектурне (watchdog, §7.1) — власний plan+advisor; **лише після рішення користувача**, що саме
-  скидає бюджет (запуск плитки при `GaveUp`, пункт трею тощо). Тест першим: «другий запуск при
-  `GaveUp` піднімає службу і скидає стан».
+- Архітектурне (watchdog, §7.1) — власний plan+advisor. Рішення 2026-10-04: запуск плитки при
+  `GaveUp` скидає бюджет і піднімає службу; tooltip і hero кажуть саме цю дію; без автоповторів.
+  Тест першим: «другий запуск при `GaveUp` піднімає службу і скидає стан».
 - «Quit» + плитка через >90 с не перевірено (щоб не викликати `GaveUp` удруге).
 - Re-test: `F-gaveup`, `D-icon-ServiceGaveUp*`, `F-respawn`.
+
+### Хвиля 14 — одне «Повністю видалити» (T-268)
+- Рішення 2026-10-04 (варіант Б): кнопка danger-zone на `/admin/ui` просить трей виконати той
+  самий шлях, що пункт трею (зупинка + стирання app-data + «Програми й компоненти»).
+- Новий сигнал служба → трей (напр. поле в `/admin/status`, яке трей бачить на 2-с опитуванні) —
+  межа процесів і незворотна дія: власний plan+advisor, CSRF-гейт, підтвердження в треї.
+- Re-test: `B-danger-HP`, `A-admin-uninstall-local-state-HP`, `C-REMOVE_ALL_ID-HP`, `DIAG-life-removed`.
 
 ## Спершу діагноз (у хвилі не входять)
 
@@ -190,8 +201,6 @@
   запуску (`G-startup-state` FAIL) — задокументована поведінка Microsoft, одна підтверджена
   причина. Чи пояснює вона початковий баг-репорт — не перевірено (користувач, ймовірно, вже
   запускав застосунок); питання користувачу, потім хвиля.
-- **T-268 — дві різні дії під назвою «Повністю видалити»** (`B-danger-HP`, `A-admin-uninstall-local-state-HP`).
-  Потрібне рішення користувача, яку форму обрати (див. TASKS.md).
 - **T-262 — систематичні `kind="http"` від Quad9** (`I-quad9-http-errors`) (7–67 на день, інші провайдери ~0). Спершу
   підтип помилки в лозі (без доменів), потім рішення.
 - **T-246 (1) — «Access is denied» на `dnsqb-service.exe`/`dnsqb-tray.exe` поза пакетом.** Гіпотеза
