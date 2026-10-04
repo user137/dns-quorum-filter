@@ -813,8 +813,9 @@ for stem, info in _stems.items():
         R(f"{stem}-{cat}", base["surf"], base["point"], cat, f"[шаблон {base['surf']}] {steps}", expect, [], who)
 
 # Phase 3a (QA pass): coverage added for behaviour already observed as PASS.
-# Selection rule: a row gets a new test only when its live verdict is PASS and
-# the check is reproducible without the installed app, OS dialogs or network.
+# Selection rule: a test covers only behaviour observed live as PASS and
+# reproducible without the installed app, OS dialogs or network. B-overrides-SB
+# stays FAIL (T-249, accessible names); the XSS test covers only its PASS half.
 # Left uncovered on purpose: FAIL/CODE-ONLY rows (they belong to the fix
 # waves in QA-FIX-PLAN.md, regression test first), tray/watcher/browser rows
 # (need a desktop session), and config fields outside QA_FIELDS -- provider
