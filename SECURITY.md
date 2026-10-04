@@ -61,9 +61,11 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   defense — enforced per route by `every_json_post_route_rejects_a_missing_or_wrong_content_type`,
   which iterates `ROUTES` itself, so a new POST route is covered without editing the test: not a
   CORS-simple content type, so a cross-origin write forces a preflight this service never
-  answers. (`POST /dns-query` is the one POST outside this gate — RFC 8484 fixes its content type
-  as `application/dns-message`; whether a foreign page can time the cache through it is ARCH-14,
-  `review/arch/04-SECURITY.md`.) Every field these routes accept, with the sink it reaches and the
+  answers. (`POST /dns-query` is the one POST outside this gate; it accepts only
+  `application/dns-message` (RFC 8484), also not CORS-simple. The preflight-free path is `GET
+  /dns-query?dns=`, which carries no `Origin`/`Sec-Fetch-Site` check: whether a foreign page can
+  time the cache through it, or write the query log / verdict cache / personal-zone counters, is
+  ARCH-14, `review/arch/04-SECURITY.md`.) Every field these routes accept, with the sink it reaches and the
   test that pins it, is tabulated in the T-270 injection audit (`review/QA-FIX-PLAN.md`, wave 0). DNS-rebinding is closed independently by the leaf cert's narrow SAN set
   (`127.0.0.1`/`::1`/`localhost` only, T-48), not by this gate. `POST /admin/reset` (T-149) reloads
   both on-disk TOML files and clears the cache + query log — a malformed file on disk fails closed

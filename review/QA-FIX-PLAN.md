@@ -141,7 +141,7 @@ T-NNN їм призначає власник при перенесенні в `T
 | 11 | **ARCH-15 (1):** QNAME з DNS wire (будь-який клієнт loopback) → домен журналу | таблиця журналу, «додати в blocklist» з рядка, `query-log.enc` | `Name::to_ascii` — presentation-форма: керівні й RTL-байти → `\DDD`, `<`/`"` лишаються з `\`; рендер `textContent`; `with_entry_added` такі рядки відкидає (400); `.enc` — serde_json | `smoke.js` xss `renderLog`, тест з рядка 1 (wire-форми) |
 | 12 | **ARCH-15 (2):** `geoip_country` / `resolved_ip_country` з `.mmdb` | бейдж журналу | `textContent`; `geoip_country` у UI не рендериться | `smoke.js` xss `logData` з обома полями (нов.) |
 | 13 | рядки логів служби (`tracing`) | `logs\*.log` | жодне поле запиту не потрапляє в лог; помилки конфігу — `{0:?}` (Debug-екранування `\n`); текст помилки `toml` цитує рядок файлу — **T-252, хвиля 13a** | already-filed |
-| 14 | тіло `/dns-query` | парсер DNS wire | `hickory-proto`, ліміт тіла | `serve_never_panics_on_arbitrary_input_for_any_documented_route`; **таймінг кешу з чужої сторінки — чекає ARCH-14** |
+| 14 | тіло `/dns-query` (`POST` — лише `application/dns-message`, тобто з preflight; `GET ?dns=` — без) | парсер DNS wire; **стан, що пише кожен запит:** журнал, кеш вердиктів, `personal_zone_stats` (якщо зону ввімкнено) | `hickory-proto`, ліміт тіла; перевірки `Origin`/`Sec-Fetch-Site` немає | `serve_never_panics_on_arbitrary_input_for_any_documented_route`; **читання таймінгом і запис у цей стан з чужої сторінки через `GET` — чекає ARCH-14** |
 | 15 | командні рядки: `certutil` (шлях `cert.pem` з app-data), `rundll32` (`format!` з `u16`-портом), PowerShell-витирач (шлях профілю) | аргументи процесу | `.arg()` без shell; PowerShell — одинарні лапки. **T-272:** подвоювався лише `'`, а PowerShell закриває рядок і на U+2018/2019/201A/201B (ін'єкцію підтверджено на 5.1) — виправлено | `wipe_script_doubles_a_single_quote_in_the_path`, `…_every_powershell_single_quote_character` (нов.) |
 | 16 | статичні HTML-шаблони (`main.js:528`, `:608`, `data-i18n-html`) | `innerHTML` | підставляють лише числа, enum і first-party словники; CSP `default-src 'self'` | `smoke.js` (футер, токени, сирі ключі) |
 | 17 | CSRF на 20 POST `/admin/*` | — | `Content-Type: application/json` | `every_json_post_route_rejects_a_missing_or_wrong_content_type` (ітерує `ROUTES`) |
@@ -399,7 +399,9 @@ T-NNN їм призначає власник при перенесенні в `T
   домену); (2) які заголовки (`Origin`, `Sec-Fetch-Site`) несе **внутрішній** DoH-запит браузера. Чому це
   важливо: промах кешу 0.155 с проти попадання 0.032 с (виміряно на встановленому 0.8.0) — чужа сторінка
   може за часом відповіді дізнатися історію переглядів, а з увімкненою персональною зоною — ще й «навчити»
-  її. Результат → рядок у таблиці хвилі 0; перевірку `Sec-Fetch-Site` вмикати **лише** якщо (2) показало,
+  її. Тож експеримент міряє і **бік запису**, не лише таймінг: рядок журналу з чужим QNAME, засіяний
+  вердикт кешу, лічильник `personal_zone_stats` (ворота — лише `enabled` + ALLOW від `Quorum`/`Cache`,
+  `dispatch.rs:704`). Результат → рядок у таблиці хвилі 0; перевірку `Sec-Fetch-Site` вмикати **лише** якщо (2) показало,
   що внутрішній DoH цього заголовка не несе, інакше фільтр перестане працювати. **Другий варіант фіксу —
   секрет в адресі DoH** (як config-ID у NextDNS): `https://127.0.0.1:<port>/<випадковий-токен>/dns-query`;
   сторінка, що не знає токена, отримує 404 сталого часу, який не доходить до кешу. Для користувача кроків
