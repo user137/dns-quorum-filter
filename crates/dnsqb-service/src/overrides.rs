@@ -6,8 +6,8 @@
 //!
 //! On-disk format is TOML (T-145, superseding T-37's JSON) — same
 //! `ssh_config`/`my.cnf`-style hand-editability motivation as `config.rs`.
-//! **Unlike `config.rs`'s `ConfigError::Toml`, this module's parse-error
-//! variant carries no payload at all.** `overrides.toml` is nothing but
+//! **This module's parse-error variant carries no payload at all** (`config.rs`'s
+//! `ConfigError::Toml` keeps only a line/column since T-252). `overrides.toml` is nothing but
 //! domain names, and `toml::de::Error`'s `Display`/`Debug` both render an
 //! annotated snippet of the offending input line (confirmed empirically via
 //! a scratch probe, not assumed) — wrapping it here would newly leak a

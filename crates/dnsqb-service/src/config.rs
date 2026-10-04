@@ -4,12 +4,11 @@
 //!
 //! On-disk format is TOML (T-145, superseding T-144's JSON) — chosen over
 //! JSON specifically for comment support, closer to the `ssh_config`/`my.cnf`
-//! hand-editable style than JSON allows. `ConfigError::Toml` wraps
-//! `toml::de::Error` directly (unlike `overrides.rs`'s deliberately
-//! payload-less parse-error variant) — `resolver_config.toml` never contains
-//! a domain name, so `toml`'s parse errors (which render an annotated
-//! snippet of the offending input line, confirmed empirically via a scratch
-//! probe) are a genuine UX win here with no privacy cost.
+//! hand-editable style than JSON allows. `ConfigError::Toml` carries only a
+//! [`ParseLocation`] (error kind, line, column), never `toml::de::Error`
+//! itself (T-252): its `Display` quotes the offending line and serde's
+//! message echoes the offending value, and a custom provider URL can carry
+//! an account id (e.g. `https://<id>.dns.nextdns.io/dns-query`).
 //!
 //! Per-provider toggling (T-148) reuses `quorum::EnabledProviders` directly
 //! as this struct's `providers` field, rather than a parallel config-only
@@ -41,6 +40,7 @@
 //! validating constructor" precedent `cache::CacheConfig::from_secs`
 //! already set (T-153).
 
+use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
@@ -57,6 +57,77 @@ use crate::upstream::{
     ProviderEntry, ProviderSpec,
 };
 
+/// Where and how `resolver_config.toml` failed to parse (T-252) — the error
+/// kind, line, and column only. `toml::de::Error`'s `Display` quotes the
+/// offending line and its `message()` echoes the offending value (serde's
+/// `invalid type: string "..."`), so neither is kept: this type is
+/// structurally incapable of carrying file content into a log line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseLocation {
+    kind: ParseErrorKind,
+    line_column: Option<(usize, usize)>,
+}
+
+/// Closed classification of a `toml`/serde parse-error message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParseErrorKind {
+    UnknownField,
+    MissingField,
+    DuplicateField,
+    InvalidType,
+    InvalidValue,
+    UnknownVariant,
+    Other,
+}
+
+impl ParseLocation {
+    fn from_toml_error(err: &toml::de::Error, raw: &str) -> Self {
+        let message = err.message();
+        let kind = [
+            ("unknown field", ParseErrorKind::UnknownField),
+            ("missing field", ParseErrorKind::MissingField),
+            ("duplicate field", ParseErrorKind::DuplicateField),
+            ("invalid type", ParseErrorKind::InvalidType),
+            ("invalid value", ParseErrorKind::InvalidValue),
+            ("unknown variant", ParseErrorKind::UnknownVariant),
+        ]
+        .into_iter()
+        .find(|(prefix, _)| message.starts_with(prefix))
+        .map_or(ParseErrorKind::Other, |(_, kind)| kind);
+        let line_column = err
+            .span()
+            .and_then(|span| raw.get(..span.start))
+            .map(|before| {
+                let line = before.matches('\n').count() + 1;
+                let column = before
+                    .rsplit('\n')
+                    .next()
+                    .map_or(0, |last| last.chars().count())
+                    + 1;
+                (line, column)
+            });
+        Self { kind, line_column }
+    }
+}
+
+impl fmt::Display for ParseLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self.kind {
+            ParseErrorKind::UnknownField => "unknown field",
+            ParseErrorKind::MissingField => "missing field",
+            ParseErrorKind::DuplicateField => "duplicate field",
+            ParseErrorKind::InvalidType => "invalid type",
+            ParseErrorKind::InvalidValue => "invalid value",
+            ParseErrorKind::UnknownVariant => "unknown variant",
+            ParseErrorKind::Other => "syntax or structure error",
+        };
+        match self.line_column {
+            Some((line, column)) => write!(f, "{kind} at line {line}, column {column}"),
+            None => write!(f, "{kind} (location unknown)"),
+        }
+    }
+}
+
 /// Errors loading the resolver config.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -64,9 +135,10 @@ pub enum ConfigError {
     /// exist" on read — a missing file is `Ok`, see [`ResolverConfig::load`]).
     #[error("failed to read or write resolver config file: {0}")]
     Io(#[source] io::Error),
-    /// The file's contents are not valid TOML in the expected shape.
+    /// The file's contents are not valid TOML in the expected shape. See
+    /// [`ParseLocation`] for why no text from the file is carried (T-252).
     #[error("failed to parse resolver config TOML: {0}")]
-    Toml(#[source] toml::de::Error),
+    Toml(ParseLocation),
     /// [`ResolverConfig::save`] failed to serialize the config to TOML. Not
     /// expected to ever actually happen for this struct's field types (no
     /// non-representable floats, no map keys), but `toml::to_string` returns
@@ -136,8 +208,7 @@ pub enum ConfigError {
     /// same "hand-edited file, loud error not a silent no-op" discipline
     /// `ZeroPort`/`ZeroTimeout` already apply. The code itself, not a
     /// domain name, so a payload here carries no "no domain names in
-    /// service logs" risk (same reasoning `ConfigError::Toml`'s own doc
-    /// comment already states for this file).
+    /// service logs" risk.
     #[error("blocked country code {0:?} is not a valid two-letter ISO 3166-1 alpha-2 code")]
     InvalidCountryCode(String),
     /// A legacy `[providers]` table (the pre-T-72 `quad9`/`adguard` bools)
@@ -687,7 +758,8 @@ impl ResolverConfig {
         {
             return Err(ConfigError::LegacyProvidersTable);
         }
-        let file: ResolverConfigFile = toml::from_str(&raw).map_err(ConfigError::Toml)?;
+        let file: ResolverConfigFile = toml::from_str(&raw)
+            .map_err(|err| ConfigError::Toml(ParseLocation::from_toml_error(&err, &raw)))?;
 
         if file.port == 0 {
             return Err(ConfigError::ZeroPort);
@@ -2655,6 +2727,46 @@ mod tests {
         match fs::read_to_string(&path) {
             Ok(got) => assert_eq!(got, original),
             Err(err) => panic!("original must still be readable: {err}"),
+        }
+    }
+
+    /// T-252: neither the `toml` snippet nor serde's value-echoing message may
+    /// reach `Display`/`Debug` — a custom provider URL can carry an account id.
+    #[test]
+    fn parse_error_never_echoes_the_offending_line_or_value() {
+        let fixtures = [
+            "port = 4443\n[[providers]]\nid = \"x\"\nurl = \"https://SENTINEL-acct.dns.nextdns.io/dns-query\n",
+            "port = \"SENTINEL-acct\"\n",
+            "[[providers]]\nid = \"quad9\"\nSENTINEL-acct = false\n",
+        ];
+        for fixture in fixtures {
+            let (_dir, path) = temp_config_path();
+            if let Err(err) = fs::write(&path, fixture) {
+                panic!("must be able to write the fixture file: {err}");
+            }
+            let err = match ResolverConfig::load(&path) {
+                Err(err @ ConfigError::Toml(_)) => err,
+                other => panic!("expected a parse error, got {:?}", other.map(|_| ())),
+            };
+            for rendered in [format!("{err}"), format!("{err:?}")] {
+                assert!(!rendered.contains("SENTINEL"), "leaked: {rendered}");
+            }
+        }
+    }
+
+    #[test]
+    fn parse_error_reports_the_line_and_column() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "port = 4443\ntimeout_ms = \"slow\"\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Err(err @ ConfigError::Toml(_)) => {
+                let rendered = format!("{err}");
+                assert!(rendered.contains("line 2"), "got: {rendered}");
+                assert!(rendered.contains("invalid type"), "got: {rendered}");
+            }
+            other => panic!("expected a parse error, got {:?}", other.map(|_| ())),
         }
     }
 }

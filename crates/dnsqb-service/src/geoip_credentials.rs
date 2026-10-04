@@ -93,8 +93,8 @@ pub struct MaxmindCredentials {
 
 /// Errors loading, storing, or migrating `MaxMind` credentials. The parse
 /// variant is payload-free by design — see the module doc for why a license
-/// key must not reach a log line the way `config::ConfigError::Toml`'s snippet
-/// legitimately can.
+/// key must not reach a log line (same rule `config::ConfigError::Toml` follows
+/// since T-252).
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialsError {
     /// Failed to read or erase a leftover `geoip_maxmind.toml` during
