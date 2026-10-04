@@ -30,12 +30,18 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
 0. **Бере single-instance lock** (T-92, SPEC.md §7.1 #2) — ексклюзивно (`share_mode(0)`) відкриває
    `%LOCALAPPDATA%\dns-quorum-filter\service.lock` (створюючи каталог, якщо його ще нема) і тримає
    хендл увесь час життя процесу. Другий `dnsqb-service` на тій самій app-data теці логує
-   `another service instance is already running` і **виходить з кодом 1** — не бореться за порт і
-   конфіги. OS звільняє лок на виході (зокрема краху), осиротілого стану нема. Одразу після цього
+   `another service instance is already running` (`info`) і **виходить з кодом 0** (хвиля 13b,
+   T-246: це не збій) — не бореться за порт і конфіги. OS звільняє лок на виході (зокрема краху), осиротілого стану нема. Одразу після цього
    пише `service.pid` (`{pid, exe_path, started_at}` JSON, перезаписується щостарту, **не**
    видаляється при виході — джерело PID для watchdog'а, Батч 3.2/3.3). Якщо `%LOCALAPPDATA%` не
    заданий — `warn!` і запуск без guard'а. Guard береться **перед** генерацією сертифіката: інакше
    два паралельні перші запуски могли б записати неузгоджені `cert.pem` + ключ.
+   **Хвиля 13b:** власник guard-а одразу читає й **видаляє** `startup-error.json` попередньої спроби і
+   виконує `reset-config.flag` (відкладає `resolver_config.toml` у `.orphaned-<ts>`) **лише** якщо
+   попередня спроба впала на `ConfigInvalid`; застарілий прапорець просто видаляється. Будь-яка
+   фатальна помилка старту далі (сертифікат/ключ, конфіг, bind, клієнт апстріму, lock) пише
+   `startup-error.json` — закритий enum причини, без тексту — і `exit(1)`; watcher на ній не
+   витрачає бюджет рестартів (див. `dnsqb-watcher`).
 1. Завантажує (або, при першому запуску, генерує і зберігає) self-signed TLS-лист-сертифікат —
    публічний `cert.pem` у `%LOCALAPPDATA%\dns-quorum-filter\`, приватний ключ у Windows
    Credential Manager через крейт `keyring` (T-48/T-142/T-67; запис
@@ -291,7 +297,8 @@ false-positive рестарту (SPEC.md §7). **Реалізовано в Ба�
 2. `Watcher` single-instance guard (`watcher.lock`, `share_mode(0)`) + `watcher.pid`. **T-187:**
    другий інстанс (повторний клік плитки Пуску) не робить `exit(1)`, а спершу
    `ensure_sibling_running(Tray)` — підніме трей, якщо його закрили, — і `exit(0)`; служби й
-   `watchdog-state.json` не чіпає. «Повторний запуск плитки = покажи іконку».
+   `watchdog-state.json` не чіпає, **крім** одного випадку (хвиля 13b, T-266): якщо свіжий
+   `watchdog-state.json` = `GAVE_UP`, пише `retry.flag` — повторний клік плитки = «спробувати ще раз». «Повторний запуск плитки = покажи іконку».
 3. `resolver_config.toml` → порт для `/health` і `AdminClient` (відсутній файл → дефолт-порт +
    warn, не hard-exit).
 4. **Ідемпотентний ланчер (T-150; `watchdog::launcher::ensure_sibling_running`):** перевіряє
@@ -313,6 +320,11 @@ PID → на `Gone`/`IdentityMismatch` → `spawn_sibling(Service)` (експо�
 restored` (бюджет не скидається на рестарт watcher'а).
 
 * * *
+
+**Хвиля 13b:** на початку тіку `retry.flag` → новий `LoopDriver` (бюджет з нуля) +
+`ensure_sibling_running(Service)`. Мертва служба з наявним `startup-error.json` → одразу `GAVE_UP`
+з `last_error = STARTUP_FAILED`, **без** рестартів. Відсутній `service.pid` у `VerifyingPid` = `Gone`.
+Новий watcher не відновлює `GAVE_UP` зі свіжого стану (лише бюджет інших станів).
 
 ## `dnsqb-tray`
 
@@ -395,6 +407,12 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   `stop.flag`). «Відновити» прибирає `stop.flag` + `ensure_sibling_running(Service)` (ідемпотентно).
   `/admin/status.paused` несе цей стан, hero `/admin/ui` показує окремий сірий «Фільтрацію
   призупинено».
+- **Спробувати ще раз** / **Скинути налаштування** (хвиля 13b) — активні лише коли служба лежить
+  (`GAVE_UP`). Перший пише `retry.flag` (+ `ensure_sibling_running(Watcher)`): watcher на наступному
+  тіку бере новий бюджет і піднімає службу. Другий — лише для причини `ConfigInvalid`, за
+  confirm-діалогом: пише `reset-config.flag` + `retry.flag`; сам файл відкладає служба на старті.
+  Tooltip називає причину (`startup-error.json`; для зайнятого порту — номер) і цю дію; ранжується
+  **вище** «Призупинено».
 - **Відновити нагляд** — `ensure_sibling_running(Watcher)`; завжди в меню, ідемпотентно (no-op,
   якщо watcher живий). Єдиний ручний шлях підняти мертвий watcher — авто-нагляд за самим
   watcher'ом ще не зроблено.

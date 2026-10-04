@@ -314,6 +314,8 @@ T-NNN їм призначає власник при перенесенні в `T
 - Коміти: 2 (ARCH-01; T-252). Re-test: `H-logs-privacy`, `H-cfg-*`.
 
 ### Хвиля 13b — «служба не працює: скажи чому й дай одну дію» (T-266, ARCH-03, user safety)
+**Виконано 2026-10-04:** `631ddfd` (рішення), `b33061c` (служба), `ca59b95` (ядро watchdog), `727c3b2`
+(watcher), `8a3f7bb` (трей), `bc54c27` (hero), нотатки — `TASKS-DONE.md` T-266/T-275/T-276; знахідка T-274.
 - Діагноз (`F-gaveup`): новий watcher відновлює стан із `watchdog-state.json` молодшого за 90 с
   (`crates/dnsqb-watcher/src/main.rs:233-239`), `GaveUp` термінальний (`watchdog/transition.rs:85-86`),
   а другий запуск плитки при живому watcher-і лише перевіряє трей і виходить (T-187). Tooltip радить

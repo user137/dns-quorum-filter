@@ -244,4 +244,9 @@ TASKS-DONE.md, never here.
   blocked automating a scratch instance. RTL mirroring, the first-visit browser-setup auto-open
   label, and the tray/CLI (Батч 5.5/5.6) remain unexercised by this pass.
   Translated browser-menu labels in `browserSetup.*` are quoted in English on purpose.
-
+- **`AdminClient` trusts the OS roots too (T-274)** — `cert.pem` is *added* as a root, not the only
+  one, so any certificate for `127.0.0.1` in `CurrentUser\Root` passes the "pin" (another instance's
+  installed cert included). Shared by the tray, the watcher's channel 3 and `/admin/*` callers.
+- **Tray tooltips for a dead service are short by necessity** (хвиля 13b) — every
+  `tooltip.startupFailed.*`/`tooltip.gaveUp` text fits the 63 UTF-16 units `tray-icon` 0.21 shows
+  (T-253), so it names the cause and the menu item only; the full reason is in `service.log`.
