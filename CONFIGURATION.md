@@ -468,7 +468,7 @@ no-op. Додавання вже наявного коду — ідемпоте�
 ### `GET /admin/ui` — вбудований веб-UI (T-149)
 
 `dnsqb-service` сам роздає сторінку налаштувань на тому самому порту — `https://127.0.0.1:<port>/admin/ui`
-(плюс `/admin/ui/main.js`, `/admin/ui/style.css`). Ті самі тумблери провайдерів/режиму таймауту,
+(плюс `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/favicon.png`). Ті самі тумблери провайдерів/режиму таймауту,
 що були в колишньому `dnsqb-ui` (Tauri-вікно, T-52 — видалено T-149, див. DECISIONS.md/
 SERVICES.md), тепер у звичайному браузері: сторінка ходить у `/admin/status`/`/admin/config`/
 `/admin/overrides` (T-47)/`/admin/cache-config` (T-153)/`/admin/geoip` (T-77) через `fetch()`

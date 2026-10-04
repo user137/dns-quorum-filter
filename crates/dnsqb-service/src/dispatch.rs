@@ -136,6 +136,7 @@ const ADMIN_INSTALL_CERT_PATH: &str = "/admin/install-cert";
 const ADMIN_UI_PATH: &str = "/admin/ui";
 const ADMIN_UI_JS_PATH: &str = "/admin/ui/main.js";
 const ADMIN_UI_CSS_PATH: &str = "/admin/ui/style.css";
+const ADMIN_UI_FAVICON_PATH: &str = "/admin/ui/favicon.png";
 
 /// T-53/T-59: the single source of truth for which paths [`serve`] routes at
 /// all and which method(s) each one accepts — `serve` checks a request
@@ -179,6 +180,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_UI_PATH, &[Method::GET]),
     (ADMIN_UI_JS_PATH, &[Method::GET]),
     (ADMIN_UI_CSS_PATH, &[Method::GET]),
+    (ADMIN_UI_FAVICON_PATH, &[Method::GET]),
 ];
 
 /// T-236 — the i18n locale routes live in their own table, not spliced into
@@ -4067,6 +4069,7 @@ where
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
         ADMIN_UI_JS_PATH => admin_ui::serve_js(req.method()),
         ADMIN_UI_CSS_PATH => admin_ui::serve_css(req.method()),
+        ADMIN_UI_FAVICON_PATH => admin_ui::serve_favicon(req.method()),
         // T-236 — one guard arm for all of I18N_ROUTES, not 37 literal arms:
         // the guard is a membership check against the same compile-time
         // table `I18N_ROUTES` itself is built from (still exact-string
@@ -9497,6 +9500,7 @@ mod tests {
         ("/admin/ui", &[Method::GET]),
         ("/admin/ui/main.js", &[Method::GET]),
         ("/admin/ui/style.css", &[Method::GET]),
+        ("/admin/ui/favicon.png", &[Method::GET]),
     ];
 
     #[test]

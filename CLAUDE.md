@@ -142,7 +142,7 @@ collapses to `UNKNOWN` on the wire), a cache kept warm by the detached `cert_wat
 `certutil` per call → **not** in `FUZZ_EXCLUDED_ROUTES`) + `POST /admin/install-cert`
 (`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
 `CurrentUser\Root` like `/admin/uninstall-local-state`; **stays** in `FUZZ_EXCLUDED_ROUTES` — mutating);
-`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/i18n/<locale>.json` for 37
+`GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/favicon.png`, `/admin/ui/i18n/<locale>.json` for 37
 supported locales (T-151 Батч 5.2 shipped uk+en as two literal routes; T-236 grew the same
 macro-generated table to the full list — `admin_ui::I18N_DICTS`/`dispatch::I18N_ROUTES`,
 `ui/i18n/GLOSSARY.md` — still exact-string matching, never path-parameterized). Also on the same

@@ -525,6 +525,12 @@ function renderTimeoutConfig(status) {
     configPersistFailed || status.persisted === false
       ? `<div class="notice warn">${t("warning.notPersisted")}</div>`
       : "";
+  // T-249: the 2s poll and the post-change refresh rebuild these inputs; put
+  // keyboard focus back on the same control instead of dropping it to <body>.
+  const focused = fields.contains(document.activeElement) ? document.activeElement : null;
+  const refocus =
+    focused &&
+    (focused.id ? `#${focused.id}` : `input[name="${focused.name}"][value="${focused.value}"]`);
   fields.innerHTML = `
     ${configWarning}
     <div class="radio-group">
@@ -549,6 +555,10 @@ function renderTimeoutConfig(status) {
   const baselineFallback = document.getElementById("baseline-fallback-toggle");
   if (baselineFallback) {
     baselineFallback.addEventListener("change", onConfigChanged);
+  }
+  const refocusTarget = refocus ? fields.querySelector(refocus) : null;
+  if (refocusTarget) {
+    refocusTarget.focus();
   }
 }
 
@@ -806,8 +816,12 @@ function renderOverrides(data) {
   addRow.className = "override-add-row";
   const input = document.createElement("input");
   input.type = "text";
+  input.name = "override-pattern";
+  input.setAttribute("aria-label", t("overrides.patternLabel"));
   input.placeholder = t("overrides.inputPlaceholder");
   const select = document.createElement("select");
+  select.name = "override-list";
+  select.setAttribute("aria-label", t("overrides.listLabel"));
   const allowOpt = document.createElement("option");
   allowOpt.value = "allowlist";
   allowOpt.textContent = t("overrides.allowOption");
@@ -965,6 +979,7 @@ function renderCacheConfig(data) {
     span.textContent = t(labelKey);
     const input = document.createElement("input");
     input.type = "number";
+    input.name = key;
     input.min = "0";
     input.step = "1";
     input.value = String(data[key]);
@@ -1232,6 +1247,7 @@ function renderCctldBlock(status) {
   input.setAttribute("aria-expanded", "false");
   input.setAttribute("aria-controls", "cc-code-menu");
   input.setAttribute("aria-autocomplete", "list");
+  input.name = "cctld-code";
   input.setAttribute("aria-label", t("cctldBlock.searchAriaLabel"));
   input.placeholder = t("cctldBlock.inputPlaceholder");
   const menu = document.createElement("ul");
@@ -2309,6 +2325,7 @@ function buildLogFilterRow() {
   search.type = "text";
   search.id = "log-search";
   search.placeholder = t("log.searchPlaceholder");
+  search.setAttribute("aria-label", t("log.searchPlaceholder"));
   search.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       refreshLog();
@@ -2318,6 +2335,7 @@ function buildLogFilterRow() {
 
   const decisionSelect = document.createElement("select");
   decisionSelect.id = "log-decision";
+  decisionSelect.setAttribute("aria-label", t("log.decisionFilterLabel"));
   // Батч 5.4: options now read through the same decisionLabel() keys as
   // logItem()'s badges (log.decision.*), not a second, independently
   // maintained literal array - Explore's own survey flagged this exact
@@ -2337,6 +2355,7 @@ function buildLogFilterRow() {
 
   const voterSelect = document.createElement("select");
   voterSelect.id = "log-voter";
+  voterSelect.setAttribute("aria-label", t("log.providerFilterLabel"));
   // T-72/T-73: options are filled in by syncLogVoterOptions() from the live
   // /admin/providers response (every built-in preset + any active custom
   // entry), not hardcoded - the provider list is now runtime state. Starts
@@ -2606,6 +2625,8 @@ function providerRow(entry) {
   sw.className = "switch";
   const cb = document.createElement("input");
   cb.type = "checkbox";
+  cb.name = `provider-${entry.id}`;
+  cb.setAttribute("aria-label", entry.display_name);
   cb.checked = entry.enabled;
   cb.addEventListener("change", async () => {
     try {
@@ -2956,7 +2977,7 @@ function categoryStateFrom(data, key) {
 // consistency with the rest of this file (admin_ui.rs's module doc). A
 // "partial" state is a non-interactive visual whose click/Enter turns the
 // whole category on; "on"/"off" is a real checkbox.
-function toggleControl(checked, partial, onFlip, ariaLabel) {
+function toggleControl(checked, partial, onFlip, ariaLabel, name) {
   if (partial) {
     const span = document.createElement("span");
     span.className = "switch is-partial";
@@ -2985,6 +3006,7 @@ function toggleControl(checked, partial, onFlip, ariaLabel) {
   label.className = "switch";
   const cb = document.createElement("input");
   cb.type = "checkbox";
+  cb.name = name;
   cb.checked = checked;
   cb.setAttribute("aria-label", ariaLabel);
   cb.addEventListener("change", () => onFlip(cb.checked));
@@ -3079,6 +3101,7 @@ function renderFilterControls(data) {
         false,
         (want) => flipAllCategories(want, data.master_switch_targets),
         t("filterControls.masterToggleLabel"),
+        "filter-master",
       ),
       true,
     ),
@@ -3101,6 +3124,7 @@ function renderFilterControls(data) {
           state === "partial",
           (want) => flipCategory(cat.key, want),
           name,
+          `category-${cat.key}`,
         ),
         false,
       ),
@@ -3540,6 +3564,7 @@ function renderRatingFilter(status) {
   switchLabel.className = "switch rating-filter-switch";
   const switchInput = document.createElement("input");
   switchInput.type = "checkbox";
+  switchInput.name = "rating-filter-enabled";
   switchInput.checked = rf.enabled;
   switchInput.setAttribute("aria-label", t("rating.heading"));
   const track = document.createElement("span");
@@ -3660,6 +3685,7 @@ function renderRatingFilter(status) {
   input.setAttribute("aria-expanded", "false");
   input.setAttribute("aria-controls", "rf-zone-menu");
   input.setAttribute("aria-autocomplete", "list");
+  input.name = "rating-zone";
   input.setAttribute("aria-label", t("rating.searchAriaLabel"));
   input.placeholder = t("rating.inputPlaceholder");
   const menu = document.createElement("ul");
@@ -4110,6 +4136,7 @@ function renderBlocklistBundles(status) {
   switchLabel.className = "switch";
   const switchInput = document.createElement("input");
   switchInput.type = "checkbox";
+  switchInput.name = "blocklist-bundles-enabled";
   switchInput.checked = bb.enabled;
   switchInput.setAttribute("aria-label", t("blocklist.heading"));
   const track = document.createElement("span");
@@ -4277,6 +4304,7 @@ function renderBlocklistBundles(status) {
     const li = document.createElement("li");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
+    checkbox.name = `blocklist-source-${ids[0]}`;
     checkbox.checked = ids.some((id) => trackedSet.has(id));
     checkbox.setAttribute("aria-label", name);
     checkbox.addEventListener("change", async () => {

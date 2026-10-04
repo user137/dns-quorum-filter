@@ -30,6 +30,8 @@ use http_body_util::Full;
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const MAIN_JS: &str = include_str!("../ui/main.js");
 const STYLE_CSS: &str = include_str!("../ui/style.css");
+/// The app icon's 32 px PNG from `assets/gen-icon.py` — reused, not redrawn.
+const FAVICON_PNG: &[u8] = include_bytes!("../../../assets/icon/icon-32.png");
 /// T-151 Батч 5.2 — flat locale dictionaries (`fieldHelp.*`/`hero.*.{state,detail}`/
 /// `zoneDomainCount`), served alongside `main.js` for the same reason: `main.js`
 /// fetches its own translated text at runtime rather than shipping it inline.
@@ -70,17 +72,37 @@ pub(crate) fn i18n_dict(locale: &str) -> Option<&'static str> {
 /// `GET /admin/ui` — the config page itself, the only one of the three that
 /// carries the strict CSP (the response a browser actually navigates to).
 pub(crate) fn serve_html(method: &Method) -> Response<Full<Bytes>> {
-    respond(method, INDEX_HTML, "text/html; charset=utf-8", true)
+    respond(
+        method,
+        INDEX_HTML.as_bytes(),
+        "text/html; charset=utf-8",
+        true,
+    )
 }
 
 /// `GET /admin/ui/main.js`.
 pub(crate) fn serve_js(method: &Method) -> Response<Full<Bytes>> {
-    respond(method, MAIN_JS, "text/javascript; charset=utf-8", false)
+    respond(
+        method,
+        MAIN_JS.as_bytes(),
+        "text/javascript; charset=utf-8",
+        false,
+    )
 }
 
 /// `GET /admin/ui/style.css`.
 pub(crate) fn serve_css(method: &Method) -> Response<Full<Bytes>> {
-    respond(method, STYLE_CSS, "text/css; charset=utf-8", false)
+    respond(
+        method,
+        STYLE_CSS.as_bytes(),
+        "text/css; charset=utf-8",
+        false,
+    )
+}
+
+/// `GET /admin/ui/favicon.png`.
+pub(crate) fn serve_favicon(method: &Method) -> Response<Full<Bytes>> {
+    respond(method, FAVICON_PNG, "image/png", false)
 }
 
 /// `GET /admin/ui/i18n/<locale>.json` for any `locale` in [`I18N_DICTS`].
@@ -93,7 +115,7 @@ pub(crate) fn serve_css(method: &Method) -> Response<Full<Bytes>> {
 /// own catch-all 404 arm.
 pub(crate) fn serve_i18n(method: &Method, locale: &str) -> Response<Full<Bytes>> {
     match i18n_dict(locale) {
-        Some(json) => respond(method, json, "application/json", false),
+        Some(json) => respond(method, json.as_bytes(), "application/json", false),
         None => status_response(StatusCode::NOT_FOUND),
     }
 }
@@ -115,7 +137,7 @@ pub(crate) fn serve_i18n(method: &Method, locale: &str) -> Response<Full<Bytes>>
 /// this header. It's set unconditionally, not contingent on T-49's status.
 fn respond(
     method: &Method,
-    body: &'static str,
+    body: &'static [u8],
     content_type: &str,
     is_document: bool,
 ) -> Response<Full<Bytes>> {
@@ -136,14 +158,15 @@ fn respond(
         );
     }
     builder
-        .body(Full::new(Bytes::from_static(body.as_bytes())))
+        .body(Full::new(Bytes::from_static(body)))
         .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        i18n_dict, serve_css, serve_html, serve_i18n, serve_js, I18N_DICTS, INDEX_HTML, MAIN_JS,
+        i18n_dict, serve_css, serve_favicon, serve_html, serve_i18n, serve_js, I18N_DICTS,
+        INDEX_HTML, MAIN_JS,
     };
     use http::{HeaderValue, Method, StatusCode};
 
@@ -327,6 +350,24 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().get("content-security-policy").is_none());
         assert!(response.headers().get("x-content-type-options").is_some());
+    }
+
+    // T-249: without a <link rel="icon"> every page load logged a
+    // `GET /favicon.ico 404`; a data: URI would trip `default-src 'self'`.
+    #[test]
+    fn serve_favicon_is_a_png_and_the_page_links_it() {
+        let response = serve_favicon(&Method::GET);
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type"),
+            Some(&HeaderValue::from_static("image/png"))
+        );
+        assert!(response.headers().get("x-content-type-options").is_some());
+        assert!(INDEX_HTML.contains(r#"<link rel="icon" href="/admin/ui/favicon.png""#));
+        assert_eq!(
+            serve_favicon(&Method::POST).status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
     }
 
     #[test]

@@ -47,6 +47,61 @@ for (const f of fs.readdirSync(path.join(UI, "i18n"))) {
   if (f.endsWith(".json")) dicts[f.slice(0, -5)] = JSON.parse(fs.readFileSync(path.join(UI, "i18n", f), "utf8"));
 }
 const doc = stub("document");
+// T-249: createElement is tracked per element, so the a11y check below can ask
+// every JS-built form field for an id/name and an accessible name.
+const created = [];
+const recOf = new WeakMap();
+function elStub(rec) {
+  const store = {};
+  const proxy = new Proxy(function () {}, {
+    get(_t, p) {
+      if (p === Symbol.toPrimitive) return () => "";
+      if (p === "then") return undefined;
+      if (p === "dataset") return {};
+      if (p === "length") return 0;
+      if (p === Symbol.iterator) return function* () {};
+      if (p in store) return store[p];
+      if (p === "setAttribute") return (a, v) => { rec.attrs[a] = String(v); if (typeof v === "string") assigned.push([`<${rec.tag}>.attr(${a})`, v]); };
+      if (["appendChild", "append", "prepend", "insertBefore", "replaceChildren"].includes(p)) {
+        return (...kids) => { for (const k of kids) { const r = recOf.get(k); if (r) r.parent = rec; } return kids[0]; };
+      }
+      return (store[p] = stub(`<${rec.tag}>.${String(p)}`));
+    },
+    set(_t, p, v) {
+      store[p] = v;
+      rec.props[p] = v;
+      if (typeof v === "string") assigned.push([`<${rec.tag}>.${String(p)}`, v]);
+      return true;
+    },
+    apply() { return stub(`<${rec.tag}>()`); },
+  });
+  recOf.set(proxy, rec);
+  return proxy;
+}
+doc.createElement = (tag) => {
+  const rec = { tag: String(tag).toLowerCase(), props: {}, attrs: {}, parent: null };
+  created.push(rec);
+  return elStub(rec);
+};
+function fieldA11yProblems(rec) {
+  if (!["input", "select", "textarea"].includes(rec.tag) || rec.props.type === "hidden") return [];
+  const id = rec.props.id || rec.attrs.id;
+  const out = [];
+  if (!id && !(rec.props.name || rec.attrs.name)) out.push("no id/name");
+  // A wrapping <label> names the field only if some node inside it carries text
+  // (a switch label holding just the track/thumb spans names nothing).
+  const within = (r, anc) => { for (let p = r; p; p = p.parent) if (p === anc) return true; return false; };
+  const hasText = (r) => typeof r.props.textContent === "string" && r.props.textContent.trim() !== "";
+  let inLabel = false;
+  for (let p = rec.parent; p; p = p.parent) {
+    if (p.tag === "label" && created.some((r) => within(r, p) && hasText(r))) inLabel = true;
+  }
+  const forLabel = id && created.some((r) => r.tag === "label" && (r.props.htmlFor === id || r.attrs.for === id));
+  if (!(rec.attrs["aria-label"] || rec.props.ariaLabel || rec.attrs["aria-labelledby"] || rec.props.title || rec.attrs.title || inLabel || forLabel)) {
+    out.push("no accessible name");
+  }
+  return out;
+}
 const ctx = {
   document: doc, console: { log() {}, error() {}, warn() {} },
   navigator: { language: "en", userAgent: "Chrome/1 Test", clipboard: null },
@@ -132,6 +187,7 @@ for (const loc of Object.keys(dicts).sort()) {
   vm.runInContext(`DICT = __dict; CURRENT_LOCALE = ${JSON.stringify(loc)}; regionNamesCacheLocale = null;`, Object.assign(ctx, { __dict: dicts[loc] }));
   for (const [name, code] of calls) {
     assigned.length = 0;
+    created.length = 0;
     try {
       const r = vm.runInContext(code, ctx);
       if (r && typeof r.then === "function") { /* not awaited: sync smoke only */ }
@@ -139,6 +195,14 @@ for (const loc of Object.keys(dicts).sort()) {
       failures++;
       console.log(`[${loc}] ${name}: THREW ${e && e.message}`);
       continue;
+    }
+    if (loc === "en") {
+      for (const rec of created) {
+        for (const problem of fieldA11yProblems(rec)) {
+          failures++;
+          console.log(`[a11y] ${name}: <${rec.tag}${rec.props.type ? ` type=${rec.props.type}` : ""}> ${problem}`);
+        }
+      }
     }
     if (name === "applyStatic") {
       const geo = assigned.find(([w]) => w.includes("footer.geoipAttribution"));
