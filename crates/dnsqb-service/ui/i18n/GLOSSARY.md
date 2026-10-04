@@ -48,7 +48,11 @@ used in the tray's tooltip strings are pulled directly from this file's own alre
   the English label is the one a search engine or the vendor docs will find. Only the surrounding prose
   is translated. The README section the verify paragraph points at (`README "Перевірка: браузер →
   локальний DoH"`) is quoted verbatim in Ukrainian in every locale, including `en` - the README itself
-  is Ukrainian-only.
+  is Ukrainian-only. **Quote only a label someone has actually seen in that browser's UI** (wave 10,
+  T-260): an unverified label is described in prose instead (`brave.step2`/`vivaldi.step2` do this
+  for the custom-provider item) - a wrong quoted label is exactly the "names don't match" defect
+  T-260 fixed. Labels written from memory, still to be confirmed live, are listed in TASKS-DONE.md
+  T-260.
 - **Licence/attribution links are never part of a translation** (footer, `footer.*Attribution`):
   their `href`s and anchor texts (including DB-IP's mandated "IP Geolocation by DB-IP") are
   constants in `main.js` (`FOOTER_LINK_VARS`) and reach the sentence through `{sapics}`/`{dbip}`/
