@@ -13,7 +13,7 @@
 
 | Хвиля | Назва | Задачі | Чому разом | Файли | Залежить від | plan+advisor | Регресійні тести | Як перевірити | Розмір | Блокує реліз |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 0 | Аудит ін'єкцій у полях API | запит користувача 2026-10-04 (нова T-NNN) | Security: одна наскрізна таблиця «поле → sink → захист → тест», окремо від усього | `dispatch.rs`, `admin.rs`, `config.rs`, `overrides.rs`, `upstream.rs`, `geoip_credentials.rs`, `ui/main.js`, `self_uninstall.rs`, `trust_store.rs` | — | так | на кожне поле × sink без тесту — payload-тест (HTML/`"`/`'`/`
+| 0 | Аудит ін'єкцій у полях API | T-270 (запит користувача 2026-10-04) | Security: одна наскрізна таблиця «поле → sink → захист → тест», окремо від усього | `dispatch.rs`, `admin.rs`, `config.rs`, `overrides.rs`, `upstream.rs`, `geoip_credentials.rs`, `ui/main.js`, `self_uninstall.rs`, `trust_store.rs` | — | так | на кожне поле × sink без тесту — payload-тест (HTML/`"`/`'`/`
 `/`
 `/`]`/`=`/`;`/`&`/`\|`/`%`/NUL/RTL-override) | CI + `smoke-installed.ps1` + браузер | M | так |
 | 1 | Межі `[cache]` | T-256 | Security-чутлива зміна формату конфігу — окремо за правилом | `cache.rs`, `config.rs`, `admin.rs`, `dispatch.rs`, `CONFIGURATION.md` | — | так | рядок `u64::MAX` у `every_config_field_rejects_…`; `CacheConfigUpdate` з `u64::MAX` → 400; `CacheEntry::new`/`expire_after_create` без паніки | CI + `smoke-installed.ps1` | M | так |
@@ -25,8 +25,8 @@
 | 7 | Приватність логу конфігу | T-252 | Точковий privacy-фікс | `config.rs` / `orchestrate.rs` (місце логування помилки `toml`) | хвиля 1 (спільний `config.rs`) | ні | помилка розбору → у тексті логу немає цитати рядка файлу | CI + наживо: битий `resolver_config.toml` + `/admin/reset` | S | ні |
 | 8 | Помилки POST у `/admin/ui` | T-250 | Один клас бага: невдалий POST руйнує картку/hero | `ui/main.js` (`onConfigChanged` :654, `renderError`, картки категорій і провайдерів) | — | ні | `ui/smoke.js`: reject `fetch` → картка лишає контроли, видно рядок помилки, hero не `SERVICE_UNREACHABLE` | CI (`ui-smoke`) + chrome-devtools/Firefox на артефакті | M | ні |
 | 9 | Перемальовування не стирає ввід | T-248 (+T-242 після рішення) | Один клас: ре-рендер скидає те, що користувач редагує; T-242 — нове опитування логу, яке не має скидати той самий стан | `ui/main.js` (`renderTranslatedCards`, `refreshLog`) | хвиля 8 (той самий `main.js`) | ні | `ui/smoke.js`: зміна локалі зберігає ввід overrides/пошуку й відкриті `?` | CI + браузер на артефакті | M | ні |
-| 10 | i18n і доступність | T-247, T-249, T-258 | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
-| 11 | Розбіжності документації | T-245, T-246 (1) як обмеження платформи, T-268 (якщо обрано перейменування) | Лише документи, без коду | `UI-SPEC.md`, `CLAUDE.md`, `KNOWN-LIMITATIONS.md`, `CONFIGURATION.md` | — (паралельно з усіма) | ні | — | перечитування + `qa-matrix-check.py`; CI для `.md` не запускається | S | ні |
+| 10 | i18n і доступність | T-247, T-249, T-258, T-260; T-268, якщо обрано перейменування (37 словників) | Один прохід по 37 словниках + `index.html` | `ui/i18n/*.json` (37), `ui/index.html`, `ui/main.js` | хвилі 8, 9 (`main.js`) | ні | `ui/smoke.js`: кожне поле форми має доступне ім'я; рядок MaxMind не згадує DB-IP | CI + Lighthouse/a11y у браузері | S | ні |
+| 11 | Розбіжності документації | T-245, T-246 (1) як обмеження платформи | Лише документи, без коду | `UI-SPEC.md`, `CLAUDE.md`, `KNOWN-LIMITATIONS.md`, `CONFIGURATION.md` | — (паралельно з усіма) | ні | — | перечитування + `qa-matrix-check.py`; CI для `.md` не запускається | S | ні |
 | 12 | Тест-покриття без зміни поведінки | рядки `CODE-ONLY` «кандидат у Фазу 3», T-265 | Лише нові тести | `watchdog/*` (transition/loop_driver), `persist_dto`, `cache_persist_dto`, `personal_zone_stats`, `dnsqb-tray` nudge | після 1-10 | ні | — | CI | M | ні |
 
 Порядок: хвиля 0 першою (security). Паралельність: 1, 2, 4, 11 не мають спільних файлів — можна паралельно. 5→6 послідовно (`dnsqb-tray`).
@@ -113,7 +113,7 @@
 - T-264: UIA-ім'я іконки — склейка зі стартовим «service unreachable»; спершу діагноз (`szTip` у
   `tray-icon`), потім фікс або обмеження.
 - Коміти: 4 (по задачі). Артефакт: так. Re-test: `A-admin-install-cert-HP`, `C-PAUSE_RESUME_ID-SB`,
-  `C-QUIT_APP_ID-HP`, `D-tooltip-suffixes`.
+  `C-QUIT_APP_ID-HP`, `D-tooltip-suffixes`, `G-first-run` (свіжий інстал, T-269).
 
 ### Хвиля 7 — приватність логу конфігу (T-252)
 - Логувати тип/рядок/колонку помилки `toml`, не цитату рядка файлу (як уже робить `overrides.toml`).
@@ -159,6 +159,17 @@
 - Re-test: лише перегенерація матриці (`qa-matrix-gen.py` + `qa-matrix-check.py`); для T-265 —
   `cmdkey /list` до/після `cargo test`.
 
+### Хвиля 13 — ручне відновлення з `GaveUp` (T-266, user safety)
+- Діагноз (`F-gaveup`): новий watcher відновлює стан із `watchdog-state.json` молодшого за 90 с
+  (`crates/dnsqb-watcher/src/main.rs:233-239`), `GaveUp` термінальний (`watchdog/transition.rs:85-86`),
+  а другий запуск плитки при живому watcher-і лише перевіряє трей і виходить (T-187). Tooltip радить
+  «open the app» — це не відновлює службу.
+- Архітектурне (watchdog, §7.1) — власний plan+advisor; **лише після рішення користувача**, що саме
+  скидає бюджет (запуск плитки при `GaveUp`, пункт трею тощо). Тест першим: «другий запуск при
+  `GaveUp` піднімає службу і скидає стан».
+- «Quit» + плитка через >90 с не перевірено (щоб не викликати `GaveUp` удруге).
+- Re-test: `F-gaveup`, `D-icon-ServiceGaveUp*`, `F-respawn`.
+
 ## Спершу діагноз (у хвилі не входять)
 
 - **T-257 — Firefox TRR mode 2 обходить фільтр на кожному блокуванні (user safety).** Спостереження
@@ -175,13 +186,10 @@
 
 - **T-243 — автозапуск після ребуту. Блокер релізу (від нього залежить T-239).** Стан запису вже
   спостережено: `HKCU\…\AppModel\SystemAppData\<PFN>\DnsqbWatcherStartup` `State=2` (Enabled).
-  Діагностовано 2026-10-04: ребут — автозапуск працює (~175 с); на свіжому інсталі ключа немає до
-  першого запуску (`G-startup-state` FAIL) — задокументована поведінка Microsoft. Фікс — інструкція
-  «запустіть один раз» і/або `ImmediateRegistration` для Store; потрібне рішення користувача.
-- **T-266 — GaveUp без шляху ручного відновлення (user safety).** Спостережено наживо (`F-gaveup`):
-  tooltip «open the app to restart it» не працює (другий watcher лише показує трей), а
-  перезапущений watcher <90 с успадковує `GaveUp` при робочій службі; «Quit» + плитка через >90 с не перевірено. Спершу тест на «запуск плитки
-  при GaveUp», потім рішення, що саме скидає бюджет. Ймовірно власна хвиля (watchdog — архітектурне).
+  2026-10-04: ребут — автозапуск працює (~175 с); на свіжому інсталі ключа немає до першого
+  запуску (`G-startup-state` FAIL) — задокументована поведінка Microsoft, одна підтверджена
+  причина. Чи пояснює вона початковий баг-репорт — не перевірено (користувач, ймовірно, вже
+  запускав застосунок); питання користувачу, потім хвиля.
 - **T-268 — дві різні дії під назвою «Повністю видалити»** (`B-danger-HP`, `A-admin-uninstall-local-state-HP`).
   Потрібне рішення користувача, яку форму обрати (див. TASKS.md).
 - **T-262 — систематичні `kind="http"` від Quad9** (`I-quad9-http-errors`) (7–67 на день, інші провайдери ~0). Спершу
@@ -210,7 +218,7 @@
   `G-direct-remove-*` (деінсталяція ОС) — у хвилю 12 не входять.
 - **`D-icon-ServiceGaveUp*`, `F-gaveup*`, `F-state-GaveUp*`** — 2026-10-04 GaveUp досягнуто
   ненавмисно (6 рестартів через `/admin/shutdown`); колір і стан — PASS, відновлення — FAIL (T-266,
-  «Спершу діагноз»). Решта шаблонних рядків — unit-тести `watchdog::budget`/`transition`.
+  хвиля 13). Решта шаблонних рядків — unit-тести `watchdog::budget`/`transition`.
 - **T-239** (публікація в Store) — поза проходом, власний kickoff.
 
 ## Ще не пройдено (не вхід Фази 4, але має потрапити у фінальний звіт)
