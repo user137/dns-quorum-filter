@@ -411,6 +411,9 @@ T-277 (push-оновлення `/admin/ui`, рішення 2026-10-04) погл�
 - Re-test: `B-danger-HP`, `A-admin-uninstall-local-state-HP`, `C-REMOVE_ALL_ID-HP`, `DIAG-life-removed`.
 
 ### Хвиля 15 — фонова мережа: ввічливість і обіцянки приватності (ARCH-20, ARCH-10, T-262)
+**Стан 2026-10-05: виконано** — ARCH-20 `da29f52` (`IDLE_INTERVAL` = 60 с, рішення користувача),
+ARCH-10 `ec00109`/`545b510`/`e0f01d9`, T-262 — діагностичний підтип у лозі `a2e74c1` (рішення — після
+даних). Деталі — `TASKS-DONE.md`.
 - **ARCH-20:** doc модуля `reachability.rs:12–14` і SPEC.md:825–827 обіцяють ротацію маркерів («жодній
   інфраструктурі безперервного heartbeat»), а `probe_all_markers` (`:239–246`) щоциклу б'є всі три
   (`tokio::join!`) — 8 640 запитів на добу до Google/Cloudflare/Apple + 2 880 DoH до baseline. Фікс: у
