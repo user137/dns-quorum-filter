@@ -446,3 +446,13 @@ tab open the sampler parks on a `Notify` and does nothing. Each open stream (≤
 waiting on ten `watch` receivers and a 10 s ping timer. A burst of changes reaches a slow
 stream as one frame per topic (`watch` keeps only the latest version); the page re-fetches the
 log at most once a second.
+
+## Blocklist-bundle warm-load at startup (ARCH-10, wave 15)
+
+`blocklist_updater::load_blocklist_bundles_from_disk` reads and hashes every selected
+`<app-data>/blocklists/<id>.txt`. Measured 2026-10-05 on the dev box (12 logical CPUs, release
+build) with the `#[ignore]`d `measure_warm_load_of_a_synthetic_full_size_set` test — 8 synthetic
+files, 5.5M entries, 128 MB: **6.0–7.2 s** of one CPU core (three runs). That is why it never runs
+on the startup path: `run_blocklist_updater` calls it in `spawn_blocking` after the listener is
+accepting, so DNS answers flow from the first second and only the bundle check waits those few
+seconds (before ARCH-10 the bundle stayed empty for the whole ~111 MB re-download instead).

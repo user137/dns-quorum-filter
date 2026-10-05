@@ -13,11 +13,12 @@
 //! live `[blocklist_bundles]` config every cycle — `enabled = false` or an
 //! empty `sources` selection makes it a no-op **before** any filesystem or
 //! network call, same order `topn_updater::refresh_all_lists` checks in.
-//! Startup itself does **not** warm-load `<app-data>/blocklists/*.txt`
-//! this batch (advisor review, Батч 7.3 — see [`load_blocklist_bundles_from_disk`]'s
-//! own doc for why that call stays deferred): `blocklist_bundles` on
-//! `AppState` starts empty and [`run_blocklist_updater`]'s first cycle (which
-//! runs immediately, before any park) populates it.
+//! **ARCH-10 (wave 15):** [`run_blocklist_updater`] first warm-loads the
+//! selected `<app-data>/blocklists/*.txt` files in `spawn_blocking` (the
+//! listener is already accepting by then, so a large set never delays
+//! startup), then defers its first network cycle while every selected file
+//! is younger than [`BLOCKLIST_CHECK_INTERVAL`] — a restart no longer
+//! re-downloads ~111 MB nor serves an empty bundle while it does.
 //!
 //! **No `.sha256` sidecar for any of the 7 sources** (`data/blocklists/
 //! CANDIDATES.md` §3, verified 2026-09-13) — unlike `topn_updater`, there is
@@ -48,10 +49,12 @@ use crate::blocklist_download::{
     delta_verdict, finalize, hash_adblock_domains, hash_plain_domains, validate_hashes,
     BlocklistSource, SourceFormat, ValidationFailure, BLOCKLIST_SOURCES, MAX_BLOCKLIST_BYTES,
 };
+use crate::config::BlocklistBundlesConfig;
 use crate::dispatch::AppState;
 use crate::normalize_domain;
 use crate::paths::write_atomic;
 use crate::public_suffix::{Psl, PSL_DAT};
+use crate::refresh_schedule::{first_cycle_delay, oldest_mtime};
 use crate::upstream::ReqwestDohClient;
 
 /// Subdirectory of the app-data directory the raw per-source text files live
@@ -420,25 +423,22 @@ fn read_and_hash_blocking(path: &Path, format: SourceFormat, seed: &RandomState)
     hash_source_body(format, &body, seed, &psl).0
 }
 
-/// Builds the initial [`BlocklistBundleState`] from whatever
+/// Builds a [`BlocklistBundleState`] from whatever selected
 /// `<app-data>/blocklists/<id>.txt` files are already present — mirrors
-/// `topn_updater::load_zone_from_disk`. Missing files contribute nothing; a
-/// fresh install (no files yet) returns an empty bundle. Mints its own fresh
-/// [`RandomState`] (there is no previous one to reuse at startup, same as
-/// the first `refresh_all_sources` cycle would do anyway).
+/// `topn_updater::load_zone_from_disk`. `selected` follows
+/// `BlocklistBundlesConfig::sources` (`None` = every source); a deselected
+/// source's leftover file is ignored, or it would keep blocking. Missing
+/// files contribute nothing; a fresh install returns an empty bundle. Mints
+/// its own fresh [`RandomState`].
 ///
-/// **Deliberately still no caller as of Батч 7.3** (advisor review): calling
-/// this synchronously at startup — before the listener accepts traffic, the
-/// same point `load_zone_from_disk`/`restore_cache` run at — reads and hashes
-/// up to `MAX_BLOCKLIST_BYTES` × 8 sources; `load_zone_from_disk`'s own files
-/// are three orders of magnitude smaller, so its "warm-load at startup"
-/// precedent doesn't carry over without measuring the real cost first. A
-/// future batch that wants a warm start without waiting for
-/// `run_blocklist_updater`'s first cycle can wire this in then, with that
-/// measurement done. Until then `AppState.blocklist_bundles` simply starts
-/// empty and that first cycle (runs immediately, no park before it) fills it.
-#[allow(dead_code)]
-pub(crate) fn load_blocklist_bundles_from_disk(app_data: Option<&Path>) -> BlocklistBundleState {
+/// Synchronous and CPU-heavy (reads and hashes up to `MAX_BLOCKLIST_BYTES` ×
+/// 8 sources — PERFORMANCE.md has the measured cost), so its one caller,
+/// [`run_blocklist_updater`], runs it in `spawn_blocking` after the listener
+/// is up, never on the startup path.
+pub(crate) fn load_blocklist_bundles_from_disk(
+    app_data: Option<&Path>,
+    selected: Option<&[String]>,
+) -> BlocklistBundleState {
     let Some(dir) = app_data else {
         return BlocklistBundleState::default();
     };
@@ -447,7 +447,8 @@ pub(crate) fn load_blocklist_bundles_from_disk(app_data: Option<&Path>) -> Block
     let psl = Psl::parse(PSL_DAT);
     let mut domains = Vec::new();
     let mut sources = Vec::with_capacity(BLOCKLIST_SOURCES.len());
-    for source in BLOCKLIST_SOURCES {
+    let is_selected = |id: &str| selected.is_none_or(|ids| ids.iter().any(|sel| sel == id));
+    for source in BLOCKLIST_SOURCES.iter().filter(|s| is_selected(s.id)) {
         let path = blocklist_dir.join(format!("{}.txt", source.id));
         let Ok(body) = std::fs::read_to_string(&path) else {
             continue;
@@ -541,8 +542,10 @@ async fn refresh_one_source_bounded(
     }
 }
 
-/// Runs one refresh right away, then every [`BLOCKLIST_CHECK_INTERVAL`] (or
-/// sooner if `apply_admin_reset` wakes it) — exact shape of
+/// Warm-loads the selected files from disk, then runs one refresh — right
+/// away, or once every selected file reaches [`BLOCKLIST_CHECK_INTERVAL`] of
+/// age (ARCH-10) — then every [`BLOCKLIST_CHECK_INTERVAL`] (or sooner if
+/// `apply_admin_reset` wakes it) — same shape as
 /// `topn_updater::run_topn_updater`. Spawned by
 /// `orchestrate::spawn_public_http_tasks` whenever an app-data directory
 /// exists; [`refresh_all_sources`] itself re-reads the config snapshot each
@@ -555,10 +558,69 @@ pub async fn run_blocklist_updater(
     state: Arc<AppState<ReqwestDohClient>>,
 ) {
     let wake = state.blocklist_bundles_refresh_wake_handle();
+    let config = state.blocklist_bundles_config_snapshot();
+    if bundles_active(&config) {
+        warm_load_from_disk(&app_data, &state, config.sources.clone()).await;
+        let first = first_cycle_delay(
+            SystemTime::now(),
+            selected_sources_last_success(&app_data, config.sources.as_deref()),
+            BLOCKLIST_CHECK_INTERVAL,
+        );
+        if !first.is_zero() {
+            tracing::info!("blocklist bundles on disk are fresh, first check deferred");
+            park_until_due(&wake, first).await;
+        }
+    }
     loop {
         refresh_all_sources(&client, &app_data, &state).await;
-        park_until_due(&wake).await;
+        park_until_due(&wake, BLOCKLIST_CHECK_INTERVAL).await;
     }
+}
+
+/// `enabled` and not an explicitly empty selection — the same gate
+/// [`refresh_all_sources`] applies before touching disk or network.
+fn bundles_active(config: &BlocklistBundlesConfig) -> bool {
+    config.enabled && !matches!(&config.sources, Some(ids) if ids.is_empty())
+}
+
+/// ARCH-10: publish the on-disk bundle before the first network cycle, off
+/// the async workers. Runs inside the updater task, so it can never race
+/// that task's own first refresh.
+async fn warm_load_from_disk(
+    app_data: &Path,
+    state: &AppState<ReqwestDohClient>,
+    selected: Option<Vec<String>>,
+) {
+    let dir = app_data.to_path_buf();
+    let loaded = tokio::task::spawn_blocking(move || {
+        load_blocklist_bundles_from_disk(Some(&dir), selected.as_deref())
+    })
+    .await;
+    match loaded {
+        Ok(bundle) if bundle.sources.is_empty() => {}
+        Ok(bundle) => {
+            state.update_blocklist_bundles(bundle);
+            tracing::info!("blocklist bundles warm-loaded from disk");
+        }
+        Err(join_err) => {
+            tracing::warn!("blocklist-bundle warm-load task failed: {join_err}");
+        }
+    }
+}
+
+/// The oldest mtime among the selected sources' files, or `None` (refresh
+/// now) when any of them is missing.
+fn selected_sources_last_success(
+    app_data: &Path,
+    selected: Option<&[String]>,
+) -> Option<SystemTime> {
+    let dir = app_data.join(BLOCKLIST_DIR);
+    oldest_mtime(
+        BLOCKLIST_SOURCES
+            .iter()
+            .filter(|s| selected.is_none_or(|ids| ids.iter().any(|sel| sel == s.id)))
+            .map(|s| dir.join(format!("{}.txt", s.id))),
+    )
 }
 
 /// Park between refresh cycles: return when the periodic timer elapses **or**
@@ -566,9 +628,9 @@ pub async fn run_blocklist_updater(
 /// `topn_updater::park_until_due` (a `notify_one` left before this is entered
 /// is remembered — one permit — so a config reload during an in-flight
 /// refresh still resolves the next park immediately).
-async fn park_until_due(wake: &Notify) {
+async fn park_until_due(wake: &Notify, after: Duration) {
     tokio::select! {
-        () = tokio::time::sleep(BLOCKLIST_CHECK_INTERVAL) => {}
+        () = tokio::time::sleep(after) => {}
         () = wake.notified() => tracing::info!("blocklist-bundle refresh woken by a config reload"),
     }
 }
@@ -704,11 +766,13 @@ mod tests {
     use std::hash::BuildHasher;
 
     use super::{
-        hash_source_body, load_blocklist_bundles_from_disk, read_and_hash_blocking,
-        write_and_hash_blocking, BlocklistBundleState, BlocklistRefreshError,
-        BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
+        bundles_active, hash_source_body, load_blocklist_bundles_from_disk, read_and_hash_blocking,
+        selected_sources_last_success, write_and_hash_blocking, BlocklistBundleState,
+        BlocklistRefreshError, BLOCKLIST_CHECK_INTERVAL, BLOCKLIST_FETCH_TIMEOUT,
+        BLOCKLIST_SOURCES,
     };
     use crate::blocklist_download::{SourceFormat, BLOCKLIST_CANARY_DOMAINS};
+    use crate::config::BlocklistBundlesConfig;
     use crate::public_suffix::test_psl;
 
     #[test]
@@ -1100,9 +1164,119 @@ mod tests {
         );
     }
 
+    // ARCH-10: a deselected source's leftover file must not keep blocking
+    // after a restart warm-loads the bundle from disk.
+    #[test]
+    fn load_blocklist_bundles_from_disk_ignores_a_deselected_source_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let blocklists = dir.path().join("blocklists");
+        if let Err(err) = std::fs::create_dir_all(&blocklists) {
+            panic!("mkdir: {err}");
+        }
+        for (id, domain) in [
+            ("hagezi-multi-pro", "kept.example"),
+            ("1hosts-lite", "dropped.example"),
+        ] {
+            if let Err(err) = std::fs::write(blocklists.join(format!("{id}.txt")), domain) {
+                panic!("write: {err}");
+            }
+        }
+        let selected = vec!["hagezi-multi-pro".to_string()];
+        let bundle = load_blocklist_bundles_from_disk(Some(dir.path()), Some(&selected));
+        assert!(bundle.matches_domain("kept.example"));
+        assert!(!bundle.matches_domain("dropped.example"));
+        assert_eq!(bundle.sources.len(), 1);
+        assert!(
+            load_blocklist_bundles_from_disk(Some(dir.path()), Some(&[]))
+                .sources
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn last_success_needs_every_selected_source_file() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let blocklists = dir.path().join("blocklists");
+        if let Err(err) = std::fs::create_dir_all(&blocklists) {
+            panic!("mkdir: {err}");
+        }
+        if let Err(err) = std::fs::write(blocklists.join("hagezi-tif.txt"), "a.example") {
+            panic!("write: {err}");
+        }
+        let only_tif = vec!["hagezi-tif".to_string()];
+        assert!(selected_sources_last_success(dir.path(), Some(&only_tif)).is_some());
+        assert!(
+            selected_sources_last_success(dir.path(), None).is_none(),
+            "\"every source\" with seven files missing must refresh at once"
+        );
+    }
+
+    #[test]
+    fn bundles_active_matches_the_refresh_gate() {
+        let on = |sources| BlocklistBundlesConfig {
+            enabled: true,
+            sources,
+        };
+        assert!(bundles_active(&on(None)));
+        assert!(bundles_active(&on(Some(vec!["hagezi-tif".to_string()]))));
+        assert!(!bundles_active(&on(Some(Vec::new()))));
+        assert!(!bundles_active(&BlocklistBundlesConfig {
+            enabled: false,
+            sources: None,
+        }));
+    }
+
+    /// ARCH-10 measurement, not a CI gate: warm-load cost of a synthetic
+    /// full-size set (8 files, 5.5M lines, ~120 MB). Run with
+    /// `cargo test --release -p dnsqb-service --lib -- --ignored
+    /// measure_warm_load --nocapture`; the result is in PERFORMANCE.md.
+    #[test]
+    #[ignore = "measurement: writes ~110 MB to a temp dir"]
+    fn measure_warm_load_of_a_synthetic_full_size_set() {
+        use std::fmt::Write as _;
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let blocklists = dir.path().join("blocklists");
+        if let Err(err) = std::fs::create_dir_all(&blocklists) {
+            panic!("mkdir: {err}");
+        }
+        let per_source = 5_500_000 / BLOCKLIST_SOURCES.len();
+        let mut bytes = 0usize;
+        for (n, source) in BLOCKLIST_SOURCES.iter().enumerate() {
+            let mut body = String::with_capacity(per_source * 24);
+            for i in 0..per_source {
+                // Writing into a String cannot fail.
+                let _ = match source.format {
+                    SourceFormat::PlainDomain => writeln!(body, "h{i:07}s{n}.example.com"),
+                    SourceFormat::AdblockNetRules => writeln!(body, "||h{i:07}s{n}.example.com^"),
+                };
+            }
+            bytes += body.len();
+            if let Err(err) = std::fs::write(blocklists.join(format!("{}.txt", source.id)), body) {
+                panic!("write: {err}");
+            }
+        }
+        let start = std::time::Instant::now();
+        let bundle = load_blocklist_bundles_from_disk(Some(dir.path()), None);
+        let elapsed = start.elapsed();
+        println!(
+            "warm-load: {} MB, {} entries, {elapsed:?}",
+            bytes / 1_000_000,
+            bundle.domains.len()
+        );
+        assert_eq!(bundle.domains.len(), per_source * BLOCKLIST_SOURCES.len());
+    }
+
     #[test]
     fn load_blocklist_bundles_from_disk_is_empty_without_app_data() {
-        assert!(load_blocklist_bundles_from_disk(None).sources.is_empty());
+        assert!(load_blocklist_bundles_from_disk(None, None)
+            .sources
+            .is_empty());
     }
 
     #[test]
@@ -1121,7 +1295,7 @@ mod tests {
             panic!("write: {err}");
         }
 
-        let bundle = load_blocklist_bundles_from_disk(Some(dir.path()));
+        let bundle = load_blocklist_bundles_from_disk(Some(dir.path()), None);
         assert_eq!(
             bundle.sources.len(),
             1,
@@ -1163,7 +1337,7 @@ mod tests {
             panic!("write: {err}");
         }
 
-        let bundle = load_blocklist_bundles_from_disk(Some(dir.path()));
+        let bundle = load_blocklist_bundles_from_disk(Some(dir.path()), None);
         let total_entry_count: usize = bundle.sources.iter().map(|s| s.entry_count).sum();
         assert_eq!(
             total_entry_count, 2,
