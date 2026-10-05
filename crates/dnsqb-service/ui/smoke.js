@@ -106,11 +106,12 @@ function fieldA11yProblems(rec) {
   }
   return out;
 }
+const intervals = [];
 const ctx = {
   document: doc, console: { log() {}, error() {}, warn() {} },
   navigator: { language: "en", userAgent: "Chrome/1 Test", clipboard: null },
   localStorage: { getItem: () => null, setItem() {} },
-  setTimeout: () => 0, setInterval: () => 0, clearTimeout() {},
+  setTimeout: () => 0, setInterval: (fn) => { intervals.push(fn); return 0; }, clearTimeout() {},
   fetch: async (url) => {
     const m = /\/admin\/ui\/i18n\/(.+)\.json$/.exec(url);
     if (m) return { ok: true, json: async () => dicts[m[1]] };
@@ -268,6 +269,27 @@ for (const [fn, data] of xssCalls) {
   if (!assigned.some(([, val]) => val.includes(XSS)) && fn !== "renderTimeoutConfig") {
     failures++;
     console.log(`[xss] ${fn}: payload never rendered at all - the probe stopped observing`);
+  }
+}
+// Blocklist ages: a source refreshes once a day and pushes nothing in
+// between, so a row's "updated N h ago" must be worked out again by a page
+// timer, not frozen at render time until the page is reloaded.
+{
+  vm.runInContext(`DICT = __dict; CURRENT_LOCALE = "en";`, Object.assign(ctx, { __dict: dicts.en }));
+  created.length = 0;
+  const updatedAt = Date.now() - 5 * 3600e3;
+  vm.runInContext(`renderBlocklistBundles(${JSON.stringify(status({ blocklist_bundles: { enabled: true, active: true, sources: null, available_sources: ["hagezi-tif"], loaded: [{ id: "hagezi-tif", last_updated: updatedAt, last_error: null }] } }))})`, ctx);
+  if (!created.some((r) => r.dataset.updatedMs === String(updatedAt))) {
+    failures++;
+    console.log("[ages] the updated-at row does not carry its absolute time");
+  }
+  const aged = { dataset: { updatedMs: String(Date.now() - 3 * 3600e3) }, textContent: "frozen" };
+  vm.runInContext("blocklistBundlesBody", ctx).querySelectorAll = (sel) => (sel === ".meta[data-updated-ms]" ? [aged] : []);
+  intervals.forEach((fn) => fn());
+  const want = vm.runInContext(`blocklistRelativeTime(${aged.dataset.updatedMs})`, ctx);
+  if (aged.textContent !== want) {
+    failures++;
+    console.log(`[ages] the page timer left the age at "${aged.textContent}", want "${want}"`);
   }
 }
 // T-258/T-260: the picker shows exactly one browser's steps plus the matching

@@ -538,6 +538,7 @@ setInterval(() => {
   if (lastQueryUnixMs !== undefined) {
     renderLastQuery(lastQueryUnixMs);
   }
+  refreshBlocklistAges();
 }, 30000);
 
 // T-243: Windows registers the autostart task only after the first launch,
@@ -4712,6 +4713,18 @@ function blocklistRelativeTime(unixMillis) {
   return tPlural("blocklist.updated.days", Math.floor(hours / 24));
 }
 
+// A source refreshes once a day, so no push arrives in between: the
+// "updated N h ago" labels are re-worked out here on the same 30 s timer as
+// the last-query age, from the absolute time each row carries.
+function refreshBlocklistAges() {
+  blocklistBundlesBody.querySelectorAll(".meta[data-updated-ms]").forEach((el) => {
+    const text = blocklistRelativeTime(Number(el.dataset.updatedMs));
+    if (el.textContent !== text) {
+      el.textContent = text;
+    }
+  });
+}
+
 function renderBlocklistBundles(status) {
   const bb = status.blocklist_bundles;
   blocklistBundlesBody.textContent = "";
@@ -4813,7 +4826,7 @@ function renderBlocklistBundles(status) {
     // line alone.
     const oldest = Math.min(...loaded.map((entry) => entry.last_updated ?? Infinity));
     return Number.isFinite(oldest)
-      ? { text: blocklistRelativeTime(oldest), cls: "" }
+      ? { text: blocklistRelativeTime(oldest), cls: "", updatedMs: oldest }
       : { text: "—", cls: "" };
   }
 
@@ -4945,6 +4958,9 @@ function renderBlocklistBundles(status) {
     const meta = document.createElement("span");
     meta.className = status.cls ? `meta ${status.cls}` : "meta";
     meta.textContent = status.text;
+    if (status.updatedMs !== undefined) {
+      meta.dataset.updatedMs = String(status.updatedMs);
+    }
     top.appendChild(meta);
     row.appendChild(top);
     const descLine = document.createElement("p");
