@@ -576,6 +576,90 @@ pub enum UpstreamError {
     Decode(#[source] ProtoError),
 }
 
+impl UpstreamError {
+    /// T-262: a domain-free subtype of an [`UpstreamError::Http`] for the
+    /// service log — a static label plus the HTTP status when the upstream
+    /// answered non-2xx. Built only from `reqwest`/`hyper`/`io` predicates,
+    /// never from the wrapped error's `Display`/`Debug` (they render the
+    /// request URL, whose `?dns=` carries the queried name). `("none", None)`
+    /// for the non-HTTP variants.
+    #[must_use]
+    pub fn http_detail(&self) -> (&'static str, Option<u16>) {
+        let Self::Http(err) = self else {
+            return ("none", None);
+        };
+        if let Some(status) = err.status() {
+            let label = if status.is_client_error() {
+                "status_4xx"
+            } else if status.is_server_error() {
+                "status_5xx"
+            } else {
+                "status_other"
+            };
+            return (label, Some(status.as_u16()));
+        }
+        if err.is_connect() {
+            let label = if err.is_timeout() {
+                "connect_timeout"
+            } else {
+                "connect"
+            };
+            return (label, None);
+        }
+        if err.is_timeout() {
+            return ("timeout", None);
+        }
+        let mut source = std::error::Error::source(err);
+        while let Some(cause) = source {
+            if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+                return (io_label(io.kind()), None);
+            }
+            if let Some(hyper) = cause.downcast_ref::<hyper::Error>() {
+                return (hyper_label(hyper), None);
+            }
+            source = cause.source();
+        }
+        let label = if err.is_body() {
+            "body"
+        } else if err.is_decode() {
+            "decode"
+        } else if err.is_request() {
+            "request"
+        } else {
+            "other"
+        };
+        (label, None)
+    }
+}
+
+fn io_label(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::ConnectionReset => "io_reset",
+        std::io::ErrorKind::ConnectionAborted => "io_aborted",
+        std::io::ErrorKind::UnexpectedEof => "io_eof",
+        std::io::ErrorKind::TimedOut => "io_timeout",
+        _ => "io_other",
+    }
+}
+
+/// An HTTP/2 `GOAWAY`/`RST_STREAM` surfaces as a `hyper::Error` none of whose
+/// public predicates match — hence `hyper_other`, not a guess.
+fn hyper_label(err: &hyper::Error) -> &'static str {
+    if err.is_incomplete_message() {
+        "incomplete_message"
+    } else if err.is_closed() {
+        "closed"
+    } else if err.is_canceled() {
+        "canceled"
+    } else if err.is_timeout() {
+        "hyper_timeout"
+    } else if err.is_parse() {
+        "parse"
+    } else {
+        "hyper_other"
+    }
+}
+
 impl std::fmt::Debug for UpstreamError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // See the type's doc comment: never fall through to the wrapped
@@ -979,6 +1063,93 @@ mod tests {
         if let Err(err) = result {
             panic!("expected a decoded DNS response, got: {err}");
         }
+    }
+
+    fn t262_query() -> Message {
+        let mut question = Query::new();
+        match Name::from_str("example.com.") {
+            Ok(name) => question.set_name(name),
+            Err(err) => panic!("valid fixture name: {err}"),
+        };
+        question.set_query_type(RecordType::A);
+        let mut query = Message::query();
+        query.add_query(question);
+        query
+    }
+
+    /// T-262: a loopback HTTP/1.1 server that answers every connection with
+    /// `reply` (possibly empty = close without a response), then hangs up.
+    async fn t262_canned_server(reply: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) => panic!("bind loopback: {err}"),
+        };
+        let addr = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(err) => panic!("local_addr: {err}"),
+        };
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                // Request bytes are irrelevant; a short read is fine.
+                let _ = stream.read(&mut buf).await;
+                // Best effort: the client side observes whatever arrives.
+                let _ = stream.write_all(reply).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        format!("http://{addr}/dns-query")
+    }
+
+    async fn t262_detail(url: &str) -> (&'static str, Option<u16>) {
+        let client = match ReqwestDohClient::new() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        match client.query(url, &t262_query()).await {
+            Err(err @ UpstreamError::Http(_)) => err.http_detail(),
+            Err(other) => panic!("expected UpstreamError::Http, got {other:?}"),
+            Ok(_) => panic!("the request must fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn http_detail_names_a_refused_connection() {
+        // Windows retries a refused loopback SYN for ~2 s, past the 500 ms
+        // `connect_timeout`, so either connect label is a correct answer.
+        let (label, status) = t262_detail("http://127.0.0.1:1/dns-query").await;
+        assert!(
+            matches!(label, "connect" | "connect_timeout"),
+            "got {label}"
+        );
+        assert_eq!(status, None);
+    }
+
+    #[tokio::test]
+    async fn http_detail_carries_a_non_2xx_status_code() {
+        let url = t262_canned_server(
+            b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        assert_eq!(t262_detail(&url).await, ("status_5xx", Some(503)));
+        let url = t262_canned_server(
+            b"HTTP/1.1 429 Too Many Requests\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        )
+        .await;
+        assert_eq!(t262_detail(&url).await, ("status_4xx", Some(429)));
+    }
+
+    #[tokio::test]
+    async fn http_detail_names_a_connection_closed_before_any_response() {
+        let url = t262_canned_server(b"").await;
+        assert_eq!(t262_detail(&url).await, ("incomplete_message", None));
+    }
+
+    #[tokio::test]
+    async fn http_detail_is_none_for_a_non_http_error() {
+        let err = UpstreamError::Decode(hickory_proto::ProtoError::from("x"));
+        assert_eq!(err.http_detail(), ("none", None));
     }
 
     // T-200 (1.1-B): a real `UpstreamError::Http` built from a failed request

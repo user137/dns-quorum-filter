@@ -615,9 +615,14 @@ fn log_outcome(label: &str, outcome: &VoterOutcome) {
             );
         }
         VoterOutcome::Errored(err) => {
+            // T-262: `detail`/`http_status` subtype `kind="http"`;
+            // `http_status` 0 = no HTTP response was received.
+            let (detail, http_status) = err.http_detail();
             tracing::warn!(
                 provider = label,
                 kind = error_kind(err),
+                detail,
+                http_status = http_status.unwrap_or(0),
                 "upstream query failed"
             );
         }
