@@ -25,6 +25,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use crate::onboarding::OfferCheck;
+
 /// File name of the "browser nudge shown" marker under the app-data
 /// directory — T-229's own one-shot latch, independent of `onboarding.seen`.
 pub const BROWSER_NUDGE_SEEN_NAME: &str = "browser-nudge.seen";
@@ -124,11 +126,40 @@ pub fn should_offer_browser_nudge(
     }
 }
 
+/// [`should_offer_browser_nudge`] for the per-tick caller (ARCH-19 a):
+/// `first_seen` is read once at startup, and `seen` is only called once the
+/// in-memory reading is already due. Any query, a missing stamp, or a present
+/// marker is final — `Never` closes the caller's latch.
+#[must_use]
+pub fn check_browser_nudge(
+    now: SystemTime,
+    first_seen: Option<SystemTime>,
+    total_queries: Option<u64>,
+    seen: impl FnOnce() -> bool,
+) -> OfferCheck {
+    match total_queries {
+        Some(0) => {}
+        Some(_) => return OfferCheck::Never,
+        None => return OfferCheck::NotYet,
+    }
+    if first_seen.is_none() {
+        return OfferCheck::Never;
+    }
+    if !should_offer_browser_nudge(now, first_seen, total_queries, false) {
+        return OfferCheck::NotYet;
+    }
+    if seen() {
+        OfferCheck::Never
+    } else {
+        OfferCheck::Offer
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_nudge_seen, first_seen, mark_browser_nudge_seen, mark_first_seen_if_absent,
-        should_offer_browser_nudge, NUDGE_AFTER,
+        browser_nudge_seen, check_browser_nudge, first_seen, mark_browser_nudge_seen,
+        mark_first_seen_if_absent, should_offer_browser_nudge, OfferCheck, NUDGE_AFTER,
     };
     use std::time::{Duration, SystemTime};
 
@@ -250,5 +281,39 @@ mod tests {
             Err(err) => panic!("write: {err}"),
         }
         assert_eq!(first_seen(dir.path()), None);
+    }
+
+    // ARCH-19 a: the marker is read only once the in-memory reading is due;
+    // any query, a missing stamp, or a present marker settles the latch.
+    #[test]
+    fn check_reads_the_marker_only_when_due_and_settles_for_good() {
+        let untouched = || -> bool { panic!("marker read without need") };
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let due = start + NUDGE_AFTER;
+        let early = start + NUDGE_AFTER - Duration::from_secs(1);
+        assert_eq!(
+            check_browser_nudge(due, Some(start), Some(3), untouched),
+            OfferCheck::Never
+        );
+        assert_eq!(
+            check_browser_nudge(due, None, Some(0), untouched),
+            OfferCheck::Never
+        );
+        assert_eq!(
+            check_browser_nudge(due, Some(start), None, untouched),
+            OfferCheck::NotYet
+        );
+        assert_eq!(
+            check_browser_nudge(early, Some(start), Some(0), untouched),
+            OfferCheck::NotYet
+        );
+        assert_eq!(
+            check_browser_nudge(due, Some(start), Some(0), || true),
+            OfferCheck::Never
+        );
+        assert_eq!(
+            check_browser_nudge(due, Some(start), Some(0), || false),
+            OfferCheck::Offer
+        );
     }
 }

@@ -55,9 +55,41 @@ pub fn should_offer_onboarding(cert_confirmed: bool, cert_trusted: bool, seen: b
     cert_confirmed && !cert_trusted && !seen
 }
 
+/// What one event-loop tick concluded about an automatic offer (ARCH-19 a).
+/// `Never` closes the caller's per-process latch, so a settled decision stops
+/// costing file I/O on every tick for the rest of the tray's life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfferCheck {
+    Offer,
+    NotYet,
+    Never,
+}
+
+/// [`should_offer_onboarding`] with the marker read deferred: `seen` is only
+/// called once the in-memory trust reading already says "offer", so a trusted
+/// or still-unconfirmed cert costs no I/O. A present marker is final.
+#[must_use]
+pub fn check_onboarding(
+    cert_confirmed: bool,
+    cert_trusted: bool,
+    seen: impl FnOnce() -> bool,
+) -> OfferCheck {
+    if !should_offer_onboarding(cert_confirmed, cert_trusted, false) {
+        return OfferCheck::NotYet;
+    }
+    if seen() {
+        OfferCheck::Never
+    } else {
+        OfferCheck::Offer
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{mark_onboarding_seen, onboarding_seen, should_offer_onboarding};
+    use super::{
+        check_onboarding, mark_onboarding_seen, onboarding_seen, should_offer_onboarding,
+        OfferCheck,
+    };
 
     fn tempdir() -> tempfile::TempDir {
         match tempfile::tempdir() {
@@ -100,5 +132,19 @@ mod tests {
         assert!(onboarding_seen(dir.path()));
         mark_onboarding_seen(dir.path()); // must not panic or error out
         assert!(onboarding_seen(dir.path()));
+    }
+
+    // ARCH-19 a: a trusted or unconfirmed cert never touches the marker file;
+    // a present marker settles the latch for good.
+    #[test]
+    fn check_reads_the_marker_only_when_the_trust_reading_says_offer() {
+        let untouched = || -> bool { panic!("marker read without need") };
+        assert_eq!(check_onboarding(true, true, untouched), OfferCheck::NotYet);
+        assert_eq!(
+            check_onboarding(false, false, untouched),
+            OfferCheck::NotYet
+        );
+        assert_eq!(check_onboarding(true, false, || true), OfferCheck::Never);
+        assert_eq!(check_onboarding(true, false, || false), OfferCheck::Offer);
     }
 }

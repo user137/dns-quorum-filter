@@ -55,6 +55,7 @@ use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
     uninstall as uninstall_trust_store, ArtifactOutcome, TrustStoreOutcome, UninstallReport,
 };
+use onboarding::OfferCheck;
 use status::{IconColour, TrayStatus, TrustState};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -254,7 +255,10 @@ fn main() {
     let mut last_paused = stop_flag_is_set(&app_data);
     let mut last_flag_check = Instant::now();
     let mut onboarding_offered = false;
-    let mut browser_nudge_offered = false;
+    let mut browser_nudge = NudgeLatch {
+        settled: false,
+        first_seen: browser_nudge::first_seen(&app_data),
+    };
     let mut browser_nudge_popup: Option<nudge_popup::NudgePopup> = None;
 
     let event_loop: EventLoop<()> = EventLoop::new();
@@ -291,7 +295,7 @@ fn main() {
             locale,
         );
         drive_browser_nudge(
-            &mut browser_nudge_offered,
+            &mut browser_nudge,
             &app_data,
             observed,
             target,
@@ -899,7 +903,7 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
 /// process (`offered` latch), and only once the trust-watch thread has a
 /// *confirmed* `certutil` reading — on a fresh MSIX install `cert.pem` does
 /// not exist when the tray starts (T-187), so an earlier check would read the
-/// optimistic seed, not the store. [`onboarding::should_offer_onboarding`] is
+/// optimistic seed, not the store. [`onboarding::check_onboarding`] is
 /// the pure predicate.
 fn maybe_offer_onboarding(
     offered: &mut bool,
@@ -912,11 +916,24 @@ fn maybe_offer_onboarding(
     if *offered {
         return;
     }
-    let seen = onboarding::onboarding_seen(app_data);
-    if onboarding::should_offer_onboarding(trust.is_confirmed(), trusted, seen) {
-        *offered = true;
-        run_setup_wizard(app_data, port, trust, locale);
+    match onboarding::check_onboarding(trust.is_confirmed(), trusted, || {
+        onboarding::onboarding_seen(app_data)
+    }) {
+        OfferCheck::Offer => {
+            *offered = true;
+            run_setup_wizard(app_data, port, trust, locale);
+        }
+        OfferCheck::Never => *offered = true,
+        OfferCheck::NotYet => {}
     }
+}
+
+/// Per-process state of the browser nudge's automatic offer (ARCH-19 a):
+/// `settled` closes once the decision is final, `first_seen` is the stamp
+/// read once at startup instead of on every tick.
+struct NudgeLatch {
+    settled: bool,
+    first_seen: Option<SystemTime>,
 }
 
 /// T-229: offers the nudge popup if due, then closes it (click or expiry).
@@ -924,7 +941,7 @@ fn maybe_offer_onboarding(
 /// own body — the same reason `refresh_tray`/`maybe_offer_onboarding` are
 /// already their own functions.
 fn drive_browser_nudge(
-    offered: &mut bool,
+    latch: &mut NudgeLatch,
     app_data: &Path,
     observed: TrayStatus,
     target: &tao::event_loop::EventLoopWindowTarget<()>,
@@ -932,7 +949,7 @@ fn drive_browser_nudge(
     event: &tao::event::Event<()>,
     popup: &mut Option<nudge_popup::NudgePopup>,
 ) {
-    maybe_offer_browser_nudge(offered, app_data, observed, target, tray_icon, popup);
+    maybe_offer_browser_nudge(latch, app_data, observed, target, tray_icon, popup);
     if popup
         .as_ref()
         .is_some_and(|p| p.should_close(event, nudge_popup::POPUP_LIFETIME))
@@ -942,33 +959,38 @@ fn drive_browser_nudge(
 }
 
 /// One-shot "point your browser at this" nudge (T-229). Fires at most once
-/// **per process** (`offered` latch) regardless of whether rendering
+/// **per process** (`NudgeLatch::settled`) regardless of whether rendering
 /// actually succeeds — a failed render (e.g. no monitor detected) is not
 /// worth retrying every tick. The persisted `browser-nudge.seen` marker is
 /// only written once [`nudge_popup::spawn`] actually returns a window — that
 /// marker means "shown", not "decided to show", so a rendering failure can't
 /// silently burn the one-shot latch a future launch could still use.
-/// [`browser_nudge::should_offer_browser_nudge`] is the pure predicate.
+/// [`browser_nudge::check_browser_nudge`] is the pure predicate.
 fn maybe_offer_browser_nudge(
-    offered: &mut bool,
+    latch: &mut NudgeLatch,
     app_data: &Path,
     observed: TrayStatus,
     target: &tao::event_loop::EventLoopWindowTarget<()>,
     tray_icon: &TrayIcon,
     popup: &mut Option<nudge_popup::NudgePopup>,
 ) {
-    if *offered {
+    if latch.settled {
         return;
     }
     let total_queries = match observed {
         TrayStatus::Filtering { total, .. } => Some(total),
         _ => None,
     };
-    let seen = browser_nudge::browser_nudge_seen(app_data);
-    let first_seen = browser_nudge::first_seen(app_data);
-    if browser_nudge::should_offer_browser_nudge(SystemTime::now(), first_seen, total_queries, seen)
-    {
-        *offered = true;
+    let check = browser_nudge::check_browser_nudge(
+        SystemTime::now(),
+        latch.first_seen,
+        total_queries,
+        || browser_nudge::browser_nudge_seen(app_data),
+    );
+    if check != OfferCheck::NotYet {
+        latch.settled = true;
+    }
+    if check == OfferCheck::Offer {
         if let Some(window) = nudge_popup::spawn(target, tray_icon.rect()) {
             *popup = Some(window);
             browser_nudge::mark_browser_nudge_seen(app_data);

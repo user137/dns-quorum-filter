@@ -30,7 +30,9 @@ T-189).
 | `seen` | marker-файл `onboarding.seen` в app-data теці (`onboarding::onboarding_seen`) | Форма `stop.flag`/`quit.flag`, але **не** в `lifecycle`: ті прапори entry-point-процес чистить на старті, а цей мусить пережити кожен запуск. Присутність = сигнал; вміст не читається. Пишеться на [Пізніше] і на **успішний** install — ніколи на невдалий (невдача на машині без довіреного серта повторить пропозицію наступного запуску). |
 
 `maybe_offer_onboarding` кличеться щотік event-loop трея (після `refresh_tray`), з латчем
-`onboarding_offered: bool` — раз на процес.
+`onboarding_offered: bool` — раз на процес. Щотік іде через `onboarding::check_onboarding`
+(ARCH-19 а): `seen` (файлова перевірка) читається лише коли `cert_confirmed && !cert_trusted`, а
+присутній marker (`Never`) закриває латч назавжди — без файлового I/O на кожному 100-мс тіку.
 
 ## Потік
 
@@ -40,9 +42,10 @@ flowchart TD
     Latch{"onboarding_offered<br/>вже true?"}
     Start --> Latch
     Latch -->|так| Nop["нічого (раз на процес)"]
-    Latch -->|ні| Pred{"should_offer_onboarding<br/>cert_confirmed && !cert_trusted && !seen"}
-    Pred -->|false| Wait["чекати наступного тіку<br/>(cert_confirmed ще false, або cert довірений, або seen)"]
-    Pred -->|true| SetLatch["onboarding_offered = true<br/>run_setup_wizard на власному std::thread (rfd блокує)"]
+    Latch -->|ні| Pred{"check_onboarding<br/>cert_confirmed && !cert_trusted?<br/>лише тоді — seen?"}
+    Pred -->|NotYet| Wait["чекати наступного тіку<br/>(cert_confirmed ще false, або cert довірений) — без I/O"]
+    Pred -->|Never: seen| Closed["onboarding_offered = true<br/>(рішення остаточне)"]
+    Pred -->|Offer| SetLatch["onboarding_offered = true<br/>run_setup_wizard на власному std::thread (rfd блокує)"]
 
     SetLatch --> Dialog{"rfd MessageDialog<br/>«Встановити сертифікат зараз?»<br/>[Так] / [Пізніше]"}
     Dialog -->|Пізніше| MarkSeen1["mark_onboarding_seen()<br/>(пункт меню «Майстер налаштування» — ручна повторна точка входу)"]
