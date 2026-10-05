@@ -254,6 +254,8 @@ TASKS-DONE.md, never here.
 - **`AdminClient` trusts the OS roots too (T-274)** — `cert.pem` is *added* as a root, not the only
   one, so any certificate for `127.0.0.1` in `CurrentUser\Root` passes the "pin" (another instance's
   installed cert included). Shared by the tray, the watcher's channel 3 and `/admin/*` callers.
-- **Tray tooltips for a dead service are short by necessity** (хвиля 13b) — every
-  `tooltip.startupFailed.*`/`tooltip.gaveUp` text fits the 63 UTF-16 units `tray-icon` 0.21 shows
-  (T-253), so it names the cause and the menu item only; the full reason is in `service.log`.
+- **Tray tooltips are capped at 127 UTF-16 units** (T-253) — the shell's `szTip` limit. Lower-priority
+  segments (rating-filter bubble, then the counts) are dropped whole when a long locale overflows, so
+  a Filtering tooltip with every warning on may show no counts. Failure tooltips
+  (`tooltip.startupFailed.*`/`tooltip.gaveUp`, хвиля 13b) were written for the old 63-unit limit and
+  name only the cause and the menu item; the full reason is in `service.log`.

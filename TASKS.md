@@ -1597,24 +1597,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
   сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
   код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
-- [ ] T-253 — **Заведено 2026-10-03, QA-прохід (рядок `D-tooltip-suffixes`).** Tooltip трею обрізається
-  до 64 символів, тож усі суфікси (`tooltip.degradedSuffixTemplate`, `tooltip.ratingFilterSuffix`,
-  `tooltip.certWarningSuffix`) в українській ніколи не видно. Спостережено наживо на 0.8.0: з
-  `degraded_events = 1/16` і окремо з активною бульбашкою (`rating_filter.active = true`) справжня
-  підказка Windows (наведення миші, скріншот) і UIA-ім'я кнопки закінчуються на «…запитів зараз: 0 »
-  — рівно 64 символи, з пробілом перед відрізаним «—». Код суфіксів (`status.rs`
-  `TrayStatus::tooltip`, `compose_tooltip`) правильний. **Діагноз:** залежність `tray-icon 0.21.3`,
-  `src/platform_impl/windows/mod.rs` — усі `NOTIFYICONDATAW` (рядки 150, 201, 553, 568) створюються
-  через `..std::mem::zeroed()` без `cbSize`, тож `Shell_NotifyIconW` трактує структуру як
-  `NOTIFYICONDATA_V1` з `szTip[64]` (крейт копіює до 128). Висновок про `cbSize` — з коду крейта й
-  64-символьного обрізання, не перевірено патчем. Остання версія крейта — 0.26.0 (не перевіряв, чи
-  там виправлено). Три Б: user safety — попередження «сертифікат не встановлено» на станах
-  Paused/Offline/NoActiveProvider і сигнал деградації кворуму, задумані саме як tooltip, користувач
-  не бачить; Lower-layer — дефект у залежності.
-  **Після бампу `tray-icon` (2026-10-05, з T-264):** перечитати UIA-ім'я іконки в оверфлоу — склейка
-  «текст `NIM_ADD` + поточний tooltip» не має повернутися. Читач: PowerShell UIAutomation —
-  `Shell_TrayWnd` → кнопка «Show Hidden Icons» (`InvokePattern`) → вікно класу
-  `TopLevelWindowForOverflowXamlIsland` → `Button`-и з іменем, що містить «DNS».
 - [ ] T-250 — **Заведено 2026-10-03, QA-прохід (шаблонні рядки `B-*-EP`).** Обробка помилок `/admin/ui`
   при невдалому POST (відтворено підміною `fetch` у chrome-devtools: reject «Failed to fetch»):
   (1) `#timeout-config-body` — `onConfigChanged()` (`main.js:654`) кидає будь-яку помилку в
@@ -1720,7 +1702,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
 - [x] Хвиля 2 — апгрейд MSIX і шлях встановлення (T-244 + ARCH-07; ARCH-13 необов'язковий — не робився) — виконано 2026-10-05, `TASKS-DONE.md`
 - [x] Хвиля 3 — hero при мертвих фільтрах + стан автозапуску + вік останнього запиту (T-254, T-243; рішення 2026-10-04; + ARCH-04) — виконано 2026-10-05, `TASKS-DONE.md`
 - [ ] Хвиля 4 — стійкість CLI (T-246 п. 2, 4)
-- [ ] Хвиля 5 — tooltip трею, залежність `tray-icon` (T-253)
+- [x] Хвиля 5 — tooltip трею, залежність `tray-icon` (T-253) — виконано 2026-10-05 (`TASKS-DONE.md`); рядок ARCH-04 у tooltip (хвиля 6) тепер розблоковано — наступний крок
 - [x] Хвиля 6 — трей: ціна простою + дрібниці (ARCH-19 першим; T-255, T-251, T-263, T-264, T-269; рядок ARCH-04; T-278 останнім). виконано 2026-10-05 (TASKS-DONE.md): ARCH-19 (а)+(б), T-255, T-251, T-263, T-264, T-269; T-278 закрито як невигідну; рядок ARCH-04 заблоковано до T-253 (хвиля 5)
 - Хвиля 7 — злито в 13a (T-252)
 - [ ] Хвиля 8 — помилки POST у `/admin/ui` (T-250)
