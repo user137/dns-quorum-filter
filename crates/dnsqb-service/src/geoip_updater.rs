@@ -118,6 +118,7 @@ use crate::geoip_download::{
     maxmind_download_url, MAXMIND_EDITION, MAX_GEOIP_COMPRESSED_BYTES,
     MAX_GEOIP_DECOMPRESSED_BYTES, USER_COUNTRY_SHA256_URL, USER_COUNTRY_URL,
 };
+use crate::refresh_schedule::first_cycle_delay;
 use crate::upstream::ReqwestDohClient;
 
 /// Which upstream a [`run_geoip_updater`] instance pulls its database from
@@ -283,7 +284,9 @@ pub enum GeoipUpdateError {
 }
 
 /// Runs [`refresh_once`] immediately (so a fresh install gets a database
-/// right away rather than waiting a full [`GEOIP_CHECK_INTERVAL`]), then
+/// right away rather than waiting a full [`GEOIP_CHECK_INTERVAL`]) — unless
+/// the source is `user-country` and the database on disk is loaded and
+/// younger than the interval (ARCH-10: a restart doesn't refetch it) — then
 /// repeats every `GEOIP_CHECK_INTERVAL` for as long as the service runs.
 /// Never returns — spawned once from `main.rs` via `tokio::spawn` and left
 /// to run for the process's lifetime, the same "spawn and forget, the
@@ -300,11 +303,23 @@ pub async fn run_geoip_updater(
     // restart. Those routes also `notify_one` this handle, so the change acts
     // within seconds instead of at the next 24h check.
     let wake = state.geoip_refresh_wake_handle();
+    let first = first_cycle_delay(
+        SystemTime::now(),
+        skippable_last_success(&state, &target_path),
+        GEOIP_CHECK_INTERVAL,
+    );
+    if !first.is_zero() {
+        tracing::info!("GeoIP database on disk is fresh, first check deferred");
+        park_until_due(&wake, first).await;
+    }
     loop {
         let source = state.geoip_source_snapshot();
         let result = refresh_once(&client, &target_path, &state, &source).await;
         match &result {
-            Ok(()) => tracing::info!("GeoIP database refreshed"),
+            Ok(GeoipRefresh::Updated) => tracing::info!("GeoIP database refreshed"),
+            Ok(GeoipRefresh::Unchanged) => {
+                tracing::info!("GeoIP database checked, unchanged upstream");
+            }
             Err(err) => tracing::warn!(
                 "GeoIP database refresh failed, keeping the last-known-good database: {err}"
             ),
@@ -315,8 +330,36 @@ pub async fn run_geoip_updater(
         if let Some(health) = health_after_refresh(source.as_ref(), &result) {
             state.update_maxmind_health(health);
         }
-        park_until_due(&wake).await;
+        park_until_due(&wake, GEOIP_CHECK_INTERVAL).await;
     }
+}
+
+/// The on-disk database's mtime when a first-cycle skip is safe (ARCH-10):
+/// only for `user-country`, and only when that file actually loaded. A
+/// `MaxMind` source always refreshes at startup — skipping would leave its
+/// health `Pending` for a day and could keep a file fetched from another
+/// source.
+fn skippable_last_success(
+    state: &AppState<ReqwestDohClient>,
+    target_path: &Path,
+) -> Option<SystemTime> {
+    let source = state.geoip_source_snapshot();
+    if !matches!(*source, GeoipSource::UserCountry) || !state.geoip_loaded() {
+        return None;
+    }
+    std::fs::metadata(target_path)
+        .and_then(|m| m.modified())
+        .ok()
+}
+
+/// Outcome of one successful refresh cycle (ARCH-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GeoipRefresh {
+    /// A new database was downloaded, verified, written and swapped in.
+    Updated,
+    /// The published checksum matched the loaded database on disk — the body
+    /// was not downloaded.
+    Unchanged,
 }
 
 /// Park between refresh cycles (T-163): return when the periodic timer
@@ -325,9 +368,9 @@ pub async fn run_geoip_updater(
 /// a source change *during* the preceding refresh still resolves the next
 /// park immediately — the "no lost wake" property. Extracted so a test
 /// exercises this exact function rather than a hand-written `select!` copy.
-async fn park_until_due(wake: &tokio::sync::Notify) {
+async fn park_until_due(wake: &tokio::sync::Notify, after: Duration) {
     tokio::select! {
-        () = tokio::time::sleep(GEOIP_CHECK_INTERVAL) => {}
+        () = tokio::time::sleep(after) => {}
         () = wake.notified() => tracing::info!("GeoIP refresh woken by a source change"),
     }
 }
@@ -339,11 +382,11 @@ async fn park_until_due(wake: &tokio::sync::Notify) {
 /// untouched".
 fn health_after_refresh(
     source: &GeoipSource,
-    result: &Result<(), GeoipUpdateError>,
+    result: &Result<GeoipRefresh, GeoipUpdateError>,
 ) -> Option<MaxmindHealth> {
     match (source, result) {
         (GeoipSource::DbIpLite | GeoipSource::UserCountry, _) => Some(MaxmindHealth::NotApplicable),
-        (GeoipSource::Maxmind(_), Ok(())) => Some(MaxmindHealth::Accepted),
+        (GeoipSource::Maxmind(_), Ok(_)) => Some(MaxmindHealth::Accepted),
         (GeoipSource::Maxmind(_), Err(GeoipUpdateError::MaxmindAuthRejected)) => {
             Some(MaxmindHealth::AuthRejected)
         }
@@ -366,14 +409,18 @@ pub(crate) async fn refresh_once(
     target_path: &Path,
     state: &AppState<ReqwestDohClient>,
     source: &GeoipSource,
-) -> Result<(), GeoipUpdateError> {
+) -> Result<GeoipRefresh, GeoipUpdateError> {
     match source {
-        GeoipSource::DbIpLite => refresh_db_ip_lite(client, target_path, state).await,
+        GeoipSource::DbIpLite => refresh_db_ip_lite(client, target_path, state)
+            .await
+            .map(|()| GeoipRefresh::Updated),
         GeoipSource::UserCountry => {
             try_user_country_release_bounded(client, target_path, state).await
         }
         GeoipSource::Maxmind(creds) => {
-            try_one_maxmind_release_bounded(client, creds, target_path, state).await
+            try_one_maxmind_release_bounded(client, creds, target_path, state)
+                .await
+                .map(|()| GeoipRefresh::Updated)
         }
     }
 }
@@ -476,7 +523,7 @@ async fn try_user_country_release_bounded(
     client: &reqwest::Client,
     target_path: &Path,
     state: &AppState<ReqwestDohClient>,
-) -> Result<(), GeoipUpdateError> {
+) -> Result<GeoipRefresh, GeoipUpdateError> {
     match tokio::time::timeout(
         GEOIP_FETCH_TIMEOUT,
         try_user_country_release(client, target_path, state),
@@ -502,10 +549,18 @@ async fn try_user_country_release(
     client: &reqwest::Client,
     target_path: &Path,
     state: &AppState<ReqwestDohClient>,
-) -> Result<(), GeoipUpdateError> {
+) -> Result<GeoipRefresh, GeoipUpdateError> {
+    // ARCH-10: sidecar first — a match against the loaded file on disk means
+    // nothing new was published, so the 7+ MB body is not downloaded.
+    let sidecar = fetch_user_country_checksum_sidecar(client).await;
+    if let Some(expected) = &sidecar {
+        if state.geoip_loaded() && local_copy_matches_sha256(target_path, expected) {
+            return Ok(GeoipRefresh::Unchanged);
+        }
+    }
     let bytes = fetch_bounded(client, USER_COUNTRY_URL).await?;
 
-    match fetch_user_country_checksum_sidecar(client).await {
+    match sidecar {
         Some(expected) if !checksum_matches_sha256(&expected, &bytes) => {
             return Err(GeoipUpdateError::ChecksumMismatch);
         }
@@ -536,7 +591,13 @@ async fn try_user_country_release(
         reader: Some(Arc::new(reader)),
         updated_at,
     });
-    Ok(())
+    Ok(GeoipRefresh::Updated)
+}
+
+/// `true` when the file at `path` hashes to `expected_hex` (SHA-256). A
+/// missing or unreadable file never matches, so the caller downloads.
+fn local_copy_matches_sha256(path: &Path, expected_hex: &str) -> bool {
+    std::fs::read(path).is_ok_and(|bytes| checksum_matches_sha256(expected_hex, &bytes))
 }
 
 /// Fetches [`USER_COUNTRY_SHA256_URL`] and returns its hex digest, or `None`
@@ -860,7 +921,7 @@ mod tests {
     #[test]
     fn health_after_refresh_marks_a_maxmind_success_as_accepted() {
         assert_eq!(
-            health_after_refresh(&maxmind_source(), &Ok(())),
+            health_after_refresh(&maxmind_source(), &Ok(GeoipRefresh::Updated)),
             Some(MaxmindHealth::Accepted)
         );
     }
@@ -878,7 +939,7 @@ mod tests {
     #[test]
     fn health_after_refresh_is_not_applicable_for_db_ip_lite_regardless_of_outcome() {
         assert_eq!(
-            health_after_refresh(&GeoipSource::DbIpLite, &Ok(())),
+            health_after_refresh(&GeoipSource::DbIpLite, &Ok(GeoipRefresh::Updated)),
             Some(MaxmindHealth::NotApplicable)
         );
         assert_eq!(
@@ -890,7 +951,7 @@ mod tests {
     #[test]
     fn health_after_refresh_is_not_applicable_for_user_country_regardless_of_outcome() {
         assert_eq!(
-            health_after_refresh(&GeoipSource::UserCountry, &Ok(())),
+            health_after_refresh(&GeoipSource::UserCountry, &Ok(GeoipRefresh::Unchanged)),
             Some(MaxmindHealth::NotApplicable)
         );
         assert_eq!(
@@ -910,7 +971,7 @@ mod tests {
         let wake = Arc::new(tokio::sync::Notify::new());
         wake.notify_one();
         let start = tokio::time::Instant::now();
-        park_until_due(&wake).await;
+        park_until_due(&wake, GEOIP_CHECK_INTERVAL).await;
         assert!(
             start.elapsed() < Duration::from_secs(1),
             "a remembered wake permit must resolve the park, not the 24h interval"
@@ -921,8 +982,25 @@ mod tests {
     async fn park_until_due_waits_the_full_interval_when_nothing_wakes_it() {
         let wake = Arc::new(tokio::sync::Notify::new());
         let start = tokio::time::Instant::now();
-        park_until_due(&wake).await;
+        park_until_due(&wake, GEOIP_CHECK_INTERVAL).await;
         assert_eq!(start.elapsed(), GEOIP_CHECK_INTERVAL);
+    }
+
+    #[test]
+    fn local_copy_matches_only_the_file_that_hashes_to_the_sidecar() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("tempdir");
+        };
+        let path = dir.path().join("geoip.mmdb");
+        assert!(
+            !local_copy_matches_sha256(&path, &sha256_hex(b"db")),
+            "a missing file must never count as current"
+        );
+        if let Err(err) = std::fs::write(&path, b"db") {
+            panic!("write: {err}");
+        }
+        assert!(local_copy_matches_sha256(&path, &sha256_hex(b"db")));
+        assert!(!local_copy_matches_sha256(&path, &sha256_hex(b"newer db")));
     }
 
     #[test]

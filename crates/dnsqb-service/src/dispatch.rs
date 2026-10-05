@@ -1144,6 +1144,12 @@ impl<C: DohClient + Sync> AppState<C> {
     /// database (if any) in place (see `geoip_updater`'s own module doc
     /// comment for the reasoning). Never touches `geoip_countries` — see
     /// that field's own doc comment.
+    /// Whether a `GeoIP` database is loaded in memory (ARCH-10: the updater
+    /// only skips a refresh when the file on disk actually loaded).
+    pub(crate) fn geoip_loaded(&self) -> bool {
+        self.geoip.read().reader.is_some()
+    }
+
     pub(crate) fn update_geoip(&self, new: GeoipState) {
         *self.geoip.write() = Arc::new(new);
         self.change_bus.bump(Topic::Geoip);
