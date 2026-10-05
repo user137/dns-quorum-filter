@@ -47,7 +47,7 @@ flowchart TD
     Latch -->|ні| Pred{"check_onboarding<br/>cert_confirmed && !cert_trusted?<br/>лише тоді — seen?"}
     Pred -->|NotYet| Wait["чекати наступного тіку<br/>(cert_confirmed ще false, або cert довірений) — без I/O"]
     Pred -->|Never: seen| Closed["onboarding_offered = true<br/>(рішення остаточне)"]
-    Pred -->|Offer| SetLatch["onboarding_offered = true<br/>run_setup_wizard на власному std::thread (rfd блокує)"]
+    Pred -->|Offer| SetLatch["onboarding_offered = true<br/>приховане topmost-вікно-власник (T-269)<br/>run_setup_wizard на власному std::thread (rfd блокує)"]
 
     SetLatch --> Dialog{"rfd MessageDialog<br/>«Встановити сертифікат зараз?»<br/>[Так] / [Пізніше]"}
     Dialog -->|Пізніше| MarkSeen1["mark_onboarding_seen()<br/>(пункт меню «Майстер налаштування» — ручна повторна точка входу)"]

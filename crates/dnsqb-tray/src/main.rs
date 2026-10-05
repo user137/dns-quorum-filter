@@ -320,7 +320,10 @@ fn main() {
     };
     let mut last_paused = stop_flag_is_set(&app_data);
     let mut last_flag_check = Instant::now();
-    let mut onboarding_offered = false;
+    let mut onboarding = OnboardingOffer {
+        offered: false,
+        owner: None,
+    };
     let mut browser_nudge = NudgeLatch {
         settled: false,
         first_seen: browser_nudge::first_seen(&app_data),
@@ -352,12 +355,13 @@ fn main() {
             &mut refresh_state,
         );
         maybe_offer_onboarding(
-            &mut onboarding_offered,
+            &mut onboarding,
             &app_data,
             port,
             &trust,
             trusted,
             locale,
+            target,
         );
         drive_browser_nudge(
             &mut browser_nudge,
@@ -680,7 +684,7 @@ fn handle_menu_event(
             });
         }
         MenuAction::ShowAbout => show_about_dialog(port, locale),
-        MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust, locale),
+        MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust, locale, None),
         MenuAction::InstallCert => {
             if confirm_install_cert(locale) {
                 let cert_path = app_data.join("cert.pem");
@@ -978,26 +982,54 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
 /// optimistic seed, not the store. [`onboarding::check_onboarding`] is
 /// the pure predicate.
 fn maybe_offer_onboarding(
-    offered: &mut bool,
+    state: &mut OnboardingOffer,
     app_data: &Path,
     port: u16,
     trust: &TrustState,
     trusted: bool,
     locale: &str,
+    target: &tao::event_loop::EventLoopWindowTarget<()>,
 ) {
-    if *offered {
+    if state.owner.is_some() && !WIZARD_ACTIVE.load(Ordering::SeqCst) {
+        state.owner = None;
+    }
+    if state.offered {
         return;
     }
     match onboarding::check_onboarding(trust.is_confirmed(), trusted, || {
         onboarding::onboarding_seen(app_data)
     }) {
         OfferCheck::Offer => {
-            *offered = true;
-            run_setup_wizard(app_data, port, trust, locale);
+            state.offered = true;
+            state.owner = topmost_owner(target);
+            run_setup_wizard(app_data, port, trust, locale, state.owner.as_ref());
         }
-        OfferCheck::Never => *offered = true,
+        OfferCheck::Never => state.offered = true,
         OfferCheck::NotYet => {}
     }
+}
+
+/// The automatic first-run offer (T-188) and the hidden owner of its dialog.
+struct OnboardingOffer {
+    offered: bool,
+    owner: Option<tao::window::Window>,
+}
+
+/// T-269: an automatic offer comes from a background process — the tray was
+/// started by the watcher, not by a click — so Windows refuses it the
+/// foreground and the welcome dialog opened behind the user's browser. A
+/// hidden always-on-top owner puts the dialog above other windows without
+/// stealing focus (no synthetic input, unlike `tao`'s `set_focus`). Kept
+/// alive while the dialog is open; `None` just means the old behaviour.
+fn topmost_owner(
+    target: &tao::event_loop::EventLoopWindowTarget<()>,
+) -> Option<tao::window::Window> {
+    tao::window::WindowBuilder::new()
+        .with_visible(false)
+        .with_always_on_top(true)
+        .build(target)
+        .map_err(|err| tracing::warn!("could not create the welcome dialog's owner: {err}"))
+        .ok()
 }
 
 /// Per-process state of the browser nudge's automatic offer (ARCH-19 a):
@@ -1086,19 +1118,29 @@ static WIZARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// afterward for free. `onboarding.seen` is written on «Пізніше» and on a
 /// *successful* install, never on a failed one (that should re-offer next
 /// launch); the menu item is the manual re-entry regardless.
-fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState, locale: &str) {
+fn run_setup_wizard(
+    app_data: &Path,
+    port: u16,
+    trust: &TrustState,
+    locale: &str,
+    owner: Option<&tao::window::Window>,
+) {
     if WIZARD_ACTIVE.swap(true, Ordering::SeqCst) {
         return; // a welcome dialog is already open
+    }
+    let mut dialog = confirm_dialog(
+        &i18n::t(locale, "onboarding.title"),
+        &i18n::t(locale, "onboarding.description"),
+        rfd::MessageLevel::Info,
+    );
+    if let Some(owner) = owner {
+        dialog = dialog.set_parent(owner);
     }
     let app_data = app_data.to_path_buf();
     let trust = trust.clone();
     let locale = locale.to_string();
     std::thread::spawn(move || {
-        let proceed = confirm(
-            &i18n::t(&locale, "onboarding.title"),
-            &i18n::t(&locale, "onboarding.description"),
-            rfd::MessageLevel::Info,
-        );
+        let proceed = dialog.show() == rfd::MessageDialogResult::Yes;
         WIZARD_ACTIVE.store(false, Ordering::SeqCst);
         if !proceed {
             onboarding::mark_onboarding_seen(&app_data);
@@ -1134,13 +1176,17 @@ fn run_setup_wizard(app_data: &Path, port: u16, trust: &TrustState, locale: &str
 /// that particular dialog exists, which a single generic call from the
 /// menu-dispatch match arm would have.
 fn confirm(action: &str, description: &str, level: rfd::MessageLevel) -> bool {
+    confirm_dialog(action, description, level).show() == rfd::MessageDialogResult::Yes
+}
+
+/// The dialog [`confirm`] shows, unshown — for a caller that must attach an
+/// owner window on the event-loop thread before showing it elsewhere.
+fn confirm_dialog(action: &str, description: &str, level: rfd::MessageLevel) -> rfd::MessageDialog {
     rfd::MessageDialog::new()
         .set_title(dialog_title(action))
         .set_description(description)
         .set_level(level)
         .set_buttons(rfd::MessageButtons::YesNo)
-        .show()
-        == rfd::MessageDialogResult::Yes
 }
 
 /// Native confirm dialog before `certutil -addstore` — this pops the OS's
