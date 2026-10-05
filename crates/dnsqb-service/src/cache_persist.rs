@@ -321,4 +321,40 @@ mod tests {
         );
         assert!(init.restore.is_empty());
     }
+
+    // ---- Error path: ARCH-11 (б) — an un-loadable file is moved aside, never overwritten ----
+
+    #[test]
+    fn a_file_without_its_key_is_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let path = dir.path().join("cache.enc");
+        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_cache(Some(dir.path()), true);
+        assert!(init.restore.is_empty());
+        assert!(
+            init.flusher.is_some(),
+            "a fresh key still enables persistence"
+        );
+        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
+    }
+
+    #[test]
+    fn an_undecryptable_file_is_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let path = dir.path().join("cache.enc");
+        // First run mints the key; only then does the bad file appear.
+        let _ = load_persisted_cache(Some(dir.path()), true);
+        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_cache(Some(dir.path()), true);
+        assert!(init.restore.is_empty());
+        assert!(
+            init.flusher.is_some(),
+            "the stored key still enables persistence"
+        );
+        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
+    }
 }

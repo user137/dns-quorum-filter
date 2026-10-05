@@ -61,6 +61,46 @@ const KEY_STORE_SERVICE: &str = "dns-quorum-filter";
 #[cfg(test)]
 pub(crate) static STORE_TEST_GUARD: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
+/// A fresh temp app-data dir for a test that reaches the real credential
+/// store. Holds [`STORE_TEST_GUARD`] for its lifetime and, on `Drop` — panic
+/// path included (T-265) — deletes every entry this module derives from the
+/// dir, then removes the dir and only then releases the lock.
+#[cfg(test)]
+pub(crate) struct StoreTestDir {
+    dir: tempfile::TempDir,
+    _guard: parking_lot::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl StoreTestDir {
+    pub(crate) fn new() -> Self {
+        let guard = STORE_TEST_GUARD.lock();
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        Self { dir, _guard: guard }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
+#[cfg(test)]
+impl Drop for StoreTestDir {
+    fn drop(&mut self) {
+        for entry in [
+            tls_key_entry(self.path()),
+            maxmind_credentials_entry(self.path()),
+            persistence_key_entry(self.path()),
+            personal_zone_key_entry(self.path()),
+        ] {
+            // Best-effort: a panic here would mask the real test failure.
+            let _ = delete_secret(&entry);
+        }
+    }
+}
+
 /// Errors from the OS credential store, other than "no such entry" (which every
 /// function below maps to `Ok(None)` / `Ok(())` before it can reach here).
 #[derive(Debug, thiserror::Error)]

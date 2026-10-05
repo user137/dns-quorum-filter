@@ -116,6 +116,36 @@ pub(crate) fn move_aside(path: &Path) -> std::io::Result<PathBuf> {
     Ok(orphan)
 }
 
+/// ARCH-11 (б) check shared by the four persisters' loader tests: nothing is
+/// left at `path`, and exactly one `<file>.orphaned-*` sibling still holds
+/// `bytes` — the un-loadable file was moved aside, never overwritten.
+#[cfg(test)]
+pub(crate) fn assert_moved_aside_intact(path: &Path, bytes: &[u8]) {
+    assert!(!path.exists(), "the original file must be moved away");
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        panic!("path must have a parent and a file name");
+    };
+    let prefix = format!("{}.orphaned-", name.to_string_lossy());
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        panic!("must be able to list {dir:?}");
+    };
+    let orphans: Vec<PathBuf> = read_dir
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(&prefix))
+        })
+        .collect();
+    let [orphan] = orphans.as_slice() else {
+        panic!("expected exactly one orphan, found {orphans:?}");
+    };
+    let Ok(kept) = std::fs::read(orphan) else {
+        panic!("must be able to read {orphan:?}");
+    };
+    assert_eq!(kept, bytes, "the orphan must hold the original bytes");
+}
+
 /// Reads, decrypts and parses `path`, seeding `log` with what it held.
 /// Returns the entry count on success.
 fn seed_from_file(log: &QueryLog, path: &Path, key: &[u8; 32]) -> Result<usize, LoadError> {
@@ -363,5 +393,41 @@ mod tests {
             init.flusher.is_none(),
             "persistence needs an app-data directory"
         );
+    }
+
+    // ---- Error path: ARCH-11 (б) — an un-loadable file is moved aside, never overwritten ----
+
+    #[test]
+    fn a_file_without_its_key_is_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let path = dir.path().join("query-log.enc");
+        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_query_log(Some(dir.path()), true);
+        assert!(init.log.snapshot(SystemTime::now()).is_empty());
+        assert!(
+            init.flusher.is_some(),
+            "a fresh key still enables persistence"
+        );
+        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
+    }
+
+    #[test]
+    fn an_undecryptable_file_is_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let path = dir.path().join("query-log.enc");
+        // First run mints the key; only then does the bad file appear.
+        let _ = load_persisted_query_log(Some(dir.path()), true);
+        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_query_log(Some(dir.path()), true);
+        assert!(init.log.snapshot(SystemTime::now()).is_empty());
+        assert!(
+            init.flusher.is_some(),
+            "the stored key still enables persistence"
+        );
+        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
     }
 }

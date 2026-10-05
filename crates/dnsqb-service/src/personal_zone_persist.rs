@@ -312,10 +312,7 @@ mod tests {
     // (never reaches the store) or supplies its own raw key directly.
     #[test]
     fn a_restart_preserves_a_learned_domain_across_the_day_boundary() {
-        let _guard = crate::key_store::STORE_TEST_GUARD.lock();
-        let Ok(dir) = tempfile::tempdir() else {
-            panic!("must be able to create a temp dir");
-        };
+        let dir = crate::key_store::StoreTestDir::new();
         let now = SystemTime::now();
         let init = load_persisted_personal_zone(Some(dir.path()), cfg(true), now);
         let Some((path, key)) = init.flusher else {
@@ -337,11 +334,6 @@ mod tests {
             Some("restart-me.example"),
             "a domain visited before a restart must still qualify after it"
         );
-
-        // Best-effort cleanup - a leaked test entry is harmless (unique per
-        // temp-dir path hash), but tidy up when we can.
-        let _ =
-            crate::key_store::delete_secret(&crate::key_store::personal_zone_key_entry(dir.path()));
     }
 
     // ---- Misuse / fool ----
@@ -370,5 +362,43 @@ mod tests {
         let init = load_persisted_personal_zone(None, cfg(true), SystemTime::now());
         assert!(init.zone.is_empty());
         assert!(init.flusher.is_none());
+    }
+
+    // ---- Error path: ARCH-11 (б) — an un-loadable file is moved aside, never overwritten ----
+
+    #[test]
+    fn a_file_without_its_key_is_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let path = dir.path().join("personal-zone.enc");
+        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_personal_zone(Some(dir.path()), cfg(true), SystemTime::now());
+        assert!(init.zone.is_empty());
+        assert_eq!(init.stats.tracked_domain_count(), 0);
+        assert!(
+            init.flusher.is_some(),
+            "a fresh key still enables persistence"
+        );
+        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
+    }
+
+    #[test]
+    fn an_undecryptable_file_is_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let path = dir.path().join("personal-zone.enc");
+        // First run mints the key; only then does the bad file appear.
+        let _ = load_persisted_personal_zone(Some(dir.path()), cfg(true), SystemTime::now());
+        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_personal_zone(Some(dir.path()), cfg(true), SystemTime::now());
+        assert!(init.zone.is_empty());
+        assert_eq!(init.stats.tracked_domain_count(), 0);
+        assert!(
+            init.flusher.is_some(),
+            "the stored key still enables persistence"
+        );
+        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
     }
 }

@@ -139,10 +139,7 @@ fn remove_secret(entry: &str) -> ArtifactOutcome {
 #[cfg(test)]
 mod tests {
     use super::{remove_secret, ArtifactOutcome};
-    use crate::key_store::{
-        delete_secret, personal_zone_key_entry, store_secret, tls_key_entry, STORE_TEST_GUARD,
-    };
-    use std::path::Path;
+    use crate::key_store::{personal_zone_key_entry, store_secret, tls_key_entry, StoreTestDir};
 
     // `remove_all`'s cert branch (and therefore `remove_all` itself) is
     // deliberately not exercised here — see its doc comment. These tests
@@ -155,33 +152,27 @@ mod tests {
 
     #[test]
     fn present_secret_reports_removed() {
-        let _guard = STORE_TEST_GUARD.lock();
-        let dir = Path::new(r"C:\scratch\dns-quorum-filter-local-state-test-a");
-        let entry = tls_key_entry(dir);
+        let dir = StoreTestDir::new();
+        let entry = tls_key_entry(dir.path());
         let Ok(()) = store_secret(&entry, b"placeholder") else {
             panic!("store_secret should succeed");
         };
 
         assert_eq!(remove_secret(&entry), ArtifactOutcome::Removed);
-
-        let _ = delete_secret(&entry); // idempotent cleanup
     }
 
     #[test]
     fn absent_secret_reports_not_present() {
-        let _guard = STORE_TEST_GUARD.lock();
-        let dir = Path::new(r"C:\scratch\dns-quorum-filter-local-state-test-b");
-        let entry = tls_key_entry(dir);
-        let _ = delete_secret(&entry); // clean slate
+        let dir = StoreTestDir::new();
+        let entry = tls_key_entry(dir.path());
 
         assert_eq!(remove_secret(&entry), ArtifactOutcome::NotPresent);
     }
 
     #[test]
     fn removing_the_same_secret_twice_is_idempotent() {
-        let _guard = STORE_TEST_GUARD.lock();
-        let dir = Path::new(r"C:\scratch\dns-quorum-filter-local-state-test-c");
-        let entry = tls_key_entry(dir);
+        let dir = StoreTestDir::new();
+        let entry = tls_key_entry(dir.path());
         let Ok(()) = store_secret(&entry, b"placeholder") else {
             panic!("store_secret should succeed");
         };
@@ -194,15 +185,12 @@ mod tests {
     // artifact `remove_all` now reports: the personal-zone key.
     #[test]
     fn present_personal_zone_key_reports_removed() {
-        let _guard = STORE_TEST_GUARD.lock();
-        let dir = Path::new(r"C:\scratch\dns-quorum-filter-local-state-test-d");
-        let entry = personal_zone_key_entry(dir);
+        let dir = StoreTestDir::new();
+        let entry = personal_zone_key_entry(dir.path());
         let Ok(()) = store_secret(&entry, b"placeholder") else {
             panic!("store_secret should succeed");
         };
 
         assert_eq!(remove_secret(&entry), ArtifactOutcome::Removed);
-
-        let _ = delete_secret(&entry); // idempotent cleanup
     }
 }
