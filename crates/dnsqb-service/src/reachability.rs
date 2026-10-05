@@ -10,9 +10,10 @@
 //! bare `HEAD` with no query string and no browsing data — it reveals only
 //! "this IP's box is online", which is exactly what a `generate_204`-class
 //! endpoint exists to receive. Three *independent* infrastructures (Google,
-//! Cloudflare, Apple), rotated over, so the marker traffic gives no single
-//! one a continuous heartbeat and one operator's outage can't fake an
-//! "offline" verdict. Separately, the baseline health probe below **does**
+//! Cloudflare, Apple), rotated over ([`MarkerRotation`] — one marker per
+//! steady-`Online` cycle, all three only when that one fails or the link is
+//! already in doubt), so the marker traffic gives no single one a continuous
+//! heartbeat and one operator's outage can't fake an "offline" verdict. Separately, the baseline health probe below **does**
 //! send one fixed `example.com A` query to the *active* baseline resolver
 //! every `Online` cycle — a continuous heartbeat to that one operator
 //! (usually Cloudflare, already this service's resolver for real traffic).
@@ -54,8 +55,10 @@ pub const MARKERS: [&str; 3] = [
 /// resolves quickly rather than dragging out the recheck interval.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Gap between probe cycles while the network is steadily `Online`.
-pub const IDLE_INTERVAL: Duration = Duration::from_secs(30);
+/// Gap between probe cycles while the network is steadily `Online`. 60 s
+/// (user decision, ARCH-20 / wave 15): halves the baseline `DoH` heartbeat
+/// against 30 s, at the cost of up to a minute before an outage is noticed.
+pub const IDLE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Gap between probe cycles while `Offline`, or right after the verdict
 /// changed — short, so a transition (either direction) is caught fast.
@@ -100,6 +103,51 @@ impl OfflineDebounce {
             }
         }
     }
+}
+
+/// Round-robin cursor over [`MARKERS`] for steady-`Online` cycles (ARCH-20).
+#[derive(Debug, Default)]
+struct MarkerRotation {
+    next: usize,
+}
+
+impl MarkerRotation {
+    fn take(&mut self) -> usize {
+        let current = self.next % MARKERS.len();
+        self.next = (current + 1) % MARKERS.len();
+        current
+    }
+}
+
+/// One probe cycle's raw verdict (ARCH-20). `steady` (the previous cycle's
+/// raw verdict was `Online`) probes a single rotated marker; if it fails, the
+/// other two are probed in the same cycle, so a real outage is still caught
+/// at once and one blocked operator still can't fake `Offline`. A non-steady
+/// cycle (the first one, or any after a failure) probes all three.
+async fn probe_cycle<F, Fut>(
+    steady: bool,
+    rotation: &mut MarkerRotation,
+    probe: F,
+) -> NetworkReachability
+where
+    F: Fn(usize) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let mut results = [false; MARKERS.len()];
+    if steady {
+        let first = rotation.take();
+        if probe(first).await {
+            return NetworkReachability::Online;
+        }
+        let (a, b) = ((first + 1) % MARKERS.len(), (first + 2) % MARKERS.len());
+        let (ok_a, ok_b) = tokio::join!(probe(a), probe(b));
+        results[a] = ok_a;
+        results[b] = ok_b;
+    } else {
+        let (ok_0, ok_1, ok_2) = tokio::join!(probe(0), probe(1), probe(2));
+        results = [ok_0, ok_1, ok_2];
+    }
+    verdict_from_probe_results(results)
 }
 
 /// Whether the machine currently has any internet connectivity (T-152).
@@ -152,8 +200,12 @@ pub async fn run_reachability_prober(
     let sentinel = sentinel_query();
     let mut previous = NetworkReachability::Online;
     let mut debounce = OfflineDebounce::default();
+    let mut rotation = MarkerRotation::default();
+    let mut last_raw = None;
     loop {
-        let raw = verdict_from_probe_results(probe_all_markers(&client).await);
+        let steady = last_raw == Some(NetworkReachability::Online);
+        let raw = probe_cycle(steady, &mut rotation, |i| probe_one(&client, MARKERS[i])).await;
+        last_raw = Some(raw);
         let current = debounce.observe(raw);
         if current != previous {
             match current {
@@ -236,15 +288,6 @@ fn is_usable_response(message: &Message) -> bool {
     )
 }
 
-async fn probe_all_markers(client: &reqwest::Client) -> [bool; MARKERS.len()] {
-    let (a, b, c) = tokio::join!(
-        probe_one(client, MARKERS[0]),
-        probe_one(client, MARKERS[1]),
-        probe_one(client, MARKERS[2]),
-    );
-    [a, b, c]
-}
-
 /// One marker probe: a bare `HEAD` under [`PROBE_TIMEOUT`]. *Any* HTTP
 /// response — whatever the status — counts as reachable; only a
 /// connect/DNS/TLS failure or the timeout counts as unreachable.
@@ -258,8 +301,9 @@ async fn probe_one(client: &reqwest::Client, url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_probe_delay, verdict_from_probe_results, NetworkReachability, OfflineDebounce,
-        IDLE_INTERVAL, OFFLINE_CONFIRM_CYCLES, RECHECK_INTERVAL,
+        next_probe_delay, probe_cycle, verdict_from_probe_results, MarkerRotation,
+        NetworkReachability, OfflineDebounce, IDLE_INTERVAL, OFFLINE_CONFIRM_CYCLES,
+        RECHECK_INTERVAL,
     };
 
     #[test]
@@ -396,5 +440,73 @@ mod tests {
             last = d.observe(NetworkReachability::Offline);
         }
         assert_eq!(last, NetworkReachability::Offline);
+    }
+
+    /// ARCH-20: a probe double that records which marker indices were hit
+    /// and answers from a fixed per-marker table.
+    fn recording_probe(
+        answers: [bool; 3],
+        hits: &std::cell::RefCell<Vec<usize>>,
+    ) -> impl Fn(usize) -> std::future::Ready<bool> + '_ {
+        move |i| {
+            hits.borrow_mut().push(i);
+            std::future::ready(answers[i])
+        }
+    }
+
+    #[tokio::test]
+    async fn steady_online_hits_one_marker_per_cycle_round_robin() {
+        let hits = std::cell::RefCell::new(Vec::new());
+        let mut rotation = MarkerRotation::default();
+        for _ in 0..6 {
+            let verdict = probe_cycle(true, &mut rotation, recording_probe([true; 3], &hits)).await;
+            assert_eq!(verdict, NetworkReachability::Online);
+        }
+        assert_eq!(
+            *hits.borrow(),
+            vec![0, 1, 2, 0, 1, 2],
+            "one marker per steady cycle, each operator in turn"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_or_post_failure_cycle_probes_every_marker() {
+        let hits = std::cell::RefCell::new(Vec::new());
+        let mut rotation = MarkerRotation::default();
+        let verdict = probe_cycle(false, &mut rotation, recording_probe([false; 3], &hits)).await;
+        assert_eq!(verdict, NetworkReachability::Offline);
+        let mut seen = hits.borrow().clone();
+        seen.sort_unstable();
+        assert_eq!(seen, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn a_failed_rotation_marker_escalates_to_the_other_two_in_the_same_cycle() {
+        let hits = std::cell::RefCell::new(Vec::new());
+        let mut rotation = MarkerRotation::default();
+        // Marker 0 is blocked on this network; the others answer.
+        let verdict = probe_cycle(
+            true,
+            &mut rotation,
+            recording_probe([false, true, true], &hits),
+        )
+        .await;
+        assert_eq!(
+            verdict,
+            NetworkReachability::Online,
+            "one blocked operator must not read as an outage"
+        );
+        let mut seen = hits.borrow().clone();
+        seen.sort_unstable();
+        assert_eq!(seen, vec![0, 1, 2], "the failed marker is not re-probed");
+    }
+
+    #[tokio::test]
+    async fn steady_cycle_with_every_marker_down_is_raw_offline() {
+        let hits = std::cell::RefCell::new(Vec::new());
+        let mut rotation = MarkerRotation::default();
+        let verdict = probe_cycle(true, &mut rotation, recording_probe([false; 3], &hits)).await;
+        assert_eq!(verdict, NetworkReachability::Offline);
+        assert_eq!(hits.borrow().len(), 3);
     }
 }
