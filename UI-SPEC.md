@@ -375,7 +375,10 @@ Timeout-режим, Кеш, Списки виключень, Лог-фільтр
    (Батч 4.4):** `dnsqb-tray`'s `compose_tooltip` дописує суфікс `— рейтинг-фільтр
    «бульбашка» активний`, коли `AdminStatusResponse.rating_filter.active` — після
    нотатки про degraded-запити, ніколи не змінюючи колір іконки (та сама логіка
-   «pass-through ≠ failure», що `NoActiveProvider`).
+   «pass-through ≠ failure», що `NoActiveProvider`). **ARCH-04 (хвиля 6):** між
+   degraded і бульбашкою — сегмент `— останній запит: N хв/год тому` / `— щойно` /
+   `— у журналі немає запитів` з `AdminStats.last_query_unix_ms` (служба зі
+   `schema_version` < 7 — без сегмента); колір іконки не змінює.
 
 ---
 
