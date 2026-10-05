@@ -1575,7 +1575,7 @@ impl<C: DohClient + Sync> AppState<C> {
     /// every other writer's current value — no per-route field list to go
     /// stale. `held` must be this state's `persist_lock` guard; `what` names
     /// the change in the warning. Returns the `persisted` flag.
-    fn persist_live_config(&self, held: &MutexGuard<'_, ()>, what: &str) -> bool {
+    fn persist_live_config(&self, held: &MutexGuard<'_, ()>, what: &'static str) -> bool {
         if !std::ptr::eq(MutexGuard::mutex(held), &raw const self.persist_lock) {
             tracing::warn!("not persisting {what}: persist_lock is not held");
             return false;
