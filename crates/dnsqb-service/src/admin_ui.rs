@@ -175,22 +175,35 @@ mod tests {
     // cleared — it must actually call the real route, warn about the
     // certificate and every secret by name, and say plainly that this does
     // not remove the app itself.
+    // Хвиля 14 (T-268): it now asks the tray to run the same full removal as
+    // the menu item, so it must also handle both answers of that request.
     #[test]
-    fn danger_zone_calls_the_uninstall_route_and_names_every_consequence() {
+    fn danger_zone_requests_the_tray_removal_and_names_every_consequence() {
         assert!(INDEX_HTML.contains("uninstall-local-state-btn"));
         assert!(
-            MAIN_JS.contains("/admin/uninstall-local-state"),
+            MAIN_JS.contains("/admin/request-remove-all"),
             "the button must call the real route"
         );
-        for word in ["сертифікат", "TLS-ключ", "MaxMind"] {
+        assert!(
+            !MAIN_JS.contains("/admin/uninstall-local-state"),
+            "the old cert-and-secrets-only route is gone"
+        );
+        for outcome in ["REQUESTED", "danger.trayNotRunning"] {
+            assert!(MAIN_JS.contains(outcome), "main.js must handle {outcome}");
+        }
+        for word in ["сертифікат", "TLS-ключ", "MaxMind", "теку даних"] {
             assert!(
                 INDEX_HTML.contains(word),
                 "the danger-zone warning must name {word} as something it removes"
             );
         }
         assert!(
-            INDEX_HTML.contains("не</strong> видаляє сам застосунок"),
-            "must say plainly that this does not remove the app itself"
+            INDEX_HTML.contains("Параметри Windows, щоб ви видалили сам застосунок"),
+            "must say the app itself is removed in Windows Settings afterwards"
+        );
+        assert!(
+            INDEX_HTML.contains("підтвердити її треба у вікні DNS Quorum Filter"),
+            "must say where the confirm appears"
         );
     }
 

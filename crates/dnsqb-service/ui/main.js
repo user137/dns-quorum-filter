@@ -3954,28 +3954,15 @@ function initBrowserSetup() {
 
 initBrowserSetup();
 
-// T-70: "Повністю видалити" - no fetch/render cycle, no 2s poll (there is
-// nothing persisted to show, only the one-shot result of the last click).
-// Two-step confirm, same established convention as #log-body's "Очистити
-// лог" above - this is a strictly higher-blast-radius action (trust store +
-// three Credential Manager secrets), so it gets the same in-page pattern,
-// not a native window.confirm() this page has no other precedent for.
+// T-70 / хвиля 14 (T-268): "Повністю видалити" - the same action as the tray
+// menu item. The route removes nothing itself; it asks the running tray, which
+// shows its own native confirm and then stops the app, clears the cert and
+// secrets, wipes app-data and opens Windows Settings. No fetch/render cycle,
+// no poll - only the one-shot answer of the last click. Two-step confirm,
+// same established convention as #log-body's "Очистити лог" above.
 
-function outcomeLabel(outcome) {
-  switch (outcome) {
-    case "REMOVED":
-      return t("danger.outcome.removed");
-    case "NOT_PRESENT":
-      return t("danger.outcome.notPresent");
-    case "FAILED":
-      return t("danger.outcome.failed");
-    default:
-      return outcome;
-  }
-}
-
-async function uninstallLocalState() {
-  const response = await fetch("/admin/uninstall-local-state", {
+async function requestRemoveAll() {
+  const response = await fetch("/admin/request-remove-all", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
@@ -3986,36 +3973,37 @@ async function uninstallLocalState() {
   return response.json();
 }
 
-function renderUninstallResult(result) {
-  const box = document.getElementById("uninstall-local-state-result");
-  box.textContent = "";
-  const rows = [
-    [t("danger.row.cert"), result.cert],
-    [t("danger.row.tlsKey"), result.tls_key],
-    [t("danger.row.persistenceKey"), result.persistence_key],
-    [t("danger.row.maxmindCreds"), result.maxmind_creds],
-    [t("danger.row.personalZoneKey"), result.personal_zone_key],
-  ];
-  const anyFailed = rows.some(([, outcome]) => outcome === "FAILED");
-  const panel = document.createElement("p");
-  panel.className = anyFailed ? "notice warn" : "notice ok";
-  panel.textContent = rows
-    .map(([label, outcome]) =>
-      t("danger.rowTemplate", { label, outcome: outcomeLabel(outcome) }),
-    )
-    .join(" · ");
-  box.appendChild(panel);
+// The last answer as a thunk, so a live locale switch repaints it in the new
+// language (same reason as the wave-8 card errors).
+let removeAllResultRender = null;
+
+function renderRemoveAllResult(result) {
+  removeAllResultRender = () => {
+    const box = document.getElementById("uninstall-local-state-result");
+    box.textContent = "";
+    const panel = document.createElement("p");
+    const requested = result.outcome === "REQUESTED";
+    panel.className = requested ? "notice ok" : "notice warn";
+    panel.textContent = requested
+      ? t("danger.requested")
+      : t("danger.trayNotRunning");
+    box.appendChild(panel);
+  };
+  removeAllResultRender();
 }
 
-function renderUninstallError(err) {
-  const box = document.getElementById("uninstall-local-state-result");
-  box.textContent = "";
-  const panel = document.createElement("p");
-  panel.className = "error-panel";
-  panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
-  });
-  box.appendChild(panel);
+function renderRemoveAllError(err) {
+  removeAllResultRender = () => {
+    const box = document.getElementById("uninstall-local-state-result");
+    box.textContent = "";
+    const panel = document.createElement("p");
+    panel.className = "error-panel";
+    panel.textContent = t("error.generic", {
+      message: (err && err.message) || String(err),
+    });
+    box.appendChild(panel);
+  };
+  removeAllResultRender();
 }
 
 const uninstallBtn = document.getElementById("uninstall-local-state-btn");
@@ -4027,6 +4015,9 @@ function syncUninstallButtonLabel() {
   uninstallBtn.textContent = confirmingUninstall
     ? t("danger.confirmUninstallButton")
     : t("danger.uninstallButton");
+  if (removeAllResultRender) {
+    removeAllResultRender();
+  }
 }
 uninstallBtn.addEventListener("click", async () => {
   if (!confirmingUninstall) {
@@ -4042,9 +4033,9 @@ uninstallBtn.addEventListener("click", async () => {
   }
   confirmingUninstall = false;
   try {
-    renderUninstallResult(await uninstallLocalState());
+    renderRemoveAllResult(await requestRemoveAll());
   } catch (err) {
-    renderUninstallError(err);
+    renderRemoveAllError(err);
   } finally {
     // Same live-verified fix as #log-body's clearBtn - without it a
     // successful click leaves the button permanently reading "Точно

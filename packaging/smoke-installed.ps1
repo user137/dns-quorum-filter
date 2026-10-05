@@ -7,7 +7,7 @@ Post-install live smoke test of the installed dns-quorum-filter MSIX (QA pass, P
 Run against the installed package before every release; CI never sees an installed MSIX.
 Read-only apart from one rolled-back mutation (POST /admin/config with the current values,
 then resolver_config.toml must be byte-identical). Never calls /admin/shutdown,
-/admin/install-cert or /admin/uninstall-local-state, and never prints a /admin/log body.
+/admin/install-cert or /admin/request-remove-all, and never prints a /admin/log body.
 Exit code: 0 when every check passes, 1 otherwise.
 
 .PARAMETER InjectFailure

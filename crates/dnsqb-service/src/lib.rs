@@ -195,7 +195,8 @@ pub use dispatch::{
 pub use geoip_updater::GeoipSource;
 pub use lifecycle::{
     clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_reset_config_flag,
-    set_retry_flag, set_stop_flag, stop_flag_is_set, take_retry_flag,
+    set_retry_flag, set_stop_flag, stop_flag_is_set, take_remove_all_flag, take_retry_flag,
+    RemoveAllTake,
 };
 pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
 pub use logging::init as init_logging;

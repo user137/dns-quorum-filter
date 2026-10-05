@@ -302,17 +302,14 @@
       <!-- T-70: MSIX (T-156) has no uninstall-time code hook - the OS just
            deletes the package's files, nothing runs afterward - so the trusted
            certificate and Credential Manager secrets have to be cleared from
-           *inside* the running app, before the user removes it. Static markup
-           (no fetch/render cycle - there is no persisted state to show, only a
-           button and its one-shot result). -->
+           *inside* the running app, before the user removes it. Хвиля 14
+           (T-268): the button asks the tray to run its own «Повністю
+           видалити», so both places do the one same thing. Static markup
+           (no fetch/render cycle - only a button and its one-shot answer). -->
       <div id="danger-zone-body" class="card danger-zone">
         <h3 data-i18n="danger.heading">Повне видалення</h3>
         <p class="notice warn" data-i18n-html="danger.warning">
-          Видаляє локальний довірений сертифікат dns-quorum-filter і всі збережені ключі/креденшели
-          (TLS-ключ, ключ шифрування журналу й кешу, креденшели MaxMind, якщо є) зі сховища
-          облікових даних Windows. Це <strong>не</strong> видаляє сам застосунок і не чистить теку
-          його даних — для повного видалення (зупинка застосунку + очищення всієї теки даних +
-          Параметри Windows) скористайтесь пунктом «Повністю видалити» в меню іконки в треї.
+          Зупиняє DNS Quorum Filter і видаляє все, що він залишив на цьому комп'ютері: довірений сертифікат, збережені ключі й креденшели (TLS-ключ, ключ шифрування журналу й кешу, креденшели MaxMind, якщо є) і всю теку даних, а потім відкриває Параметри Windows, щоб ви видалили сам застосунок. Це та сама дія, що пункт «Повністю видалити» у меню іконки в треї; підтвердити її треба у вікні DNS Quorum Filter.
         </p>
         <button type="button" id="uninstall-local-state-btn">Повністю видалити</button>
         <div id="uninstall-local-state-result"></div>

@@ -31,8 +31,8 @@ use crate::admin::{
     LogEntryView, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
     MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest, OverrideDomainView,
     OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView, RatingFilterConfigUpdate,
-    RatingFilterStatusView, UninstallLocalStateResponse, WatchdogStatusView, ZoneListStatusView,
-    ADMIN_DTO_SCHEMA_VERSION,
+    RatingFilterStatusView, RemoveAllRequestOutcomeView, RemoveAllRequestResponse,
+    WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -84,7 +84,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::convert::Infallible;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -131,7 +131,7 @@ const ADMIN_PROVIDERS_SET_ENABLED_PATH: &str = "/admin/providers/set-enabled";
 const ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH: &str = "/admin/providers/set-category-enabled";
 const ADMIN_LOG_PATH: &str = "/admin/log";
 const ADMIN_LOG_CLEAR_PATH: &str = "/admin/log/clear";
-const ADMIN_UNINSTALL_LOCAL_STATE_PATH: &str = "/admin/uninstall-local-state";
+const ADMIN_REQUEST_REMOVE_ALL_PATH: &str = "/admin/request-remove-all";
 const ADMIN_CERT_STATUS_PATH: &str = "/admin/cert-status";
 const ADMIN_INSTALL_CERT_PATH: &str = "/admin/install-cert";
 const ADMIN_UI_PATH: &str = "/admin/ui";
@@ -179,7 +179,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH, &[Method::POST]),
     (ADMIN_LOG_PATH, &[Method::GET]),
     (ADMIN_LOG_CLEAR_PATH, &[Method::POST]),
-    (ADMIN_UNINSTALL_LOCAL_STATE_PATH, &[Method::POST]),
+    (ADMIN_REQUEST_REMOVE_ALL_PATH, &[Method::POST]),
     (ADMIN_CERT_STATUS_PATH, &[Method::GET]),
     (ADMIN_INSTALL_CERT_PATH, &[Method::POST]),
     (ADMIN_UI_PATH, &[Method::GET]),
@@ -1253,9 +1253,9 @@ impl<C: DohClient + Sync> AppState<C> {
 
     /// Publishes a fresh cert-trust reading (T-211). The sole background
     /// writer is `cert_watch::run_cert_trust_watch`; `/admin/install-cert`
-    /// and `/admin/uninstall-local-state` also poke it synchronously with the
-    /// outcome they just produced, so the `/admin/ui` hero doesn't lag a poll
-    /// cycle behind an action taken on this channel.
+    /// also pokes it synchronously with the outcome it just produced, so the
+    /// `/admin/ui` hero doesn't lag a poll cycle behind an action taken on
+    /// this channel.
     pub(crate) fn update_cert_trust(&self, trust: CertTrustView) {
         *self.cert_trust.write() = Some(trust);
     }
@@ -3849,15 +3849,16 @@ where
     status_response(StatusCode::OK)
 }
 
-/// `POST /admin/uninstall-local-state` (T-70) — the in-app "Prepare for
-/// removal" action `dnsqb-tray`'s "Повністю видалити" menu item and
-/// `/admin/ui`'s danger-zone button both call. MSIX (T-156) has no
-/// uninstall-time code hook, so this is the only place the trusted
-/// certificate and the three Credential Manager secrets ever actually get
-/// cleared — the caller still has to remove the app itself afterward. Same
-/// CSRF gate and body-size cap as every other admin `POST`; no config file
-/// touched, so no `persist_lock`.
-async fn serve_admin_uninstall_local_state<C, B>(
+/// `POST /admin/request-remove-all` (хвиля 14, T-268) — the `/admin/ui`
+/// danger-zone button. Removes nothing itself: it writes
+/// `lifecycle::remove-all.flag`, and the running tray shows its own native
+/// confirm and then runs the same «Повністю видалити» path as its menu item
+/// (stop the app, clear the cert + secrets, wipe app-data, open Windows
+/// Settings) — one name, one action. The service still manages no processes
+/// (DECISIONS.md T-195): with no live tray it answers `TRAY_NOT_RUNNING` and
+/// writes nothing. Same CSRF gate and body-size cap as every other admin
+/// `POST`; no config file touched, so no `persist_lock`.
+async fn serve_admin_request_remove_all<C, B>(
     req: Request<B>,
     state: &AppState<C>,
 ) -> Response<Full<Bytes>>
@@ -3877,20 +3878,50 @@ where
     if limited.collect().await.is_err() {
         return status_response(StatusCode::BAD_REQUEST);
     }
-    let app_data_dir = state.persist.paths.as_ref().map(PersistPaths::app_data_dir);
-    let report = crate::local_state::remove_all(app_data_dir.as_deref());
-    // T-211: a removed (or already-absent) cert is no longer trusted — poke
-    // the cache so the hero reflects it without waiting for the next poll. A
-    // *failed* removal leaves the cert where it was, so don't touch the
-    // cache then; the background poll reconciles.
-    match report.cert {
-        crate::local_state::ArtifactOutcome::Removed
-        | crate::local_state::ArtifactOutcome::NotPresent => {
-            state.update_cert_trust(CertTrustView::NotTrusted);
+    let Some(app_data_dir) = state.persist.paths.as_ref().map(PersistPaths::app_data_dir) else {
+        return status_response(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    let outcome = tokio::task::spawn_blocking(move || {
+        let tray_alive = tray_is_running(&app_data_dir);
+        request_remove_all(&app_data_dir, tray_alive)
+    })
+    .await;
+    match outcome {
+        Ok(Ok(outcome)) => json_response(&RemoveAllRequestResponse { outcome }),
+        Ok(Err(err)) => {
+            tracing::warn!("could not write the remove-all request flag: {err}");
+            status_response(StatusCode::INTERNAL_SERVER_ERROR)
         }
-        crate::local_state::ArtifactOutcome::Failed(_) => {}
+        Err(err) => {
+            tracing::warn!("remove-all request task failed: {err}");
+            status_response(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
-    json_response(&UninstallLocalStateResponse::from(report))
+}
+
+/// The request half of [`serve_admin_request_remove_all`], with the tray's
+/// liveness passed in: no live tray → nothing written, since no one would
+/// consume the flag and a later tray must never find a pending request.
+fn request_remove_all(
+    app_data_dir: &Path,
+    tray_alive: bool,
+) -> std::io::Result<RemoveAllRequestOutcomeView> {
+    if !tray_alive {
+        return Ok(RemoveAllRequestOutcomeView::TrayNotRunning);
+    }
+    crate::lifecycle::set_remove_all_flag(app_data_dir)?;
+    tracing::info!("full removal requested from /admin/ui; waiting for the tray's confirm");
+    Ok(RemoveAllRequestOutcomeView::Requested)
+}
+
+/// A live, identity-matching `dnsqb-tray` holds `tray.pid` — the same check
+/// `watchdog::launcher::ensure_sibling_running` makes before a spawn.
+fn tray_is_running(app_data_dir: &Path) -> bool {
+    crate::watchdog::instance::read_pid_file(app_data_dir, crate::watchdog::instance::Role::Tray)
+        .is_ok_and(|record| {
+            crate::watchdog::pid_check::verify_pid_alive(record.pid, &record.exe_path)
+                == crate::watchdog::pid_check::PidCheck::Alive
+        })
 }
 
 /// `<app-data>/cert.pem`, when this service has a persisted config location at
@@ -3912,8 +3943,7 @@ fn cert_pem_path<C: DohClient + Sync>(state: &AppState<C>) -> Option<PathBuf> {
 ///
 /// Since T-211 this is a pure read of [`AppState::cert_trust_snapshot`] — the
 /// cache the background `cert_watch::run_cert_trust_watch` poll (and a
-/// synchronous poke from `/admin/install-cert` /
-/// `/admin/uninstall-local-state`) keeps warm — so it no longer spawns a
+/// synchronous poke from `/admin/install-cert`) keeps warm — so it no longer spawns a
 /// `certutil` process per call, which is why it's no longer in
 /// `FUZZ_EXCLUDED_ROUTES`.
 ///
@@ -3936,8 +3966,7 @@ fn serve_admin_cert_status<C: DohClient + Sync>(state: &AppState<C>) -> Response
 /// isn't already trusted; an already-trusted cert returns
 /// [`crate::admin::InstallCertOutcomeView::AlreadyInstalled`] with no
 /// mutation. Same CSRF gate and body-size cap as every other admin `POST`; no
-/// config file touched, so no `persist_lock`. Precedent for mutating the trust
-/// store from a route: `POST /admin/uninstall-local-state` (T-70).
+/// config file touched, so no `persist_lock`.
 ///
 /// [`crate::trust_store::ensure_installed`] is a synchronous `certutil` call
 /// that can sit behind a crypt32 confirmation dialog — run on `spawn_blocking`
@@ -4157,7 +4186,7 @@ where
         }
         ADMIN_LOG_PATH => serve_admin_log(req.uri().query(), &state),
         ADMIN_LOG_CLEAR_PATH => serve_admin_log_clear(req, &state).await,
-        ADMIN_UNINSTALL_LOCAL_STATE_PATH => serve_admin_uninstall_local_state(req, &state).await,
+        ADMIN_REQUEST_REMOVE_ALL_PATH => serve_admin_request_remove_all(req, &state).await,
         ADMIN_CERT_STATUS_PATH => serve_admin_cert_status(&state),
         ADMIN_INSTALL_CERT_PATH => serve_admin_install_cert(req, &state).await,
         ADMIN_UI_PATH => admin_ui::serve_html(req.method()),
@@ -4246,7 +4275,6 @@ fn route_topics(path: &str) -> Option<&'static [Topic]> {
         | ADMIN_PROVIDERS_SET_ENABLED_PATH
         | ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH => Some(&[Topic::Providers]),
         ADMIN_LOG_CLEAR_PATH => Some(&[Topic::Log]),
-        ADMIN_UNINSTALL_LOCAL_STATE_PATH => Some(&[Topic::Maxmind, Topic::Status]),
         _ => None,
     }
 }
@@ -4259,17 +4287,18 @@ pub(crate) mod tests {
         resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
         GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
         PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
-        ADMIN_INSTALL_CERT_PATH, ADMIN_UNINSTALL_LOCAL_STATE_PATH, BLOCKLIST_SOURCES,
+        ADMIN_INSTALL_CERT_PATH, ADMIN_REQUEST_REMOVE_ALL_PATH, BLOCKLIST_SOURCES,
         DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
-    use super::{route_topics, ADMIN_SHUTDOWN_PATH};
+    use super::{request_remove_all, route_topics, ADMIN_SHUTDOWN_PATH};
     use crate::admin::{
         AdminConfigUpdate, AdminStatusResponse, BlocklistSourceStatusView, CacheConfigUpdate,
         CacheConfigView, CategoryToggleState, CertStatusResponse, CertTrustView, DecisionView,
         GeoipCountriesResponse, GeoipCountryRequest, HeroStateView, LogQueryResponse,
         MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView,
         OverrideAddRequest, OverrideListsResponse, OverrideRemoveRequest, ProvidersResponse,
-        WatchdogStatusView, ZoneListStatusView,
+        RemoveAllRequestOutcomeView, RemoveAllRequestResponse, WatchdogStatusView,
+        ZoneListStatusView,
     };
     use crate::blocklist_updater::{BlocklistBundleState, BlocklistSourceStatus};
     use crate::cache::{Cache, CacheConfig, CacheEntry, CacheKey, Verdict};
@@ -4290,7 +4319,7 @@ pub(crate) mod tests {
     use hickory_proto::op::{Message, Query, ResponseCode};
     use hickory_proto::rr::rdata::A;
     use hickory_proto::rr::{Name, RData, Record, RecordType};
-    use http::{header, Method, Request, StatusCode};
+    use http::{header, Method, Request, Response, StatusCode};
     use http_body_util::Full;
     use std::net::Ipv4Addr;
     use std::str::FromStr;
@@ -4477,25 +4506,24 @@ pub(crate) mod tests {
     /// `trust_store`'s and `cert_rotation`'s own tests already refuse to
     /// trigger (see `local_state.rs`'s `remove_all` doc comment):
     ///
-    /// - `/admin/uninstall-local-state` (T-70) — once past the content-type
-    ///   gate (which this property always satisfies for a non-GET route),
-    ///   `local_state::remove_all` runs `certutil` and clears the trust
-    ///   store; the handler never even inspects the body, so fuzzing it buys
-    ///   nothing.
-    /// - `/admin/install-cert` (T-188) — same, `trust_store::ensure_installed`
+    /// - `/admin/install-cert` (T-188) — `trust_store::ensure_installed`
     ///   mutates `CurrentUser\Root`.
+    ///
+    /// `/admin/uninstall-local-state` (T-70) was here too until хвиля 14
+    /// replaced it with `/admin/request-remove-all`, which removes nothing
+    /// and, on this property's path-less state, answers 503 before touching
+    /// the disk.
     ///
     /// `/admin/cert-status` (T-188) *used* to be here for the same reason —
     /// its handler spawned two `certutil` processes per case — but since T-211
     /// it is a pure read of `AppState::cert_trust_snapshot()`, so the fuzz
     /// property now covers it like any other GET.
     ///
-    /// Method-gating for both is proven by
+    /// Method-gating is proven by
     /// `serve_matches_the_documented_admin_route_allowlist` +
     /// `serve_enforces_the_route_table_it_matched_above`, plus each route's
     /// own gate tests below.
-    const FUZZ_EXCLUDED_ROUTES: &[&str] =
-        &[ADMIN_UNINSTALL_LOCAL_STATE_PATH, ADMIN_INSTALL_CERT_PATH];
+    const FUZZ_EXCLUDED_ROUTES: &[&str] = &[ADMIN_INSTALL_CERT_PATH];
 
     fn fuzzable_routes() -> impl Iterator<Item = &'static (&'static str, &'static [Method])> {
         ROUTES
@@ -9550,44 +9578,134 @@ pub(crate) mod tests {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // T-70: only the two gates that reject *before* `local_state::
-    // remove_all` is ever called are tested through `serve()` here — the
-    // real success path spawns a real `certutil.exe` and mutates the
-    // machine's actual trust store (see `serve_never_panics_on_arbitrary_
-    // input_for_any_documented_route`'s `FUZZ_EXCLUDED_ROUTES` comment for
-    // the full reasoning); `local_state::remove_secret` is unit-tested
-    // directly instead, in `local_state.rs`.
+    // Хвиля 14 (T-268): `/admin/request-remove-all` hands the request to the
+    // tray and removes nothing itself.
 
-    #[tokio::test]
-    async fn serve_admin_uninstall_local_state_rejects_non_post_methods() {
-        let Ok(req) = Request::builder()
-            .method(Method::GET)
-            .uri("/admin/uninstall-local-state")
-            .body(Full::new(Bytes::new()))
-        else {
-            panic!("fixture request must build");
-        };
-        let response = match serve(req, state_with(no_op_client())).await {
+    fn tempdir() -> tempfile::TempDir {
+        match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("tempdir: {err}"),
+        }
+    }
+
+    fn remove_all_request(content_type: Option<&str>, method: Method) -> Request<Full<Bytes>> {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri("/admin/request-remove-all");
+        if let Some(content_type) = content_type {
+            builder = builder.header(header::CONTENT_TYPE, content_type);
+        }
+        match builder.body(Full::new(Bytes::from_static(b"{}"))) {
+            Ok(req) => req,
+            Err(err) => panic!("fixture request must build: {err}"),
+        }
+    }
+
+    fn state_in(dir: &std::path::Path) -> Arc<AppState<MockClient>> {
+        state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: dir.join("resolver_config.toml"),
+                    overrides: dir.join("overrides.toml"),
+                }),
+            },
+        )
+    }
+
+    async fn remove_all_response(
+        state: Arc<AppState<MockClient>>,
+        req: Request<Full<Bytes>>,
+    ) -> Response<Full<Bytes>> {
+        match serve(req, state).await {
             Ok(response) => response,
             Err(err) => match err {},
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn request_remove_all_rejects_non_post_methods() {
+        let response = remove_all_response(
+            state_with(no_op_client()),
+            remove_all_request(Some("application/json"), Method::GET),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
-    async fn serve_admin_uninstall_local_state_rejects_a_missing_content_type() {
-        let Ok(req) = Request::builder()
-            .method(Method::POST)
-            .uri("/admin/uninstall-local-state")
-            .body(Full::new(Bytes::from_static(b"{}")))
-        else {
-            panic!("fixture request must build");
+    async fn request_remove_all_rejects_a_missing_or_foreign_content_type() {
+        for content_type in [None, Some("text/plain")] {
+            let dir = tempdir();
+            let response = remove_all_response(
+                state_in(dir.path()),
+                remove_all_request(content_type, Method::POST),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+            assert!(
+                !dir.path()
+                    .join(crate::lifecycle::REMOVE_ALL_FLAG_NAME)
+                    .exists(),
+                "the CSRF gate answers before any flag is written"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn request_remove_all_without_an_app_data_dir_is_unavailable() {
+        let response = remove_all_response(
+            state_with(no_op_client()),
+            remove_all_request(Some("application/json"), Method::POST),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn request_remove_all_without_a_tray_writes_nothing() {
+        let dir = tempdir();
+        let response = remove_all_response(
+            state_in(dir.path()),
+            remove_all_request(Some("application/json"), Method::POST),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response).await;
+        let parsed: RemoveAllRequestResponse = match serde_json::from_slice(&body) {
+            Ok(parsed) => parsed,
+            Err(err) => panic!("body must be a RemoveAllRequestResponse: {err}"),
         };
-        let response = match serve(req, state_with(no_op_client())).await {
-            Ok(response) => response,
-            Err(err) => match err {},
-        };
-        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(parsed.outcome, RemoveAllRequestOutcomeView::TrayNotRunning);
+        assert!(!dir
+            .path()
+            .join(crate::lifecycle::REMOVE_ALL_FLAG_NAME)
+            .exists());
+    }
+
+    #[test]
+    fn request_remove_all_with_a_live_tray_writes_a_fresh_flag() {
+        let dir = tempdir();
+        match request_remove_all(dir.path(), true) {
+            Ok(outcome) => assert_eq!(outcome, RemoveAllRequestOutcomeView::Requested),
+            Err(err) => panic!("request: {err}"),
+        }
+        assert_eq!(
+            crate::lifecycle::take_remove_all_flag(dir.path(), std::time::SystemTime::now()),
+            crate::lifecycle::RemoveAllTake::Fresh
+        );
+    }
+
+    #[test]
+    fn request_remove_all_surfaces_a_failed_flag_write() {
+        let dir = tempdir();
+        let missing = dir.path().join("no-such-dir");
+        assert!(request_remove_all(&missing, true).is_err());
     }
 
     // T-188 / T-211: `/admin/install-cert`'s success path spawns a real
@@ -9726,7 +9844,7 @@ pub(crate) mod tests {
         ("/admin/providers/set-category-enabled", &[Method::POST]),
         ("/admin/log", &[Method::GET]),
         ("/admin/log/clear", &[Method::POST]),
-        ("/admin/uninstall-local-state", &[Method::POST]),
+        ("/admin/request-remove-all", &[Method::POST]),
         ("/admin/cert-status", &[Method::GET]),
         ("/admin/install-cert", &[Method::POST]),
         ("/admin/ui", &[Method::GET]),
@@ -10550,7 +10668,13 @@ pub(crate) mod tests {
     /// `route_topics` or deliberately exempted here.
     #[test]
     fn every_post_route_has_its_topics() {
-        const EXEMPT: [&str; 2] = [DNS_QUERY_PATH, ADMIN_SHUTDOWN_PATH];
+        // `/admin/request-remove-all` changes no service state: it only
+        // hands the request to the tray (хвиля 14).
+        const EXEMPT: [&str; 3] = [
+            DNS_QUERY_PATH,
+            ADMIN_SHUTDOWN_PATH,
+            ADMIN_REQUEST_REMOVE_ALL_PATH,
+        ];
         for &(path, methods) in ROUTES.iter().chain(I18N_ROUTES) {
             let topics = route_topics(path);
             if EXEMPT.contains(&path) {

@@ -11,10 +11,10 @@
 //! `certutil` subprocess, so each poll goes through
 //! [`tokio::task::spawn_blocking`] and the cadence is correspondingly slow:
 //! cert trust only changes on a deliberate install / uninstall / rotate, and
-//! the two in-process routes ([`crate::dispatch`]'s `/admin/install-cert` and
-//! `/admin/uninstall-local-state`) poke [`AppState::update_cert_trust`]
-//! synchronously — this loop is the backstop for an out-of-process change
-//! (the tray's own cert menu items) and for the first reading after startup.
+//! the one in-process route ([`crate::dispatch`]'s `/admin/install-cert`)
+//! pokes [`AppState::update_cert_trust`] synchronously — this loop is the
+//! backstop for an out-of-process change (the tray's own cert menu items and
+//! its «Повністю видалити») and for the first reading after startup.
 //!
 //! `certutil` here runs via `trust_store::certutil_command` with
 //! `CREATE_NO_WINDOW` (T-194) and never touches a domain name.

@@ -21,8 +21,8 @@
 //! directory. Erasing `%LOCALAPPDATA%\dns-quorum-filter` itself (`cert.pem`,
 //! the encrypted query-log / cache, `resolver_config.toml`, logs) is the
 //! tray's job (T-195, `dnsqb-tray`'s `self_uninstall`): it happens after the
-//! processes exit, because the `/admin/uninstall-local-state` route runs
-//! *inside* `dnsqb-service` and can't delete its own open directory.
+//! processes exit, which is also why the only caller is the tray: the
+//! `/admin/ui` button (`/admin/request-remove-all`, хвиля 14) just asks it.
 
 use std::path::Path;
 
@@ -50,7 +50,7 @@ pub enum ArtifactOutcome {
 }
 
 /// Result of [`remove_all`] — one outcome per artifact this project may have
-/// written, so a caller (tray dialog, `/admin/uninstall-local-state`) can
+/// written, so the caller (the tray's report dialog) can
 /// show exactly what happened rather than a single pass/fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UninstallReport {

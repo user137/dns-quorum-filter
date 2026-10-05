@@ -39,11 +39,20 @@
 //!   moves `resolver_config.toml` aside **only** when the previous attempt
 //!   failed on an invalid config (`startup_failure::should_reset_config`).
 //!
+//! **Хвиля 14** adds the first flag in the other direction, **service → tray**:
+//!
+//! - **`remove-all.flag`** — written only by `POST /admin/request-remove-all`
+//!   (the `/admin/ui` danger-zone button) and consumed only by the tray, which
+//!   shows its own native confirm and then runs the same «Повністю видалити»
+//!   path as its menu item. Its mtime is the request time: only a flag younger
+//!   than [`REMOVE_ALL_FLAG_WINDOW`] is acted on, an older one is discarded.
+//!
 //! No flag here is `watchdog-state.json` — that file keeps its single-writer
 //! invariant (§7.1 #7). A flag's *presence* is the whole signal; its contents
 //! are not read.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 /// File name of the pause flag under the app-data directory.
 pub const STOP_FLAG_NAME: &str = "stop.flag";
@@ -54,6 +63,12 @@ pub const QUIT_FLAG_NAME: &str = "quit.flag";
 pub const RETRY_FLAG_NAME: &str = "retry.flag";
 /// File name of the reset-config flag (хвиля 13b) under the app-data directory.
 pub const RESET_CONFIG_FLAG_NAME: &str = "reset-config.flag";
+/// File name of the remove-all request flag (хвиля 14) under the app-data
+/// directory.
+pub const REMOVE_ALL_FLAG_NAME: &str = "remove-all.flag";
+/// How long a `remove-all.flag` stays actionable. The tray checks once a
+/// second, so a live tray consumes it well inside this window.
+pub const REMOVE_ALL_FLAG_WINDOW: Duration = Duration::from_secs(30);
 
 fn flag_path(app_data_dir: &Path, name: &str) -> PathBuf {
     app_data_dir.join(name)
@@ -133,6 +148,60 @@ pub(crate) fn take_reset_config_flag(app_data_dir: &Path) -> bool {
     take(&flag_path(app_data_dir, RESET_CONFIG_FLAG_NAME))
 }
 
+/// Create (or re-stamp) `remove-all.flag` — ask the running tray to confirm and
+/// run «Повністю видалити». The mtime is set explicitly: it is the request's
+/// timestamp, and truncating an existing empty file need not update it.
+///
+/// # Errors
+///
+/// The underlying I/O error if the file cannot be created or stamped.
+pub fn set_remove_all_flag(app_data_dir: &Path) -> std::io::Result<()> {
+    std::fs::File::create(flag_path(app_data_dir, REMOVE_ALL_FLAG_NAME))?
+        .set_modified(SystemTime::now())
+}
+
+/// What [`take_remove_all_flag`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoveAllTake {
+    /// No flag (or one that could not be removed — acting on it would prompt
+    /// again every tick).
+    Absent,
+    /// A flag younger than [`REMOVE_ALL_FLAG_WINDOW`], now removed — act on it.
+    Fresh,
+    /// A flag that is too old, from the future, or without a readable mtime,
+    /// now removed — ignore it.
+    Stale,
+}
+
+/// Consume `remove-all.flag`. Only a [`RemoveAllTake::Fresh`] one may raise
+/// the destructive confirm: a leftover from a click minutes ago must never pop
+/// up later, and "no prompt" is the safe error — the user just clicks again.
+#[must_use]
+pub fn take_remove_all_flag(app_data_dir: &Path, now: SystemTime) -> RemoveAllTake {
+    let path = flag_path(app_data_dir, REMOVE_ALL_FLAG_NAME);
+    let mtime = match std::fs::metadata(&path).and_then(|meta| meta.modified()) {
+        Ok(mtime) => Some(mtime),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return RemoveAllTake::Absent,
+        Err(_) => None,
+    };
+    if !take(&path) {
+        return RemoveAllTake::Absent;
+    }
+    match mtime {
+        Some(mtime) if is_fresh(now, mtime, REMOVE_ALL_FLAG_WINDOW) => RemoveAllTake::Fresh,
+        _ => {
+            tracing::info!("ignored a stale {REMOVE_ALL_FLAG_NAME}");
+            RemoveAllTake::Stale
+        }
+    }
+}
+
+/// `mtime` is at most `window` old as of `now`; a future `mtime` is not fresh.
+fn is_fresh(now: SystemTime, mtime: SystemTime, window: Duration) -> bool {
+    now.duration_since(mtime)
+        .is_ok_and(|elapsed| elapsed <= window)
+}
+
 /// One-shot consume. A flag that exists but cannot be removed counts as **not**
 /// taken (logged): acting on it would repeat every tick — for `retry.flag` a
 /// silent restart loop, exactly what SPEC §7 forbids — while ignoring it only
@@ -161,9 +230,12 @@ fn remove_if_present(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_reset_config_flag,
-        set_retry_flag, set_stop_flag, stop_flag_is_set, take_reset_config_flag, take_retry_flag,
+        clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_remove_all_flag,
+        set_reset_config_flag, set_retry_flag, set_stop_flag, stop_flag_is_set,
+        take_remove_all_flag, take_reset_config_flag, take_retry_flag, RemoveAllTake,
+        REMOVE_ALL_FLAG_WINDOW,
     };
+    use std::time::{Duration, SystemTime};
 
     #[test]
     fn retry_and_reset_config_flags_are_one_shot_and_independent() {
@@ -214,6 +286,82 @@ mod tests {
         assert!(!stop_flag_is_set(dir.path()), "quit does not imply stop");
         clear_quit_flag(dir.path());
         assert!(!quit_flag_is_set(dir.path()));
+    }
+
+    fn remove_all_mtime(dir: &std::path::Path) -> SystemTime {
+        match std::fs::metadata(dir.join(super::REMOVE_ALL_FLAG_NAME)).and_then(|m| m.modified()) {
+            Ok(mtime) => mtime,
+            Err(err) => panic!("mtime: {err}"),
+        }
+    }
+
+    #[test]
+    fn a_fresh_remove_all_flag_is_taken_once() {
+        let dir = tempdir();
+        assert_eq!(
+            take_remove_all_flag(dir.path(), SystemTime::now()),
+            RemoveAllTake::Absent
+        );
+        if let Err(err) = set_remove_all_flag(dir.path()) {
+            panic!("set: {err}");
+        }
+        let now = remove_all_mtime(dir.path()) + Duration::from_secs(1);
+        assert_eq!(take_remove_all_flag(dir.path(), now), RemoveAllTake::Fresh);
+        assert_eq!(
+            take_remove_all_flag(dir.path(), now),
+            RemoveAllTake::Absent,
+            "consumed"
+        );
+    }
+
+    #[test]
+    fn an_old_remove_all_flag_is_removed_but_never_acted_on() {
+        let dir = tempdir();
+        if let Err(err) = set_remove_all_flag(dir.path()) {
+            panic!("set: {err}");
+        }
+        let now = remove_all_mtime(dir.path()) + REMOVE_ALL_FLAG_WINDOW + Duration::from_secs(1);
+        assert_eq!(take_remove_all_flag(dir.path(), now), RemoveAllTake::Stale);
+        assert_eq!(
+            take_remove_all_flag(dir.path(), now),
+            RemoveAllTake::Absent,
+            "a stale flag is removed too"
+        );
+    }
+
+    #[test]
+    fn a_remove_all_flag_from_the_future_is_not_fresh() {
+        let dir = tempdir();
+        if let Err(err) = set_remove_all_flag(dir.path()) {
+            panic!("set: {err}");
+        }
+        let now = remove_all_mtime(dir.path()) - Duration::from_secs(60);
+        assert_eq!(take_remove_all_flag(dir.path(), now), RemoveAllTake::Stale);
+    }
+
+    #[test]
+    fn rewriting_the_remove_all_flag_refreshes_its_mtime() {
+        let dir = tempdir();
+        let path = dir.path().join(super::REMOVE_ALL_FLAG_NAME);
+        if let Err(err) = std::fs::write(&path, []) {
+            panic!("write: {err}");
+        }
+        let old = SystemTime::now() - Duration::from_secs(3600);
+        match std::fs::File::options().write(true).open(&path) {
+            Ok(file) => {
+                if let Err(err) = file.set_modified(old) {
+                    panic!("set_modified: {err}");
+                }
+            }
+            Err(err) => panic!("open: {err}"),
+        }
+        if let Err(err) = set_remove_all_flag(dir.path()) {
+            panic!("set: {err}");
+        }
+        assert_eq!(
+            take_remove_all_flag(dir.path(), SystemTime::now()),
+            RemoveAllTake::Fresh
+        );
     }
 
     #[test]

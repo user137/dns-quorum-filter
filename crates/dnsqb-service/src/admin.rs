@@ -2061,59 +2061,24 @@ impl AdminClient {
     }
 }
 
-/// Wire form of [`crate::local_state::ArtifactOutcome`] — the `Failed`
-/// variant's coarse label is dropped rather than sent to the browser: it's a
-/// fixed, non-secret string (never the underlying error), but the UI only
-/// ever needs to know *that* it failed, not the internal label.
+/// What `POST /admin/request-remove-all` (хвиля 14, T-268) did. The route
+/// never removes anything itself: it asks the running tray, which shows its
+/// own native confirm and then runs «Повністю видалити».
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ArtifactOutcomeView {
-    /// It was present and is now gone.
-    Removed,
-    /// It was already absent.
-    NotPresent,
-    /// The removal attempt failed.
-    Failed,
+pub enum RemoveAllRequestOutcomeView {
+    /// The request flag is written; the tray will show its confirm dialog.
+    Requested,
+    /// No live tray holds the role, so nobody would answer the request —
+    /// nothing was written; the user starts the app and tries again.
+    TrayNotRunning,
 }
 
-impl From<crate::local_state::ArtifactOutcome> for ArtifactOutcomeView {
-    fn from(outcome: crate::local_state::ArtifactOutcome) -> Self {
-        match outcome {
-            crate::local_state::ArtifactOutcome::Removed => Self::Removed,
-            crate::local_state::ArtifactOutcome::NotPresent => Self::NotPresent,
-            crate::local_state::ArtifactOutcome::Failed(_) => Self::Failed,
-        }
-    }
-}
-
-/// The body of `POST /admin/uninstall-local-state` (T-70) — one outcome per
-/// artifact, mirroring [`crate::local_state::UninstallReport`], so the
-/// `/admin/ui` danger-zone card can show exactly what happened rather than a
-/// single pass/fail.
+/// The body of `POST /admin/request-remove-all` (хвиля 14, T-268).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UninstallLocalStateResponse {
-    /// The trusted leaf certificate in `CurrentUser\Root` (T-49).
-    pub cert: ArtifactOutcomeView,
-    /// The `DoH` listener's TLS private key (T-67).
-    pub tls_key: ArtifactOutcomeView,
-    /// The `XChaCha20Poly1305` persistence key (T-146).
-    pub persistence_key: ArtifactOutcomeView,
-    /// The optional `MaxMind` `GeoLite2` account credentials (T-163).
-    pub maxmind_creds: ArtifactOutcomeView,
-    /// The personal learned rating-filter zone's own key (T-138, Батч 4.5).
-    pub personal_zone_key: ArtifactOutcomeView,
-}
-
-impl From<crate::local_state::UninstallReport> for UninstallLocalStateResponse {
-    fn from(report: crate::local_state::UninstallReport) -> Self {
-        Self {
-            cert: report.cert.into(),
-            tls_key: report.tls_key.into(),
-            persistence_key: report.persistence_key.into(),
-            maxmind_creds: report.maxmind_creds.into(),
-            personal_zone_key: report.personal_zone_key.into(),
-        }
-    }
+pub struct RemoveAllRequestResponse {
+    /// What the request did.
+    pub outcome: RemoveAllRequestOutcomeView,
 }
 
 /// `GET /admin/cert-status` (T-188) — whether the local `cert.pem` is the
@@ -2124,7 +2089,7 @@ impl From<crate::local_state::UninstallReport> for UninstallLocalStateResponse {
 /// that as "unknown", never "untrusted". Collapsing the two would tell a user
 /// whose check is broken to (re)install a cert that may already be there, with
 /// a button that then appears to do nothing. Same closed-projection shape as
-/// [`WatchdogStatusView`] / [`ArtifactOutcomeView`].
+/// [`WatchdogStatusView`] / [`InstallCertOutcomeView`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CertTrustView {
