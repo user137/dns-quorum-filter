@@ -139,7 +139,7 @@
   "log.emptyResults": "Không tìm thấy mục nào.",
   "log.truncatedNotice": "Chỉ hiển thị các mục mới nhất khớp với bộ lọc - thu hẹp tìm kiếm để xem phần còn lại.",
   "log.liveOn": "Các mục mới tự động xuất hiện.",
-  "log.livePaused": "Các mục mới không hiển thị khi đang mở một trang khác trang đầu tiên.",
+  "log.livePaused": "Các mục mới sẽ xuất hiện khi bạn quay lại đầu nhật ký.",
   "log.liveOff": "Không có cập nhật tự động — hãy nhấp “{button}”.",
   "log.pageNewer": "Mới hơn",
   "log.pageOlder": "Cũ hơn",

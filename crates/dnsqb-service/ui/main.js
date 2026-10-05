@@ -365,6 +365,11 @@ function cardBusy(container) {
   ) {
     return true;
   }
+  // Text being selected (to copy a domain or a number) would vanish.
+  const selection = document.getSelection();
+  if (selection && !selection.isCollapsed && container.contains(selection.anchorNode)) {
+    return true;
+  }
   return Array.from(container.querySelectorAll("[data-pending]")).some((el) => !el.hidden);
 }
 
@@ -447,6 +452,8 @@ function watchCard(container) {
       }
     }, 0);
   ["focusout", "click", "keyup"].forEach((type) => container.addEventListener(type, flush));
+  // A selection cleared by a click elsewhere fires nothing inside the card.
+  document.addEventListener("selectionchange", flush);
 }
 
 // T-176 / T-204: the basic view's one large element. The decisive priority
@@ -488,6 +495,13 @@ function heroPresentation(heroState, stats) {
 const HERO_MARK = { "is-ok": "✓", "is-bad": "✕", "is-warn": "↺" };
 
 function renderProtectionHero(state) {
+  // T-277: status frames arrive about once a second; an unchanged hero is
+  // left alone so focus on its button (or a click mid-install) survives.
+  const signature = [state.cls, state.state, state.detail, state.action, CURRENT_LOCALE].join("|");
+  if (protectionHero.dataset.rendered === signature) {
+    return;
+  }
+  protectionHero.dataset.rendered = signature;
   protectionHero.textContent = "";
   const box = document.createElement("div");
   box.className = `hero ${state.cls}`;
@@ -922,7 +936,8 @@ function pushLost(unreachable) {
 
 // Throttled, not per entry: while browsing, entries arrive many times a second.
 function scheduleLogRefresh() {
-  if (logPage > 0) {
+  if (logReaderAway()) {
+    logUpdateMissed = true;
     renderLogLiveMarker();
     return;
   }
@@ -931,7 +946,9 @@ function scheduleLogRefresh() {
   }
   logRefreshTimer = setTimeout(() => {
     logRefreshTimer = null;
-    if (logPage === 0) {
+    if (logReaderAway()) {
+      logUpdateMissed = true;
+    } else {
       refreshLog(BACKGROUND);
     }
   }, LOG_PUSH_THROTTLE_MS);
@@ -2618,6 +2635,17 @@ const LOG_FETCH_LIMIT = 1000;
 const LOG_PAGE_SIZE = 50;
 let logPage = 0; // 0 = newest
 let logEntriesNewestFirst = [];
+// The rendered page's list (it scrolls on its own) and whether a pushed log
+// change was held back while the reader was away from the newest rows.
+let currentLogList = null;
+let logUpdateMissed = false;
+
+// Rows pushed in at the top would shift what the reader is looking at, and a
+// re-render would throw their scroll position away: an older page or a list
+// scrolled down both hold new entries back until the reader is at the top.
+function logReaderAway() {
+  return logPage > 0 || (currentLogList !== null && currentLogList.scrollTop > 0);
+}
 
 function currentLogQuery() {
   const params = new URLSearchParams();
@@ -2770,7 +2798,7 @@ function logLiveText() {
   if (!pushLive) {
     return t("log.liveOff", { button: t("log.refreshButton") });
   }
-  return logPage > 0 ? t("log.livePaused") : t("log.liveOn");
+  return logReaderAway() ? t("log.livePaused") : t("log.liveOn");
 }
 
 function renderLogLiveMarker() {
@@ -2779,6 +2807,7 @@ function renderLogLiveMarker() {
 
 function renderLog(data) {
   logResults.textContent = "";
+  currentLogList = null;
   // Newest first for reading, even though the backend returns oldest-first
   // within the kept window (dispatch::serve_admin_log's own doc comment).
   logEntriesNewestFirst = [...data.entries].reverse();
@@ -2813,6 +2842,14 @@ function renderLogPage(slot) {
   slot.textContent = "";
   const list = document.createElement("ul");
   list.className = "log-list";
+  currentLogList = list;
+  logUpdateMissed = false;
+  list.addEventListener("scroll", () => {
+    renderLogLiveMarker();
+    if (list.scrollTop === 0 && logUpdateMissed && logPage === 0) {
+      refreshLog(BACKGROUND);
+    }
+  });
   logEntriesNewestFirst
     .slice(logPage * LOG_PAGE_SIZE, (logPage + 1) * LOG_PAGE_SIZE)
     .forEach((entry) => list.appendChild(logItem(entry)));
@@ -2853,6 +2890,7 @@ function showLogPage(page, slot) {
 
 function renderLogError(err) {
   logResults.textContent = "";
+  currentLogList = null;
   const panel = document.createElement("div");
   panel.className = "error-panel";
   panel.textContent = t("error.generic", {

@@ -139,7 +139,7 @@
   "log.emptyResults": "Ingen oppføringer funnet.",
   "log.truncatedNotice": "Kun de nyeste oppføringene som matcher filteret vises - avgrens søket for å se resten.",
   "log.liveOn": "Nye oppføringer vises automatisk.",
-  "log.livePaused": "Nye oppføringer vises ikke så lenge en annen side enn den første er åpen.",
+  "log.livePaused": "Nye oppføringer vises når du er tilbake øverst i loggen.",
   "log.liveOff": "Automatisk oppdatering er ikke tilgjengelig — klikk «{button}».",
   "log.pageNewer": "Nyere",
   "log.pageOlder": "Eldre",

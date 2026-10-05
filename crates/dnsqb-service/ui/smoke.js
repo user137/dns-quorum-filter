@@ -383,6 +383,18 @@ for (const [fn, data] of xssCalls) {
   guard("user-action render was held back", renders === 2);
   doc.activeElement = null;
 
+  // Selected text inside the card holds a background render back too.
+  c = card([fel("input", { name: "x" })]);
+  const selected = { isCollapsed: false, anchorNode: c.kids[0] };
+  doc.getSelection = () => selected;
+  renders = 0;
+  vm.runInContext("renderInBackground", ctx)(c, () => { renders++; }, () => {});
+  guard("rendered over a text selection in the card", renders === 0);
+  selected.isCollapsed = true;
+  vm.runInContext("renderInBackground", ctx)(c, () => { renders++; }, () => {});
+  guard("collapsed selection still held the render back", renders === 1);
+  doc.getSelection = () => null;
+
   // T-279: pager - 50 rows per page, newest first, page clamped to the data.
   const logRows = () => created.filter((r) => r.tag === "li" && r.props.className === "log-item");
   const pagerText = () => assigned.filter(([w]) => w === "<span>.textContent").map(([, v]) => v);
@@ -453,6 +465,14 @@ for (const [fn, data] of xssCalls) {
   es.emit("log", "4");
   guard("a log event re-fetched while reading an older page", fire(1000) === 0 && spy.refreshLog.length === 1);
   run("logPage = 0");
+  // A list scrolled down is held the same way (a re-render would reset its
+  // scroll), and scrolling back to the top catches up once.
+  const scrolledList = { scrollTop: 300 };
+  vm.runInContext("currentLogList = __list", Object.assign(ctx, { __list: scrolledList }));
+  es.emit("log", "5");
+  guard("a log event re-fetched while the list was scrolled down", fire(1000) === 0 && spy.refreshLog.length === 1);
+  guard("scrolled list not reported as paused", run("logLiveText()") === run(`t("log.livePaused")`));
+  run("currentLogList = null; logUpdateMissed = false");
 
   // Silence: hero says unreachable at once, the poll takes over, a reconnect is scheduled.
   es.emit("ping", "");

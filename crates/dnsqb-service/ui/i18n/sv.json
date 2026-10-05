@@ -139,7 +139,7 @@
   "log.emptyResults": "Inga poster hittades.",
   "log.truncatedNotice": "Endast de senaste posterna som matchar filtret visas - begränsa sökningen för att se resten.",
   "log.liveOn": "Nya poster visas automatiskt.",
-  "log.livePaused": "Nya poster visas inte medan en annan sida än den första är öppen.",
+  "log.livePaused": "Nya poster visas när du är tillbaka högst upp i loggen.",
   "log.liveOff": "Automatisk uppdatering är inte tillgänglig — klicka på ”{button}”.",
   "log.pageNewer": "Nyare",
   "log.pageOlder": "Äldre",

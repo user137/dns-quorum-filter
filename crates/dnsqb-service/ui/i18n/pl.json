@@ -139,7 +139,7 @@
   "log.emptyResults": "Nie znaleziono wpisów.",
   "log.truncatedNotice": "Pokazano tylko najnowsze wpisy pasujące do filtra - zawęź wyszukiwanie, aby zobaczyć resztę.",
   "log.liveOn": "Nowe wpisy pojawiają się automatycznie.",
-  "log.livePaused": "Nowe wpisy nie są pokazywane, dopóki otwarta jest strona inna niż pierwsza.",
+  "log.livePaused": "Nowe wpisy pojawią się, gdy wrócisz na początek dziennika.",
   "log.liveOff": "Automatyczne odświeżanie jest niedostępne — kliknij „{button}”.",
   "log.pageNewer": "Nowsze",
   "log.pageOlder": "Starsze",

@@ -139,7 +139,7 @@
   "log.emptyResults": "Tidak ada entri yang ditemukan.",
   "log.truncatedNotice": "Hanya entri terbaru yang cocok dengan filter yang ditampilkan - persempit pencarian untuk melihat sisanya.",
   "log.liveOn": "Entri baru muncul secara otomatis.",
-  "log.livePaused": "Entri baru tidak ditampilkan selama halaman selain halaman pertama terbuka.",
+  "log.livePaused": "Entri baru akan muncul setelah Anda kembali ke bagian atas log.",
   "log.liveOff": "Pembaruan otomatis tidak tersedia — klik “{button}”.",
   "log.pageNewer": "Lebih baru",
   "log.pageOlder": "Lebih lama",

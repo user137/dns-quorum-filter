@@ -139,7 +139,7 @@
   "log.emptyResults": "Hakuna maingizo yaliyopatikana.",
   "log.truncatedNotice": "Maingizo mapya zaidi tu yanayolingana na kichujio yanaonyeshwa - punguza utafutaji ili kuona mengine.",
   "log.liveOn": "Maingizo mapya yanaonekana kiotomatiki.",
-  "log.livePaused": "Maingizo mapya hayaonyeshwi wakati ukurasa usio wa kwanza uko wazi.",
+  "log.livePaused": "Maingizo mapya yataonekana utakaporudi juu ya kumbukumbu.",
   "log.liveOff": "Masasisho ya kiotomatiki hayapatikani — bofya \"{button}\".",
   "log.pageNewer": "Mapya zaidi",
   "log.pageOlder": "Ya zamani zaidi",

@@ -139,7 +139,7 @@
   "log.emptyResults": "Nessuna voce trovata.",
   "log.truncatedNotice": "Vengono mostrate solo le voci più recenti corrispondenti al filtro - restringi la ricerca per vedere il resto.",
   "log.liveOn": "Le nuove voci compaiono automaticamente.",
-  "log.livePaused": "Le nuove voci non vengono mostrate finché è aperta una pagina diversa dalla prima.",
+  "log.livePaused": "Le nuove voci compariranno quando tornerai all'inizio del registro.",
   "log.liveOff": "L'aggiornamento automatico non è disponibile: fai clic su «{button}».",
   "log.pageNewer": "Più recenti",
   "log.pageOlder": "Meno recenti",

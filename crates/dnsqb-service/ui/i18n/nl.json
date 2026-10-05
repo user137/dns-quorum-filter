@@ -139,7 +139,7 @@
   "log.emptyResults": "Geen items gevonden.",
   "log.truncatedNotice": "Alleen de nieuwste items die aan het filter voldoen worden getoond - verklein de zoekopdracht om de rest te zien.",
   "log.liveOn": "Nieuwe items verschijnen automatisch.",
-  "log.livePaused": "Nieuwe items worden niet getoond zolang een andere pagina dan de eerste open is.",
+  "log.livePaused": "Nieuwe items verschijnen zodra u weer bovenaan het logboek bent.",
   "log.liveOff": "Automatisch bijwerken is niet beschikbaar — klik op ‘{button}’.",
   "log.pageNewer": "Nieuwer",
   "log.pageOlder": "Ouder",

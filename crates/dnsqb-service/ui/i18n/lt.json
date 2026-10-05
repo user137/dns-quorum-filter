@@ -139,7 +139,7 @@
   "log.emptyResults": "Įrašų nerasta.",
   "log.truncatedNotice": "Rodomi tik naujausi filtrą atitinkantys įrašai - susiaurinkite paiešką, kad pamatytumėte likusius.",
   "log.liveOn": "Nauji įrašai rodomi automatiškai.",
-  "log.livePaused": "Nauji įrašai nerodomi, kol atidarytas ne pirmasis puslapis.",
+  "log.livePaused": "Nauji įrašai atsiras, kai grįšite į žurnalo pradžią.",
   "log.liveOff": "Automatinis atnaujinimas nepasiekiamas — spustelėkite „{button}“.",
   "log.pageNewer": "Naujesni",
   "log.pageOlder": "Senesni",

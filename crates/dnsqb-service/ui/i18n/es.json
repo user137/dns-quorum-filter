@@ -139,7 +139,7 @@
   "log.emptyResults": "No se encontraron entradas.",
   "log.truncatedNotice": "Solo se muestran las entradas más recientes que coinciden con el filtro - reduzca la búsqueda para ver el resto.",
   "log.liveOn": "Las entradas nuevas aparecen automáticamente.",
-  "log.livePaused": "Las entradas nuevas no se muestran mientras esté abierta una página distinta de la primera.",
+  "log.livePaused": "Las entradas nuevas aparecerán cuando vuelva al principio del registro.",
   "log.liveOff": "La actualización automática no está disponible: haga clic en «{button}».",
   "log.pageNewer": "Más recientes",
   "log.pageOlder": "Más antiguas",

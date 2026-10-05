@@ -139,7 +139,7 @@
   "log.emptyResults": "Nebyly nalezeny žádné záznamy.",
   "log.truncatedNotice": "Zobrazeny jsou pouze nejnovější záznamy odpovídající filtru - zúžte hledání, abyste viděli zbytek.",
   "log.liveOn": "Nové záznamy se zobrazují automaticky.",
-  "log.livePaused": "Nové záznamy se nezobrazují, dokud není otevřená první stránka.",
+  "log.livePaused": "Nové záznamy se zobrazí, jakmile se vrátíte na začátek protokolu.",
   "log.liveOff": "Automatické obnovování není k dispozici — klikněte na „{button}“.",
   "log.pageNewer": "Novější",
   "log.pageOlder": "Starší",

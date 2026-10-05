@@ -139,7 +139,7 @@
   "log.emptyResults": "Merkintöjä ei löytynyt.",
   "log.truncatedNotice": "Näytetään vain suodatinta vastaavat uusimmat merkinnät - tarkenna hakua nähdäksesi loput.",
   "log.liveOn": "Uudet merkinnät näkyvät automaattisesti.",
-  "log.livePaused": "Uusia merkintöjä ei näytetä, kun auki on muu kuin ensimmäinen sivu.",
+  "log.livePaused": "Uudet merkinnät näkyvät, kun palaat lokin alkuun.",
   "log.liveOff": "Automaattinen päivitys ei ole käytettävissä — napsauta ”{button}”.",
   "log.pageNewer": "Uudemmat",
   "log.pageOlder": "Vanhemmat",

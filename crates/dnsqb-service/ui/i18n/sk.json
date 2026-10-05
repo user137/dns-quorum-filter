@@ -139,7 +139,7 @@
   "log.emptyResults": "Nenašli sa žiadne záznamy.",
   "log.truncatedNotice": "Zobrazujú sa iba najnovšie záznamy zodpovedajúce filtru - zúžte vyhľadávanie, aby ste videli zvyšok.",
   "log.liveOn": "Nové záznamy sa zobrazujú automaticky.",
-  "log.livePaused": "Nové záznamy sa nezobrazujú, kým nie je otvorená prvá stránka.",
+  "log.livePaused": "Nové záznamy sa zobrazia, keď sa vrátite na začiatok denníka.",
   "log.liveOff": "Automatické obnovovanie nie je k dispozícii — kliknite na „{button}“.",
   "log.pageNewer": "Novšie",
   "log.pageOlder": "Staršie",

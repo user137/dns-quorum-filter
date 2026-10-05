@@ -139,7 +139,7 @@
   "log.emptyResults": "Nema pronađenih unosa.",
   "log.truncatedNotice": "Prikazani su samo najnoviji unosi koji odgovaraju filteru - suzite pretragu da vidite ostatak.",
   "log.liveOn": "Novi unosi se pojavljuju automatski.",
-  "log.livePaused": "Novi unosi se ne prikazuju dok je otvorena stranica koja nije prva.",
+  "log.livePaused": "Novi unosi će se pojaviti kada se vratite na početak dnevnika.",
   "log.liveOff": "Automatsko osvežavanje nije dostupno — kliknite „{button}“.",
   "log.pageNewer": "Noviji",
   "log.pageOlder": "Stariji",

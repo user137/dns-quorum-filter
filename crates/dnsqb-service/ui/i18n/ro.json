@@ -139,7 +139,7 @@
   "log.emptyResults": "Nu s-au găsit intrări.",
   "log.truncatedNotice": "Sunt afișate doar cele mai noi intrări care corespund filtrului - restrângeți căutarea pentru a vedea restul.",
   "log.liveOn": "Intrările noi apar automat.",
-  "log.livePaused": "Intrările noi nu sunt afișate cât timp este deschisă altă pagină decât prima.",
+  "log.livePaused": "Intrările noi vor apărea când reveniți la începutul jurnalului.",
   "log.liveOff": "Actualizarea automată nu este disponibilă — faceți clic pe „{button}”.",
   "log.pageNewer": "Mai noi",
   "log.pageOlder": "Mai vechi",

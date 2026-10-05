@@ -139,7 +139,7 @@
   "log.emptyResults": "Kayıt bulunamadı.",
   "log.truncatedNotice": "Yalnızca filtreyle eşleşen en yeni kayıtlar gösteriliyor - geri kalanını görmek için aramayı daraltın.",
   "log.liveOn": "Yeni kayıtlar otomatik olarak görünür.",
-  "log.livePaused": "İlk sayfa dışında bir sayfa açıkken yeni kayıtlar gösterilmez.",
+  "log.livePaused": "Günlüğün başına döndüğünüzde yeni kayıtlar görünür.",
   "log.liveOff": "Otomatik güncelleme kullanılamıyor — “{button}” düğmesine tıklayın.",
   "log.pageNewer": "Daha yeni",
   "log.pageOlder": "Daha eski",

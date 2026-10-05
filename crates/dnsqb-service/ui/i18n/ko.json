@@ -139,7 +139,7 @@
   "log.emptyResults": "항목을 찾을 수 없습니다.",
   "log.truncatedNotice": "필터와 일치하는 최신 항목만 표시됩니다 - 나머지를 보려면 검색 범위를 좁히세요.",
   "log.liveOn": "새 항목이 자동으로 표시됩니다.",
-  "log.livePaused": "첫 페이지가 아닌 페이지를 보는 동안에는 새 항목이 표시되지 않습니다.",
+  "log.livePaused": "로그 맨 위로 돌아오면 새 항목이 표시됩니다.",
   "log.liveOff": "자동 업데이트를 사용할 수 없습니다. '{button}'을(를) 클릭하세요.",
   "log.pageNewer": "최신",
   "log.pageOlder": "이전",

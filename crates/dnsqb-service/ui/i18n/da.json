@@ -139,7 +139,7 @@
   "log.emptyResults": "Ingen poster fundet.",
   "log.truncatedNotice": "Kun de nyeste poster, der matcher filteret, vises - indsnævr søgningen for at se resten.",
   "log.liveOn": "Nye poster vises automatisk.",
-  "log.livePaused": "Nye poster vises ikke, så længe en anden side end den første er åben.",
+  "log.livePaused": "Nye poster vises, når du er tilbage i toppen af loggen.",
   "log.liveOff": "Automatisk opdatering er ikke tilgængelig — klik på »{button}«.",
   "log.pageNewer": "Nyere",
   "log.pageOlder": "Ældre",

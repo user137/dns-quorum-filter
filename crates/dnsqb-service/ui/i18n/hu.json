@@ -139,7 +139,7 @@
   "log.emptyResults": "Nem található bejegyzés.",
   "log.truncatedNotice": "Csak a szűrőnek megfelelő legújabb bejegyzések láthatók - szűkítse a keresést a többi megtekintéséhez.",
   "log.liveOn": "Az új bejegyzések automatikusan megjelennek.",
-  "log.livePaused": "Az új bejegyzések nem jelennek meg, amíg nem az első oldal van megnyitva.",
+  "log.livePaused": "Az új bejegyzések megjelennek, amint visszatér a napló elejére.",
   "log.liveOff": "Az automatikus frissítés nem érhető el — kattintson a „{button}” gombra.",
   "log.pageNewer": "Újabbak",
   "log.pageOlder": "Régebbiek",

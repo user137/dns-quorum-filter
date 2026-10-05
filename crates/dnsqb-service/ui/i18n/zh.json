@@ -139,7 +139,7 @@
   "log.emptyResults": "未找到条目。",
   "log.truncatedNotice": "仅显示与过滤器匹配的最新条目 - 缩小搜索范围以查看其余条目。",
   "log.liveOn": "新条目会自动显示。",
-  "log.livePaused": "打开第一页以外的页面时，不显示新条目。",
+  "log.livePaused": "回到日志顶部后，新条目就会显示。",
   "log.liveOff": "自动更新不可用 — 请点击“{button}”。",
   "log.pageNewer": "较新",
   "log.pageOlder": "较旧",

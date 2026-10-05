@@ -139,7 +139,7 @@
   "log.emptyResults": "Aucune entrée trouvée.",
   "log.truncatedNotice": "Seules les entrées les plus récentes correspondant au filtre sont affichées - affinez la recherche pour voir le reste.",
   "log.liveOn": "Les nouvelles entrées s'affichent automatiquement.",
-  "log.livePaused": "Les nouvelles entrées ne s'affichent pas tant qu'une autre page que la première est ouverte.",
+  "log.livePaused": "Les nouvelles entrées s'afficheront dès que vous reviendrez en haut du journal.",
   "log.liveOff": "La mise à jour automatique n'est pas disponible — cliquez sur « {button} ».",
   "log.pageNewer": "Plus récentes",
   "log.pageOlder": "Plus anciennes",

@@ -139,7 +139,7 @@
   "log.emptyResults": "Kirjeid ei leitud.",
   "log.truncatedNotice": "Kuvatakse ainult filtrile vastavad uusimad kirjed - kitsenda otsingut, et näha ülejäänuid.",
   "log.liveOn": "Uued kirjed ilmuvad automaatselt.",
-  "log.livePaused": "Uusi kirjeid ei kuvata, kuni avatud on muu kui esimene leht.",
+  "log.livePaused": "Uued kirjed ilmuvad, kui naasete logi algusesse.",
   "log.liveOff": "Automaatne värskendamine pole saadaval — klõpsake „{button}“.",
   "log.pageNewer": "Uuemad",
   "log.pageOlder": "Vanemad",

@@ -139,7 +139,7 @@
   "log.emptyResults": "Ieraksti nav atrasti.",
   "log.truncatedNotice": "Tiek rādīti tikai jaunākie ierakstiem atbilstošie filtram - sašauriniet meklēšanu, lai redzētu pārējos.",
   "log.liveOn": "Jaunie ieraksti parādās automātiski.",
-  "log.livePaused": "Jaunie ieraksti netiek rādīti, kamēr atvērta nav pirmā lapa.",
+  "log.livePaused": "Jaunie ieraksti parādīsies, kad atgriezīsieties žurnāla sākumā.",
   "log.liveOff": "Automātiskā atjaunināšana nav pieejama — noklikšķiniet uz “{button}”.",
   "log.pageNewer": "Jaunāki",
   "log.pageOlder": "Vecāki",
