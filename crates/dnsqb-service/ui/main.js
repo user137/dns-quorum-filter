@@ -3316,15 +3316,15 @@ function customProviderForm() {
       return;
     }
     try {
-      renderProviders(
-        await addProvider({
-          id,
-          url,
-          display_name: displayName,
-          category: catSelect.value,
-          block_signature: sigSelect.value,
-        }),
-      );
+      const data = await addProvider({
+        id,
+        url,
+        display_name: displayName,
+        category: catSelect.value,
+        block_signature: sigSelect.value,
+      });
+      providersActionError = null;
+      renderProviders(data);
     } catch (err) {
       errorLine.textContent = t("providers.addFailedTemplate", {
         message: (err && err.message) || String(err),

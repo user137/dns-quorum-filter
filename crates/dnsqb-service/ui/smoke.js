@@ -54,6 +54,7 @@ const recOf = new WeakMap();
 function elStub(rec) {
   const store = {};
   rec.dataset = {};
+  rec.listeners = rec.listeners || {};
   const proxy = new Proxy(function () {}, {
     get(_t, p) {
       if (p === Symbol.toPrimitive) return () => "";
@@ -62,6 +63,7 @@ function elStub(rec) {
       if (p === "length") return 0;
       if (p === Symbol.iterator) return function* () {};
       if (p in store) return store[p];
+      if (p === "addEventListener") return (type, fn) => { (rec.listeners[type] = rec.listeners[type] || []).push(fn); };
       if (p === "setAttribute") return (a, v) => { rec.attrs[a] = String(v); if (typeof v === "string") assigned.push([`<${rec.tag}>.attr(${a})`, v]); };
       if (["appendChild", "append", "prepend", "insertBefore", "replaceChildren"].includes(p)) {
         return (...kids) => { for (const k of kids) { const r = recOf.get(k); if (r) r.parent = rec; } return kids[0]; };
@@ -76,6 +78,7 @@ function elStub(rec) {
     },
     apply() { return stub(`<${rec.tag}>()`); },
   });
+  rec.proxy = proxy;
   recOf.set(proxy, rec);
   return proxy;
 }
@@ -503,6 +506,22 @@ for (const [fn, data] of xssCalls) {
   assigned.length = 0;
   run(`renderProviders(${JSON.stringify(providersData)})`);
   guard("successful actions kept the old errors", !shown("HTTP 500") && !shown("Failed to fetch"));
+  // Happy: a custom provider added through the form is a successful action too.
+  ctx.fetch = routeFetch({ "/admin/providers/set-enabled": failWith(500), "/admin/providers/add": okJson(providersData) });
+  await run(`providerAction(() => setProviderEnabled("x", false), "providers.changeFailedTemplate")`);
+  run("customFormNode = null; customFormRefs = null");
+  created.length = 0;
+  run("customProviderForm()");
+  const formField = (id) => created.find((r) => r.props.id === id).proxy;
+  formField("custom-provider-id").value = "my-dns";
+  formField("custom-provider-url").value = "https://dns.example/dns-query";
+  formField("custom-provider-name").value = "My DNS";
+  const formAdd = created.find((r) => r.tag === "button" && r.listeners.click);
+  await formAdd.listeners.click[0]();
+  assigned.length = 0;
+  run(`renderProviders(${JSON.stringify(providersData)})`);
+  guard("custom provider added, old action error kept", !shown("HTTP 500"));
+  run("customFormNode = null; customFormRefs = null");
   // No data at all yet (first load failed): the panel is still the honest answer.
   run("lastProvidersData = null");
   ctx.fetch = routeFetch({ "/admin/providers/set-enabled": offline });
