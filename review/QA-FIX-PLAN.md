@@ -348,6 +348,8 @@ T-277 (push-оновлення `/admin/ui`, рішення 2026-10-04) погл�
 - Коміти: 1–2 docs (CI не запускається). Re-test: `A-dto-doc-drift`, `KL-tls-key-uninstall`.
 
 ### Хвиля 12 — тест-покриття
+**Стан 2026-10-05: виконано** — `9173775` (тести ARCH-11 б + `StoreTestDir`), `8b19d27` (текст T-265),
+`0464179` (матриця). Деталі й що лишилось без тесту — `TASKS-DONE.md`.
 - Рядки `CODE-ONLY` з «автотестів НЕМАЄ — кандидат у Фазу 3», де є чисте ядро: `F-state-*`
   (`watchdog::transition`, `loop_driver`), `F-start-flags-*`, `F-launcher-order-*` (`launcher::plan_launch`),
   `H-file-*` (формати `persist_dto`/`cache_persist_dto`), `D-browser-nudge-*`, `DIAG-rf-*`.
