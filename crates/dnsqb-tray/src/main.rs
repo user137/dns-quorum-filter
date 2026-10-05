@@ -34,8 +34,11 @@
 //! network I/O itself. `muda`'s [`MenuEvent`] channel is a plain
 //! lock-free queue, not wired into `tao`'s own event delivery on Windows
 //! (only macOS/Linux integrate it via the native run loop, per `tray-icon`'s
-//! own docs) — this loop drains it on a short fixed [`EVENT_POLL_INTERVAL`]
-//! tick via `ControlFlow::WaitUntil` instead.
+//! own docs) — so a handler forwards each menu event to this loop's own
+//! queue and wakes it through an [`EventLoopProxy`] ([`wake_event_loop`]);
+//! the status and trust threads wake it the same way, only on a change
+//! (ARCH-19 b). [`EVENT_POLL_INTERVAL`] is just the fallback deadline for
+//! the time-based checks.
 
 mod browser;
 mod browser_nudge;
@@ -59,10 +62,11 @@ use onboarding::OfferCheck;
 use status::{IconColour, TrayStatus, TrustState};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
-use tao::event_loop::{ControlFlow, EventLoop};
+use tao::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 // Four raw 32x32 RGBA blobs (4096 bytes each, no header), transparent
 // background + a hexagon glyph in the per-status colour (green / amber / grey
@@ -128,18 +132,78 @@ const REMOVE_ALL_ID: &str = "remove-all-local-state";
 const RETRY_SERVICE_ID: &str = "retry-service";
 const RESET_CONFIG_ID: &str = "reset-config";
 
-/// Re-check cadence for `muda`'s global menu-event channel (see the module
-/// doc comment for why this loop drives it rather than `tao` itself) —
-/// independent of [`status::spawn`]'s own 2s poll interval; this tick only
-/// governs how quickly a menu click gets noticed.
-const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Fallback wake-up deadline (ARCH-19 b). Menu clicks and status/trust
+/// changes wake the loop at once through [`wake_event_loop`]; this deadline
+/// only bounds the time-based checks — the `stop.flag` label, the nudge
+/// popup's lifetime, the nudge's 30-minute due time — to at most a second
+/// late. Was a 100 ms poll of the menu channel before the proxy wake-up.
+const EVENT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How often the event loop re-stats `stop.flag` to keep the pause/resume
 /// label current (T-185). The flag only changes on a click handled here or a
-/// fresh watcher launch clearing it, so statting it on every 100 ms
-/// [`EVENT_POLL_INTERVAL`] tick is far more often than needed (advisor,
+/// fresh watcher launch clearing it, so once a second is enough; other wakes
+/// in between (a menu click, a status change) don't re-stat it (advisor,
 /// Батч 3.12 closing).
 const FLAG_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+/// The running event loop's proxy, set once in `main` before anything that
+/// could produce a menu or status event exists (ARCH-19 b).
+static LOOP_PROXY: OnceLock<EventLoopProxy<()>> = OnceLock::new();
+
+/// Wakes the event loop from any thread so it re-reads the status, trust and
+/// menu state now instead of at the next [`EVENT_POLL_INTERVAL`] deadline.
+pub(crate) fn wake_event_loop() {
+    if let Some(proxy) = LOOP_PROXY.get() {
+        // Err only once the event loop has exited — nothing left to wake.
+        let _ = proxy.send_event(());
+    }
+}
+
+/// Handles every menu event queued since the last wake, stopping once one of
+/// them exits the loop.
+fn handle_menu_events(
+    menu_events: &mpsc::Receiver<MenuEvent>,
+    app_data: &Path,
+    port: u16,
+    control_flow: &mut ControlFlow,
+    trust: &TrustState,
+    locale: &str,
+) {
+    while let Ok(event) = menu_events.try_recv() {
+        handle_menu_event(
+            event.id().as_ref(),
+            app_data,
+            port,
+            control_flow,
+            trust,
+            locale,
+        );
+        if *control_flow == ControlFlow::Exit {
+            break;
+        }
+    }
+}
+
+/// Installs the menu and tray-icon event handlers (ARCH-19 b). Must run before
+/// the tray icon exists: `muda`/`tray-icon` lock in "no handler" on the first
+/// event they deliver, and a later `set_event_handler` is silently ignored —
+/// the menu would go dead with no error. The menu handler runs inside the
+/// window procedure (possibly under an `rfd` modal's message pump), so it only
+/// forwards; the loop handles the event.
+fn install_event_handlers(event_loop: &EventLoop<()>) -> mpsc::Receiver<MenuEvent> {
+    // `main` runs once, so the slot is always empty here.
+    let _ = LOOP_PROXY.set(event_loop.create_proxy());
+    let (tx, rx) = mpsc::channel();
+    MenuEvent::set_event_handler(Some(move |event| {
+        // Err only once the loop and its receiver are gone.
+        let _ = tx.send(event);
+        wake_event_loop();
+    }));
+    // Nothing reads icon events (the menu opens natively); without a handler
+    // every hover and click piles up in tray-icon's unbounded channel.
+    TrayIconEvent::set_event_handler(Some(|_| {}));
+    rx
+}
 
 /// The single-instance guard, pid file, watcher safety-net, and config load
 /// `main` needs before it can build anything — extracted only to keep `main`
@@ -240,13 +304,15 @@ fn main() {
     // tick, so a tray that never reaches a later tick still has it recorded.
     browser_nudge::mark_first_seen_if_absent(&app_data, SystemTime::now());
 
+    let event_loop: EventLoop<()> = EventLoop::new();
+    let menu_events = install_event_handlers(&event_loop);
+
     let status_handle = status::spawn(app_data.clone(), port);
     let trust = status::spawn_trust_watch(app_data.join("cert.pem"));
 
     let (tray_icon, icons, menu_items) = build_tray_icon(&app_data, locale);
     let mut last_recovery = (false, false);
 
-    let menu_channel = MenuEvent::receiver();
     let mut refresh_state = TrayRefreshState {
         status: TrayStatus::Unreachable,
         trusted: trust.is_trusted(),
@@ -261,14 +327,13 @@ fn main() {
     };
     let mut browser_nudge_popup: Option<nudge_popup::NudgePopup> = None;
 
-    let event_loop: EventLoop<()> = EventLoop::new();
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + EVENT_POLL_INTERVAL);
 
         // T-195: the "Повністю видалити" worker sets this once the report
         // dialog is dismissed and the wipe helper is spawned. Checked after
         // the `WaitUntil` assignment above so it isn't overwritten; the
-        // `return` drops this tick's queued menu event, which is fine here
+        // `return` leaves any queued menu event unhandled, which is fine here
         // (do not copy this pattern to the pause/label path).
         if QUIT_REQUESTED.load(Ordering::SeqCst) {
             *control_flow = ControlFlow::Exit;
@@ -321,16 +386,7 @@ fn main() {
             }
         }
 
-        if let Ok(event) = menu_channel.try_recv() {
-            handle_menu_event(
-                event.id().as_ref(),
-                &app_data,
-                port,
-                control_flow,
-                &trust,
-                locale,
-            );
-        }
+        handle_menu_events(&menu_events, &app_data, port, control_flow, &trust, locale);
     });
 }
 
@@ -858,8 +914,8 @@ fn spawn_cert_action<F, E>(
 }
 
 /// Set by [`spawn_remove_all_and_quit`] once the report dialog is dismissed
-/// and the app-data wipe helper is spawned — the event loop exits on its next
-/// tick (a worker thread has no handle to `control_flow`).
+/// and the app-data wipe helper is spawned — the worker then wakes the event
+/// loop, which exits (a worker thread has no handle to `control_flow`).
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// T-195 — "Повністю видалити": clear the out-of-tree state, show the report,
@@ -896,6 +952,7 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
         self_uninstall::spawn_app_data_dir_wipe(&app_data);
         browser::open_windows_apps_settings();
         QUIT_REQUESTED.store(true, Ordering::SeqCst);
+        wake_event_loop();
     });
 }
 

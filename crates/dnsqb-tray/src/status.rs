@@ -866,6 +866,36 @@ mod tests {
         assert_eq!(compose_tooltip(status, true, "uk"), status.tooltip("uk"));
     }
 
+    // ARCH-19 b: the event loop is woken only when what it shows changes.
+    #[test]
+    fn publish_reports_only_a_real_change() {
+        use super::publish;
+        use parking_lot::RwLock;
+
+        let current = RwLock::new(TrayStatus::Unreachable);
+        assert!(!publish(&current, TrayStatus::Unreachable));
+        assert!(publish(&current, TrayStatus::Paused));
+        assert_eq!(*current.read(), TrayStatus::Paused);
+        assert!(!publish(&current, TrayStatus::Paused));
+    }
+
+    // ARCH-19 b: a trust flip and the first conclusive answer both wake the
+    // loop — onboarding keys on `confirmed`, the icon on `trusted`.
+    #[test]
+    fn record_trust_reports_a_flip_and_the_first_confirmation() {
+        use super::record_trust;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let trusted = AtomicBool::new(true);
+        let confirmed = AtomicBool::new(false);
+        assert!(record_trust(&trusted, &confirmed, true));
+        assert!(confirmed.load(Ordering::Relaxed));
+        assert!(!record_trust(&trusted, &confirmed, true));
+        assert!(record_trust(&trusted, &confirmed, false));
+        assert!(!trusted.load(Ordering::Relaxed));
+        assert!(!record_trust(&trusted, &confirmed, false));
+    }
+
     #[test]
     fn trust_poll_cadence_stays_fast_until_a_confirmed_trusted_cert() {
         use super::next_delay;
@@ -933,6 +963,15 @@ fn watchdog_override(app_data_dir: &Path) -> Option<TrayStatus> {
     }
 }
 
+/// Stores `status` and reports whether it differs from what was there — the
+/// poll thread wakes the event loop only on a real change (ARCH-19 b).
+fn publish(current: &RwLock<TrayStatus>, status: TrayStatus) -> bool {
+    let mut slot = current.write();
+    let changed = *slot != status;
+    *slot = status;
+    changed
+}
+
 /// Spawns the background polling thread and returns a handle to read its
 /// latest result. `app_data_dir`/`port` are resolved once by the caller
 /// (`main.rs`, at startup) — this never re-resolves either.
@@ -983,7 +1022,9 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
                 // given-up service now outranks the pause ([`local_status`]).
                 let paused = dnsqb_service::stop_flag_is_set(&app_data_dir);
                 if let Some(local) = local_status(paused, watchdog_override(&app_data_dir)) {
-                    *current.write() = local;
+                    if publish(&current, local) {
+                        crate::wake_event_loop();
+                    }
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
@@ -1016,7 +1057,9 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
                 } else {
                     TrayStatus::Unreachable
                 };
-                *current.write() = status;
+                if publish(&current, status) {
+                    crate::wake_event_loop();
+                }
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
         });
@@ -1091,6 +1134,15 @@ impl TrustState {
     }
 }
 
+/// Stores one conclusive `certutil` answer and reports whether the event loop
+/// has anything new to show: a trust flip (icon colour) or the first
+/// confirmation (the onboarding offer keys on it) — ARCH-19 b.
+fn record_trust(trusted: &AtomicBool, confirmed: &AtomicBool, now_trusted: bool) -> bool {
+    let flipped = trusted.swap(now_trusted, Ordering::Relaxed) != now_trusted;
+    let first_confirmation = !confirmed.swap(true, Ordering::Relaxed);
+    flipped || first_confirmation
+}
+
 /// Spawns the dedicated trust-watch thread and returns a handle to read its
 /// result. Kept off [`spawn`]'s poll loop on purpose: [`dnsqb_service::is_trusted`]
 /// is two blocking `certutil` subprocesses (~100–300 ms each), and threading a
@@ -1122,11 +1174,12 @@ pub fn spawn_trust_watch(cert_path: PathBuf) -> TrustState {
             let confirmed_trusted = matches!(result, Ok(true));
             match result {
                 Ok(now_trusted) => {
-                    trusted.store(now_trusted, Ordering::Relaxed);
                     // Any `Ok` — trusted or not — means `certutil` gave a real
                     // answer, so the displayed flag is now a reading, not the
                     // seed (T-188).
-                    confirmed.store(true, Ordering::Relaxed);
+                    if record_trust(&trusted, &confirmed, now_trusted) {
+                        crate::wake_event_loop();
+                    }
                     logged_err = false;
                 }
                 Err(err) => {
