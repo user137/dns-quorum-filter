@@ -53,11 +53,12 @@ const created = [];
 const recOf = new WeakMap();
 function elStub(rec) {
   const store = {};
+  rec.dataset = {};
   const proxy = new Proxy(function () {}, {
     get(_t, p) {
       if (p === Symbol.toPrimitive) return () => "";
       if (p === "then") return undefined;
-      if (p === "dataset") return {};
+      if (p === "dataset") return rec.dataset;
       if (p === "length") return 0;
       if (p === Symbol.iterator) return function* () {};
       if (p in store) return store[p];
@@ -398,6 +399,13 @@ for (const [fn, data] of xssCalls) {
   run(`logPage = 2; renderLog(${JSON.stringify(logData)})`);
   guard("page not clamped when the data shrank", run("logPage") === 0 && logRows().length === 1);
   run("logPage = 0");
+
+  // ARCH-12: an expanded voter-detail row marks the log card busy, so the
+  // pushed log refresh waits instead of collapsing it.
+  created.length = 0;
+  run(`renderLog(${JSON.stringify(logData)})`);
+  const detail = created.find((r) => r.parent && r.parent.tag === "li" && "pending" in r.dataset);
+  guard("log voter detail is not marked [data-pending]", detail && detail.props.hidden === true);
 
   // T-277: the push-stream client.
   const timers = [];
