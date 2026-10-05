@@ -129,24 +129,31 @@ impl TrayStatus {
         }
     }
 
-    /// The text shown as the tray icon's hover tooltip. T-176 reworded these
-    /// for a non-technical reader (no "резолвінг", no "апстрім", no stale
-    /// "обидва провайдери") while keeping the raw counts intact. **T-151
-    /// Батч 5.5:** `locale` is an explicit parameter, never read from ambient
-    /// global state - see `i18n.rs`'s own module doc comment for why.
-    #[must_use]
-    pub fn tooltip(&self, locale: &str) -> String {
+    /// The hover tooltip's headline plus its optional segments, most
+    /// important first — [`fit_tooltip`] drops from the least important
+    /// when space runs out (T-253), so the counts go last: a real problem
+    /// outranks a scope choice, and both outrank a number. T-176 reworded
+    /// these for a non-technical reader (no "резолвінг", no "апстрім", no
+    /// stale "обидва провайдери") while keeping the raw counts intact.
+    /// **T-151 Батч 5.5:** `locale` is an explicit parameter, never read from
+    /// ambient global state - see `i18n.rs`'s own module doc comment for why.
+    fn tooltip_parts(&self, locale: &str) -> (String, Vec<String>) {
         match self {
-            Self::Unreachable => i18n::t(locale, "tooltip.unreachable"),
-            Self::ServiceRestarting => i18n::t(locale, "tooltip.restarting"),
-            Self::ServiceGaveUp => i18n::t(locale, "tooltip.gaveUp"),
-            Self::ServiceStartupFailed(reason) => startup_failure_tooltip(*reason, locale),
-            Self::Paused => i18n::t(locale, "tooltip.paused"),
-            Self::Offline => i18n::t(locale, "tooltip.offline"),
-            Self::NoActiveProvider { in_flight } => i18n::t_args(
-                locale,
-                "tooltip.noActiveProviderTemplate",
-                &[("inFlight", &in_flight.to_string())],
+            Self::Unreachable => (i18n::t(locale, "tooltip.unreachable"), Vec::new()),
+            Self::ServiceRestarting => (i18n::t(locale, "tooltip.restarting"), Vec::new()),
+            Self::ServiceGaveUp => (i18n::t(locale, "tooltip.gaveUp"), Vec::new()),
+            Self::ServiceStartupFailed(reason) => {
+                (startup_failure_tooltip(*reason, locale), Vec::new())
+            }
+            Self::Paused => (i18n::t(locale, "tooltip.paused"), Vec::new()),
+            Self::Offline => (i18n::t(locale, "tooltip.offline"), Vec::new()),
+            Self::NoActiveProvider { in_flight } => (
+                i18n::t(locale, "tooltip.noActiveProvider"),
+                vec![i18n::t_args(
+                    locale,
+                    "tooltip.noActiveProviderCountsTemplate",
+                    &[("inFlight", &in_flight.to_string())],
+                )],
             ),
             Self::Filtering {
                 in_flight,
@@ -156,40 +163,36 @@ impl TrayStatus {
                 degraded_window,
                 rating_filter_active,
             } => {
-                let base = i18n::t_args(
-                    locale,
-                    "tooltip.filteringBaseTemplate",
-                    &[
-                        ("blocked", &blocked.to_string()),
-                        ("total", &total.to_string()),
-                        ("inFlight", &in_flight.to_string()),
-                    ],
-                );
+                let mut segments = Vec::new();
                 // Raw counts, not a collapsed bool/percentage (admin.rs's
                 // own degraded_counts doc comment) — any nonzero count is
                 // shown as-is, letting the reader judge severity instead of
                 // an always-on warning masking it (T-56, advisor-caught
                 // during planning: a bare threshold-free boolean would go
                 // permanently true under routine fail-open timeouts).
-                let mut text = if *degraded_events > 0 {
-                    i18n::t_args(
+                if *degraded_events > 0 {
+                    segments.push(i18n::t_args(
                         locale,
-                        "tooltip.degradedSuffixTemplate",
+                        "tooltip.degradedSegmentTemplate",
                         &[
-                            ("base", &base),
                             ("degradedEvents", &degraded_events.to_string()),
                             ("degradedWindow", &degraded_window.to_string()),
                         ],
-                    )
-                } else {
-                    base
-                };
-                // T-128: an informational suffix, ranked after the degraded
-                // note (a real problem outranks a scope choice).
-                if *rating_filter_active {
-                    text.push_str(&i18n::t(locale, "tooltip.ratingFilterSuffix"));
+                    ));
                 }
-                text
+                if *rating_filter_active {
+                    segments.push(i18n::t(locale, "tooltip.ratingFilterSuffix"));
+                }
+                segments.push(i18n::t_args(
+                    locale,
+                    "tooltip.filteringCountsTemplate",
+                    &[
+                        ("blocked", &blocked.to_string()),
+                        ("total", &total.to_string()),
+                        ("inFlight", &in_flight.to_string()),
+                    ],
+                ));
+                (i18n::t(locale, "tooltip.filteringHead"), segments)
             }
         }
     }
@@ -328,11 +331,50 @@ pub fn cert_warning(status: TrayStatus, cert_trusted: bool, locale: &str) -> Opt
 
 /// The tray tooltip for `status`, plus the [`cert_warning`] suffix when it
 /// applies. `main.rs` calls this instead of [`TrayStatus::tooltip`] directly.
+/// The warning goes first among the segments, so it is the last thing
+/// [`fit_tooltip`] would drop.
 #[must_use]
 pub fn compose_tooltip(status: TrayStatus, cert_trusted: bool, locale: &str) -> String {
-    let mut text = status.tooltip(locale);
+    let (head, mut segments) = status.tooltip_parts(locale);
     if let Some(suffix) = cert_warning(status, cert_trusted, locale) {
-        text.push_str(&suffix);
+        segments.insert(0, suffix);
+    }
+    fit_tooltip(&head, &segments)
+}
+
+/// Longest tooltip the shell can show: `NOTIFYICONDATAW.szTip` holds 128
+/// UTF-16 units including the NUL, and `tray-icon` copies up to 128 units
+/// without adding one, so one unit stays free for it (T-253).
+pub(crate) const TOOLTIP_MAX_UTF16: usize = 127;
+
+/// `head` plus every segment (each carries its own leading separator) that
+/// still fits in [`TOOLTIP_MAX_UTF16`], in order. A segment that doesn't fit
+/// is dropped whole and a later, shorter one may still go in — a cut-off
+/// half-sentence would read as the whole message. A `head` that alone is too
+/// long is cut at a char boundary and ends in `…`.
+pub(crate) fn fit_tooltip(head: &str, segments: &[String]) -> String {
+    let mut used = head.encode_utf16().count();
+    if used > TOOLTIP_MAX_UTF16 {
+        let budget = TOOLTIP_MAX_UTF16 - '…'.len_utf16();
+        let mut text = String::new();
+        let mut kept = 0;
+        for c in head.chars() {
+            kept += c.len_utf16();
+            if kept > budget {
+                break;
+            }
+            text.push(c);
+        }
+        text.push('…');
+        return text;
+    }
+    let mut text = head.to_string();
+    for segment in segments {
+        let len = segment.encode_utf16().count();
+        if used + len <= TOOLTIP_MAX_UTF16 {
+            text.push_str(segment);
+            used += len;
+        }
     }
     text
 }
@@ -427,9 +469,9 @@ mod tests {
         }
     }
 
-    // T-253: tray-icon 0.21 shows only 63 UTF-16 units of a tooltip. Every
-    // failure tooltip (worst-case port) must fit in every locale, and each
-    // reason has its own text.
+    // T-253: a failure tooltip is never cut by `fit_tooltip` — the raw text
+    // (worst-case port) fits whole in every locale, and each reason has its
+    // own text.
     #[test]
     fn every_failure_tooltip_fits_the_visible_limit_in_every_locale() {
         let mut keys: Vec<&str> = EVERY_FAILURE
@@ -444,10 +486,13 @@ mod tests {
                 .iter()
                 .map(|r| startup_failure_tooltip(*r, code))
                 .collect();
-            texts.push(TrayStatus::ServiceGaveUp.tooltip(code));
+            texts.push(compose_tooltip(TrayStatus::ServiceGaveUp, true, code));
             for text in texts {
                 let units = text.encode_utf16().count();
-                assert!(units <= 63, "{code}: {units} units: {text}");
+                assert!(
+                    units <= super::TOOLTIP_MAX_UTF16,
+                    "{code}: {units} units: {text}"
+                );
                 assert!(!text.contains('{'), "{code}: unfilled placeholder: {text}");
             }
         }
@@ -653,7 +698,7 @@ mod tests {
             }],
             stats(20, 0),
         );
-        let tooltip = TrayStatus::from_response(&resp).tooltip("uk");
+        let tooltip = compose_tooltip(TrayStatus::from_response(&resp), true, "uk");
         assert!(
             !tooltip.contains("тайм-аут"),
             "must not warn with zero recorded degraded events: {tooltip}"
@@ -670,7 +715,7 @@ mod tests {
             }],
             stats(20, 3),
         );
-        let tooltip = TrayStatus::from_response(&resp).tooltip("uk");
+        let tooltip = compose_tooltip(TrayStatus::from_response(&resp), true, "uk");
         assert!(
             tooltip.contains("3/20"),
             "expected the raw counts in the tooltip, got: {tooltip}"
@@ -698,24 +743,21 @@ mod tests {
         resp.rating_filter.enabled = true;
         resp.rating_filter.active = true;
         assert!(
-            TrayStatus::from_response(&resp)
-                .tooltip("uk")
+            compose_tooltip(TrayStatus::from_response(&resp), true, "uk")
                 .contains("рейтинг-фільтр «бульбашка» активний"),
             "an active bubble must add its suffix"
         );
 
         resp.rating_filter.active = false;
         assert!(
-            !TrayStatus::from_response(&resp)
-                .tooltip("uk")
+            !compose_tooltip(TrayStatus::from_response(&resp), true, "uk")
                 .contains("рейтинг-фільтр"),
             "Fork B (enabled, no list) gets no tray suffix"
         );
 
         resp.rating_filter.enabled = false;
         assert!(
-            !TrayStatus::from_response(&resp)
-                .tooltip("uk")
+            !compose_tooltip(TrayStatus::from_response(&resp), true, "uk")
                 .contains("рейтинг-фільтр"),
             "a disabled bubble gets no suffix"
         );
@@ -741,7 +783,7 @@ mod tests {
     fn paused_tooltip_names_the_state_plainly_and_not_as_a_failure() {
         // T-185: a deliberate pause must not read as "служба недоступна" /
         // "зупинилася" — those are failure states, this one the user chose.
-        let tooltip = TrayStatus::Paused.tooltip("uk");
+        let tooltip = compose_tooltip(TrayStatus::Paused, true, "uk");
         assert!(tooltip.contains("призупинено"), "got: {tooltip}");
         assert!(!tooltip.contains("недоступна"), "got: {tooltip}");
     }
@@ -856,6 +898,104 @@ mod tests {
         assert!(cert_warning(TrayStatus::Paused, false, "uk").is_none());
     }
 
+    // ---- T-253: the tooltip fits the shell's buffer, problems first ----
+
+    use super::{fit_tooltip, TOOLTIP_MAX_UTF16};
+
+    fn units(text: &str) -> usize {
+        text.encode_utf16().count()
+    }
+
+    #[test]
+    fn fit_tooltip_skips_a_segment_that_does_not_fit_and_keeps_a_later_one() {
+        let head = "h".repeat(100);
+        let too_long = " ".to_string() + &"x".repeat(30);
+        let short = " y".to_string();
+        let text = fit_tooltip(&head, &[too_long, short]);
+        assert_eq!(text, format!("{head} y"));
+    }
+
+    #[test]
+    fn fit_tooltip_keeps_every_segment_when_all_fit() {
+        let text = fit_tooltip("a", &[" b".to_string(), " c".to_string()]);
+        assert_eq!(text, "a b c");
+    }
+
+    #[test]
+    fn fit_tooltip_cuts_an_overlong_head_with_an_ellipsis_inside_the_budget() {
+        // 4-byte chars: a cut must never split a surrogate pair.
+        let head = "\u{1F600}".repeat(100);
+        let text = fit_tooltip(&head, &[" tail".to_string()]);
+        assert!(units(&text) <= TOOLTIP_MAX_UTF16, "{}", units(&text));
+        assert!(text.ends_with('…'), "{text}");
+        assert!(!text.contains("tail"), "{text}");
+        assert!(text.chars().all(|c| c == '\u{1F600}' || c == '…'));
+    }
+
+    fn worst_filtering() -> TrayStatus {
+        TrayStatus::Filtering {
+            in_flight: u64::MAX,
+            blocked: u64::MAX,
+            total: u64::MAX,
+            degraded_events: u64::MAX,
+            degraded_window: u64::MAX,
+            rating_filter_active: true,
+        }
+    }
+
+    #[test]
+    fn every_tooltip_fits_and_keeps_the_cert_warning_whole_in_every_locale() {
+        let mut statuses = vec![
+            worst_filtering(),
+            TrayStatus::NoActiveProvider {
+                in_flight: u64::MAX,
+            },
+            TrayStatus::Unreachable,
+            TrayStatus::ServiceRestarting,
+            TrayStatus::ServiceGaveUp,
+            TrayStatus::Paused,
+            TrayStatus::Offline,
+        ];
+        statuses.extend(
+            EVERY_FAILURE
+                .iter()
+                .map(|r| TrayStatus::ServiceStartupFailed(*r)),
+        );
+        for &(code, _) in I18N_DICTS {
+            for &status in &statuses {
+                for trusted in [true, false] {
+                    let text = compose_tooltip(status, trusted, code);
+                    assert!(units(&text) <= TOOLTIP_MAX_UTF16, "{code}: {text}");
+                    assert!(!text.contains('{'), "{code}: unfilled placeholder: {text}");
+                    if let Some(warning) = cert_warning(status, trusted, code) {
+                        assert!(text.contains(&warning), "{code}: lost cert warning: {text}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn problems_come_before_the_counts() {
+        let text = compose_tooltip(
+            TrayStatus::Filtering {
+                in_flight: 0,
+                blocked: 1,
+                total: 9,
+                degraded_events: 3,
+                degraded_window: 20,
+                rating_filter_active: false,
+            },
+            false,
+            "uk",
+        );
+        assert!(
+            text.starts_with("DNS Quorum Filter: захищає — сертифікат не встановлено — деякі"),
+            "{text}"
+        );
+        assert!(text.contains("3/20"), "{text}");
+    }
+
     #[test]
     fn compose_tooltip_appends_the_cert_warning_when_it_applies() {
         let status = filtering(0);
@@ -863,7 +1003,8 @@ mod tests {
         assert!(with.contains("захищає"), "{with}");
         assert!(with.contains("сертифікат не встановлено"), "{with}");
         // Trusted → identical to the plain tooltip.
-        assert_eq!(compose_tooltip(status, true, "uk"), status.tooltip("uk"));
+        let without = compose_tooltip(status, true, "uk");
+        assert!(!without.contains("сертифікат"), "{without}");
     }
 
     // T-255: a cert change the service saw first (the `/admin/ui` install

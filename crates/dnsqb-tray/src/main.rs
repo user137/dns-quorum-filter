@@ -465,7 +465,11 @@ fn build_tray_icon(app_data: &Path, locale: &str) -> (TrayIcon, TrayIcons, MenuI
         .build()
     {
         Ok(tray_icon) => {
-            if let Err(err) = tray_icon.set_tooltip(Some(TrayStatus::Unreachable.tooltip(locale))) {
+            if let Err(err) = tray_icon.set_tooltip(Some(status::compose_tooltip(
+                TrayStatus::Unreachable,
+                true,
+                locale,
+            ))) {
                 tracing::warn!("could not set the initial tray tooltip: {err}");
             }
             tray_icon
