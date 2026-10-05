@@ -1,7 +1,8 @@
 SOURCES: SPEC.md §5, §5.1.1, §5.2, §5.3, §6, §8, §3.3, §3.4, §3.5, §4, §7, §7.1; TASKS.md
 T-95 (`AdminStatusResponse.watchdog`); T-152/T-154/T-155 (`network`/`baseline_endpoint`/
 `serve_baseline_when_filters_unreachable`); T-146/T-97
-(`AdminStatusResponse.encrypted_persistence { query_log, cache }`);
+(`AdminStatusResponse.encrypted_persistence { query_log, cache }`); T-205 (`schema_version`);
+T-241 follow-up (`app_version`);
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-07, 2026-09-08, 2026-09-10 (порядок пріоритету
 індикатора; шифрована персистентність; T-179 — `VoterScope` прибрано, §5.1 знято; T-188 —
 `CertStatusResponse` / `InstallCertResponse` для онбордингу; T-193 — `AdminStatusResponse.paused`;
@@ -184,6 +185,7 @@ classDiagram
     }
     class AdminStatusResponse {
         <<T-52 / T-72 / T-95 / T-152 / T-154 / T-146 / T-193 / T-128 / T-218 / Фаза 5 реалізовано>>
+        +u32 schema_version
         +ProviderStatusView[] active_providers
         +TimeoutMode timeout_mode
         +u32 timeout_ms
@@ -200,6 +202,7 @@ classDiagram
         +BlocklistBundlesStatusView blocklist_bundles
         +CctldBlockStatusView cctld_block
         +HeroStateView hero_state
+        +String app_version
         +StartupTaskView startup_task
     }
     class HeroStateView {

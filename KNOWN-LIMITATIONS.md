@@ -44,13 +44,14 @@ TASKS-DONE.md, never here.
   loses ≤60s of the log tail (periodic full-snapshot rewrite, not append-only — deliberate); an
   orphaned `query-log.enc` (key gone) is renamed `.orphaned-<ts>` and **never** decrypted/
   recovered, a fresh key is minted (a query log is re-creatable — warn+proceed, unlike a TLS
-  key); the `persistence-key` entry is not deleted on uninstall (folds into T-70, same as the
-  TLS key). **Orphaned `.enc` files (`query-log.enc` / `cache.enc`) accumulate indefinitely** —
+  key); the `persistence-key` entry (like the TLS key) is deleted only by the in-app «Повністю
+  видалити» (`local_state::remove_all`) — a plain Windows uninstall leaves it (SECURITY.md, T-70
+  MSIX residual risk). **Orphaned `.enc` files (`query-log.enc` / `cache.enc`) accumulate indefinitely** —
   `rename_orphan` never deletes (a key *might* resurface), but for a re-creatable store that
   recovery value is ~nil while each incident leaves a permanent undecryptable blob of
   browsing-derived data; no cleanup path exists yet.
-- **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-not-
-  deleted-on-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
+- **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-left-
+  by-a-plain-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
   is persisted** — `Block` is dropped at snapshot (so `fail_closed` timeout-blocks never cross a
   restart), meaning a fresh quorum `Block` costs one round-trip to re-derive after a restart. An
   entry whose **absolute wall-clock deadline** elapsed during downtime is dropped on restore, never
@@ -137,13 +138,8 @@ TASKS-DONE.md, never here.
   `UPSTREAM_CONNECT_TIMEOUT` (500 ms) but has no ceiling of its own (PERFORMANCE.md "Fan-out
   ceiling"). Also: `[limits]` is not admin-mutable and `apply_admin_reset` does not rebuild the
   gate, so a `[limits]` change needs a full service restart (same as `port`).
-- **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
-  delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
-  but nothing calls it for the *TLS key* entry on uninstall. A left-behind
-  key in Windows Credential Manager after the app is removed is the same class of security bug as
-  a left-behind trusted cert (SECURITY.md). Calling it for the TLS-key entry on uninstall is
-  folded into **T-70** (the packaged uninstaller). Also `key_store::overwrite_with_zeros` before
-  unlinking a migrated plaintext file is a best-effort scrub only — no defence against VSS shadow
+- **`key_store::overwrite_with_zeros` before
+  unlinking a migrated plaintext file is a best-effort scrub only** — no defence against VSS shadow
   copies or SSD wear-levelling.
 - **Fuzz coverage (T-58, widened since)** — `overrides::parse_pattern`, `wire::decode_wire_message`,
   a dedicated `/admin/config` POST-body pass, **and**

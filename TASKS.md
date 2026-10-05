@@ -1568,21 +1568,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   паніки; лише детерміновано — stdout = `os.pipe()` із закритим кінцем читання до старту (Python), очікувано код 0
   і порожній stderr; аргумент із непарним сурогатом — лише разом із `--help`). Уже пройдено
   на 0.8.903 — `review/QA-FIX-PLAN.md`, хвиля 6, «Re-test на артефакті 0.8.903».
-- [ ] T-245 — **Заведено 2026-10-03, QA-прохід (рядки `A-dto-doc-drift`, `KL-tls-key-uninstall`).**
-  Документація розійшлась із кодом у чотирьох місцях (лише доки, код коректний): (1) `UI-SPEC.md:265`
-  каже, що версія застосунку ніде в UI не показана — з `v0.7.0` вона в заголовку `/admin/ui`
-  (`AdminStatusResponse.app_version`); (2) `UI-SPEC.md` не описує `app_version`,
-  `encrypted_persistence`, `MaxmindCredentialsView.refresh_health` і
-  `UninstallLocalStateResponse` (5 полів — з хвилі 14 маршруту й DTO немає, натомість `RemoveAllRequestResponse`, уже в `UI-SPEC.md`); (3) рядок `local_state` у `CLAUDE.md` — «3 keyring entries
-  … 4 artifacts», а код (`local_state.rs:60`, DTO) звітує 5 артефактів: cert + 4 секрети, включно з
-  `tls_key`; (4) пункт `KNOWN-LIMITATIONS.md` «The stored TLS private key (T-67) is never removed on
-  uninstall yet» застарів — `local_state::remove_all` видаляє `tls_key_entry` (`local_state.rs:107`).
-  (5) Рядок `config` у `CLAUDE.md` — «`[limits]` … `0`/`>1_000_000` = fatal load error» читається як межа
-  для всіх трьох полів, а верхня межа є лише в `max_concurrent_connections`
-  (`MAX_CONCURRENT_CONNECTIONS_CEILING`); `handshake_timeout_ms`/`idle_timeout_ms = 1000001` приймаються
-  (перевірено `/admin/reset`), `CONFIGURATION.md` це й документує правильно. (6) `CONFIGURATION.md`
-  не називає ліміт розміру `overrides.toml` (10 МБ, `overrides.rs:177`), хоча для `resolver_config.toml`
-  (64 КБ) його описано.
 - [ ] T-246 — **Заведено 2026-10-03, QA-прохід (поверхня E).** CLI `--help` (T-235) на встановленому
   MSIX 0.8.0, три спостереження: (1) `dnsqb-service.exe`/`dnsqb-tray.exe` з `WindowsApps\` напряму
   (PowerShell 7, Windows PowerShell 5.1, `cmd`) — «Access is denied», ACL ідентичні з
@@ -1603,7 +1588,18 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
   сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
   код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
-  **Пункти (2) і (4) закрито хвилею 4 (`dc54232`, `TASKS-DONE.md`); відкритий лише (1) — діагноз, потім хвиля 11.**
+  **Пункти (2) і (4) закрито хвилею 4 (`dc54232`, `TASKS-DONE.md`); відкритий лише (1).**
+  **Діагноз (1), хвиля 11, 2026-10-05 — експериментом, не документом:** на встановленому 0.8.903
+  `--help` напряму з `WindowsApps\` — watcher код 0, service/tray «Access is denied» (відтворено).
+  SDDL трьох exe однаковий: безумовно `BU` має лише `FR` (без execute); `0x1200a9` (з execute) — лише
+  умовний ACE `(XA;…;BU;(WIN://SYSAPPID Contains "dns-quorum-filter_8d78tvs37tgae"))`, тобто тільки
+  токену з ідентичністю пакета. Windows дає ідентичність при прямому запуску лише exe, оголошеному в
+  маніфесті (`<Application Executable="dnsqb-watcher.exe">`); service/tray там немає. Прямого речення
+  в документації Microsoft не знайдено (3 пошуки: learn.microsoft.com MSIX troubleshooting/known
+  issues/«behind the scenes», devblogs «Inside MSIX»). **Рішення за користувачем:** (а) лишити як
+  обмеження в `KNOWN-LIMITATIONS.md` (`--help` служби/трея — через
+  `Invoke-CommandInDesktopPackage` або з розпакованої збірки) чи (б) змінити маніфест (напр.
+  `uap3:AppExecutionAlias` або додаткові `Application` з `AppListEntry="none"`) — тоді MSIX-тест.
 - [ ] T-280 — **Заведено 2026-10-05, запит користувача (знахідка хвилі 8 / T-250; раніше — картка кешу,
   хвиля 1).** Відмова сервера на POST з `/admin/ui` показується як голе «HTTP 400» без пояснення: усі
   ~40 відповідей 400 у `dispatch.rs` віддаються без тіла (`status_response(StatusCode::BAD_REQUEST)`,
@@ -1706,7 +1702,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
 - [x] Хвиля 9 — поглинута T-277 (T-248, T-242, тест ARCH-12) — виконано 2026-10-04, `TASKS-DONE.md`
 - [x] T-277 — push-оновлення `/admin/ui` через `GET /admin/events` (+ T-279 пейджер журналу) — виконано 2026-10-04, `TASKS-DONE.md`
 - [x] Хвиля 10 — i18n, доступність і інструкції браузерів (T-247, T-249, T-258, T-260, текст T-257; + ARCH-05 «перевірка» в README) — виконано 2026-10-04, `TASKS-DONE.md`
-- [ ] Хвиля 11 — розбіжності документації (T-245; T-246 п. 1 після діагнозу; + ARCH-05, -06, -17; ARCH-02 окремим комітом)
+- [ ] Хвиля 11 — розбіжності документації (T-245; T-246 п. 1 після діагнозу; + ARCH-05, -06, -17; ARCH-02 окремим комітом) — T-245, ARCH-05/-06/-17 і діагноз T-246 (1) виконано 2026-10-05 (`TASKS-DONE.md`); лишились рішення T-246 (1) і ARCH-02
 - [ ] Хвиля 12 — тест-покриття рядків `CODE-ONLY`, T-265 (+ ARCH-11 б)
 - [x] Хвиля 13a — атомарний запис конфігу + приватна помилка розбору (ARCH-01 → T-273, T-252) — виконано 2026-10-04, `TASKS-DONE.md`
 - [x] Хвиля 13b — «служба не працює: причина й одна дія» (T-266, ARCH-03 → T-275, ARCH-11 а → T-276, T-246 побічне) — виконано 2026-10-04, `TASKS-DONE.md`; знахідка T-274

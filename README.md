@@ -5,7 +5,7 @@
 
 [![CI](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: Phase 4 complete](https://img.shields.io/badge/status-Phase%204%20complete-brightgreen)
+![Status: Phase 5 in progress](https://img.shields.io/badge/status-Phase%205%20in%20progress-yellow)
 
 [`SPEC.md`](SPEC.md) · [`SERVICES.md`](SERVICES.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`SECURITY.md`](SECURITY.md)
 
@@ -24,8 +24,9 @@ Cloudflare Malware та AdGuard DNS; список редагується) і б�
   (SPEC.md §2). Це навмисно найбільша поверхня атаки проєкту, назва якої не приховується: якщо
   ключ CA скомпрометовано — можна підробити TLS будь-якого сайту; якщо ключ листового
   сертифіката — можна підробити лише `127.0.0.1`. Другий сценарій істотно вужчий, тому обрано
-  саме його, ціною того, що сертифікат треба довіряти вручну для кожного профілю браузера (T-49,
-  ще не автоматизовано — [`SERVICES.md`](SERVICES.md)).
+  саме його, ціною того, що сертифікат треба довірити (T-49; встановлення в `CurrentUser\Root`
+  автоматизоване — майстер першого запуску трея або кнопка на `/admin/ui`, T-188 —
+  [`SERVICES.md`](SERVICES.md)).
 - **Блокування — це `0.0.0.0`/`::` (NULL), ніколи NXDOMAIN**, для A/AAAA-записів (SPEC.md §3.2).
   NXDOMAIN у деяких браузерах провокує тихий fallback на інший резолвер — тобто саме той спосіб
   "обходу" фільтра, якого цей дизайн навмисно уникає.

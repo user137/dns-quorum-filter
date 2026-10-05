@@ -24,9 +24,10 @@ about, not a coordinated attack.
 | 1. Allowlist | O(n) linear scan, `OverrideLists::decision` | n = allowlist entries |
 | 2. Blocklist | O(n) linear scan, same function, same pass | n = blocklist entries |
 | 2b. Public blocklist bundle (T-218 Батч 7.4, opt-in) | O(L log m) suffix walk over the query host's labels, each step an O(log m) binary search over the sorted hashed set; zero network, runs before the cache read on **every** query when active (not just A/AAAA) | L = labels in the host (≤ ~10), m = deduplicated bundle size (up to ~5.5M hashes, ~44 MB resident) — independent of zone/list size otherwise |
-| 3. ccTLD block | not implemented (Фаза 5, TASKS.md T-115) | — |
+| 3. ccTLD block (Фаза 5, T-115) | O(c) — one `rsplit('.')` for the last label, then a linear case-insensitive compare against `[cctld_block].blocked_codes` (`cctld_block::is_blocked`); zero network, runs before the cache read on every query | c = blocked codes (≤ ~250 two-letter ccTLDs) |
 | 4. Cache | O(1) amortized, `moka` concurrent hash map lookup | bounded by `max_capacity` (10 000) |
 | 5. Rating filter «bubble» (T-124) | O(L) suffix walk over the query host's labels, each step an O(1) `HashSet` lookup against the zone union and the removal overlay; zero network | L = labels in the host (≤ ~10) — independent of zone size |
+| 5b. Personal learned zone (T-138, opt-in) | second independent `zone_match` over `AppState.rating_filter_personal_zone` on a step-5 miss — same O(L) shape. **Learner (after the verdict, clean quorum/cache ALLOW only):** `PersonalZoneStats::record_visit` under a write lock — O(1) for an already-tracked host; a *new* host once `MAX_TRACKED_DOMAINS` (2000) is reached runs `evict_oldest`, an O(2000) scan | L as above; ≤ 2000 tracked hosts |
 | 6. Quorum | O(k) parallel fan-out, `FuturesUnordered` | k = enabled providers, ≤10 (SPEC.md §3.4) |
 | 7. GeoIP | O(1) effectively — bounded-depth binary lookup over the IP address's bit prefix, `maxminddb` mmap read | independent of blocked-country-list size |
 
@@ -227,9 +228,11 @@ The two shapes:
 - **This run does not exercise**: connections opened and held without completing a request
   (slow-loris shape — the residual risk SPEC.md §1.1 calls out), the outbound-socket
   amplification (no upstream calls by design), or concurrency far beyond 3000. So "will it
-  eventually exhaust resources" is: yes in principle — nothing caps connections, tasks, or
-  in-flight requests, and nothing time-bounds a stalled TLS handshake — but not at any level a
-  single well-behaved client produces.
+  eventually exhaust resources" was, at the time of this run: yes in principle — nothing capped
+  connections, tasks, or in-flight requests, and nothing time-bounded a stalled TLS handshake —
+  but not at any level a single well-behaved client produces. **Since T-169** connections are
+  capped (`[limits].max_concurrent_connections`) and handshake/idle are time-bounded; in-flight
+  quorum resolutions still are not (see "Fan-out ceiling").
 
 The design decision this feeds — a generous bounded-concurrency backstop against pathological
 accumulation, sized from these server-side numbers rather than a throughput percentile —
