@@ -80,6 +80,7 @@ stateDiagram-v2
     Exited --> Filtering: плитка / логін (старт watcher чистить stop.flag)
     Filtering --> Removed: трей «Повністю видалити»<br/>(T-195: секрети + stop/quit.flag; detached powershell чекає вихід усіх 3<br/>і стирає всю %LOCALAPPDATA%\dns-quorum-filter; відкрито ms-settings:appsfeatures)
     Paused --> Removed: трей «Повністю видалити»
+    Filtering --> Removed: кнопка /admin/ui → remove-all.flag (<30 с)<br/>→ той самий confirm трею (T-268)
     Removed --> [*]: користувач тисне «Видалити» в Параметрах Windows
 
     Filtering --> Filtering: трей «Сховати іконку»<br/>(виходить лише трей; служба+watcher живі;<br/>повернути — клік плитки → 2-й watcher піднімає трей)

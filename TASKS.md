@@ -1570,7 +1570,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   каже, що версія застосунку ніде в UI не показана — з `v0.7.0` вона в заголовку `/admin/ui`
   (`AdminStatusResponse.app_version`); (2) `UI-SPEC.md` не описує `app_version`,
   `encrypted_persistence`, `MaxmindCredentialsView.refresh_health` і
-  `UninstallLocalStateResponse` (5 полів); (3) рядок `local_state` у `CLAUDE.md` — «3 keyring entries
+  `UninstallLocalStateResponse` (5 полів — з хвилі 14 маршруту й DTO немає, натомість `RemoveAllRequestResponse`, уже в `UI-SPEC.md`); (3) рядок `local_state` у `CLAUDE.md` — «3 keyring entries
   … 4 artifacts», а код (`local_state.rs:60`, DTO) звітує 5 артефактів: cert + 4 секрети, включно з
   `tls_key`; (4) пункт `KNOWN-LIMITATIONS.md` «The stored TLS private key (T-67) is never removed on
   uninstall yet» застарів — `local_state::remove_all` видаляє `tls_key_entry` (`local_state.rs:107`).
