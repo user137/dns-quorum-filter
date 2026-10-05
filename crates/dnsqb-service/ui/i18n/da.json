@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Avancerede indstillinger",
   "advanced.summaryHint": "for erfarne brugere",
   "danger.heading": "Fuld fjernelse",
-  "danger.warning": "Stopper DNS Quorum Filter og fjerner alt, hvad det har efterladt på denne computer: det betroede certifikat, de gemte nøgler og legitimationsoplysninger (TLS-nøgle, krypteringsnøglen til log og cache, nøglen til den personlige zone, MaxMind-legitimationsoplysninger hvis nogen) og hele datamappen, og åbner derefter Windows-indstillinger, så du kan fjerne selve programmet. Det er samme handling som punktet »Fjern alt« i menuen for ikonet i meddelelsesområdet; du bekræfter den i DNS Quorum Filter-vinduet.",
+  "danger.warning": "Stopper DNS Quorum Filter og fjerner alt, hvad det har efterladt på denne computer: det betroede certifikat, de gemte nøgler og legitimationsoplysninger (TLS-nøgle, krypteringsnøglen til log og cache, personlig zone-nøgle, MaxMind-legitimationsoplysninger hvis nogen) og hele datamappen, og åbner derefter Windows-indstillinger, så du kan fjerne selve programmet. Det er samme handling som punktet »Fjern alt« i menuen for ikonet i meddelelsesområdet; du bekræfter den i DNS Quorum Filter-vinduet.",
   "danger.uninstallButton": "Fjern alt",
   "danger.confirmUninstallButton": "Fjern virkelig alt?",
   "danger.requested": "Anmodning sendt. Bekræft fjernelsen i DNS Quorum Filter-vinduet - derefter lukker programmet, og denne side holder op med at svare.",

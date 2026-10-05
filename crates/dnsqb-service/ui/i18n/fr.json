@@ -223,7 +223,7 @@
   "advanced.summaryLabel": "Paramètres avancés",
   "advanced.summaryHint": "pour les utilisateurs expérimentés",
   "danger.heading": "Suppression complète",
-  "danger.warning": "Arrête DNS Quorum Filter et supprime tout ce qu'il a laissé sur cet ordinateur : le certificat de confiance, les clés et identifiants enregistrés (clé TLS, clé de chiffrement du journal et du cache, clé de la zone personnelle, identifiants MaxMind le cas échéant) et tout le dossier de données, puis ouvre les Paramètres Windows pour que vous supprimiez l'application elle-même. C'est la même action que l'élément « Tout supprimer » du menu de l'icône de la barre d'état ; vous la confirmez dans la fenêtre de DNS Quorum Filter.",
+  "danger.warning": "Arrête DNS Quorum Filter et supprime tout ce qu'il a laissé sur cet ordinateur : le certificat de confiance, les clés et identifiants enregistrés (clé TLS, clé de chiffrement du journal et du cache, clé de zone personnelle, identifiants MaxMind le cas échéant) et tout le dossier de données, puis ouvre les Paramètres Windows pour que vous supprimiez l'application elle-même. C'est la même action que l'élément « Tout supprimer » du menu de l'icône de la barre d'état ; vous la confirmez dans la fenêtre de DNS Quorum Filter.",
   "danger.uninstallButton": "Tout supprimer",
   "danger.confirmUninstallButton": "Vraiment tout supprimer ?",
   "danger.requested": "Demande envoyée. Confirmez la suppression dans la fenêtre de DNS Quorum Filter - l'application se fermera ensuite et cette page cessera de répondre.",
