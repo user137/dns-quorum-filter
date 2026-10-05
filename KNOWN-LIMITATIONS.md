@@ -125,11 +125,6 @@ TASKS-DONE.md, never here.
   `UPSTREAM_CONNECT_TIMEOUT` (500 ms) but has no ceiling of its own (PERFORMANCE.md "Fan-out
   ceiling"). Also: `[limits]` is not admin-mutable and `apply_admin_reset` does not rebuild the
   gate, so a `[limits]` change needs a full service restart (same as `port`).
-- **`refresh_health: AUTH_REJECTED` (T-163) only appears on the next `/admin/ui` load / operator
-  action** — the `#geoip-maxmind` card has its own fetch cycle (so a key field being typed isn't
-  wiped by the 2s status poll), so a key that MaxMind starts rejecting 20h into an open page shows
-  no live banner until the page is reloaded or the card is interacted with. Acceptable; stated,
-  not a live push.
 - **The stored TLS private key (T-67) is never removed on uninstall yet** — `key_store::
   delete_secret` is no longer `#[cfg(test)]` (T-163 gave it a real caller — the creds-clear route)
   but nothing calls it for the *TLS key* entry on uninstall. A left-behind

@@ -161,7 +161,7 @@ advisor-знахідка Батчу 4.5, DECISIONS.md 2026-09-11).
   `ul[role=listbox]`, ↑↓/Enter/Esc, `aria-activedescendant`) з `available_lists` + стовпчик
   обраних із лічильником доменів (`loaded`, per-list, ніколи сума) і `×`; кнопка «Зберегти зони»
   (один POST). Fork B і `persisted:false` — notice у картці.
-- **Бейдж `#rating-filter-badge`** під hero (2-с полл) + суфікс у підказці трею (лише коли
+- **Бейдж `#rating-filter-badge`** під hero (кадр `status` з `/admin/events`, T-277) + суфікс у підказці трею (лише коли
   `active`; колір іконки не чіпає) — див. `diagrams/ui-status-indicator.md`.
 
 ## Крос-посилання на UI

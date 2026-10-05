@@ -65,7 +65,7 @@ flowchart TD
 основного індикатора, коли `AdminStatusResponse.rating_filter.enabled = true`.
 **Збудовано Батч 4.4 (T-128):** конвеєр — T-124/Батч 4.3; поле статусу
 (`RatingFilterStatusView { enabled, active, lists, available_lists, loaded }`),
-`<div id="rating-filter-badge">` під hero (2-с полл, `renderRatingFilterBadge`
+`<div id="rating-filter-badge">` під hero (кадр `status` з `/admin/events`, T-277, `renderRatingFilterBadge`
 у `render()` — не застаріває; порожній `<div>`, коли вимкнено) з двома станами
 (`active` → «активний»; `enabled && !active` Fork B → «увімкнено — списки
 завантажуються») **плюс** суфікс у підказці трею `— рейтинг-фільтр «бульбашка»

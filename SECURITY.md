@@ -81,7 +81,11 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   `quit.flag` (tray «Вийти з DNS Quorum Filter», behind a confirm dialog); the tray's pause no
   longer touches this route at all — it writes `stop.flag`, and the running service serves the
   unfiltered baseline itself (`pause_watch`). Reachable only from this same loopback-only,
-  CSRF-gated, cert-pinned channel. The embedded web UI (`GET /admin/ui`, T-149) ships `Content-Security-Policy: default-src
+  CSRF-gated, cert-pinned channel. `GET /admin/events` (T-277, the `/admin/ui` push stream) is
+  read-only like `GET /admin/status` and carries no CSRF gate for the same reason; each frame is a
+  closed topic name plus a version counter, or the status DTO `GET /admin/status` already returns —
+  never a domain name. At most 4 streams at once (`503` past that; each holds a connection-gate
+  permit for its lifetime), and every stream ends on `/admin/shutdown`. The embedded web UI (`GET /admin/ui`, T-149) ships `Content-Security-Policy: default-src
   'self'; frame-ancestors 'none'` — the latter specifically to keep the page from becoming
   iframe-able/clickjackable once T-49 installs the cert and the current incidental
   untrusted-cert protection against framing goes away.
