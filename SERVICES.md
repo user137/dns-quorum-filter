@@ -258,6 +258,8 @@ last_error}`, §7.1 #7) — **єдиний письменник `dnsqb-watcher`*
 пише в `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log` (`dnsqb-service.log` / `dnsqb-watcher.log`
 / `dnsqb-tray.log`). Фіксований рівень `INFO`, без `RUST_LOG` (щоб не тягнути feature `env-filter`).
 Ротація примітивна — на старті, якщо файл > 5 МіБ, він перейменовується в `<role>.log.old`.
+`TLS handshake failed` (браузер стукає, поки сертифікат не довірений) — не частіше рядка на 60 с, з
+кількістю пропущених (ARCH-21, `log_throttle.rs`), щоб лог не ріс між рестартами.
 **Debug-збірка додатково пише в stdout** (`cargo run` без змін); release/MSIX має
 `windows_subsystem = "windows"` (T-181), тож консолі немає взагалі. Якщо `%LOCALAPPDATA%` не
 резолвиться — деградація до stdout-subscriber (під MSIX іде в нікуди, але процес стартує).

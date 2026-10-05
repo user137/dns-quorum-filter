@@ -206,6 +206,9 @@ PSL (`public_suffix_list.dat`, 334 040 байт) у `dnsqb-service.exe` — **д
 `BEGIN ICANN DOMAINS` — 2 входження в exe, 1 у файлі). Причина — `pub const PSL_DAT: &str =
 include_str!(…)` (`public_suffix.rs:13`): `const` підставляється в кожне місце використання, а
 `static` гарантує одну копію. ≈330 КБ (3 % exe). **nit**, рядок для хвилі «дрібниці».
+> **Спростовано 2026-10-05 (хвиля 17):** друге входження — літерал парсера
+> `line.contains("BEGIN ICANN DOMAINS")` (`public_suffix.rs:47`); `===BEGIN ICANN DOMAINS===` і рядок
+> із середини файлу в тому самому exe — по 1. PSL у бінарі одна; змін не потрібно.
 
 Що можна прибрати без втрати місії: суттєво — нічого; 208 крейтів ship-графа — здебільшого
 `reqwest`/`hyper`/`rustls`/`hickory`/`tao`, потрібні.

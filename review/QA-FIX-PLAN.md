@@ -460,8 +460,9 @@ ARCH-10 `ec00109`/`545b510`/`e0f01d9`, T-262 — діагностичний пі
 
 ### Хвиля 17 — дрібниці служби (ARCH-18, ARCH-21, nit-и огляду)
 **Стан 2026-10-05: виконано** — `900e8f9` (ARCH-18), `d8e6e30` (ARCH-21). Nit `PSL_DAT` спростовано
-(у релізному MSVC `dnsqb-service.exe` v0.8.0 маркер `===BEGIN ICANN DOMAINS===` — 1 входження, не 2:
-`grep -o -a | wc -l`; `grep -c` рахує рядки) — правки нема. Інтервал `cert_watch` лишено 60 с: трей
+(у релізному `dnsqb-service.exe` v0.8.0 `BEGIN ICANN DOMAINS` справді 2 входження, але друге — літерал
+парсера `line.contains("BEGIN ICANN DOMAINS")`, `public_suffix.rs:47`; `===BEGIN ICANN DOMAINS===`,
+`===END PRIVATE DOMAINS===` і рядок із середини файлу — по 1: тіло PSL одне) — правки нема. Інтервал `cert_watch` лишено 60 с: трей
 ставить/знімає сертифікат сам (`dnsqb-tray/src/main.rs`, `spawn_cert_action` → `ensure_installed`), без
 звернення до служби, тож опитування — єдиний шлях для hero `/admin/ui` після майстра першого запуску;
 5 хв означали б «сертифікат не довірений» одразу після успішного встановлення. Деталі — `TASKS-DONE.md`.
