@@ -240,8 +240,8 @@ icon"), clearing only `quit.flag` — plus `retry.flag` from a fresh `GAVE_UP` (
 (→ stop service, `exit(0)`). **A pause keeps the service up** (it reads `stop.flag` itself via
 `pause_watch` and serves the unfiltered baseline, not killed by the watcher), so the normal tick
 sees a healthy service and is a no-op; a genuine crash mid-pause respawns (the new service
-re-reads `stop.flag`). Children are spawned detached (`DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`
-via safe `creation_flags`, fallback to `DETACHED_PROCESS` alone on `ERROR_ACCESS_DENIED`).
+re-reads `stop.flag`). Children are spawned `DETACHED_PROCESS` via safe `creation_flags`; breakaway
+from the job only outside an MSIX package (T-244 — in it, a survivor blocks the upgrade).
 `resume`s a <90s-old state file via `LoopDriver::restored`. Depends on `dnsqb-service` as a lib
 (§7.1 #6).
 

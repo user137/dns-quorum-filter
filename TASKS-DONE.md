@@ -7772,3 +7772,42 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   `[cache]` у крейті немає (`should_serve_stale` — чистий bool). Re-test на артефакті: `A-admin-cache-config-apply-SB2`,
   `H-cfg-cache.*-SB`; картка кешу на 400 показує лише «HTTP 400» без назви поля (маршрут віддає голий
   400 — UX-доробка в хвилі 8, не тут).
+- [x] T-244 — **Заведено 2026-10-03, QA-прохід (рядок `G-upgrade`, `review/QA-MATRIX.md`).** Апгрейд
+  MSIX документованим шляхом (`Trust-TestCert.ps1 -Install` → `Add-AppxPackage
+  -ForceTargetApplicationShutdown`, T-223) 0.7.0 → 0.8.0 мовчки не спрацьовує. Спостережено наживо:
+  прапорець закрив лише `dnsqb-watcher` (Application Hang 1002 у журналі), а `dnsqb-service` і
+  `dnsqb-tray` 0.7.0 лишились живими, хоча каталог `WindowsApps\…_0.7.0.0_…` уже видалено.
+  Сервіс 0.7.0 далі обслуговував DoH (`/admin/status.app_version: 0.7.0`, `hero_state: PROTECTED`)
+  без watcher'а, пишучи кожні ~20 с `failed to respawn dnsqb-watcher: no sibling binary found`.
+  Запуск 0.8.0 плиткою (двічі) не створив жодного процесу: `AppModel-Runtime/Admin` 215/208
+  `0x80070020: Cannot create the Desktop AppX container … converting the job`. Тобто нова версія не
+  стартує, доки живі старі процеси, — аж до ребуту або ручного kill. **Діагноз (частковий):**
+  watcher спавнить дітей з `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` (T-182,
+  `watchdog::spawn`), тож вони поза job пакета і `-ForceTargetApplicationShutdown` їх не бачить;
+  `0x80070020` — їх утримання контейнера родини пакета (перевірено лише за журналом, не кодом
+  Windows). Три Б: user safety — користувач бачить «Захищено» і не знає, що оновлення не
+  відбулось, а нагляду немає; оновлення через Store (T-239) матиме той самий шлях. T-223
+  ніколи не перевірявся наживо (власна нотатка в TASKS-DONE.md). Обхід у проході: kill старих PID →
+  плитка → 0.8.0 стартує. Фікс не почато.
+  **Виконано 2026-10-05 (хвиля 2).** Крок 0, діагноз підтверджено. Скрипт у контексті пакета
+  (`Invoke-CommandInDesktopPackage` + `QueryInformationJobObject(NULL, JobObjectBasicProcessIdList)`)
+  показав, що в job пакета лише watcher, а служба й трей вийшли через breakaway. Ліміти job:
+  `BREAKAWAY_OK`, **без** `KILL_ON_JOB_CLOSE`, тож мотив T-182 «job убиває все при закритті» для
+  MSIX не діє. Вирішальний експеримент на діагностичній гілці `diag/t244-no-breakaway` (`da53d9f`,
+  не злита: без breakaway + дві версії під одним сертом): 0.8.900 → 0.8.901 через
+  `Add-AppxPackage -ForceTargetApplicationShutdown` закрив усі три процеси, 0.8.901 стартував із
+  плитки без `0x80070020`. Kill watcher'а на 0.8.901: служба й трей живі, служба перезапустила
+  watcher (+36 с) у той самий job — регресії T-182 немає. Фікс `400ace7`: `watchdog::spawn` —
+  breakaway лише поза пакетом (`AppxManifest.xml` поруч з exe, `breakaway_wanted`/`is_packaged_layout`,
+  тести першими); `Trust-TestCert.ps1 -Install` перед `Add-AppxPackage` зупиняє процеси з теки
+  встановленого пакета (одноразовий перехід з ≤0.8.0, чиї процеси вже поза job; перевірено лише
+  механіку на 0.8.901, сам сценарій «втеклих» процесів — ні); `release.yml` — необов'язковий вхід
+  `msix_version` для тестових артефактів (на машині тепер 0.8.901, артефакт із main інакше —
+  даунгрейд), `pack-msix` перевіряє формат `-Version`. **ARCH-07 підтверджено:** README-команда
+  `.\Trust-TestCert.ps1 -Install` відмовляє під `Restricted` (дефолт клієнтської Windows) і під
+  `RemoteSigned` із Mark-of-the-Web (Windows PowerShell 5.1, політика рівня процесу замість
+  Windows Sandbox, якої на машині немає) → README/`packaging/README.md`:
+  `powershell -ExecutionPolicy Bypass -File …`. ARCH-13 (встановлення в CI) не робився —
+  необов'язковий. Re-test на артефакті з `msix_version` > 0.8.901: `G-upgrade`, `F-respawn*`,
+  `F-launcher-order*`. Під час примусового закриття остання (≤60 с) порція opt-in persist-файлів
+  може не записатись — як при краші.

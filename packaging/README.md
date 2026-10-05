@@ -22,7 +22,7 @@
 
   ```powershell
   # from an elevated prompt is fine; the helper also self-elevates:
-  .\dist\Trust-TestCert.ps1 -Install
+  powershell -ExecutionPolicy Bypass -File .\dist\Trust-TestCert.ps1 -Install
   ```
 
   **The store is `Cert:\LocalMachine\TrustedPeople`, specifically.** `Add-AppxPackage` checks it
@@ -47,6 +47,26 @@
   packages — this manifest declares none) force-closes `dnsqb-service`/`-tray`/`-watcher`
   themselves, so an update never needs a manual "Exit" from the tray first. `Trust-TestCert.ps1
   -Install` already passes it.
+
+  **Why `-ExecutionPolicy Bypass -File` (ARCH-07):** a plain `.\Trust-TestCert.ps1` is refused
+  under the Windows client default policy `Restricted`, and under `RemoteSigned` once the
+  downloaded file carries Mark-of-the-Web (both reproduced with Windows PowerShell 5.1,
+  2026-10-05; Windows Sandbox wasn't available, so process-scope policy stood in for a clean
+  machine). The self-elevating relaunch already used `Bypass`.
+
+  **The flag only reaches the package job (T-244).** `-ForceTargetApplicationShutdown` closes
+  the processes in the package's job. Up to 0.8.0 the watcher spawned the service and tray with
+  `CREATE_BREAKAWAY_FROM_JOB`, so they survived the upgrade and kept the new version from
+  starting (`0x80070020`, "converting the job"). Since T-244 a packaged watcher spawns without
+  breakaway (`watchdog::spawn::breakaway_wanted`). The first upgrade *from* 0.8.0 or older still
+  meets the escaped processes, so `Trust-TestCert.ps1 -Install` stops every process running from
+  the installed package's directory before `Add-AppxPackage`. The manual route needs a tray
+  "Exit" first for that one upgrade.
+
+  **Test artifacts above the crate version:** `gh workflow run release.yml -f msix_version=0.8.902`
+  packs that MSIX version instead of the crate's. A machine that once installed such a build
+  refuses every lower-numbered artifact as a downgrade, so keep raising it until a real release
+  overtakes it.
 
 ## Post-install smoke test
 

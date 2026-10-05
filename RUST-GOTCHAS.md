@@ -358,9 +358,16 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   becomes a visible defect. `CREATE_NO_WINDOW` (`0x0800_0000`) still captures stdout/stderr through
   the pipes. It is **ignored when paired with `DETACHED_PROCESS`** — a child that must *outlive*
   the app (T-195's `self_uninstall` cleaner) uses `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`
-  with the raw-OS-error-5 fallback, mirroring `watchdog::spawn::spawn_detached` (T-182): the MSIX
-  process tree is job-contained, so `DETACHED_PROCESS` alone lets the job kill the helper with the
-  tray.
+  with the raw-OS-error-5 fallback: package termination and removal end every process in the
+  package job, and the helper has to outlive both. (Not because the job kills on close — measured
+  2026-10-05, the package job is `BREAKAWAY_OK` without `KILL_ON_JOB_CLOSE`; T-244.)
+- **Inside MSIX, a child that breaks away from the package job is invisible to `Add-AppxPackage
+  -ForceTargetApplicationShutdown`** (T-244). It survives the upgrade, and the new version then
+  refuses to start (`0x80070020`, "Cannot create the Desktop AppX container ... converting the
+  job" in `AppModel-Runtime/Admin`). `IsProcessInJob(h, NULL)` says only "in *some* job", so it
+  can't tell which one. What can: run a script in the package context
+  (`Invoke-CommandInDesktopPackage`) and call `QueryInformationJobObject(NULL, 3)` to list the
+  PIDs of the package's own job.
 - **A process cannot delete its own open app-data directory, and `tao`'s `event_loop.run` never
   returns** (T-195). The tray holds `tray.lock` (`share_mode(0)`) for its whole life and there is
   no post-`run` cleanup point to drop the guard. "Повністю видалити" therefore hands the wipe to a
