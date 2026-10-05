@@ -32,6 +32,12 @@ use crate::config::PersonalZoneConfig;
 /// Checked with `>=`, not an equality that only holds by construction.
 pub(crate) const MAX_TRACKED_DOMAINS: usize = 2000;
 
+/// How many entries one eviction pass drops once [`MAX_TRACKED_DOMAINS`] is
+/// reached — so the O([`MAX_TRACKED_DOMAINS`]) scan runs once per this many
+/// new hosts, not on every one.
+pub(crate) const EVICTION_BATCH: usize = MAX_TRACKED_DOMAINS / 10;
+const _: () = assert!(1 <= EVICTION_BATCH && EVICTION_BATCH < MAX_TRACKED_DOMAINS);
+
 /// A day counter, not a calendar date — days since the Unix epoch,
 /// saturating on both directions rather than panicking on a clock jump
 /// (NTP correction, timezone change, or a multi-month-old restored
@@ -254,7 +260,7 @@ impl PersonalZoneStats {
             return;
         }
         if self.domains.len() >= MAX_TRACKED_DOMAINS {
-            self.evict_oldest();
+            self.evict_batch();
         }
         let mut counts = VecDeque::with_capacity(self.window_len);
         for _ in 1..self.window_len {
@@ -270,17 +276,31 @@ impl PersonalZoneStats {
         );
     }
 
-    /// Evicts the domain least recently visited — the
-    /// [`MAX_TRACKED_DOMAINS`] backstop, run only on the rare call that
-    /// would otherwise grow past the cap.
-    fn evict_oldest(&mut self) {
-        let oldest = self
+    /// The [`MAX_TRACKED_DOMAINS`] backstop: drops the [`EVICTION_BATCH`]
+    /// least valuable domains, ranked by `(last_visited, visits in the
+    /// window)` — the visit count breaks the day-granularity tie, so a host
+    /// visited 50 times today outlives one visited once today. One
+    /// O([`MAX_TRACKED_DOMAINS`]) pass under the caller's write lock, once
+    /// per [`EVICTION_BATCH`] new hosts once the cap is reached (a
+    /// steady-state stream of new hosts hits it continually, so this is not
+    /// rare). Batching instead of an ordered index keeps
+    /// [`Self::record_visit`] allocation-free for an already-tracked host —
+    /// an index would need re-keying on every visit.
+    fn evict_batch(&mut self) {
+        let mut ranked: Vec<((DayIndex, u32), &String)> = self
             .domains
             .iter()
-            .min_by_key(|(_, s)| s.last_visited)
-            .map(|(d, _)| d.clone());
-        if let Some(oldest) = oldest {
-            self.domains.remove(&oldest);
+            .map(|(d, s)| ((s.last_visited, sum_last(&s.counts, s.counts.len())), d))
+            .collect();
+        let n = EVICTION_BATCH.min(ranked.len());
+        if n == 0 {
+            return;
+        }
+        ranked.select_nth_unstable_by_key(n - 1, |(key, _)| *key);
+        ranked.truncate(n);
+        let victims: Vec<String> = ranked.into_iter().map(|(_, d)| d.clone()).collect();
+        for victim in &victims {
+            self.domains.remove(victim);
         }
     }
 
@@ -326,7 +346,7 @@ impl PersonalZoneStats {
 
 #[cfg(test)]
 mod tests {
-    use super::{DayIndex, PersonalZoneStats, MAX_TRACKED_DOMAINS};
+    use super::{DayIndex, PersonalZoneStats, EVICTION_BATCH, MAX_TRACKED_DOMAINS};
     use crate::config::PersonalZoneConfig;
 
     fn day(n: u32) -> DayIndex {
@@ -395,6 +415,35 @@ mod tests {
             stats.record_visit(&format!("host-{i}.example"), day(0));
         }
         assert!(stats.tracked_domain_count() <= MAX_TRACKED_DOMAINS);
+    }
+
+    #[test]
+    fn frequent_hosts_survive_a_flood_of_one_off_hosts_on_the_same_day() {
+        let mut stats = PersonalZoneStats::new(7, day(0));
+        for f in 0..50 {
+            for _ in 0..50 {
+                stats.record_visit(&format!("frequent-{f}.example"), day(0));
+            }
+        }
+        for i in 0..(10 * MAX_TRACKED_DOMAINS) {
+            stats.record_visit(&format!("once-{i}.example"), day(0));
+        }
+        let qualifying = stats.derive_qualifying_domains(&cfg(7, 50, 7, 7));
+        for f in 0..50 {
+            assert!(qualifying.contains(&format!("frequent-{f}.example")));
+        }
+    }
+
+    #[test]
+    fn reaching_the_cap_evicts_a_whole_batch_not_one_entry() {
+        let mut stats = PersonalZoneStats::new(7, day(0));
+        for i in 0..=MAX_TRACKED_DOMAINS {
+            stats.record_visit(&format!("host-{i}.example"), day(0));
+        }
+        assert_eq!(
+            stats.tracked_domain_count(),
+            MAX_TRACKED_DOMAINS - EVICTION_BATCH + 1
+        );
     }
 
     #[test]
