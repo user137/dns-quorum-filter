@@ -1,7 +1,8 @@
 SOURCES: SPEC.md §7 (+ §7.1 — реалізаційні рішення Ф3 Батч 3.0), §1 (лістенер `127.0.0.1`),
 §2 (self-signed cert), §6 (лог у памʼяті); `packaging/AppxManifest.template.xml` (T-156 — entry
 point + startup task); `plans/silly-wiggling-globe.md` (Батч 3.12 — матриця сценаріїв S1–S15);
-DECISIONS.md 2026-09-07 (T-185 — `stop.flag`/`quit.flag`), 2026-09-08 (T-193 — пауза; T-195 — «Повністю видалити»);
+DECISIONS.md 2026-09-07 (T-185 — `stop.flag`/`quit.flag`), 2026-09-08 (T-193 — пауза; T-195 — «Повністю видалити»),
+2026-10-05 (T-268 — кнопка `/admin/ui` → `remove-all.flag` → трей);
 TASKS.md T-150, T-181, T-182, T-183, T-185, T-187, T-195; `crates/dnsqb-service/src/watchdog/launcher.rs`
 (`ensure_sibling_running`), `crates/dnsqb-service/src/lifecycle.rs` (флаги),
 `crates/dnsqb-watcher/src/main.rs` (порядок спавну, повторний запуск, `stop.flag`/`quit.flag`
@@ -93,7 +94,7 @@ watcher більше не заморожений.
 
 | Сценарій | Реакція |
 |---|---|
-| S13 — видалення MSIX | Немає uninstall-хука. Трей «Повністю видалити» (T-70 + **T-195**): чистить cert + секрети Credential Manager, тоді пише `stop.flag`+`quit.flag`, спавнить від'єднаний прихований `powershell` (`self_uninstall.rs`), що чекає на вихід усіх 3 процесів і стирає всю `%LOCALAPPDATA%\dns-quorum-filter`, і відкриває `ms-settings:appsfeatures` (`explorer.exe`); фінальний клік «Видалити» — у Параметрах Windows. `/admin/uninstall-local-state` — лише секрети (крутиться в службі). |
+| S13 — видалення MSIX | Немає uninstall-хука. Трей «Повністю видалити» (T-70 + **T-195**): чистить cert + секрети Credential Manager, тоді пише `stop.flag`+`quit.flag`, спавнить від'єднаний прихований `powershell` (`self_uninstall.rs`), що чекає на вихід усіх 3 процесів і стирає всю `%LOCALAPPDATA%\dns-quorum-filter`, і відкриває `ms-settings:appsfeatures` (`explorer.exe`); фінальний клік «Видалити» — у Параметрах Windows. Кнопка `/admin/ui` (хвиля 14) — `POST /admin/request-remove-all` → `remove-all.flag` (<30 с) → той самий confirm трею; без трею — `TRAY_NOT_RUNNING`. |
 | S14 — Linux / headless | Guard `instance::acquire` — `#[cfg(windows)]` → `UnsupportedPlatform` → service/watcher виходять одразу; трей без дисплея не стартує. **Нічого не працює — Фаза 6.** Лог (T-184) робить це зрозумілим |
 | S15 — dev (`cargo run`, debug) | `windows_subsystem` під `not(debug_assertions)` → debug лишає консоль зі stdout. Ручний старт будь-якого бінарника |
 

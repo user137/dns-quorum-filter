@@ -81,7 +81,7 @@ cert-гілки: сервіс досяжний і фільтрація йде �
 | Маршрут | Метод | DTO | Примітка |
 |---|---|---|---|
 | `/admin/cert-status` | GET | `CertStatusResponse { trusted: CertTrustView }` | read-only, без CSRF-гейта; `is_trusted(<app-data>/cert.pem)`; `FUZZ_EXCLUDED_ROUTES` |
-| `/admin/install-cert` | POST `{}` | `InstallCertResponse { outcome: InstallCertOutcomeView }` | CSRF-гейт + body-cap; `ensure_installed` через `spawn_blocking`; мутує `CurrentUser\Root` (прецедент — `POST /admin/uninstall-local-state`, T-70); `FUZZ_EXCLUDED_ROUTES` |
+| `/admin/install-cert` | POST `{}` | `InstallCertResponse { outcome: InstallCertOutcomeView }` | CSRF-гейт + body-cap; `ensure_installed` через `spawn_blocking`; мутує `CurrentUser\Root`; `FUZZ_EXCLUDED_ROUTES` |
 
 Трей **не** ходить цими маршрутами — кличе `dnsqb_service::ensure_installed` як lib-функцію
 напряму (як `INSTALL_CERT_ID`-хендлер). Маршрути існують для `/admin/ui`.

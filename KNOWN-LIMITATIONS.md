@@ -151,9 +151,9 @@ TASKS-DONE.md, never here.
   `ROUTES` itself, so every route not in `FUZZ_EXCLUDED_ROUTES` is exercised — each route's GET
   query pair and each non-GET body, **`/dns-query` POST included** (`application/dns-message` +
   arbitrary bytes; the `decode`-branch reachability is pinned by a temporary `panic!()` per that
-  test's comment). Still outside the fuzz surface: the two excluded mutating routes
-  (`/admin/uninstall-local-state`, `/admin/install-cert` — real `certutil` / trust-store mutation;
-  method + content-type gate tests only) and the upstream/quorum response-decode path (the property
+  test's comment). Still outside the fuzz surface: the one excluded mutating route
+  (`/admin/install-cert` — real `certutil` / trust-store mutation; method + content-type gate tests
+  only) and the upstream/quorum response-decode path (the property
   runs against a benign mock client).
 - **The status indicator (T-56, narrowed)** — watchdog state is built (T-95: tray
   `ServiceRestarting`/`ServiceGaveUp` + `/admin/status.watchdog`); browser-DoH-usage detection
