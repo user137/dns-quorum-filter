@@ -9,6 +9,14 @@ state" section: a finished task adds a bullet here only if it leaves a live limi
 the task's own narrative (rationale, advisor catches, verification notes) goes to
 TASKS-DONE.md, never here.
 
+- **Blocklist-bundle step is empty for a few seconds after start (ARCH-10, wave 15)** — the
+  on-disk bundle is warm-loaded in `spawn_blocking` after the listener is up (6–7 s of one core
+  for a full set, PERFORMANCE.md), and on first enable or a fresh install it stays empty for the
+  whole download; quorum filtering runs meanwhile and the hero stays green.
+- **A `MaxMind` GeoIP source still re-downloads on every service start (ARCH-10)** — the
+  first-cycle skip and sidecar-before-body apply only to `user-country`: MaxMind's local file is an
+  extracted `.mmdb` (its archive digest can't be compared) and skipping would leave its health
+  `Pending` for a day.
 - **Autostart needs one launch (T-243)** — Windows registers the MSIX `DnsqbWatcherStartup` task
   only after the app's first launch; an install that is never launched starts nothing after a
   reboot. Told in README/release notes; `/admin/ui` can only show a task that already exists

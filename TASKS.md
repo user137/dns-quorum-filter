@@ -1664,7 +1664,9 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Спершу — детальніший (без доменів) підтип помилки в лозі, потім рішення.
   **Хвиля 15 (`a2e74c1`):** перший крок зроблено — рядок логу несе `detail` (`connect`,
   `connect_timeout`, `timeout`, `status_4xx`/`status_5xx` + `http_status`, `io_reset`,
-  `incomplete_message`, `hyper_other` = ймовірно HTTP/2 GOAWAY/RST, …). Відкрито: зібрати розподіл
+  `incomplete_message`, `hyper_other` = `hyper::Error` без `io`-причини, на практиці HTTP/2-протокол
+  (GOAWAY/RST_STREAM — без розрізнення; для нього треба прямий `h2`, `9b84ea8` — TCP-reset тепер
+  `io_reset`, а не `hyper_other`), …). Відкрито: зібрати розподіл
   `detail` з `dnsqb-service.log` на артефакті ≥ 0.8.904 за кілька днів, потім рішення.
 - [ ] T-265 — **Заведено 2026-10-04, QA-прохід (знімок Credential Manager перед кроком d).**
   У справжньому сховищі облікових даних користувача лежать 62 записи `*.dns-quorum-filter`, з
