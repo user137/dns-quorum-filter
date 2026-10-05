@@ -1178,23 +1178,28 @@ mod tests {
     // why no query reaches the service.
     #[test]
     fn the_last_query_segment_fits_whole_beside_the_degraded_warning() {
-        let status = TrayStatus::Filtering {
-            in_flight: 99,
-            blocked: 99_999,
-            total: 999_999,
-            degraded_events: 20,
-            degraded_window: 20,
-            rating_filter_active: true,
-            last_query: LastQuery::Minutes(59),
-        };
-        for &(code, _) in I18N_DICTS {
-            let segment = crate::i18n::t_args(
-                code,
-                "tooltip.lastQueryMinutesTemplate",
-                &[("minutes", "59")],
-            );
-            let text = compose_tooltip(status, true, code);
-            assert!(text.contains(&segment), "{code}: lost last query: {text}");
+        for last_query in [
+            LastQuery::Minutes(59),
+            LastQuery::Hours(23),
+            LastQuery::JustNow,
+            LastQuery::Empty,
+        ] {
+            let status = TrayStatus::Filtering {
+                in_flight: 99,
+                blocked: 99_999,
+                total: 999_999,
+                degraded_events: 20,
+                degraded_window: 20,
+                rating_filter_active: true,
+                last_query,
+            };
+            for &(code, _) in I18N_DICTS {
+                let Some(segment) = last_query.segment(code) else {
+                    panic!("{code}: {last_query:?} must have a segment");
+                };
+                let text = compose_tooltip(status, true, code);
+                assert!(text.contains(&segment), "{code}: lost last query: {text}");
+            }
         }
     }
 
