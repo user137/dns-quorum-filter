@@ -72,6 +72,9 @@ trap {
 $CODE_SIGNING_EKU = '1.3.6.1.5.5.7.3.3'
 $EXPECTED_SUBJECT = 'CN=dns-quorum-filter'
 $STORE_NAME       = 'TrustedPeople'
+# PublisherId is a hash of the publisher, here exactly $EXPECTED_SUBJECT.
+$PACKAGE_FAMILY   = 'dns-quorum-filter_8d78tvs37tgae'
+$PACKAGE_DIR_PATTERN = '\\WindowsApps\\dns-quorum-filter_[^\\]+__8d78tvs37tgae\\'
 
 # --- Resolve paths (working directory is C:\WINDOWS\system32 after elevation,
 # so everything forwarded to the child must already be absolute).
@@ -133,6 +136,14 @@ if (-not $isAdmin) {
         if ($stillThere) { Write-Host "Certificate $thumb is now trusted (LocalMachine\$STORE_NAME)." -ForegroundColor Green }
         else { Write-Warning "Certificate not found afterwards -- the elevated step may have been cancelled." }
     }
+    # The elevated step stopped the running app before installing (T-244). Start
+    # whichever version is now registered -- the new one, or the old one if the
+    # install failed -- so DNS never stays down. Started from here, not from the
+    # elevated child, so the app does not run as Administrator.
+    if ($Install -and -not $Remove -and -not (Get-Process -Name 'dnsqb-watcher' -ErrorAction SilentlyContinue)) {
+        Write-Host "Starting DNS Quorum Filter ..."
+        Start-Process "shell:AppsFolder\$PACKAGE_FAMILY!App"
+    }
     return
 }
 
@@ -170,16 +181,18 @@ if ($Install -and -not $Remove) {
     # T-244: versions up to 0.8.0 spawned the service and tray outside the
     # package job, where -ForceTargetApplicationShutdown cannot see them, and a
     # survivor keeps the new version from starting (0x80070020). Stop every
-    # process running from the installed package's own directory first.
-    foreach ($installed in @(Get-AppxPackage -Name 'dns-quorum-filter')) {
-        $dir = $installed.InstallLocation.TrimEnd('\') + '\'
-        Get-CimInstance Win32_Process |
-            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } |
-            ForEach-Object {
-                Write-Host "Stopping $($_.Name) (PID $($_.ProcessId)) from the installed version ..."
-                # A process that already exited between the query and the stop is the goal.
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            }
+    # process running from ANY version directory of this package family --
+    # after an earlier failed upgrade the survivors run from a version that is
+    # no longer the registered one. The parent relaunches the app afterwards.
+    Get-CimInstance Win32_Process |
+        Where-Object { $_.ExecutablePath -and $_.ExecutablePath -match $PACKAGE_DIR_PATTERN } |
+        ForEach-Object {
+            Write-Host "Stopping $($_.Name) (PID $($_.ProcessId)) from an installed version ..."
+            # A process that already exited between the query and the stop is the goal.
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    if (-not $Elevated) {
+        Write-Warning "Run from an already elevated prompt: the app is not restarted afterwards -- start it from the Start menu."
     }
     Write-Host "Installing $msix ..."
     try {

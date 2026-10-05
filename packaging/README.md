@@ -60,13 +60,19 @@
   starting (`0x80070020`, "converting the job"). Since T-244 a packaged watcher spawns without
   breakaway (`watchdog::spawn::breakaway_wanted`). The first upgrade *from* 0.8.0 or older still
   meets the escaped processes, so `Trust-TestCert.ps1 -Install` stops every process running from
-  the installed package's directory before `Add-AppxPackage`. The manual route needs a tray
-  "Exit" first for that one upgrade.
+  *any* version directory of this package family (`dns-quorum-filter_*__8d78tvs37tgae` — after an
+  earlier failed upgrade the survivors run from a version that is no longer registered) before
+  `Add-AppxPackage`. The non-elevated parent then relaunches the app if no watcher runs, so a
+  failed install falls back to the old version instead of leaving no DNS; a run from an already
+  elevated prompt has no parent and only prints a reminder. The manual route needs a tray "Exit"
+  first for that one upgrade.
 
   **Test artifacts above the crate version:** `gh workflow run release.yml -f msix_version=0.8.902`
   packs that MSIX version instead of the crate's. A machine that once installed such a build
   refuses every lower-numbered artifact as a downgrade, so keep raising it until a real release
-  overtakes it.
+  overtakes it. The binaries inside still report the crate version (`app_version`), so
+  `smoke-installed.ps1`'s "app_version matches package" check FAILs on such a build by design —
+  identify the running build by its `WindowsApps\…_0.8.90x.0_…` exe path instead.
 
 ## Post-install smoke test
 
