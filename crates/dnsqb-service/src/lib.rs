@@ -162,6 +162,8 @@ mod query_log;
 mod quorum;
 mod rating_filter;
 mod reachability;
+mod refresh_schedule;
+
 mod startup_failure;
 mod startup_task;
 mod timeout;
