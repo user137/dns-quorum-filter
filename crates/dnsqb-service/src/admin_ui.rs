@@ -482,6 +482,30 @@ mod tests {
         }
     }
 
+    // T-280: `main.js` builds `error.reason.<NAME>` at runtime, so the
+    // literal-key test below never sees these keys - this is their only guard.
+    // The other 36 locales follow from the key-set parity test above.
+    #[test]
+    fn every_admin_error_reason_has_a_dictionary_entry() {
+        let Some(en_json) = i18n_dict("en") else {
+            panic!("en.json must be registered");
+        };
+        let Ok(serde_json::Value::Object(en)) = serde_json::from_str::<serde_json::Value>(en_json)
+        else {
+            panic!("en.json must be a JSON object");
+        };
+        for reason in crate::admin::AdminErrorReason::ALL {
+            let Ok(serde_json::Value::String(name)) = serde_json::to_value(reason) else {
+                panic!("{reason:?} must serialize as a string");
+            };
+            let key = format!("error.reason.{name}");
+            assert!(
+                matches!(en.get(&key), Some(serde_json::Value::String(_))),
+                "en.json has no {key}"
+            );
+        }
+    }
+
     /// T-236 — measured via a real Chrome's
     /// `Intl.PluralRules(<code>).resolvedOptions().pluralCategories`, not
     /// recalled from memory (see `ui/i18n/GLOSSARY.md`'s own note on this) -

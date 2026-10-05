@@ -53,7 +53,100 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 7;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 8;
+
+/// Why an `/admin/*` request was refused with `400` (T-280) — the whole body
+/// of that response is an [`AdminErrorResponse`]. A closed set of fixed
+/// labels: a reason never carries the rejected value itself (T-270's no-echo
+/// rule — a refused override domain must not come back in a response body).
+/// `main.js` maps each to `error.reason.<NAME>`; an unknown or absent reason
+/// (an older service) falls back to the bare `HTTP 400` it showed before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AdminErrorReason {
+    /// The body was unreadable, over the size cap, or not the route's JSON shape.
+    MalformedBody,
+    /// A numeric value is above its cap; `field`/`max` name which and the cap.
+    ValueTooLarge,
+    /// Cache `clamp_min_secs` is above `clamp_max_secs`.
+    ClampMinExceedsMax,
+    /// An override pattern is empty.
+    EmptyDomain,
+    /// An override pattern is not a valid domain.
+    InvalidDomain,
+    /// A `*.` wildcard where only an exact domain is accepted.
+    UnexpectedWildcard,
+    /// Not a two-letter ISO 3166-1 country code.
+    InvalidCountryCode,
+    /// A rating-filter list code is not two letters or `global`.
+    InvalidZoneList,
+    /// A well-formed rating-filter list code with no published list.
+    UnknownZoneList,
+    /// A blocklist-bundle source id that is not published.
+    UnknownBlocklistSource,
+    /// Not a valid two-letter ccTLD code.
+    InvalidCctldCode,
+    /// A provider id outside lowercase letters, digits and hyphens (1-64).
+    InvalidProviderId,
+    /// A provider with this id is already configured.
+    DuplicateProviderId,
+    /// A custom provider needs a URL, a display name and a category.
+    IncompleteCustomProvider,
+    /// A provider URL that is not `https` or points at a non-public host.
+    InvalidProviderUrl,
+    /// A built-in preset can be disabled but not removed.
+    BuiltinProviderNotRemovable,
+    /// No configured or built-in provider has this id.
+    UnknownProvider,
+    /// The `MaxMind` account ID or license key is malformed or blank.
+    MalformedCredentials,
+    /// A `GET /admin/log` query parameter is malformed.
+    InvalidLogQuery,
+    /// Any other refused value.
+    InvalidValue,
+}
+
+impl AdminErrorReason {
+    /// Every variant, for the `error.reason.<NAME>` dictionary coverage test.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 20] = [
+        Self::MalformedBody,
+        Self::ValueTooLarge,
+        Self::ClampMinExceedsMax,
+        Self::EmptyDomain,
+        Self::InvalidDomain,
+        Self::UnexpectedWildcard,
+        Self::InvalidCountryCode,
+        Self::InvalidZoneList,
+        Self::UnknownZoneList,
+        Self::UnknownBlocklistSource,
+        Self::InvalidCctldCode,
+        Self::InvalidProviderId,
+        Self::DuplicateProviderId,
+        Self::IncompleteCustomProvider,
+        Self::InvalidProviderUrl,
+        Self::BuiltinProviderNotRemovable,
+        Self::UnknownProvider,
+        Self::MalformedCredentials,
+        Self::InvalidLogQuery,
+        Self::InvalidValue,
+    ];
+}
+
+/// The body of every `/admin/*` `400` (T-280). `field`/`max` are present only
+/// for [`AdminErrorReason::ValueTooLarge`] and are server constants (a config
+/// key and its cap), never the rejected input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminErrorResponse {
+    /// Why the request was refused.
+    pub reason: AdminErrorReason,
+    /// The config key whose value is over its cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// The largest accepted value for `field`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<u64>,
+}
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the

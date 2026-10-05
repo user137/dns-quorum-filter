@@ -23,16 +23,16 @@
 
 use crate::admin::{
     category_filter_views, compute_hero_state, compute_stats, master_switch_targets, unix_millis,
-    AdminConfigUpdate, AdminStats, AdminStatusResponse, BaselineEndpointView,
-    BlocklistBundlesConfigUpdate, BlocklistBundlesStatusView, BlocklistSourceStatusView,
-    CacheConfigUpdate, CacheConfigView, CctldBlockConfigUpdate, CctldBlockStatusView,
-    CertStatusResponse, CertTrustView, DatabaseSource, EncryptedPersistenceView,
-    GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip, HealthResponse, InstallCertResponse,
-    LogEntryView, LogQueryResponse, MaxmindCredentialCheck, MaxmindCredentialsRequest,
-    MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest, OverrideDomainView,
-    OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView, RatingFilterConfigUpdate,
-    RatingFilterStatusView, RemoveAllRequestOutcomeView, RemoveAllRequestResponse,
-    WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    AdminConfigUpdate, AdminErrorReason, AdminErrorResponse, AdminStats, AdminStatusResponse,
+    BaselineEndpointView, BlocklistBundlesConfigUpdate, BlocklistBundlesStatusView,
+    BlocklistSourceStatusView, CacheConfigUpdate, CacheConfigView, CctldBlockConfigUpdate,
+    CctldBlockStatusView, CertStatusResponse, CertTrustView, DatabaseSource,
+    EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
+    HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
+    MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
+    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
+    RatingFilterConfigUpdate, RatingFilterStatusView, RemoveAllRequestOutcomeView,
+    RemoveAllRequestResponse, WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -2011,6 +2011,64 @@ fn json_response<T: Serialize>(value: &T) -> Response<Full<Bytes>> {
         .unwrap_or_else(|_| status_response(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
+/// `400` with an [`AdminErrorResponse`] body naming only `reason` (T-280).
+fn bad_request(reason: AdminErrorReason) -> Response<Full<Bytes>> {
+    rejection_response(&AdminErrorResponse {
+        reason,
+        field: None,
+        max: None,
+    })
+}
+
+/// `400` carrying `body` — a serialization failure degrades to the bare
+/// `400` the UI already falls back on, never to a different status.
+fn rejection_response(body: &AdminErrorResponse) -> Response<Full<Bytes>> {
+    let Ok(bytes) = serde_json::to_vec(body) else {
+        return status_response(StatusCode::BAD_REQUEST);
+    };
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(bytes)))
+        .unwrap_or_else(|_| status_response(StatusCode::BAD_REQUEST))
+}
+
+/// The reason a refused `/admin/cache-config/apply` reports — the field and
+/// cap of [`CacheConfigError::ValueTooLarge`] are server constants, so they
+/// ride along; the rejected number does not.
+fn cache_config_rejection(err: CacheConfigError) -> Response<Full<Bytes>> {
+    match err {
+        CacheConfigError::ValueTooLarge { field, max } => rejection_response(&AdminErrorResponse {
+            reason: AdminErrorReason::ValueTooLarge,
+            field: Some(field.to_string()),
+            max: Some(max),
+        }),
+        CacheConfigError::ClampMinExceedsMax => bad_request(AdminErrorReason::ClampMinExceedsMax),
+    }
+}
+
+fn override_rejection_reason(reason: InvalidReason) -> AdminErrorReason {
+    match reason {
+        InvalidReason::UnexpectedWildcard => AdminErrorReason::UnexpectedWildcard,
+        InvalidReason::EmptyDomain => AdminErrorReason::EmptyDomain,
+        InvalidReason::InvalidDomain => AdminErrorReason::InvalidDomain,
+    }
+}
+
+/// Maps the validation errors the geoip / rating-filter / blocklist-bundle /
+/// ccTLD routes can raise. The wildcard arm covers load-time-only variants
+/// (I/O, TOML, provider table) no admin route produces.
+fn config_rejection_reason(err: &ConfigError) -> AdminErrorReason {
+    match err {
+        ConfigError::InvalidCountryCode(_) => AdminErrorReason::InvalidCountryCode,
+        ConfigError::InvalidRatingFilterList(_) => AdminErrorReason::InvalidZoneList,
+        ConfigError::UnknownRatingFilterList(_) => AdminErrorReason::UnknownZoneList,
+        ConfigError::UnknownBlocklistBundleSource(_) => AdminErrorReason::UnknownBlocklistSource,
+        ConfigError::InvalidCctldCode(_) => AdminErrorReason::InvalidCctldCode,
+        _ => AdminErrorReason::InvalidValue,
+    }
+}
+
 /// `GET /admin/status` — method allowlisting for this path happens once,
 /// centrally, in [`serve`]'s `ROUTES` check before this is ever called; this
 /// function itself trusts that and doesn't re-check.
@@ -2074,10 +2132,10 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(update) = serde_json::from_slice::<AdminConfigUpdate>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     json_response(&apply_admin_config(state, update))
 }
@@ -2289,7 +2347,7 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     if limited.collect().await.is_err() {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     }
     match apply_admin_reset(state) {
         Ok(response) => json_response(&response),
@@ -2409,16 +2467,16 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(request) = serde_json::from_slice::<OverrideAddRequest>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_overrides_change(state, |current| {
         current.with_entry_added(&request.pattern, request.list)
     }) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(reason) => bad_request(override_rejection_reason(reason)),
     }
 }
 
@@ -2446,16 +2504,16 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(request) = serde_json::from_slice::<OverrideRemoveRequest>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_overrides_change(state, |current| {
         Ok(current.with_entry_removed(&request.domain, request.is_wildcard, request.list))
     }) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(reason) => bad_request(override_rejection_reason(reason)),
     }
 }
 
@@ -2520,14 +2578,14 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(update) = serde_json::from_slice::<CacheConfigUpdate>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_cache_config(state, update) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => cache_config_rejection(err),
     }
 }
 
@@ -2636,10 +2694,10 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(request) = serde_json::from_slice::<GeoipCountryRequest>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_geoip_change(state, |current| {
         let code = validate_country_code(&request.country)?;
@@ -2650,7 +2708,7 @@ where
         Ok(new_list)
     }) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => bad_request(config_rejection_reason(&err)),
     }
 }
 
@@ -2683,17 +2741,17 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(request) = serde_json::from_slice::<GeoipCountryRequest>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_geoip_change(state, |current| {
         let code = validate_country_code(&request.country)?;
         Ok(current.iter().filter(|c| **c != code).cloned().collect())
     }) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => bad_request(config_rejection_reason(&err)),
     }
 }
 
@@ -2770,15 +2828,15 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(update) = serde_json::from_slice::<RatingFilterConfigUpdate>(&collected.to_bytes())
     else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_rating_filter_change(state, &update) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => bad_request(config_rejection_reason(&err)),
     }
 }
 
@@ -2841,15 +2899,15 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(update) = serde_json::from_slice::<BlocklistBundlesConfigUpdate>(&collected.to_bytes())
     else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_blocklist_bundles_change(state, &update) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => bad_request(config_rejection_reason(&err)),
     }
 }
 
@@ -2895,14 +2953,14 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(update) = serde_json::from_slice::<CctldBlockConfigUpdate>(&collected.to_bytes()) else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     match apply_cctld_block_change(state, &update) {
         Ok(response) => json_response(&response),
-        Err(_) => status_response(StatusCode::BAD_REQUEST),
+        Err(err) => bad_request(config_rejection_reason(&err)),
     }
 }
 
@@ -2982,11 +3040,11 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
     let Ok(request) = serde_json::from_slice::<MaxmindCredentialsRequest>(&collected.to_bytes())
     else {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     };
 
     let Some(paths) = state.persist.paths.as_ref() else {
@@ -3033,7 +3091,7 @@ where
     };
 
     match save_outcome {
-        Err(CredentialsError::Malformed) => status_response(StatusCode::BAD_REQUEST),
+        Err(CredentialsError::Malformed) => bad_request(AdminErrorReason::MalformedCredentials),
         Err(err) => {
             tracing::warn!("failed to persist MaxMind credentials to the store: {err}");
             json_response(&MaxmindCredentialsView {
@@ -3088,7 +3146,7 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     if limited.collect().await.is_err() {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     }
     // T-163 closing review: `geoip_source_lock` across clear →
     // `update_geoip_source` for the same reason the POST route holds it —
@@ -3151,19 +3209,35 @@ fn providers_view(entries: &[ProviderEntry], persisted: bool) -> crate::admin::P
     }
 }
 
+/// A refused `/admin/providers/*` request: a non-`400` status (`415`, the
+/// `500` invariant break) or a `400` with its reason (T-280).
+enum ProviderRejection {
+    Status(StatusCode),
+    BadRequest(AdminErrorReason),
+}
+
+impl ProviderRejection {
+    fn into_response(self) -> Response<Full<Bytes>> {
+        match self {
+            Self::Status(code) => status_response(code),
+            Self::BadRequest(reason) => bad_request(reason),
+        }
+    }
+}
+
 /// Applies `compute` to the live voter list (T-72/T-73), swaps the result in,
 /// re-serializes `resolver_config.toml` (reading the other live fields first,
 /// same cross-field discipline as `apply_geoip_change`), and returns the
 /// fresh view. Shares `state.persist_lock` with every other
-/// `resolver_config.toml` writer. `Err(StatusCode)` is a rejected request
-/// (`400`), surfaced payload-free.
+/// `resolver_config.toml` writer. `Err` is a rejected request, surfaced as
+/// its reason only (T-280), never the submitted id or URL.
 fn apply_provider_change<C, F>(
     state: &AppState<C>,
     compute: F,
-) -> Result<crate::admin::ProvidersResponse, StatusCode>
+) -> Result<crate::admin::ProvidersResponse, ProviderRejection>
 where
     C: DohClient + Sync,
-    F: FnOnce(Vec<ProviderEntry>) -> Result<Vec<ProviderEntry>, StatusCode>,
+    F: FnOnce(Vec<ProviderEntry>) -> Result<Vec<ProviderEntry>, ProviderRejection>,
 {
     let persist_guard = state.persist_lock.lock();
     let before = state.providers_snapshot();
@@ -3194,7 +3268,7 @@ fn serve_admin_providers<C: DohClient + Sync>(state: &AppState<C>) -> Response<F
 /// Shared CSRF-gate + body-cap + JSON-decode preamble for the three
 /// `/admin/providers/*` POST routes — returns the decoded body, or `Err` with
 /// the HTTP status to send back instead.
-async fn read_provider_body<B, T>(req: Request<B>) -> Result<T, StatusCode>
+async fn read_provider_body<B, T>(req: Request<B>) -> Result<T, ProviderRejection>
 where
     B: Body<Data = Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -3205,13 +3279,18 @@ where
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok());
     if !content_type_is_json(content_type) {
-        return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        return Err(ProviderRejection::Status(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        ));
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     let Ok(collected) = limited.collect().await else {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ProviderRejection::BadRequest(
+            AdminErrorReason::MalformedBody,
+        ));
     };
-    serde_json::from_slice::<T>(&collected.to_bytes()).map_err(|_| StatusCode::BAD_REQUEST)
+    serde_json::from_slice::<T>(&collected.to_bytes())
+        .map_err(|_| ProviderRejection::BadRequest(AdminErrorReason::MalformedBody))
 }
 
 /// `POST /admin/providers/add` (T-72/T-73) — a built-in preset (`{id}` only)
@@ -3229,14 +3308,18 @@ where
 {
     let request: crate::admin::ProviderAddRequest = match read_provider_body(req).await {
         Ok(request) => request,
-        Err(code) => return status_response(code),
+        Err(rejection) => return rejection.into_response(),
     };
     let result = apply_provider_change(state, |mut entries| {
         if !crate::upstream::is_valid_provider_id(&request.id) {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(ProviderRejection::BadRequest(
+                AdminErrorReason::InvalidProviderId,
+            ));
         }
         if entries.iter().any(|entry| entry.spec.id == request.id) {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(ProviderRejection::BadRequest(
+                AdminErrorReason::DuplicateProviderId,
+            ));
         }
         let spec = if let Some(preset) = builtin_preset(&request.id) {
             preset
@@ -3246,10 +3329,14 @@ where
                 request.display_name.as_deref(),
                 request.category,
             ) else {
-                return Err(StatusCode::BAD_REQUEST);
+                return Err(ProviderRejection::BadRequest(
+                    AdminErrorReason::IncompleteCustomProvider,
+                ));
             };
             if crate::upstream::validate_provider_url(url).is_err() {
-                return Err(StatusCode::BAD_REQUEST);
+                return Err(ProviderRejection::BadRequest(
+                    AdminErrorReason::InvalidProviderUrl,
+                ));
             }
             ProviderSpec {
                 id: request.id.clone(),
@@ -3269,7 +3356,7 @@ where
     });
     match result {
         Ok(response) => json_response(&response),
-        Err(code) => status_response(code),
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -3287,22 +3374,26 @@ where
 {
     let request: crate::admin::ProviderRemoveRequest = match read_provider_body(req).await {
         Ok(request) => request,
-        Err(code) => return status_response(code),
+        Err(rejection) => return rejection.into_response(),
     };
     let result = apply_provider_change(state, |mut entries| {
         if builtin_preset(&request.id).is_some() {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(ProviderRejection::BadRequest(
+                AdminErrorReason::BuiltinProviderNotRemovable,
+            ));
         }
         let before = entries.len();
         entries.retain(|entry| entry.spec.id != request.id);
         if entries.len() == before {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(ProviderRejection::BadRequest(
+                AdminErrorReason::UnknownProvider,
+            ));
         }
         Ok(entries)
     });
     match result {
         Ok(response) => json_response(&response),
-        Err(code) => status_response(code),
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -3319,18 +3410,20 @@ where
 {
     let request: crate::admin::ProviderSetEnabledRequest = match read_provider_body(req).await {
         Ok(request) => request,
-        Err(code) => return status_response(code),
+        Err(rejection) => return rejection.into_response(),
     };
     let result = apply_provider_change(state, |mut entries| {
         let Some(entry) = entries.iter_mut().find(|entry| entry.spec.id == request.id) else {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(ProviderRejection::BadRequest(
+                AdminErrorReason::UnknownProvider,
+            ));
         };
         entry.enabled = request.enabled;
         Ok(entries)
     });
     match result {
         Ok(response) => json_response(&response),
-        Err(code) => status_response(code),
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -3358,7 +3451,7 @@ where
 {
     let request: crate::admin::SetCategoryEnabledRequest = match read_provider_body(req).await {
         Ok(request) => request,
-        Err(code) => return status_response(code),
+        Err(rejection) => return rejection.into_response(),
     };
     let result = apply_provider_change(state, |mut entries| {
         let has_any = entries
@@ -3366,13 +3459,15 @@ where
             .any(|entry| entry.spec.category == request.category);
         if !has_any && request.enabled {
             let Some(spec) = builtin_preset(EMPTY_ADULT_CATEGORY_DEFAULT_PRESET) else {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                return Err(ProviderRejection::Status(StatusCode::INTERNAL_SERVER_ERROR));
             };
             // The constant and its category must agree — a future edit that
             // points it at a non-adult preset would otherwise misfile it into
             // whatever empty category was toggled. Reject rather than guess.
             if spec.category != request.category {
-                return Err(StatusCode::BAD_REQUEST);
+                return Err(ProviderRejection::BadRequest(
+                    AdminErrorReason::InvalidValue,
+                ));
             }
             entries.push(ProviderEntry {
                 spec,
@@ -3393,7 +3488,7 @@ where
     });
     match result {
         Ok(response) => json_response(&response),
-        Err(code) => status_response(code),
+        Err(rejection) => rejection.into_response(),
     }
 }
 
@@ -3529,7 +3624,7 @@ fn serve_admin_log<C: DohClient + Sync>(
         // reach a log line (SPEC.md, Наскрізні вимоги). `LogQueryError`'s own
         // messages are fixed strings, but the label doesn't lean on that.
         tracing::debug!("admin log query parse failed");
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::InvalidLogQuery);
     };
     // Validate `?voter=` against the ids a log entry could plausibly carry:
     // currently-configured voters plus every built-in preset — so a preset
@@ -3549,7 +3644,7 @@ fn serve_admin_log<C: DohClient + Sync>(
                 .iter()
                 .any(|preset| preset.id == voter);
         if !known {
-            return status_response(StatusCode::BAD_REQUEST);
+            return bad_request(AdminErrorReason::UnknownProvider);
         }
     }
     let filter = LogFilter {
@@ -3593,7 +3688,7 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     if limited.collect().await.is_err() {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     }
     state.query_log.clear();
     status_response(StatusCode::OK)
@@ -3626,7 +3721,7 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     if limited.collect().await.is_err() {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     }
     let Some(app_data_dir) = state.persist.paths.as_ref().map(PersistPaths::app_data_dir) else {
         return status_response(StatusCode::SERVICE_UNAVAILABLE);
@@ -3740,7 +3835,7 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     if limited.collect().await.is_err() {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     }
     let Some(cert_path) = cert_pem_path(state) else {
         return status_response(StatusCode::INTERNAL_SERVER_ERROR);
@@ -3792,7 +3887,7 @@ where
     }
     let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
     if limited.collect().await.is_err() {
-        return status_response(StatusCode::BAD_REQUEST);
+        return bad_request(AdminErrorReason::MalformedBody);
     }
     // `Err` means every receiver has already been dropped - reachable if a
     // second `/admin/shutdown` arrives after the accept loop already exited
@@ -4034,11 +4129,12 @@ pub(crate) mod tests {
     use super::{
         admin_status, blocklist_bundles_is_active, blocklist_bundles_status_view,
         content_type_is_dns_message, parse_log_query, rating_filter_is_active, read_watchdog_view,
-        resolve_doh_request, serve, wire_bytes_from_get, AppState, CacheState, DohRequestError,
-        GeoipInit, GeoipSource, GeoipState, LogQueryError, OverridesState, PersistPaths,
-        PersistTarget, RuntimeInit, WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH,
-        ADMIN_INSTALL_CERT_PATH, ADMIN_REQUEST_REMOVE_ALL_PATH, BLOCKLIST_SOURCES,
-        DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
+        resolve_doh_request, serve, wire_bytes_from_get, AdminErrorReason, AdminErrorResponse,
+        AppState, CacheState, DohRequestError, GeoipInit, GeoipSource, GeoipState, LogQueryError,
+        OverridesState, PersistPaths, PersistTarget, RuntimeInit, WatchdogState, ZoneLists,
+        ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH, ADMIN_REQUEST_REMOVE_ALL_PATH,
+        BLOCKLIST_SOURCES, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT,
+        MAX_MESSAGE_SIZE, ROUTES,
     };
     use super::{request_remove_all, route_topics, ADMIN_SHUTDOWN_PATH};
     use crate::admin::{
@@ -5881,7 +5977,7 @@ pub(crate) mod tests {
                     let added = super::apply_provider_change(s, |mut list| {
                         let Some(spec) = crate::upstream::builtin_preset("opendns-familyshield")
                         else {
-                            return Err(StatusCode::BAD_REQUEST);
+                            return Err(super::ProviderRejection::Status(StatusCode::BAD_REQUEST));
                         };
                         list.push(ProviderEntry {
                             spec,
@@ -10124,6 +10220,272 @@ pub(crate) mod tests {
             panic!("fixture request must build");
         };
         req
+    }
+
+    async fn rejection_of(response: http::Response<Full<Bytes>>) -> (Bytes, AdminErrorResponse) {
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<AdminErrorResponse>(&bytes) else {
+            panic!("a 400 body must decode as AdminErrorResponse");
+        };
+        (bytes, body)
+    }
+
+    async fn assert_rejected_without_echo(
+        cases: Vec<(Request<Full<Bytes>>, AdminErrorReason, &str)>,
+    ) {
+        for (request, expected, canary) in cases {
+            let uri = request.uri().to_string();
+            let (_dir, state) = providers_state();
+            let response = match serve(request, state).await {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            let (bytes, body) = rejection_of(response).await;
+            assert_eq!(body.reason, expected, "{uri}");
+            assert_eq!((body.field, body.max), (None, None), "{uri}");
+            assert!(
+                !String::from_utf8_lossy(&bytes).contains(canary),
+                "{uri}: the 400 body must not echo the submitted value"
+            );
+        }
+    }
+
+    // T-280 — Security & Boundary: every validating `/admin/*` route answers
+    // `400` with its closed reason, and the body never carries the submitted
+    // value (T-270's no-echo rule) — each case's canary is the value it sent.
+    #[tokio::test]
+    async fn config_route_400s_name_their_reason_and_never_echo_the_value() {
+        use AdminErrorReason as R;
+        let post = admin_post_json;
+        assert_rejected_without_echo(vec![
+            (
+                post(
+                    "/admin/geoip/add",
+                    &serde_json::json!({"country": "zqcanary"}),
+                ),
+                R::InvalidCountryCode,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/geoip/remove",
+                    &serde_json::json!({"country": "zqcanary"}),
+                ),
+                R::InvalidCountryCode,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/cctld-block",
+                    &serde_json::json!({"blocked_codes": ["zqcanary"]}),
+                ),
+                R::InvalidCctldCode,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/rating-filter",
+                    &serde_json::json!({"enabled": true, "lists": ["zqcanary"]}),
+                ),
+                R::InvalidZoneList,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/rating-filter",
+                    &serde_json::json!({"enabled": true, "lists": ["zq"]}),
+                ),
+                R::UnknownZoneList,
+                "zq",
+            ),
+            (
+                post(
+                    "/admin/blocklist-bundles",
+                    &serde_json::json!({"enabled": true, "sources": ["zqcanary"]}),
+                ),
+                R::UnknownBlocklistSource,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/overrides/add",
+                    &serde_json::json!({"pattern": "zq*canary.example", "list": "blocklist"}),
+                ),
+                R::UnexpectedWildcard,
+                "canary",
+            ),
+            (
+                post(
+                    "/admin/overrides/add",
+                    &serde_json::json!({"pattern": "*.", "list": "blocklist"}),
+                ),
+                R::EmptyDomain,
+                "*.",
+            ),
+            (
+                post(
+                    "/admin/overrides/add",
+                    &serde_json::json!({"pattern": "zq canary.example", "list": "blocklist"}),
+                ),
+                R::InvalidDomain,
+                "canary",
+            ),
+        ])
+        .await;
+    }
+
+    #[tokio::test]
+    async fn provider_and_log_400s_name_their_reason_and_never_echo_the_value() {
+        use AdminErrorReason as R;
+        let post = admin_post_json;
+        assert_rejected_without_echo(vec![
+            (
+                post(
+                    "/admin/providers/add",
+                    &serde_json::json!({"id": "Zq Canary"}),
+                ),
+                R::InvalidProviderId,
+                "Canary",
+            ),
+            (
+                post("/admin/providers/add", &serde_json::json!({"id": "quad9"})),
+                R::DuplicateProviderId,
+                "quad9",
+            ),
+            (
+                post(
+                    "/admin/providers/add",
+                    &serde_json::json!({"id": "zqcanary"}),
+                ),
+                R::IncompleteCustomProvider,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/providers/add",
+                    &serde_json::json!({"id": "zqcanary", "url": "https://127.0.0.1/zqpath", "display_name": "x", "category": "SECURITY"}),
+                ),
+                R::InvalidProviderUrl,
+                "zq",
+            ),
+            (
+                post(
+                    "/admin/providers/remove",
+                    &serde_json::json!({"id": "quad9"}),
+                ),
+                R::BuiltinProviderNotRemovable,
+                "quad9",
+            ),
+            (
+                post(
+                    "/admin/providers/remove",
+                    &serde_json::json!({"id": "zqcanary"}),
+                ),
+                R::UnknownProvider,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/providers/set-enabled",
+                    &serde_json::json!({"id": "zqcanary", "enabled": true}),
+                ),
+                R::UnknownProvider,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/providers/set-category-enabled",
+                    &serde_json::json!({"category": "zqcanary", "enabled": true}),
+                ),
+                R::MalformedBody,
+                "zqcanary",
+            ),
+            (
+                post(
+                    "/admin/config",
+                    &serde_json::json!({"timeout_mode": "zqcanary"}),
+                ),
+                R::MalformedBody,
+                "zqcanary",
+            ),
+            (
+                admin_log_request(Some("decision=zqcanary")),
+                R::InvalidLogQuery,
+                "zqcanary",
+            ),
+            (
+                admin_log_request(Some("voter=zqcanary")),
+                R::UnknownProvider,
+                "zqcanary",
+            ),
+        ])
+        .await;
+    }
+
+    #[tokio::test]
+    async fn maxmind_malformed_credentials_400_names_its_reason_without_the_account_id() {
+        let (_dir, state) = maxmind_state_with_tempdir();
+        let response = match serve(admin_maxmind_post_request("zqcanary", "   "), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let (bytes, body) = rejection_of(response).await;
+        assert_eq!(body.reason, AdminErrorReason::MalformedCredentials);
+        assert!(!String::from_utf8_lossy(&bytes).contains("zqcanary"));
+    }
+
+    // The one reason that names more than itself: the field and its cap are
+    // server constants, so the cache card can say which input is too large —
+    // the rejected number itself never comes back.
+    #[tokio::test]
+    async fn cache_config_value_past_its_cap_names_the_field_and_cap_not_the_value() {
+        let (_dir, state) = providers_state();
+        let update = CacheConfigUpdate {
+            stale_grace_secs: 987_654_321_987,
+            ..non_default_cache_config_update()
+        };
+        let response = match serve(admin_cache_config_apply_request(update), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let (bytes, body) = rejection_of(response).await;
+        assert_eq!(body.reason, AdminErrorReason::ValueTooLarge);
+        assert_eq!(body.field.as_deref(), Some("stale_grace_secs"));
+        assert_eq!(body.max, Some(604_800));
+        assert!(!String::from_utf8_lossy(&bytes).contains("987654321987"));
+    }
+
+    #[test]
+    fn every_admin_error_reason_is_listed_in_all() {
+        // A new variant fails to compile here until it is added to `ALL`
+        // (and so reaches the dictionary coverage test in `admin_ui`).
+        for reason in AdminErrorReason::ALL {
+            match reason {
+                AdminErrorReason::MalformedBody
+                | AdminErrorReason::ValueTooLarge
+                | AdminErrorReason::ClampMinExceedsMax
+                | AdminErrorReason::EmptyDomain
+                | AdminErrorReason::InvalidDomain
+                | AdminErrorReason::UnexpectedWildcard
+                | AdminErrorReason::InvalidCountryCode
+                | AdminErrorReason::InvalidZoneList
+                | AdminErrorReason::UnknownZoneList
+                | AdminErrorReason::UnknownBlocklistSource
+                | AdminErrorReason::InvalidCctldCode
+                | AdminErrorReason::InvalidProviderId
+                | AdminErrorReason::DuplicateProviderId
+                | AdminErrorReason::IncompleteCustomProvider
+                | AdminErrorReason::InvalidProviderUrl
+                | AdminErrorReason::BuiltinProviderNotRemovable
+                | AdminErrorReason::UnknownProvider
+                | AdminErrorReason::MalformedCredentials
+                | AdminErrorReason::InvalidLogQuery
+                | AdminErrorReason::InvalidValue => {}
+            }
+        }
+        let distinct: std::collections::HashSet<_> = AdminErrorReason::ALL.iter().collect();
+        assert_eq!(distinct.len(), AdminErrorReason::ALL.len());
     }
 
     async fn providers_json(state: Arc<AppState<MockClient>>) -> crate::admin::ProvidersResponse {

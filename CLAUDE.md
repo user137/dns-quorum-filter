@@ -110,7 +110,7 @@ Modules under `crates/dnsqb-service/src/`:
 | `geoip` / `geoip_credentials` / `geoip_download` / `geoip_updater` | `GeoipReader` country lookup — `country()` tries the nested `["country","iso_code"]` path (DB-IP/GeoLite2) then falls back to a flat `["country_code"]` field (T-226(б)). `GeoipSource` = `UserCountry` (`sapics/ip-location-db`, default since T-226(б) 2026-09-12, PDDL, no registration) or `Maxmind` (opt-in, Basic auth, `.tar.gz` extract — T-80). **`DbIpLite`, the former default, is not selectable by any production code path any more** — no config field or route constructs it (`load_geoip_source` and its two `dispatch.rs` mirrors all fall back to `UserCountry`) — kept in the enum only as a one-line revert path, not a live option. `geoip_credentials::{save,load,clear}` (T-163) store the MaxMind account-id+license-key JSON blob in the OS secret store (`key_store::maxmind_credentials_entry`), not a file; `migrate_legacy_credentials_file` folds a pre-T-163 plaintext `geoip_maxmind.toml` in once and unlinks it (delete-after-store is safe here — a credential is re-typeable, unlike the TLS key). `geoip_updater::check_maxmind_credentials` = one status-only authed probe (10s timeout) for the save-time check; `MaxmindHealth` (`health_after_refresh`, pure) tracks whether the stored key is still accepted at the 24h background refresh. `GeoipSource` lives on `AppState` (`RwLock<Arc<_>>`); `run_geoip_updater` re-snapshots it each cycle and parks on `sleep`-or-`Notify` so a creds change is picked up with no restart. Bounded download + integrity gate (hard-fail sha256 for `user-country` — a confirmed real sidecar, unlike DB-IP's/MaxMind's opportunistic ones) + atomic swap |
 
 Admin channel — same loopback TLS port as `/dns-query`, `application/json` CSRF gate on every
-write route, the full set enumerated in `dispatch::ROUTES` (a path/method not in that table can
+write route, every `400` body = `AdminErrorResponse { reason }` (closed enum, never the input, T-280), the full set enumerated in `dispatch::ROUTES` (a path/method not in that table can
 never reach a handler): `GET /admin/status`; `POST /admin/config`, `/admin/reset`,
 `/admin/shutdown`; `GET|POST /admin/overrides[/add|/remove]`, `/admin/cache-config[/apply]`,
 `/admin/geoip[/add|/remove]`, `GET|POST /admin/geoip/maxmind` + `POST /admin/geoip/maxmind/clear`
@@ -144,8 +144,7 @@ collapses to `UNKNOWN` on the wire), a cache kept warm by the detached `cert_wat
 (`ensure_installed` via `spawn_blocking`, `InstallCertResponse { outcome }`; mutates
 `CurrentUser\Root`; **stays** in `FUZZ_EXCLUDED_ROUTES` — mutating);
 `GET /admin/events` (T-277, SSE push stream, read-only, no CSRF gate — see `change_bus`/`events`); `GET /admin/ui`, `/admin/ui/main.js`, `/admin/ui/style.css`, `/admin/ui/favicon.png`, `/admin/ui/i18n/<locale>.json` for 37
-supported locales (T-151 Батч 5.2 shipped uk+en as two literal routes; T-236 grew the same
-macro-generated table to the full list — `admin_ui::I18N_DICTS`/`dispatch::I18N_ROUTES`,
+supported locales (`admin_ui::I18N_DICTS`/`dispatch::I18N_ROUTES`,
 `ui/i18n/GLOSSARY.md` — still exact-string matching, never path-parameterized). Also on the same
 listener but
 **not** an admin route: `GET /health` (watchdog channel 3 — no CSRF gate, read-only,

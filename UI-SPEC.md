@@ -204,7 +204,7 @@ persist'нути напівстан). Рядок «N сторін бачать �
 | Порт локального DoH | `u16` | §1 | числове поле | конфліктний порт → **явна помилка**, не мовчазний fallback (§1); не в UI-картці | Ф1 |
 | Список voter'ів, згрупований за категорією | `ProviderView[]` (`ProvidersResponse.active`) | §3.4, T-72/T-73 | заголовки `SECURITY`/`ADS_TRACKERS`/`ADULT_CONTENT`, у кожній рядок із тумблером | тумблер → `POST /admin/providers/set-enabled`; бейдж `block_signature`; дефолт `quad9`+`cloudflare-malware`+`adguard` ON (T-170, DECISIONS.md 2026-09-05 — два Security-tier §3.4 + AdGuard для реклами) | Ф2 ✅ |
 | Додати пресет | `ProviderView[]` (`available_presets` мінус уже активні) | §3.4, T-73 | рядок «назва + бейдж категорії + Додати» | `POST /admin/providers/add` з `{ id }` (решта полів — з таблиці `BUILTIN_PRESETS`) | Ф2 ✅ |
-| Додати власний DoH-провайдер | `ProviderAddRequest` | §3.4, T-72 | суб-форма: `id` (`[a-z0-9-]{1,64}`), URL, показова назва, select категорії, select `block_signature` (дефолт `NULL_IP_OR_NXDOMAIN`) | `POST /admin/providers/add`; клієнт дублює бекендові перевірки `is_valid_provider_id` / `https://`; сервер відхиляє SSRF-хост (loopback/private/link-local літерал), дублікат id, неповну форму — payload-free 400 | Ф2 ✅ |
+| Додати власний DoH-провайдер | `ProviderAddRequest` | §3.4, T-72 | суб-форма: `id` (`[a-z0-9-]{1,64}`), URL, показова назва, select категорії, select `block_signature` (дефолт `NULL_IP_OR_NXDOMAIN`) | `POST /admin/providers/add`; клієнт дублює бекендові перевірки `is_valid_provider_id` / `https://`; сервер відхиляє SSRF-хост (loopback/private/link-local літерал), дублікат id, неповну форму — 400 з причиною (`AdminErrorResponse`, T-280), без відлуння введеного | Ф2 ✅ |
 | Видалити власний запис | `ProviderRemoveRequest` | §3.4, T-72 | confirm-gated кнопка «Видалити» лише на рядках `is_builtin=false` | `POST /admin/providers/remove` з `{ id }`; пресет видалити не можна (лише вимкнути) | Ф2 ✅ |
 | Рядок «N третіх сторін бачать запити» | `usize` (`third_party_count`) | §3.4, CLAUDE.md «не ховати» | текст, лише читання | увімкнені voter'и + 1 baseline | Ф2 ✅ |
 | Попередження «фільтрація не активна» | `bool` (`filtering_active`) | §3, §8.1, T-72/T-73 closing review | `notice warn`, з'являється умовно | показується, коли жоден voter не увімкнено (легітимний pass-through, але має бути видимим) | Ф2 ✅ |
@@ -363,6 +363,10 @@ Timeout-режим, Кеш, Списки виключень, Лог-фільтр
    `port`/`stats`/`persisted`) — строгі. `AdminClient::{status,apply,reset}`
    `tracing::warn!` на розбіжність версій, не падає. **Правило:** додав поле в
    `AdminStatusResponse` → бампни const **і** додай `#[serde(default)]`.
+5b. **Відмова `400` (T-280, хвиля 18):** тіло — `AdminErrorResponse { reason, field?, max? }`,
+   `reason` — закритий `AdminErrorReason` (20 варіантів), без відлуння введеного; `field`/`max`
+   лише у `VALUE_TOO_LARGE`. Клієнт показує `error.reason.<NAME>` у шаблоні помилки своєї картки,
+   інакше — `HTTP 400`. Деталі — `diagrams/ui-dto-model.md`.
 6. `StatusIndicatorState` — не єдиний enum, а сукупність незалежних умов; див.
    `diagrams/ui-status-indicator.md` (включно з ⚠️ GAP про порядок пріоритету
    при одночасному виконанні кількох умов). **T-191:** трей-іконка (`dnsqb-tray`)

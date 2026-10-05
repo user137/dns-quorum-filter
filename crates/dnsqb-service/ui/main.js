@@ -111,6 +111,46 @@ function tPlural(key, n) {
   return template.replace("{n}", n);
 }
 
+const CACHE_FIELD_LABEL_KEYS = {
+  clamp_min_secs: "cacheConfig.field.clampMin",
+  clamp_max_secs: "cacheConfig.field.clampMax",
+  block_verdict_ttl_secs: "cacheConfig.field.blockVerdictTtl",
+  stale_grace_secs: "cacheConfig.field.staleGrace",
+  max_capacity: "cacheConfig.field.maxCapacity",
+};
+
+// T-280: a refused /admin/* request names a closed reason in its 400 body.
+// No body (an older service), a non-JSON one, an unknown reason or an unloaded
+// dictionary all keep the bare status this page showed before. Never throws.
+async function responseError(response) {
+  const fallback = new Error(`HTTP ${response.status}`);
+  let body;
+  try {
+    const type = response.headers && response.headers.get("Content-Type");
+    if (!type || !type.startsWith("application/json")) {
+      return fallback;
+    }
+    body = await response.json();
+  } catch (_err) {
+    // A truncated or unparsable body is no reason - keep the bare status.
+    return fallback;
+  }
+  const reason = body && typeof body.reason === "string" ? body.reason : "";
+  const key = `error.reason.${reason}`;
+  if (!reason || !Object.prototype.hasOwnProperty.call(DICT, key)) {
+    return fallback;
+  }
+  if (reason !== "VALUE_TOO_LARGE") {
+    return new Error(t(key));
+  }
+  if (typeof body.field !== "string" || typeof body.max !== "number") {
+    return fallback;
+  }
+  const labelKey = CACHE_FIELD_LABEL_KEYS[body.field];
+  const field = labelKey ? t(labelKey) : body.field;
+  return new Error(t(key, { field, max: String(body.max) }));
+}
+
 // Lists only SUPPORTED_LOCALES - deliberately not a broader "every language"
 // list: a selector entry for a locale with no dictionary would silently snap
 // back to English the moment it's picked (Три Б - never offer a choice that
@@ -631,7 +671,7 @@ async function installCertFromHero(button) {
       body: "{}",
     });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw await responseError(response);
     }
     await refresh();
   } catch (_err) {
@@ -646,7 +686,7 @@ async function installCertFromHero(button) {
 async function getStatus() {
   const response = await fetch("/admin/status");
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -672,7 +712,7 @@ async function applyCurrentConfig() {
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1157,7 +1197,7 @@ function startLiveUpdates() {
 async function getOverrides() {
   const response = await fetch("/admin/overrides");
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1169,7 +1209,7 @@ async function addOverride(pattern, list) {
     body: JSON.stringify({ pattern, list }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1181,7 +1221,7 @@ async function removeOverride(domain, isWildcard, list) {
     body: JSON.stringify({ domain, is_wildcard: isWildcard, list }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1361,7 +1401,7 @@ async function refreshOverrides(mode) {
 async function getCacheConfig() {
   const response = await fetch("/admin/cache-config");
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1373,7 +1413,7 @@ async function applyCacheConfig(update) {
     body: JSON.stringify(update),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1615,7 +1655,7 @@ async function setCctldBlock(blockedCodes) {
     body: JSON.stringify({ blocked_codes: blockedCodes }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1986,7 +2026,7 @@ async function refreshCctldBlock(mode) {
 async function getGeoip() {
   const response = await fetch("/admin/geoip");
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -1998,7 +2038,7 @@ async function addGeoipCountry(country) {
     body: JSON.stringify({ country }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -2010,7 +2050,7 @@ async function removeGeoipCountry(country) {
     body: JSON.stringify({ country }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -2294,7 +2334,7 @@ const MAXMIND_CHECK_MESSAGES = {
 async function getMaxmind() {
   const response = await fetch("/admin/geoip/maxmind");
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -2306,7 +2346,7 @@ async function setMaxmind(accountId, licenseKey) {
     body: JSON.stringify({ account_id: accountId, license_key: licenseKey }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -2318,7 +2358,7 @@ async function clearMaxmind() {
     body: "{}",
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -2496,7 +2536,7 @@ async function refreshMaxmind(mode) {
 async function getLog(params) {
   const response = await fetch(`/admin/log?${params.toString()}`);
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -2508,7 +2548,7 @@ async function clearLog() {
     body: "{}",
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
 }
 
@@ -3069,7 +3109,7 @@ function blockSignatureLabel(signature) {
 async function getProviders() {
   const response = await fetch("/admin/providers");
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -3081,7 +3121,7 @@ async function setProviderEnabled(id, enabled) {
     body: JSON.stringify({ id, enabled }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -3093,7 +3133,7 @@ async function addProvider(spec) {
     body: JSON.stringify(spec),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -3105,7 +3145,7 @@ async function removeProvider(id) {
     body: JSON.stringify({ id }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -3548,7 +3588,7 @@ async function setCategoryEnabled(category, enabled) {
     body: JSON.stringify({ category, enabled }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -3969,7 +4009,7 @@ async function requestRemoveAll() {
     body: "{}",
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -4097,7 +4137,7 @@ async function setRatingFilter(enabled, lists) {
     body: JSON.stringify({ enabled, lists }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }
@@ -4692,7 +4732,7 @@ async function setBlocklistBundles(enabled, sources) {
     body: JSON.stringify({ enabled, sources }),
   });
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await responseError(response);
   }
   return response.json();
 }

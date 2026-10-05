@@ -23,6 +23,8 @@ T-227, T-218, T-115/T-116/T-117/T-119 (Фаза 5 Батч 5.1). DECISIONS.md 20
 T-254/T-243/ARCH-04: `HeroStateView` (досі не було на діаграмі) з `FILTERS_DEGRADED`,
 `AdminStatusResponse.startup_task: StartupTaskView`, `AdminStats.last_query_unix_ms`,
 `ADMIN_DTO_SCHEMA_VERSION` 6→7 (`crates/dnsqb-service/src/admin.rs`, `startup_task.rs`).
+TASKS.md T-280 (хвиля 18): `AdminErrorResponse`/`AdminErrorReason` — тіло кожного `/admin/*` `400`,
+`ADMIN_DTO_SCHEMA_VERSION` 7→8.
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -630,6 +632,16 @@ MaxMind GeoLite2 (креденшели з T-163 — в OS secret store, не у 
   — CSRF-гейт + body-cap як усі write-маршрути; `ensure_installed` через `spawn_blocking`. Обидва
   в `FUZZ_EXCLUDED_ROUTES`. Немає `AdminClient`-методів — жоден Rust-споживач не кличе (трей —
   `ensure_installed` напряму, `/admin/ui` — `fetch`), той самий прецедент, що `/admin/overrides`.
+
+## `AdminErrorResponse` — тіло відмови `400` (T-280, хвиля 18)
+
+Кожен `400` адмін-каналу (`/admin/*`, не `/dns-query`) несе `AdminErrorResponse { reason:
+AdminErrorReason, field?: String, max?: u64 }`. `AdminErrorReason` — закритий enum із 20
+варіантів (`SCREAMING_SNAKE_CASE`: `MALFORMED_BODY`, `VALUE_TOO_LARGE`, `INVALID_COUNTRY_CODE`,
+`UNKNOWN_PROVIDER`, … `INVALID_VALUE`), **без відлуння введеного** (T-270). `field`/`max` є лише
+у `VALUE_TOO_LARGE` — ключ `[cache]` і його межа, константи сервера. `main.js` (`responseError`)
+мапить причину на `error.reason.<NAME>` у словнику; немає тіла / не JSON / невідома причина →
+голе `HTTP 400`, як до T-280 (сумісність зі старішою службою). Статус-коди не змінено.
 
 ## `LogEntry`/`VoterResult`/`VoterStatus`/`DecisionSource`/`Decision`/`QType` — реальна реалізація (T-54)
 

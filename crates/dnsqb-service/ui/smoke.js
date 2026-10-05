@@ -555,6 +555,38 @@ for (const [fn, data] of xssCalls) {
   ctx.fetch = realFetch;
   run("providersActionError = null; filterControlsActionError = null; configApplyError = null");
 
+  // T-280: a 400 that names its reason shows the localized reason; anything
+  // else (older service, odd body, unknown reason) keeps the bare "HTTP 400".
+  const reply400 = (body, type = "application/json") => ({
+    ok: false, status: 400,
+    headers: { get: (h) => (h.toLowerCase() === "content-type" ? type : null) },
+    json: async () => { if (body instanceof Error) throw body; return body; },
+  });
+  ctx.__r = null;
+  const errorText = async (response) => { ctx.__r = response; return (await run("responseError(__r)")).message; };
+  guard("reason not localized", (await errorText(reply400({ reason: "INVALID_COUNTRY_CODE" }))) === dicts.en["error.reason.INVALID_COUNTRY_CODE"]);
+  const tooLarge = await errorText(reply400({ reason: "VALUE_TOO_LARGE", field: "stale_grace_secs", max: 604800 }));
+  guard(`VALUE_TOO_LARGE lost its field label or cap: ${tooLarge}`, tooLarge.includes(dicts.en["cacheConfig.field.staleGrace"]) && tooLarge.includes("604800") && !tooLarge.includes("{"));
+  guard("VALUE_TOO_LARGE without field/max not the bare status", (await errorText(reply400({ reason: "VALUE_TOO_LARGE" }))) === "HTTP 400");
+  guard("unknown reason not the bare status", (await errorText(reply400({ reason: "NO_SUCH_REASON" }))) === "HTTP 400");
+  guard("prototype key taken as a reason", (await errorText(reply400({ reason: "__proto__" }))) === "HTTP 400");
+  guard("missing reason not the bare status", (await errorText(reply400({}))) === "HTTP 400");
+  guard("non-JSON body parsed", (await errorText(reply400({ reason: "INVALID_VALUE" }, "text/plain"))) === "HTTP 400");
+  guard("unparsable body threw out of responseError", (await errorText(reply400(new SyntaxError("bad json")))) === "HTTP 400");
+  guard("old service shape (no headers) not the bare status", (await errorText({ ok: false, status: 400, json: async () => ({}) })) === "HTTP 400");
+  run("DICT = {}");
+  guard("unloaded dictionary not the bare status", (await errorText(reply400({ reason: "INVALID_VALUE" }))) === "HTTP 400");
+  run(`DICT = __dict; CURRENT_LOCALE = "uk"`, Object.assign(ctx, { __dict: dicts.uk }));
+  guard("reason not localized in uk", (await errorText(reply400({ reason: "INVALID_VALUE" }))) === dicts.uk["error.reason.INVALID_VALUE"]);
+  run(`DICT = __dict; CURRENT_LOCALE = "en"`, Object.assign(ctx, { __dict: dicts.en }));
+  // Happy, end to end: a refused config POST shows the reason inside its card.
+  ctx.fetch = routeFetch({ "/admin/config": () => reply400({ reason: "INVALID_VALUE" }) });
+  assigned.length = 0;
+  await run("onConfigChanged()");
+  guard("config POST 400 reason not shown in the card", shown(run(`t("timeoutConfig.applyFailedTemplate", { message: t("error.reason.INVALID_VALUE") })`)));
+  ctx.fetch = realFetch;
+  run("configApplyError = null");
+
   // T-277: the push-stream client.
   const timers = [];
   let timerId = 1;
