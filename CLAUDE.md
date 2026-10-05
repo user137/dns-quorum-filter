@@ -505,7 +505,7 @@ entry there, not here, on the same trigger CLAUDE.md's own maintenance rule alre
 | `RUST-GOTCHAS.md` | non-obvious Rust/tooling gotchas learned by doing — split out of `CLAUDE.md` once it became that file's single largest section | a new empirically-verified gotcha is worth not re-deriving next time |
 | `KNOWN-LIMITATIONS.md` | live limitations in shipped code, no task number unless noted — split out of `CLAUDE.md`'s `Project state` once it became the fastest-growing section | a finished task leaves a live limitation behind (narrative still goes to `TASKS-DONE.md`) |
 | `crates/dnsqb-service/ui/i18n/GLOSSARY.md` | i18n translation rules for the pilot key set: untranslated terms, per-locale term conventions, the measured `Intl.PluralRules` category table, the `sr`-vs-`sr-Latn` rationale | a new locale is added, or a translation convention changes |
-| `TASKS.md` | open backlog — status only, no reasoning | a task starts or gets added |
+| `TASKS.md` | open backlog — status only, no reasoning; CI size gate `tasks-md-size.yml` | a task starts or gets added |
 | `TASKS-DONE.md` | completed tasks, moved out of `TASKS.md` on finish, same format + a one-line implementation note per task | a task finishes |
 | `DECISIONS.md` | retroactive corrections to already-shipped decisions, with reasoning; overrides SPEC.md by date on conflict | a past decision gets revised |
 | `SECURITY.md` | threat model summary, hard security constraints, dependency-vetting table | threat model changes or a dependency is added |

@@ -1100,41 +1100,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   паніки; лише детерміновано — stdout = `os.pipe()` із закритим кінцем читання до старту (Python), очікувано код 0
   і порожній stderr; аргумент із непарним сурогатом — лише разом із `--help`). Уже пройдено
   на 0.8.903 — `review/QA-FIX-PLAN.md`, хвиля 6, «Re-test на артефакті 0.8.903».
-- [ ] T-246 — **Заведено 2026-10-03, QA-прохід (поверхня E).** CLI `--help` (T-235) на встановленому
-  MSIX 0.8.0, три спостереження: (1) `dnsqb-service.exe`/`dnsqb-tray.exe` з `WindowsApps\` напряму
-  (PowerShell 7, Windows PowerShell 5.1, `cmd`) — «Access is denied», ACL ідентичні з
-  `dnsqb-watcher.exe`, який запускається; через `Invoke-CommandInDesktopPackage` обидва друкують
-  довідку (код 0). Найімовірніше Windows не дає запускати поза пакетом exe, не оголошений у
-  маніфесті (`Application`/`startupTask` — лише watcher) — **не підтверджено документацією**.
-  Тобто для користувача `--help` реально доступний лише у watcher. (2) Закритий stdout →
-  паніка: `dnsqb-watcher.exe --help | Select -First 1` і `--help > file` у PowerShell 7 дають
-  `thread 'main' panicked … failed printing to stdout: The pipe is being closed. (os error 232)`
-  (відтворено 3 рази); `println!` панікує на зламаному pipe — суперечить `deny(unwrap/expect)`-духу
-  «без panic у продакшн-коді», правильніше `writeln!` з ігноруванням помилки. (3) Через (2) `> file`
-  у PowerShell 7 лишає порожній файл (PowerShell не чекає GUI-subsystem процес); `Start-Process
-  -Wait -RedirectStandardOutput` і `| Out-String` працюють. Низька тяжкість, не блокує реліз.
-  Принагідно: другий екземпляр `dnsqb-service` логує `ERROR … not starting a second one`, але
-  виходить з кодом 0 — зафіксовано, не досліджено. **Закрито хвилею 13b (`b33061c`): тепер `info` + `exit(0)`.** (4) **Доповнено 2026-10-04:** усі три `main.rs`
-  (`dnsqb-service/src/main.rs:23`, `dnsqb-tray/src/main.rs:193`, `dnsqb-watcher/src/main.rs:61`)
-  передають у `wants_help` `std::env::args()`, який панікує на аргументі, що не є коректним
-  Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
-  сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
-  код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
-  **Пункти (2) і (4) закрито хвилею 4 (`dc54232`, `TASKS-DONE.md`); відкритий лише (1).**
-  **Діагноз (1), хвиля 11, 2026-10-05 — експериментом, не документом:** на встановленому 0.8.903
-  `--help` напряму з `WindowsApps\` — watcher код 0, service/tray «Access is denied» (відтворено).
-  SDDL трьох exe однаковий: безумовно `BU` має лише `FR` (без execute); `0x1200a9` (з execute) — лише
-  умовний ACE `(XA;…;BU;(WIN://SYSAPPID Contains "dns-quorum-filter_8d78tvs37tgae"))`, тобто тільки
-  токену з ідентичністю пакета. **Висновок (не спостерігався напряму, лише узгоджується з результатом):**
-  Windows дає ідентичність при прямому запуску лише exe, оголошеному в маніфесті
-  (`<Application Executable="dnsqb-watcher.exe">`); service/tray там немає. Прямого речення
-  в документації Microsoft не знайдено (3 пошуки: learn.microsoft.com MSIX troubleshooting/known
-  issues/«behind the scenes», devblogs «Inside MSIX»). **Рішення за користувачем:** (а) лишити як
-  обмеження в `KNOWN-LIMITATIONS.md` (`--help` служби/трея — через
-  `Invoke-CommandInDesktopPackage` або з розпакованої збірки) чи (б) змінити маніфест —
-  додаткові `Application` для service/tray з `AppListEntry="none"` (за потреби ще
-  `uap3:AppExecutionAlias`; чи може псевдонім watcher-ового `Application` вести на інший exe — не
-  перевірено, сторінка елемента цього не каже) — тоді MSIX-тест.
 - [ ] T-280 — **Заведено 2026-10-05, запит користувача (знахідка хвилі 8 / T-250; раніше — картка кешу,
   хвиля 1).** Відмова сервера на POST з `/admin/ui` показується як голе «HTTP 400» без пояснення: усі
   ~40 відповідей 400 у `dispatch.rs` віддаються без тіла (`status_response(StatusCode::BAD_REQUEST)`,
@@ -1237,7 +1202,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
 - [x] Хвиля 9 — поглинута T-277 (T-248, T-242, тест ARCH-12) — виконано 2026-10-04, `TASKS-DONE.md`
 - [x] T-277 — push-оновлення `/admin/ui` через `GET /admin/events` (+ T-279 пейджер журналу) — виконано 2026-10-04, `TASKS-DONE.md`
 - [x] Хвиля 10 — i18n, доступність і інструкції браузерів (T-247, T-249, T-258, T-260, текст T-257; + ARCH-05 «перевірка» в README) — виконано 2026-10-04, `TASKS-DONE.md`
-- [ ] Хвиля 11 — розбіжності документації (T-245; T-246 п. 1 після діагнозу; + ARCH-05, -06, -17; ARCH-02 окремим комітом) — T-245, ARCH-05/-06/-17 і діагноз T-246 (1) виконано 2026-10-05 (`TASKS-DONE.md`); ARCH-02 (82 закриті блоки → `TASKS-DONE.md`, розділ «Перенесено з `TASKS.md`») — теж 2026-10-05; лишились рішення T-246 (1) і розмірного гейта на `TASKS.md`
+- [x] Хвиля 11 — розбіжності документації (T-245; T-246 п. 1 після діагнозу; + ARCH-05, -06, -17; ARCH-02 окремим комітом) — T-245, ARCH-05/-06/-17 і діагноз T-246 (1) виконано 2026-10-05 (`TASKS-DONE.md`); ARCH-02 (82 закриті блоки → `TASKS-DONE.md`, розділ «Перенесено з `TASKS.md`») — теж 2026-10-05; T-246 (1) → обмеження в `KNOWN-LIMITATIONS.md`, розмірний гейт `tasks-md-size.yml` (рішення користувача 2026-10-05)
 - [ ] Хвиля 12 — тест-покриття рядків `CODE-ONLY`, T-265 (+ ARCH-11 б)
 - [x] Хвиля 13a — атомарний запис конфігу + приватна помилка розбору (ARCH-01 → T-273, T-252) — виконано 2026-10-04, `TASKS-DONE.md`
 - [x] Хвиля 13b — «служба не працює: причина й одна дія» (T-266, ARCH-03 → T-275, ARCH-11 а → T-276, T-246 побічне) — виконано 2026-10-04, `TASKS-DONE.md`; знахідка T-274

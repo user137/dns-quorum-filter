@@ -1,0 +1,39 @@
+name: TASKS.md size gate
+
+on:
+  push:
+    paths: ['TASKS.md']
+  pull_request:
+    paths: ['TASKS.md']
+
+# Same shape and reasoning as claude-md-size.yml: ci.yml/codeql.yml ignore **/*.md,
+# so without this a docs-only push gets no feedback at all. TASKS.md is the open
+# backlog only (Documentation map) — on 2026-10-05 (ARCH-02) 82 closed `[x]` blocks
+# had piled up in it and were moved to TASKS-DONE.md by script.
+concurrency:
+  group: tasks-md-size-${{ github.ref }}
+  cancel-in-progress: true
+
+# Threshold = size right after ARCH-02 + closing T-246 as the windows-latest checkout sees it
+# (CRLF: 196,205 LF bytes + 1,557 lines = ~197,762) plus ~6 % headroom,
+# deliberately tight. If this fails, the fix is moving finished tasks to
+# TASKS-DONE.md, not raising TASKS_MD_MAX_BYTES.
+env:
+  TASKS_MD_MAX_BYTES: 210000
+
+jobs:
+  check-size:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check TASKS.md size
+        shell: pwsh
+        run: |
+          $bytes = (Get-Item TASKS.md).Length
+          $limit = [int]$env:TASKS_MD_MAX_BYTES
+          Write-Host "TASKS.md is $bytes bytes (limit $limit)."
+          if ($bytes -gt $limit) {
+            Write-Host "::error::TASKS.md is $bytes bytes, limit $limit. TASKS.md holds the open backlog only -- move finished [x] tasks (with their indented continuation lines) to TASKS-DONE.md, see CLAUDE.md's 'Documentation map'. Do not raise TASKS_MD_MAX_BYTES in this workflow as the fix."
+            exit 1
+          }

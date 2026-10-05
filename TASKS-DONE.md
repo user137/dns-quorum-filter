@@ -8818,3 +8818,41 @@ TASKS.md); переклади 35 локалей — машинні, без на�
 - [x] T-216 — CLAUDE.md «Commands» — додано, що `--lib --bins` так само не запускає `tests/`
   integration-бінарники (третя категорія); кожен потребує власного `cargo test --test <name>`
   (`conformance` + `admin_client`). Виявлено у T-201. (знахідка T-201)
+- [x] T-246 — **Заведено 2026-10-03, QA-прохід (поверхня E).** CLI `--help` (T-235) на встановленому
+  MSIX 0.8.0, три спостереження: (1) `dnsqb-service.exe`/`dnsqb-tray.exe` з `WindowsApps\` напряму
+  (PowerShell 7, Windows PowerShell 5.1, `cmd`) — «Access is denied», ACL ідентичні з
+  `dnsqb-watcher.exe`, який запускається; через `Invoke-CommandInDesktopPackage` обидва друкують
+  довідку (код 0). Найімовірніше Windows не дає запускати поза пакетом exe, не оголошений у
+  маніфесті (`Application`/`startupTask` — лише watcher) — **не підтверджено документацією**.
+  Тобто для користувача `--help` реально доступний лише у watcher. (2) Закритий stdout →
+  паніка: `dnsqb-watcher.exe --help | Select -First 1` і `--help > file` у PowerShell 7 дають
+  `thread 'main' panicked … failed printing to stdout: The pipe is being closed. (os error 232)`
+  (відтворено 3 рази); `println!` панікує на зламаному pipe — суперечить `deny(unwrap/expect)`-духу
+  «без panic у продакшн-коді», правильніше `writeln!` з ігноруванням помилки. (3) Через (2) `> file`
+  у PowerShell 7 лишає порожній файл (PowerShell не чекає GUI-subsystem процес); `Start-Process
+  -Wait -RedirectStandardOutput` і `| Out-String` працюють. Низька тяжкість, не блокує реліз.
+  Принагідно: другий екземпляр `dnsqb-service` логує `ERROR … not starting a second one`, але
+  виходить з кодом 0 — зафіксовано, не досліджено. **Закрито хвилею 13b (`b33061c`): тепер `info` + `exit(0)`.** (4) **Доповнено 2026-10-04:** усі три `main.rs`
+  (`dnsqb-service/src/main.rs:23`, `dnsqb-tray/src/main.rs:193`, `dnsqb-watcher/src/main.rs:61`)
+  передають у `wants_help` `std::env::args()`, який панікує на аргументі, що не є коректним
+  Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
+  сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
+  код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
+  **Пункти (2) і (4) закрито хвилею 4 (`dc54232`, `TASKS-DONE.md`); відкритий лише (1).**
+  **Діагноз (1), хвиля 11, 2026-10-05 — експериментом, не документом:** на встановленому 0.8.903
+  `--help` напряму з `WindowsApps\` — watcher код 0, service/tray «Access is denied» (відтворено).
+  SDDL трьох exe однаковий: безумовно `BU` має лише `FR` (без execute); `0x1200a9` (з execute) — лише
+  умовний ACE `(XA;…;BU;(WIN://SYSAPPID Contains "dns-quorum-filter_8d78tvs37tgae"))`, тобто тільки
+  токену з ідентичністю пакета. **Висновок (не спостерігався напряму, лише узгоджується з результатом):**
+  Windows дає ідентичність при прямому запуску лише exe, оголошеному в маніфесті
+  (`<Application Executable="dnsqb-watcher.exe">`); service/tray там немає. Прямого речення
+  в документації Microsoft не знайдено (3 пошуки: learn.microsoft.com MSIX troubleshooting/known
+  issues/«behind the scenes», devblogs «Inside MSIX»). **Рішення за користувачем:** (а) лишити як
+  обмеження в `KNOWN-LIMITATIONS.md` (`--help` служби/трея — через
+  `Invoke-CommandInDesktopPackage` або з розпакованої збірки) чи (б) змінити маніфест —
+  додаткові `Application` для service/tray з `AppListEntry="none"` (за потреби ще
+  `uap3:AppExecutionAlias`; чи може псевдонім watcher-ового `Application` вести на інший exe — не
+  перевірено, сторінка елемента цього не каже) — тоді MSIX-тест.
+  **Пункт (1) закрито 2026-10-05 (хвиля 11, рішення користувача «на твій розсуд»): варіант (а) — обмеження в
+  `KNOWN-LIMITATIONS.md`; маніфест не змінено (низька тяжкість, `--help` watcher-а працює). Разом із цим —
+  розмірний гейт `.github/workflows/tasks-md-size.yml` (210 000 байт, запит користувача).**

@@ -21,6 +21,13 @@ TASKS-DONE.md, never here.
   only after the app's first launch; an install that is never launched starts nothing after a
   reboot. Told in README/release notes; `/admin/ui` can only show a task that already exists
   (`ImmediateRegistration` is Store-only, T-239).
+- **`--help` of the installed service and tray can't be run directly (T-246 (1))** — launching
+  `dnsqb-service.exe`/`dnsqb-tray.exe` from `WindowsApps\` gives «Access is denied»; only
+  `dnsqb-watcher.exe` (the manifest's `Application`) runs. Every exe there grants `BUILTIN\Users`
+  execute only through a `WIN://SYSAPPID` conditional ACE (needs package identity); the two
+  undeclared exes evidently don't get one on a direct launch (inferred, not found in Microsoft's
+  docs). Workaround: `Invoke-CommandInDesktopPackage`, or a build outside the package. Not fixed by
+  adding manifest `Application` entries — low severity, the watcher's `--help` works.
 - **Rating filter (T-124)** — ~~(a) enable-needs-restart~~ / ~~(b) already-cached domains outlive
   a new bubble~~ **both closed in Батч 4.4** (T-127: `run_topn_updater` always spawns; the enable
   route rebuilds the verdict cache). ~~(c) The lazy-hygiene removal overlay is in-memory only~~
