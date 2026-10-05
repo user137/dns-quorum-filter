@@ -1563,7 +1563,8 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   (`H-logs-privacy` зі зламаним конфігом, `F-gaveup`, `D-icon-ServiceGaveUp*`, `F-respawn*`),
   хвиля 8 (`B-timeout-EP`, `B-filter-controls-EP`, `B-providers-EP` — підміна `fetch` у devtools), хвиля 14
   (`B-danger-HP`: кнопка → діалог трею поверх браузера → «Так» → повне видалення, і `TRAY_NOT_RUNNING` після
-  «Сховати іконку»; `C-REMOVE_ALL_ID-HP`, `DIAG-life-removed`). Уже пройдено
+  «Сховати іконку»; `C-REMOVE_ALL_ID-HP`, `DIAG-life-removed`), хвиля 4 (`E-watcher-help-EP`, `E-locale-EP`,
+  `E-watcher-args-SB` — `--help | Select -First 1`, `--help > file`, аргумент із непарним сурогатом). Уже пройдено
   на 0.8.903 — `review/QA-FIX-PLAN.md`, хвиля 6, «Re-test на артефакті 0.8.903».
 - [ ] T-245 — **Заведено 2026-10-03, QA-прохід (рядки `A-dto-doc-drift`, `KL-tls-key-uninstall`).**
   Документація розійшлась із кодом у чотирьох місцях (лише доки, код коректний): (1) `UI-SPEC.md:265`
@@ -1600,6 +1601,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
   сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
   код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
+  **Пункти (2) і (4) закрито хвилею 4 (`dc54232`, `TASKS-DONE.md`); відкритий лише (1) — діагноз, потім хвиля 11.**
 - [ ] T-280 — **Заведено 2026-10-05, запит користувача (знахідка хвилі 8 / T-250; раніше — картка кешу,
   хвиля 1).** Відмова сервера на POST з `/admin/ui` показується як голе «HTTP 400» без пояснення: усі
   ~40 відповідей 400 у `dispatch.rs` віддаються без тіла (`status_response(StatusCode::BAD_REQUEST)`,
@@ -1694,7 +1696,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
 - [x] Хвиля 1 — межі `[cache]` (T-256; після 13a) — виконано 2026-10-05, `TASKS-DONE.md`
 - [x] Хвиля 2 — апгрейд MSIX і шлях встановлення (T-244 + ARCH-07; ARCH-13 необов'язковий — не робився) — виконано 2026-10-05, `TASKS-DONE.md`
 - [x] Хвиля 3 — hero при мертвих фільтрах + стан автозапуску + вік останнього запиту (T-254, T-243; рішення 2026-10-04; + ARCH-04) — виконано 2026-10-05, `TASKS-DONE.md`
-- [ ] Хвиля 4 — стійкість CLI (T-246 п. 2, 4)
+- [x] Хвиля 4 — стійкість CLI (T-246 п. 2, 4) — виконано 2026-10-05 (`TASKS-DONE.md`)
 - [x] Хвиля 5 — tooltip трею, залежність `tray-icon` (T-253) — виконано 2026-10-05 (`TASKS-DONE.md`); рядок ARCH-04 у tooltip (хвиля 6) виконано 2026-10-05 `35caceb`
 - [x] Хвиля 6 — трей: ціна простою + дрібниці (ARCH-19 першим; T-255, T-251, T-263, T-264, T-269; рядок ARCH-04; T-278 останнім). виконано 2026-10-05 (TASKS-DONE.md): ARCH-19 (а)+(б), T-255, T-251, T-263, T-264, T-269; T-278 закрито як невигідну; рядок ARCH-04 — `35caceb` після хвилі 5
 - Хвиля 7 — злито в 13a (T-252)
