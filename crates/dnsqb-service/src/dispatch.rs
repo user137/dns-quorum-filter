@@ -6049,6 +6049,176 @@ pub(crate) mod tests {
         }
     }
 
+    /// One `resolver_config.toml` writer for the ARCH-09 route-pair table:
+    /// its name, a call that sets its field(s) to a non-default value, and a
+    /// check that a reloaded file still holds that value.
+    type ConfigWriter = (
+        &'static str,
+        fn(&AppState<MockClient>),
+        fn(&ResolverConfig) -> bool,
+    );
+
+    fn config_writers() -> [ConfigWriter; 7] {
+        [
+            (
+                "config",
+                |s| {
+                    let _ = super::apply_admin_config(
+                        s,
+                        AdminConfigUpdate {
+                            timeout_mode: crate::timeout::TimeoutMode::FailClosed,
+                            serve_baseline_when_filters_unreachable: true,
+                        },
+                    );
+                },
+                |c| {
+                    c.timeout_mode == crate::timeout::TimeoutMode::FailClosed
+                        && c.serve_baseline_when_filters_unreachable
+                },
+            ),
+            (
+                "cache-config",
+                |s| {
+                    assert!(
+                        super::apply_cache_config(s, non_default_cache_config_update()).is_ok()
+                    );
+                },
+                |c| matches!(non_default_cache_config_update().into_config(), Ok(want) if c.cache == want),
+            ),
+            (
+                "geoip",
+                |s| assert!(super::apply_geoip_change(s, |_| Ok(vec!["RU".to_string()])).is_ok()),
+                |c| c.geoip.blocked_countries == ["RU"],
+            ),
+            (
+                "rating-filter",
+                |s| {
+                    let update = crate::admin::RatingFilterConfigUpdate {
+                        enabled: true,
+                        lists: vec!["ua".to_string()],
+                    };
+                    assert!(super::apply_rating_filter_change(s, &update).is_ok());
+                },
+                |c| c.rating_filter.enabled && c.rating_filter.lists == ["ua"],
+            ),
+            (
+                "blocklist-bundles",
+                |s| {
+                    let update = crate::admin::BlocklistBundlesConfigUpdate {
+                        enabled: true,
+                        sources: Some(vec!["hagezi-multi-pro".to_string()]),
+                    };
+                    assert!(super::apply_blocklist_bundles_change(s, &update).is_ok());
+                },
+                |c| {
+                    c.blocklist_bundles.enabled
+                        && c.blocklist_bundles.sources == Some(vec!["hagezi-multi-pro".to_string()])
+                },
+            ),
+            (
+                "cctld-block",
+                |s| {
+                    let update = crate::admin::CctldBlockConfigUpdate {
+                        blocked_codes: vec!["ru".to_string()],
+                    };
+                    assert!(super::apply_cctld_block_change(s, &update).is_ok());
+                },
+                |c| c.cctld_block.blocked_codes == ["ru"],
+            ),
+            (
+                "providers",
+                |s| {
+                    let added = super::apply_provider_change(s, |mut list| {
+                        let Some(spec) = crate::upstream::builtin_preset("opendns-familyshield")
+                        else {
+                            return Err(StatusCode::BAD_REQUEST);
+                        };
+                        list.push(ProviderEntry {
+                            spec,
+                            enabled: true,
+                        });
+                        Ok(list)
+                    });
+                    assert!(added.is_ok());
+                },
+                |c| {
+                    c.providers
+                        .iter()
+                        .any(|p| p.spec.id == "opendns-familyshield")
+                },
+            ),
+        ]
+    }
+
+    fn assert_config_writers_preserve_each_other(reverse: bool) {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let limits = LimitsConfig {
+            max_concurrent_connections: 100,
+            handshake_timeout: Duration::from_secs(5),
+            idle_timeout: Duration::from_secs(20),
+        };
+        let personal_zone = PersonalZoneConfig {
+            enabled: true,
+            frequency_window_days: 21,
+            frequency_top_n: 77,
+            regularity_window_days: 9,
+            regularity_min_days: 3,
+        };
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 9443,
+                persist_query_log: true,
+                persist_cache: true,
+                rating_filter: RatingFilterConfig::default(),
+                limits,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        state.update_personal_zone_config(personal_zone);
+
+        let mut writers = config_writers();
+        if reverse {
+            writers.reverse();
+        }
+        for (step, (name, write, _)) in writers.iter().enumerate() {
+            write(&state);
+            let loaded = match ResolverConfig::load(&path) {
+                Ok(loaded) => loaded,
+                Err(err) => panic!("the file saved by {name} must load back: {err}"),
+            };
+            for (earlier, _, holds) in &writers[..=step] {
+                assert!(
+                    holds(&loaded),
+                    "{earlier}'s value was lost by the {name} write (reverse = {reverse})"
+                );
+            }
+            assert_eq!(loaded.port, 9443, "{name} lost port");
+            assert_eq!(loaded.limits, limits, "{name} lost [limits]");
+            assert!(loaded.persist_query_log, "{name} lost persist_query_log");
+            assert!(loaded.persist_cache, "{name} lost persist_cache");
+            assert_eq!(
+                loaded.personal_zone, personal_zone,
+                "{name} lost [personal_zone]"
+            );
+        }
+    }
+
+    // ARCH-09 (wave 16): every `resolver_config.toml` writer must carry every
+    // other writer's live value and the no-route fields. Forward then reverse
+    // order covers every ordered pair (A then B, B then A).
+    #[test]
+    fn every_config_writer_preserves_every_other_writers_field() {
+        assert_config_writers_preserve_each_other(false);
+        assert_config_writers_preserve_each_other(true);
+    }
+
     // T-76, advisor-caught before commit: an unrelated `POST /admin/config`
     // (providers/timeout-mode only) must not silently wipe a hand-edited
     // `[geoip] blocked_countries` on save - the same "backend snapshots the
