@@ -4717,6 +4717,9 @@ function blocklistRelativeTime(unixMillis) {
 // "updated N h ago" labels are re-worked out here on the same 30 s timer as
 // the last-query age, from the absolute time each row carries.
 function refreshBlocklistAges() {
+  if (cardBusy(blocklistBundlesBody)) {
+    return;
+  }
   blocklistBundlesBody.querySelectorAll(".meta[data-updated-ms]").forEach((el) => {
     const text = blocklistRelativeTime(Number(el.dataset.updatedMs));
     if (el.textContent !== text) {

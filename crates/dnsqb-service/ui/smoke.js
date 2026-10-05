@@ -284,7 +284,9 @@ for (const [fn, data] of xssCalls) {
     console.log("[ages] the updated-at row does not carry its absolute time");
   }
   const aged = { dataset: { updatedMs: String(Date.now() - 3 * 3600e3) }, textContent: "frozen" };
-  vm.runInContext("blocklistBundlesBody", ctx).querySelectorAll = (sel) => (sel === ".meta[data-updated-ms]" ? [aged] : []);
+  const body = vm.runInContext("blocklistBundlesBody", ctx);
+  body.contains = () => false; // idle card: no focused field inside it
+  body.querySelectorAll = (sel) => (sel === ".meta[data-updated-ms]" ? [aged] : []);
   intervals.forEach((fn) => fn());
   const want = vm.runInContext(`blocklistRelativeTime(${aged.dataset.updatedMs})`, ctx);
   if (aged.textContent !== want) {
