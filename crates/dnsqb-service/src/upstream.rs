@@ -609,15 +609,22 @@ impl UpstreamError {
         if err.is_timeout() {
             return ("timeout", None);
         }
+        // The whole chain is walked: a transport failure nests as
+        // reqwest -> hyper_util -> `hyper::Error` -> `io::Error`, so an `io`
+        // cause anywhere below wins over the `hyper::Error` wrapping it.
+        let mut hyper_seen = None;
         let mut source = std::error::Error::source(err);
         while let Some(cause) = source {
             if let Some(io) = cause.downcast_ref::<std::io::Error>() {
                 return (io_label(io.kind()), None);
             }
-            if let Some(hyper) = cause.downcast_ref::<hyper::Error>() {
-                return (hyper_label(hyper), None);
+            if hyper_seen.is_none() {
+                hyper_seen = cause.downcast_ref::<hyper::Error>().map(hyper_label);
             }
             source = cause.source();
+        }
+        if let Some(label) = hyper_seen {
+            return (label, None);
         }
         let label = if err.is_body() {
             "body"
@@ -642,8 +649,9 @@ fn io_label(kind: std::io::ErrorKind) -> &'static str {
     }
 }
 
-/// An HTTP/2 `GOAWAY`/`RST_STREAM` surfaces as a `hyper::Error` none of whose
-/// public predicates match — hence `hyper_other`, not a guess.
+/// A `hyper::Error` with no `io::Error` below it and none of whose public
+/// predicates match — in practice an HTTP/2 protocol error (`GOAWAY`,
+/// `RST_STREAM`, …) — is `hyper_other`, not a guess at which one.
 fn hyper_label(err: &hyper::Error) -> &'static str {
     if err.is_incomplete_message() {
         "incomplete_message"
@@ -1138,6 +1146,32 @@ mod tests {
         )
         .await;
         assert_eq!(t262_detail(&url).await, ("status_4xx", Some(429)));
+    }
+
+    #[tokio::test]
+    async fn http_detail_names_a_tcp_reset_as_io_not_hyper_other() {
+        use tokio::io::AsyncReadExt;
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) => panic!("bind loopback: {err}"),
+        };
+        let addr = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(err) => panic!("local_addr: {err}"),
+        };
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                // Request bytes are irrelevant; a short read is fine.
+                let _ = stream.read(&mut buf).await;
+                // Linger 0 + drop sends RST instead of FIN.
+                let _ = stream.set_zero_linger();
+                drop(stream);
+            }
+        });
+        let (label, status) = t262_detail(&format!("http://{addr}/dns-query")).await;
+        assert!(label.starts_with("io_"), "got {label}");
+        assert_eq!(status, None);
     }
 
     #[tokio::test]
