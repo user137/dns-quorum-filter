@@ -177,7 +177,20 @@ jobs:
               Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
             }
           } else {
-            .\packaging\pack-msix.ps1 -BinDir bin -OutFile dist\dns-quorum-filter.msix
+            # DIAG T-244: two versions signed by one ephemeral cert (one UAC trust).
+            $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=dns-quorum-filter" `
+              -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy Exportable `
+              -KeyUsage DigitalSignature -HashAlgorithm SHA256 -KeyAlgorithm RSA -KeyLength 2048 `
+              -Provider "Microsoft Strong Cryptographic Provider"
+            $pw = [guid]::NewGuid().ToString()
+            $pfxPath = Join-Path $env:RUNNER_TEMP "diag.pfx"
+            Export-PfxCertificate -Cert $cert -FilePath $pfxPath -Password (ConvertTo-SecureString $pw -AsPlainText -Force) | Out-Null
+            Export-Certificate -Cert $cert -FilePath dist\dns-quorum-filter.cer | Out-Null
+            Copy-Item packaging\Trust-TestCert.ps1 dist\ -Force
+            foreach ($v in "0.8.900", "0.8.901") {
+              .\packaging\pack-msix.ps1 -Version $v -BinDir bin -OutFile "dist\dns-quorum-filter-$v.msix" -PfxPath $pfxPath -PfxPassword $pw
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+            }
           }
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4

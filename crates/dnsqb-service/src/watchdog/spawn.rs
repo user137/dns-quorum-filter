@@ -114,7 +114,7 @@ fn spawn_detached(target: &Path) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
 
     match std::process::Command::new(target)
-        .creation_flags(detached_flags(true))
+        .creation_flags(detached_flags(false))
         .spawn()
     {
         Err(err) if err.raw_os_error() == Some(5) => std::process::Command::new(target)
