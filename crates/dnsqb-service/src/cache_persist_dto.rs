@@ -138,12 +138,9 @@ fn from_persisted(p: PersistedCacheEntry, now_wall: SystemTime) -> Option<(Cache
         return None;
     }
     let key = CacheKey::new(&p.domain, RecordType::from(p.qtype)).ok()?;
-    let entry = CacheEntry {
-        verdict: Verdict::from(p.verdict),
-        ttl: remaining,
-        expires_at: Instant::now() + remaining,
-    };
-    Some((key, entry))
+    // T-256: through `CacheEntry::new`, which caps the ttl — a deadline
+    // written under an older, unbounded `[cache]` config can't overflow.
+    Some((key, CacheEntry::new(Verdict::from(p.verdict), remaining)))
 }
 
 /// Serializes a [`crate::cache::Cache::snapshot`] result to the JSON plaintext

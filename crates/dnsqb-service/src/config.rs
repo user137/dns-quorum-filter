@@ -206,6 +206,16 @@ pub enum ConfigError {
     /// the admin-channel write handler both go through.
     #[error("cache config clamp_min_secs must not exceed clamp_max_secs")]
     CacheClampMinExceedsMax,
+    /// A `[cache]` value is above its cap (T-256, `cache::MAX_TTL_SECS` and
+    /// siblings) — before the cap, a value near `u64::MAX` panicked on every
+    /// cache insert. Names the key and the cap only, never the value (T-252).
+    #[error("cache config {field} must not exceed {max}")]
+    CacheValueTooLarge {
+        /// The `[cache]` key.
+        field: &'static str,
+        /// The largest accepted value.
+        max: u64,
+    },
     /// The `[geoip]` table's `blocked_countries` contains an entry that
     /// isn't exactly two ASCII letters (T-76) — rejected at load rather than
     /// silently stored and matching nothing: `"RUS"` or `"Ukraine"` would
@@ -782,6 +792,9 @@ impl ResolverConfig {
             Ok(cache) => cache,
             Err(crate::cache::CacheConfigError::ClampMinExceedsMax) => {
                 return Err(ConfigError::CacheClampMinExceedsMax)
+            }
+            Err(crate::cache::CacheConfigError::ValueTooLarge { field, max }) => {
+                return Err(ConfigError::CacheValueTooLarge { field, max })
             }
         };
         let mut blocked_countries = Vec::with_capacity(file.geoip.blocked_countries.len());
@@ -2700,7 +2713,9 @@ mod tests {
             let mut bad_values = vec![format!("{original_line}\n{original_line}")];
             bad_values.extend(
                 match kind {
-                    QaFieldKind::Unsigned => vec!["\"30\"", "-1", "1.5", "true"],
+                    QaFieldKind::Unsigned => {
+                        vec!["\"30\"", "-1", "1.5", "true", "9223372036854775807"]
+                    }
                     QaFieldKind::Bool => vec!["True", "1", "\"false\""],
                     QaFieldKind::EnumString => vec!["42", "\"Fail_Open\"", "[]"],
                     QaFieldKind::IdString => vec!["42", "[]"],
@@ -2725,6 +2740,35 @@ mod tests {
             cases > 100,
             "expected the full field table to run, got {cases}"
         );
+    }
+
+    /// T-256 — Security & Boundary through the file: each `[cache]` cap
+    /// loads, cap + 1 is a load error that names the key, never the value.
+    #[test]
+    fn cache_caps_load_and_cap_plus_one_is_a_named_load_error() {
+        let (_dir, path) = temp_config_path();
+        for (key, cap) in [
+            ("clamp_max_secs", 604_800_u64),
+            ("block_verdict_ttl_secs", 604_800),
+            ("stale_grace_secs", 604_800),
+            ("max_capacity", 1_000_000),
+        ] {
+            for (value, ok) in [(cap, true), (cap + 1, false)] {
+                let toml = qa_with_line("[cache]", key, &format!("{key} = {value}"));
+                if let Err(err) = fs::write(&path, &toml) {
+                    panic!("must be able to write the fixture file: {err}");
+                }
+                match ResolverConfig::load(&path) {
+                    Ok(_) => assert!(ok, "{key} = {value} must be rejected"),
+                    Err(err) => {
+                        assert!(!ok, "{key} = {value} must load: {err}");
+                        let text = err.to_string();
+                        assert!(text.contains(key), "{text}");
+                        assert!(!text.contains(&value.to_string()), "{text}");
+                    }
+                }
+            }
+        }
     }
 
     /// ARCH-01 (хвиля 13a): `save` must never truncate the live file in

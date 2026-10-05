@@ -74,14 +74,25 @@ pub struct CacheEntry {
     pub expires_at: Instant,
 }
 
+/// T-256 second line behind [`CacheConfig::from_secs`]'s bounds: no entry
+/// lives longer than this, whatever TTL reaches [`CacheEntry::new`] (a struct
+/// literal, a `cache.enc` deadline written under an older unbounded config).
+/// Twice the largest configurable TTL, so a valid config is never cut.
+const MAX_ENTRY_TTL: Duration = Duration::from_secs(2 * MAX_TTL_SECS);
+
 impl CacheEntry {
-    /// Constructs an entry, computing `expires_at` as `Instant::now() + ttl`.
+    /// Constructs an entry, computing `expires_at` as `Instant::now() + ttl`,
+    /// with `ttl` capped at [`MAX_ENTRY_TTL`]. Should the addition still
+    /// overflow the platform's `Instant`, the entry is born stale rather than
+    /// panicking (T-256).
     #[must_use]
     pub fn new(verdict: Verdict, ttl: Duration) -> Self {
+        let ttl = ttl.min(MAX_ENTRY_TTL);
+        let now = Instant::now();
         Self {
             verdict,
             ttl,
-            expires_at: Instant::now() + ttl,
+            expires_at: now.checked_add(ttl).unwrap_or(now),
         }
     }
 
@@ -141,9 +152,34 @@ impl Default for CacheConfig {
     }
 }
 
+/// T-256 — upper bound for `clamp_min_secs`/`clamp_max_secs` (upstream TTLs).
+/// RFC 8767 §4: "Values SHOULD be capped on the order of days to weeks, with
+/// a recommended cap of 604,800 seconds (7 days)."
+pub const MAX_TTL_SECS: u64 = 604_800;
+/// T-256 — upper bound for `block_verdict_ttl_secs`. A project choice (SPEC.md
+/// is silent): the same 7 days as an upstream TTL, so a block verdict never
+/// outlives the longest allowed answer by more than that.
+pub const MAX_BLOCK_VERDICT_TTL_SECS: u64 = MAX_TTL_SECS;
+/// T-256 — upper bound for `stale_grace_secs`. A project choice: RFC 8767 §5
+/// suggests 1–3 days for the stale timer and §6 mentions "as much as a week";
+/// the cap is that week, the default stays 1 day.
+pub const MAX_STALE_GRACE_SECS: u64 = MAX_TTL_SECS;
+/// T-256 — upper bound for `max_capacity`. A project choice with no panic
+/// behind it, only memory: 100× the default 10 000 entries.
+pub const MAX_CACHE_CAPACITY: u64 = 1_000_000;
+
 /// Errors validating raw seconds/count into a [`CacheConfig`] (T-153).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CacheConfigError {
+    /// A `[cache]` value is above its cap (T-256). Names the field and the
+    /// cap only — never the rejected value (T-252's no-echo rule).
+    #[error("cache {field} must not exceed {max}")]
+    ValueTooLarge {
+        /// The `[cache]` key, e.g. `"stale_grace_secs"`.
+        field: &'static str,
+        /// The largest accepted value.
+        max: u64,
+    },
     /// `clamp_min_secs > clamp_max_secs` — rejected here rather than left to
     /// surface as a panic in [`clamp_ttl`] (which is itself made
     /// structurally non-panicking regardless, see its own doc comment; this
@@ -165,6 +201,9 @@ impl CacheConfig {
     ///
     /// # Errors
     ///
+    /// Returns [`CacheConfigError::ValueTooLarge`] for the first field (in
+    /// parameter order) above its cap — checked before the min/max order, so
+    /// `clamp_min_secs = 604_801, clamp_max_secs = 10` is a `ValueTooLarge`.
     /// Returns [`CacheConfigError::ClampMinExceedsMax`] if
     /// `clamp_min_secs > clamp_max_secs`.
     pub fn from_secs(
@@ -174,6 +213,21 @@ impl CacheConfig {
         stale_grace_secs: u64,
         max_capacity: u64,
     ) -> Result<Self, CacheConfigError> {
+        for (field, value, max) in [
+            ("clamp_min_secs", clamp_min_secs, MAX_TTL_SECS),
+            ("clamp_max_secs", clamp_max_secs, MAX_TTL_SECS),
+            (
+                "block_verdict_ttl_secs",
+                block_verdict_ttl_secs,
+                MAX_BLOCK_VERDICT_TTL_SECS,
+            ),
+            ("stale_grace_secs", stale_grace_secs, MAX_STALE_GRACE_SECS),
+            ("max_capacity", max_capacity, MAX_CACHE_CAPACITY),
+        ] {
+            if value > max {
+                return Err(CacheConfigError::ValueTooLarge { field, max });
+            }
+        }
         if clamp_min_secs > clamp_max_secs {
             return Err(CacheConfigError::ClampMinExceedsMax);
         }
@@ -300,7 +354,14 @@ impl Expiry<CacheKey, CacheEntry> for CacheExpiry {
         value: &CacheEntry,
         _created_at: Instant,
     ) -> Option<Duration> {
-        Some(value.ttl + self.stale_grace)
+        // T-256: saturating and capped — `moka` is never handed a deadline
+        // past the largest valid ttl + grace, whatever a struct literal holds.
+        Some(
+            value
+                .ttl
+                .saturating_add(self.stale_grace)
+                .min(MAX_ENTRY_TTL.saturating_add(Duration::from_secs(MAX_STALE_GRACE_SECS))),
+        )
     }
 }
 
@@ -447,6 +508,90 @@ mod tests {
 
     fn a_record(name: Name, ttl: u32) -> Record {
         Record::from_rdata(name, ttl, RData::A(A(Ipv4Addr::new(93, 184, 216, 34))))
+    }
+
+    // T-256 — Security & Boundary: every cap is inclusive, cap + 1 is rejected
+    // and names its field.
+    #[test]
+    fn from_secs_accepts_each_cap_and_rejects_cap_plus_one() {
+        use super::{MAX_CACHE_CAPACITY, MAX_STALE_GRACE_SECS, MAX_TTL_SECS};
+        let at_caps = CacheConfig::from_secs(
+            MAX_TTL_SECS,
+            MAX_TTL_SECS,
+            MAX_TTL_SECS,
+            MAX_STALE_GRACE_SECS,
+            MAX_CACHE_CAPACITY,
+        );
+        assert!(at_caps.is_ok(), "{at_caps:?}");
+        let base = [30, 86_400, 86_400, 86_400, 10_000];
+        let names = [
+            "clamp_min_secs",
+            "clamp_max_secs",
+            "block_verdict_ttl_secs",
+            "stale_grace_secs",
+            "max_capacity",
+        ];
+        let caps = [
+            MAX_TTL_SECS,
+            MAX_TTL_SECS,
+            MAX_TTL_SECS,
+            MAX_STALE_GRACE_SECS,
+            MAX_CACHE_CAPACITY,
+        ];
+        for i in 0..base.len() {
+            for over in [caps[i] + 1, u64::MAX] {
+                let mut v = base;
+                v[i] = over;
+                if i == 0 {
+                    // keep clamp_min <= clamp_max out of the picture
+                    v[1] = MAX_TTL_SECS;
+                }
+                assert_eq!(
+                    CacheConfig::from_secs(v[0], v[1], v[2], v[3], v[4]),
+                    Err(CacheConfigError::ValueTooLarge {
+                        field: names[i],
+                        max: caps[i]
+                    }),
+                    "{} = {over}",
+                    names[i]
+                );
+            }
+        }
+    }
+
+    // T-256 — the cap check runs before the min/max order check, so one
+    // input has one defined error.
+    #[test]
+    fn from_secs_reports_the_cap_before_min_exceeds_max() {
+        assert_eq!(
+            CacheConfig::from_secs(604_801, 10, 60, 60, 100),
+            Err(CacheConfigError::ValueTooLarge {
+                field: "clamp_min_secs",
+                max: 604_800
+            })
+        );
+    }
+
+    // T-256 — Error path, second line: a struct-literal config and entry far
+    // past every cap go through the real `moka` insert without a panic.
+    #[tokio::test]
+    async fn huge_ttl_and_grace_insert_through_moka_without_panic() {
+        let config = CacheConfig {
+            stale_grace: Duration::MAX,
+            ..CacheConfig::default()
+        };
+        let cache = Cache::new(&config);
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        cache
+            .insert(key.clone(), CacheEntry::new(Verdict::Block, Duration::MAX))
+            .await;
+        let Some(entry) = cache.get(&key).await else {
+            panic!("the capped entry must still be stored");
+        };
+        assert!(entry.ttl <= Duration::from_secs(2 * super::MAX_TTL_SECS));
+        assert!(entry.is_fresh(Instant::now()));
     }
 
     #[test]

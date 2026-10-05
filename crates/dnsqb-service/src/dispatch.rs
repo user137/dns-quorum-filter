@@ -7132,6 +7132,76 @@ pub(crate) mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    // T-256 — Security & Boundary: a value past its cap is a 400, and the
+    // live cache config and the file on disk stay as they were; the cap
+    // itself is accepted.
+    #[tokio::test]
+    async fn serve_admin_cache_config_apply_rejects_a_value_past_its_cap_and_changes_nothing() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        let accepted = CacheConfigUpdate {
+            stale_grace_secs: 604_800,
+            ..non_default_cache_config_update()
+        };
+        let response = match serve(
+            admin_cache_config_apply_request(accepted),
+            Arc::clone(&state),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK, "the cap itself is valid");
+        let live_before = state.cache.read().config;
+        let Ok(file_before) = std::fs::read(&path) else {
+            panic!("the accepted change must be on disk");
+        };
+
+        for update in [
+            CacheConfigUpdate {
+                stale_grace_secs: u64::MAX,
+                ..non_default_cache_config_update()
+            },
+            CacheConfigUpdate {
+                block_verdict_ttl_secs: 604_801,
+                ..non_default_cache_config_update()
+            },
+            CacheConfigUpdate {
+                max_capacity: 1_000_001,
+                ..non_default_cache_config_update()
+            },
+        ] {
+            let response =
+                match serve(admin_cache_config_apply_request(update), Arc::clone(&state)).await {
+                    Ok(response) => response,
+                    Err(err) => match err {},
+                };
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{update:?}");
+            assert_eq!(state.cache.read().config, live_before, "{update:?}");
+            match std::fs::read(&path) {
+                Ok(now) => assert_eq!(now, file_before, "{update:?}"),
+                Err(err) => panic!("config file must still be readable: {err}"),
+            }
+        }
+    }
+
     // Same CSRF concern as `/admin/config`/`/admin/overrides/add` (T-52/T-47)
     // - see `content_type_is_json`'s own doc comment.
     #[tokio::test]

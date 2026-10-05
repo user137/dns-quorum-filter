@@ -196,6 +196,10 @@ mod tests {
             ConfigError::Empty,
             ConfigError::ZeroPort,
             ConfigError::TooLarge,
+            ConfigError::CacheValueTooLarge {
+                field: "stale_grace_secs",
+                max: 604_800,
+            },
         ] {
             assert_eq!(
                 StartupFailure::from_config_error(&err),
