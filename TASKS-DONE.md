@@ -8096,3 +8096,725 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   бінарників» при трьох, меню трея («restart, stop»), немає `KNOWN-LIMITATIONS.md` у таблиці доків;
   межа ccTLD у `PERFORMANCE.md` — 676 (доводиться валідацією), не «~250»; формулювання діагнозу T-246 (1)
   розділено на факт (SDDL) і висновок; вартість `evict_oldest` долучено до ARCH-18 (хвиля 17).
+- [x] ARCH-02 — **Хвиля 11, виконано 2026-10-05, окремим комітом.** Скриптом перенесено 82 закриті `[x]`-блоки
+  (691 рядок, з відступленими продовженнями) з `TASKS.md` у розділ «Перенесено з `TASKS.md`» у кінці цього
+  файлу, дослівно, згруповано за вихідними заголовками; рядки-індекс хвиль у «Батч QA-FIX» свідомо лишились
+  у `TASKS.md` (це покажчики стану, не задачі). Перевірка: сума рядків до/після збігається (assert у
+  скрипті), 82 видалені `- [x]` = 82 додані, серед видалених рядків немає жодного, що не є рядком блоку.
+  Розмірний гейт на `TASKS.md` — на рішення користувача.
+
+## Перенесено з `TASKS.md` (ARCH-02, 2026-10-05)
+
+Закриті `[x]`-блоки, що лишалися в `TASKS.md` всупереч DOC MAP — перенесені скриптом дослівно,
+згруповані за вихідними заголовками. Частина з них уже має окремий розділ вище (той самий T-номер) —
+тут лише оригінальний текст із беклогу, не нова історія.
+
+### Фаза 3 — Продакшн-hardening
+
+- [x] T-70 — (Батч 3.8) **Windows-половина — зроблено 2026-09-04**: MSIX (T-156) не має хука на
+  видалення взагалі, тож замість «деінсталятор кличе» — новий `local_state::remove_all`
+  (`crates/dnsqb-service/src/local_state.rs`), in-app дія (трей «Повністю видалити» + `/admin/ui`
+  + `POST /admin/uninstall-local-state`): `trust_store::uninstall()` + `key_store::delete_secret`
+  для всіх трьох ключів (TLS, persistence, MaxMind), звіт по кожному артефакту незалежно
+  (`Removed`/`NotPresent`/`Failed`). **macOS-половина (Keychain) → Фаза 6.** TASKS-DONE.md.
+- [x] T-98 — (Батч 3.6) Перевірити актуальну документацію Chrome `DnsOverHttpsTemplates` enterprise policy перед імплементацією (Відкриті питання п.3) — **зроблено 2026-09-04, docs-only** (SPEC.md §"Відкриті питання" п.3 tiered; TASKS-DONE.md)
+- [x] T-99 — (Батч 3.6) Enterprise policy автоматизація (Chrome `DnsOverHttpsMode=secure` + `DnsOverHttpsTemplates` через registry) — **закрито без коду 2026-09-04** (kickoff-AskUserQuestion, формат T-164): hard-fail-залежність Chrome від сервісу + конфлікт із «без постійних підвищених прав», Chrome-only, той самий висновок, що T-134 для Firefox; механізм задокументовано в SPEC.md §"Відкриті питання" п.3 для можливої майбутньої фази; TASKS-DONE.md
+- [x] T-100 — (Батч 3.7) Reproducible builds — **зроблено 2026-09-04**: `--locked` скрізь у CI +
+  `.cargo/config.toml` `/Brepro` (MSVC-triple) + `[profile.release] codegen-units = 1` + блокуюча
+  джоба `repro` (дві чисті `--release` збірки в різних теках, SHA-256 порівняння). TASKS-DONE.md.
+- [x] T-102 — (Батч 3.7) CI code-signing релізних бінарників — **зроблено 2026-09-04**:
+  `.github/workflows/release.yml` підписує 3 бінарники (не бандл). Модель (рішення користувача):
+  ефемерний self-signed `test-signed` за замовчуванням, реальний cert опційно через secret
+  `CODESIGN_PFX`; продакшн-довіра = пере-підпис Microsoft Store при публікації MSIX (Батч 3.8).
+  Ім'я артефакту несе режим. TASKS-DONE.md.
+- [x] T-103 — (Батч 3.7) CI release-pipeline — **зроблено 2026-09-04**: тег `v*` → джоба `release`
+  повторно доводить cross-path репродукованість → чернетка GitHub-релізу з 3 `.exe` + `SHA256SUMS`,
+  публікує людина. `per-OS` = лише Windows (macOS/Linux → Ф6). MSIX-пакет — прогалина для Батча
+  3.8. TASKS-DONE.md.
+- [x] T-167 — (Батч Ф3, після 3.7) **Повна ревізія документації для читача-людини — зроблено
+  2026-09-04** (plan+advisor kickoff+closing, kickoff-AskUserQuestion 2 форки). (a)+(d) README:
+  додано передумову "встанови Rust", доведено обидва шляхи встановлення (з джерел і MSIX) до
+  реального "тепер налаштуй браузер", чесно позначено, що живого браузер→DoH-проходу проєкт не
+  підтвердив (замість вигаданого кроку перевірки — посилання на `/admin/ui`); (b) нова секція
+  "Як працює фільтрація" — 8 кроків SPEC.md §5.3 простою мовою + легкий mermaid flowchart,
+  вбудований у README без ритуалу `diagrams/README.md` (рішення kickoff); (c) SECURITY.md's
+  таблиця залежностей стиснута зі знімком-не-логом — 57065→19099 символів (~66%), кожен рядок
+  звірений по чек-листу "чому цей крейт / де unsafe / прийнятий ризик" до й після. Заразом
+  виправлено дрейф: README's статус-бейдж і "Workspace" все ще казали "Фаза 3 не почата" /
+  `dnsqb-watcher` — заглушка, хоча Фаза 3 вже закрита. TASKS-DONE.md.
+- [x] T-156 — (Батч 3.8) MSIX-пакування — **зроблено 2026-09-04** (kickoff-AskUserQuestion, 3
+  форки: sideload зараз/Store-identity пізніше; T-70 = in-app дія, не хук; повний скоуп із CI).
+  `packaging/AppxManifest.template.xml` (`runFullTrust`, entry point + `windows.startupTask` обидва
+  `dnsqb-watcher.exe`) + `packaging/pack-msix.ps1` (`makeappx pack` + `signtool sign`, той самий
+  ефемерний/`CODESIGN_PFX` вибір, що T-102) + `release.yml`'s `msix`-job (`.msix`+`.cer` у чернетці
+  релізу). `assets/gen-icon.py` — єдине джерело іконки застосунку всюди (не лише MSIX). Емпірично
+  перевірено локально (Windows SDK 10.0.26100.0, той самий, що CI) і на реальному тег-релізі.
+  **Store-субміт і Mac App Store/Flathub — свідомо поза скоупом**, лишається майбутньою задачею;
+  маніфест структурований під підміну identity без переписування решти. TASKS-DONE.md.
+- [x] T-168 — (Батч Ф3, після 3.8) **Аналіз перфомансу + навантажувальний тест + дизайн-рішення
+  щодо resource-exhaustion — зроблено 2026-09-05** (plan+advisor kickoff+closing, 3 коміти).
+  `PERFORMANCE.md` (новий) — таблиця складності всіх кроків конвеєра §5.3 + реальні цифри
+  `examples/load_test.rs` (новий, manual, не CI): деградація **плавна й прогнозована**, нуль
+  відмов до 3000 одночасних з'єднань / 2000 стрімів, `overrides::decision`'s O(n) при ~10k
+  записів — +17% p50, не ризик. Дизайн-рішення в SPEC.md §1.1: обмежена одночасність із
+  негайною відмовою (не глибока черга), щедра межа як backstop проти патологічного накопичення,
+  Три Б-наслідок reject-vs-SERVFAIL лишено відкритим питанням. **Імплементація → T-169.**
+  TASKS-DONE.md.
+- [x] T-169 — (Батч Ф3, після 3.8) **Імплементація запобіжника resource-exhaustion — зроблено
+  2026-09-05** (plan+advisor kickoff+closing, 5 комітів). Новий модуль `admission::ConnectionGate`
+  (обмежена одночасність через `tokio::sync::Semaphore` + `AtomicU64` — без `Mutex`/`Arc<Mutex>`),
+  негайна відмова на стелі: `main.rs` accept-loop бере `OwnedSemaphorePermit` до `tokio::spawn`, а
+  на стелі закриває TCP **до TLS** (`drop(stream)` — рішення kickoff-AskUserQuestion). **Разом зі
+  стелею**: `tokio::time::timeout` навколо `acceptor.accept` + `auto::Builder` http1
+  `header_read_timeout` / http2 keep-alive — інакше гола стеля = slow-loris DoS. Нова
+  `[limits]`-таблиця в `resolver_config.toml` (kickoff-рішення: конфіг-поля, не хардкод):
+  `max_concurrent_connections` (дефолт 4096, `0`/`>1_000_000` — фатальна помилка завантаження),
+  `handshake_timeout_ms` (10000), `idle_timeout_ms` (30000). `AdminStats.rejected_connections`
+  (live-лічильник, як `in_flight`) → `GET /admin/status`. Аналіз складності по пам'яті + slow-loris
+  smoke (`examples/load_test.rs` новий режим): (а)(б)(в) підтверджено, ~4–10 КіБ на утримуване
+  pre-handshake з'єднання. Тести на 4 категорії (`admission` + `dispatch`). `tower` не додано.
+  Окрема менша стеля на одночасні quorum-резолюції «у польоті» — **не в цьому обсязі** (backstop на
+  вхідні з'єднання закриває основний вектор; fan-out ceiling лишається арифметичним, PERFORMANCE.md).
+  TASKS-DONE.md.
+- [x] T-173 — (Батч 3.11) **Фінальне закриття Фази 3 + реліз `v0.3.0` — зроблено 2026-09-06**
+  (короткий kickoff + обов'язковий closing-advisor перед пушем тега; бамп-коміт + окремий
+  docs-коміт). Бамп `0.2.0` → `0.3.0`: 3 літерали `version` + 2 path-dep specs у
+  `crates/dnsqb-{service,tray,watcher}/Cargo.toml` + `Cargo.lock` (`cargo update -w`, diff = рівно
+  3 member-рядки). `VERSIONINFO` (`build/win_resource.rs`) читає `CARGO_PKG_VERSION*` — 4-го
+  сайту нема. `sinkhole_probe` (обов'язковий перед релізом) — зелений. Тег `v0.3.0` на бамп-коміті
+  `bd2ec61` → `release.yml` (`34046773417`, усі 3 job'и success: `build-sign` test-signed +
+  `msix` — version-cross-check `pack-msix.ps1` пройшов + `release` cross-path repro-gate) →
+  **чернетка** GitHub-релізу, `isDraft: true`, 6 артефактів (3 `.exe` + `SHA256SUMS` +
+  `dns-quorum-filter.msix` + `.cer`). Публікацію лишено людині (як `v0.2.0`). Деталі — TASKS-DONE.md.
+### Батч 3.12 — пост-Ф3 hotfix: MSIX UX / процесна модель
+
+- [x] T-181 — **зроблено 2026-09-07** — `#![cfg_attr(not(debug_assertions), windows_subsystem =
+  "windows")]` у `dnsqb-service` + `dnsqb-watcher` main.rs (як у `dnsqb-tray`). Локальні гейти
+  зелені. Прибирає вікно термінала на старті MSIX і касадне вбивство групи процесів.
+- [x] T-184 — **зроблено 2026-09-07** — `crates/dnsqb-service/src/logging.rs` (`init_logging(role,
+  Option<&Path>)`, re-export у `lib.rs`); файл `%LOCALAPPDATA%\dns-quorum-filter\logs\<role>.log`,
+  фікс. INFO, startup-ротація при >5 МіБ → `.old` (dependency-free — жодних нових крейтів);
+  debug додатково stdout. Три `main` перенесли `init` після резолву `app_data_dir()`. Sweep:
+  DoH-fan-out (`quorum`/`pipeline`/`upstream`) уже логує лише `error_kind()`; решта `{err}` —
+  payload-free error-типи / локальний I/O / config над файлами без доменів (узгоджено з
+  CLAUDE.md). 3 юніт-тести (`prepare_log_file`: happy/rotate/error). Локальні гейти зелені.
+- [x] T-183 — **зроблено 2026-09-07** — `assets/gen-icon.py` `make_tray_glyph` (білий гексагон,
+  прозорий фон) → `crates/dnsqb-tray/icons/tray-32-rgba.bin` (4096 Б, 32×32 RGBA); tray
+  `include_bytes!` перемкнено на новий блоб + провенанс-коментар переписано; застарілий
+  `icon_32x32_rgba.bin` (копія іконки видаленого Tauri `dnsqb-ui` = бірюзовий квадрат) видалено;
+  CLAUDE.md gen-icon-рядок оновлено. Візуально підтверджено (гексагон на темному фоні). Іконка
+  `.exe` окремо — вже є з T-177 (`app.ico` у всіх трьох через `build/win_resource.rs`).
+- [x] T-182 — **зроблено 2026-09-07** — `watchdog/spawn.rs`: `spawn_detached(&Path)` через
+  безпечний `std::os::windows::process::CommandExt::creation_flags` (жодного `unsafe`) —
+  `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB`; при `ERROR_ACCESS_DENIED` (raw OS 5, job
+  забороняє breakaway) — ретрай лише з `DETACHED_PROCESS`. Чиста `const fn detached_flags(bool)`;
+  `#[cfg(not(windows))]` — плоский spawn. Unit-тест на точні Win32-значення + fallback-композицію.
+  Локальні гейти зелені (660 lib+bins).
+- [x] T-187 — **зроблено 2026-09-07** — watcher лишається коренем (T-156 / AppxManifest не
+  чіпано). `watchdog::launcher::ensure_sibling_running` винесено в lib (спільний для
+  watcher-старту й трей-запобіжника). Watcher спавнить `Tray` **перед** `Service` (іконка за
+  ~0.2 с). `acquire_watcher_guard` при `AlreadyRunning` → `ensure_running(Tray)` + `exit(0)`
+  (клік плитки = покажи іконку). `dnsqb-tray` при standalone-запуску → `ensure_running(Watcher)`
+  запобіжник. Нова `diagrams/process-lifecycle.md` + індекс; SPEC §7 + SERVICES.md оновлено.
+  Локальні гейти зелені (660 lib+bins).
+- [x] T-185 — **зроблено 2026-09-07** — новий `crates/dnsqb-service/src/lifecycle.rs`:
+  `stop.flag` (пауза — watchdog не респавнить) + `quit.flag` (вихід — watcher зупиняє службу й
+  виходить). «Clear on startup, honor in loop»: `dnsqb-watcher::main` чистить обидва; loop лише
+  читає `stop.flag`; `AlreadyRunning`-гілка чистить лише `quit.flag`. Меню трея (Варіант B,
+  узгоджено з користувачем): «Призупинити ↔ Відновити фільтрацію» (live-тогл), «Відновити нагляд»
+  (`ensure_sibling_running(Watcher)`, завжди), «Вийти з DNS Quorum Filter» (confirm), «Сховати
+  іконку»; «Перезапустити» → «Скинути кеш і лог». `dispatch::ROUTES` не чіпано (флаги пише трей).
+  DECISIONS.md 2026-09-07; SPEC §7; SERVICES.md меню; `process-lifecycle.md` пауза/вихід —
+  реальна. 3 юніт-тести (`lifecycle`). Локальні гейти зелені (663 lib+bins).
+  **Closing-advisor Батча 3.12:** `stop.flag` заморожує **весь** `LoopDriver::tick` (не лише
+  `Effect::Spawn`) — інакше pure-`tick` витрачає `RestartBudget` і жене автомат у термінальний
+  `GaveUp`; новий `TrayStatus::Paused`; `confirm_pause` текст (перезапуск теж знімає паузу);
+  event-loop перечитує прапор раз/с; заморожений луп логує freeze/resume раз на перехід.
+  Нова gotcha в CLAUDE.md. CI `34155167169` / `34156201573` — 7/7 success.
+- [x] T-186 — патч-реліз `v0.3.1`. **Розділено:** механічну частину (бамп `0.3.0`→`0.3.1`,
+  `0e9b944`) зроблено в Батчі 3.12; closing-advisor + ручний чистий прогін + тег `v0.3.1`
+  (покриває Батч 3.12 **+ 3.14**) — виконано як **T-192** (2026-09-08).
+### Батч 3.14 — кольорові трей-іконки за станом + `is_trusted` наперед + hotfix T-194/T-195/T-196
+
+- [x] T-191 — **зроблено 2026-09-08**, коміт `6bba1f8`, CI `34215928169` 7/7 success. Кольорові
+  трей-іконки за станом + `is_trusted` наперед + кеш довіри. `assets/gen-icon.py`
+  `make_tray_glyph(size, colour)` → 4 блоби `tray-32-{green,amber,grey,red}-rgba.bin` (палітра
+  GitHub Primer; старий `tray-32-rgba.bin` видалено). `trust_store::is_trusted(cert_path)` (read-only,
+  спільне ядро `trusted_state` з `ensure_installed`; re-export з `lib.rs`; **без HTTP-маршруту** —
+  той у Батчі 3.13 / T-188). `status::{IconColour, icon_colour, cert_warning, compose_tooltip}`
+  (чисті, вичерпний `match` без wildcard) + `TrustState`/`spawn_trust_watch` (окремий тред,
+  показуваний прапор seed `true`; каденс `next_delay` ключиться на підтверджений `Ok(true)` —
+  `Err`/`Ok(false)` → драбина `2→5→15→60→300` с; closing-advisor). `main.rs`: `TrayIcons` (4 `Icon` при старті), `refresh_tray`
+  (tooltip на зміну `(observed, trusted)`; `set_icon` на зміну кольору; `last_colour` лише на `Ok`),
+  `spawn_cert_action` (`request_recheck()` після `certutil`-мутації). Override cert→red фліпає
+  **лише** `Filtering`. Docs: DECISIONS.md, `diagrams/ui-status-indicator.md` (+SOURCES) + README,
+  SERVICES.md §Іконка, CLAUDE.md, UI-SPEC.md. Без анімації вершин. Деталі — TASKS-DONE.md.
+- [x] T-194 — **зроблено 2026-09-08**, коміт `58c269d`. Два баги з живого прогону
+  `dist\dns-quorum-filter-0.3.1.msix`: `certutil` спавнився без `CREATE_NO_WINDOW`, тож фоновий
+  trust-watch T-191 (2 спавни/полл на драбині `2→5→15→60→300` с) миготів консоллю ~5 разів на
+  свіжій інсталяції. Новий хелпер `trust_store::certutil_command` ставить `CREATE_NO_WINDOW`; усі
+  4 сайти йдуть через нього. **Заходить у `v0.3.1`, перед тегом; `dist`-MSIX перезбирається.**
+- [x] T-195 — **зроблено 2026-09-08**, коміт `45aa0d6` (+ closing-advisor `a65143f`:
+  `CREATE_BREAKAWAY_FROM_JOB` + bail-on-timeout). «Повністю видалити» чистило cert + 3
+  секрети, але лишало застосунок запущеним (служба одразу регенерує `cert.pem`) і не чіпало теку
+  app-data. Тепер: `remove_all` → звіт → `stop.flag`+`quit.flag` → detached прихований
+  `powershell` (`self_uninstall.rs`), що чекає на вихід усіх 3 процесів і стирає всю
+  `%LOCALAPPDATA%\dns-quorum-filter` → `explorer.exe ms-settings:appsfeatures` → трей виходить
+  (`QUIT_REQUESTED`). `build_wipe_script` фенсить ціль (під `%LOCALAPPDATA%`, остання компонента
+  = `dns-quorum-filter`). Перегляд T-70 (DECISIONS.md 2026-09-08). **У `v0.3.1`, перед тегом.**
+- [x] T-196 — **зроблено 2026-09-08**, коміт `<pending>`. Живий прогін: трей-іконка жовта при
+  робочій фільтрації. `icon_colour` (T-191) фарбував `Filtering` в amber на будь-який
+  `degraded_events > 0` — трейлінговий лічильник за 20 quorum-запитів, тож один тайм-аут застрягав
+  жовтим. Фікс: amber для `Filtering` **лише** коли `degraded_events == degraded_window > 0` (усі
+  останні деградували). Частковий → зелена + суфікс тултіпа. DECISIONS.md 2026-09-08. **У `v0.3.1`.**
+### Батч 3.13 — онбординг першого запуску: майстер сертифіката + налаштування браузера
+
+- [x] T-188 — **зроблено 2026-09-08**, коміт `4cb9ed9`. Read-only перевірка довіри як
+  HTTP-маршрут + майстер першого запуску.
+  - Backend: `GET /admin/cert-status` → `{ trusted: CertTrustView }` (три-стан `TRUSTED` /
+    `NOT_TRUSTED` / `UNKNOWN` — `certutil` може не відповісти; «unknown ≠ untrusted» контракт
+    `is_trusted`); `POST /admin/install-cert` → `{ outcome }` (`ensure_installed` через
+    `spawn_blocking`; CSRF-гейт + body-cap; прецедент — `POST /admin/uninstall-local-state`).
+    `dispatch::ROUTES` + `EXPECTED_ADMIN_ROUTES` + `FUZZ_EXCLUDED_ROUTES` (**обидва** маршрути —
+    `cert-status` GET = 2 `certutil`-спавни/кейс). 5 нових тестів (unknown-без-paths, method/
+    content-type гейти).
+  - Tray: новий пункт меню «Майстер налаштування» (`SETUP_WIZARD_ID`, cert-група); новий модуль
+    `onboarding.rs` (`onboarding.seen` marker у app-data — **не** `lifecycle.rs`, той чиститься на
+    старті; чиста `should_offer_onboarding(cert_confirmed, cert_trusted, seen)` + 4 тести).
+    `TrustState` дістав `confirmed: Arc<AtomicBool>` (+ `is_confirmed()`) — виставляється на
+    першому `Ok(_)`; майстер стартує лише на **підтвердженому** «не довірений» (advisor — на
+    чистій MSIX-інсталяції `cert.pem` ще нема, коли трей стартує, T-187). `maybe_offer_onboarding`
+    (латч, раз на процес) + `run_setup_wizard` (`rfd` Yes/No на власному треді; на Yes → reuse
+    `spawn_cert_action` → `ensure_installed` → marker + `open_in_default_browser` **лише на
+    успіху**).
+  - `/admin/ui`: `#protection-hero` дістав cert-гілку — `computeProtectionState(status, reachable,
+    certTrust)`: `NOT_TRUSTED` → `is-bad` + кнопка «Встановити сертифікат» (`POST
+    /admin/install-cert`); `UNKNOWN` → `is-warn` (окремо, не «не встановлено»). `refreshCertStatus()`
+    — один fetch на завантаженні + після install-кліку, **не** на 2-с поллі. `.hero-action` у
+    `style.css`, CSP без змін (той самий origin).
+  - Docs: DECISIONS.md (новий запис), `diagrams/onboarding.md` (нова) + README, `ui-navigation.md`
+    + `ui-status-indicator.md` + `ui-dto-model.md` (звірка), `SPEC.md` §8, `UI-SPEC.md`,
+    `SERVICES.md`, `CLAUDE.md`. Деталі — TASKS-DONE.md.
+- [x] T-189 — **зроблено 2026-09-08**, коміт `98ac6c8` (+ closing-advisor `a5489ef`). Картка
+  налаштування браузера, свідома до браузера. `navigator.userAgent` детект (`detectBrowserFamily` → Edge/Firefox/Opera/Chrome;
+  `navigator.brave.isBrave()` async уточнює Brave) → `revealBrowserSteps` розкриває один із 3
+  статичних блоків (`browser-steps-{chromium,firefox,other}`) + виставляє `chromium-settings-url`
+  (`chrome://`/`edge://`/`brave://`/`opera://`). Кроки — **статичний HTML** (toggled `hidden`), не
+  JS-рендер (index.html прямо це фіксує; advisor). `wireCopyButton` — спільний хелпер для 3
+  copy-кнопок (DoH-URL + 2 settings-рядки). `.setup-copy-row`/`.setup-verify` у `style.css`, CSP
+  без змін. `README.md` секція браузера переписана (+Firefox). Тест `admin_ui`
+  `browser_setup_card_has_a_static_step_block_per_browser_family`. Автоматичне прописування DoH —
+  **поза обсягом** (T-99/T-134); one-click ProgId-перехід — відкладено (норма копіювати рядок).
+- [x] T-193 — **зроблено 2026-09-08**, коміти `ab72e73` + `af86515` (closing-advisor), CI 7/7,
+  kickoff+closing plan+advisor. Пауза фільтрації
+  більше не вбиває DNS — трей-пауза тримає `dnsqb-service` живим, служба віддає нефільтрований
+  baseline (перегляд T-185, DECISIONS.md 2026-09-08). Новий `pause_watch::run_pause_watcher`
+  (detached, 1-с `stat` `stop.flag` → `AppState.filtering_paused`, `RwLock<bool>` як `reachability`);
+  `handle_query` знімає `UpstreamContext.filtering_paused` і зливає в гілку `!any_enabled` (baseline
+  pass-through, без кешу, `DecisionSource::Quorum`). Трей: `PAUSE_RESUME_ID` **прибрав**
+  `/admin/shutdown` (лише `set_stop_flag`); `confirm_pause` переписано (без over-claim — blocklist
+  блокує). Watcher: блок заморозки + `supervision_frozen` + `Effect::Spawn if stop_flag_is_set`
+  guard **прибрано** (служба жива → tick no-op; краш під час паузи респавниться в bypass).
+  `/admin/status.paused: bool` + hero-гілка `computeProtectionState` (сірий, ранг offline > paused
+  > 0-voters). 5 pipeline-тестів + dispatch + admin_ui. Docs: DECISIONS.md, SPEC §7,
+  `process-lifecycle.md`, `ui-status-indicator.md`, `ui-dto-model.md`, `lifecycle.rs` module-doc,
+  CLAUDE.md, SERVICES.md. Ships у `v0.4.0` (Батч 4.6) **перед тегом**.
+- [x] T-190 — **закрито Батчем 4.6, 2026-09-11 — тег `v0.4.0`, не окремий `v0.3.2`** (DECISIONS.md
+  2026-09-11: майстер онбордингу + T-193 злиті в один реліз із Фазою 4, бамп одразу `0.3.1`→`0.4.0`
+  замість промижного `0.3.2`). Бамп (3 літерали + 2 path-dep + `Cargo.lock`) окремим комітом;
+  closing-advisor; тег `v0.4.0` → `release.yml` draft. `sinkhole_probe` перед тегом — зроблено.
+  **Ручний чистий прогін MSIX (розширення T-186 чек-листа: діалог майстра з'являється → [Так] →
+  cert у `CurrentUser\Root` → браузер відкриває `/admin/ui`; per-браузер кроки Chrome і Firefox;
+  [Пізніше]-гілка + повторний виклик пункту меню; hero-кнопка) лишається на користувачі — той самий
+  «людина публікує чернетку» гейт, ще не пройдено.** Спільно з відкладеним прогоном MSIX `v0.3.1`
+  (Батч 3.14) — обидва чекають на цю саму ручну перевірку на живій машині.
+### Фаза 4 — Рейтинговий фільтр «бульбашка» + інфраструктура топ-N списку по країнах / Батч 4.7 — Позапланові знахідки під час смоук-тесту v0.4.0 + приєднаний беклог (не MSIX-специфічні, крім T-219)
+
+- [x] T-219 — **Знайдено й закрито 2026-09-12** під час продовження ручного MSIX-смоук-тесту
+  (T-190's відкладений гейт вище). `certutil.exe`, спавнений дочірнім процесом пакованого
+  `dnsqb-service`/`dnsqb-tray`, не бачив MSIX-віртуалізований `cert.pem` за логічним шляхом —
+  `/admin/cert-status` застрягав на `UNKNOWN`, майстер онбордингу ніколи не спрацьовував
+  автоматично, зелена трей-іконка нічого не доводила. Фікс: `local_cert_thumbprint` тепер чистий
+  Rust (SHA-1 DER, без `certutil` взагалі), `ensure_installed`'s `-addstore` — через тимчасову
+  копію в `%SystemRoot%\Temp`. Обидва живо підтверджені на перезбудованому MSIX. Коміт `d90f578`.
+  Повний запис (root cause, advisor-раунди, верифікація): `TASKS-DONE.md`.
+- [x] T-224 — **Знайдено 2026-09-12, виправлено 2026-09-12.** Кнопка «В allowlist»/
+  «В blocklist» у рядку лога лишалась мертвою («✓ Додано», disabled) після видалення
+  того самого домену зі списку overrides, бо `overrideListItem`'s `removeBtn`
+  (`main.js:429-436`) викликав лише `refreshOverrides()`, ніколи `refreshLog()`. Фікс:
+  варіант (b) з опису задачі — додано `await refreshLog()` одразу після
+  `refreshOverrides()` у тому самому handler'і; той самий прийнятний trade-off, що вже
+  описаний коментарем біля log-row add handler'а (T-46) — застосовує поточний,
+  можливо ще не підтверджений `Пошук`, фільтр лога. Перевірено живо в Chrome (реальний
+  DoH-запит → лог-рядок → «В blocklist» → disabled → «Видалити» в BLOCKLIST → кнопка в
+  лог-рядку знову активна), не лише build/clippy/fmt/test. Повний запис: TASKS-DONE.md.
+- [x] T-225 — **Запит користувача 2026-09-12, закрито користувачем 2026-09-12.** Прохання
+  зробити `chrome://settings/security` клікабельним посиланням, що саме відкриється — технічно
+  неможливо (Chrome блокує навігацію на `chrome://`-URL з `<a href>` звичайної сторінки). Наявна
+  копі-кнопка (`#chromium-settings-copy`/`#firefox-settings-copy`, T-189, коміт `98ac6c8`, задовго
+  до заведення T-225) визнана достатньою реалістичною заміною — **користувач підтвердив явно
+  ("225 можеш закрити"), не одноосібне рішення агента.** Без коду, чисто документаційне закриття.
+- [x] T-226(а) — **Запит користувача 2026-09-12, виправлено 2026-09-13.** При пошуку GeoIP-країни
+  не було підсказки/випадного списку з назвою країни — лише сирий ISO-код. Фікс: `<datalist>`
+  (нативна браузерна автопідказка, без нового Cargo/npm-пакета) із 249 записами ISO 3166-1
+  alpha-2 → англійська назва, згенерованими скриптом (`pycountry`, не вручну — уникнення ризику
+  ручного передруку 249 рядків), прив'язана до існуючого текстового поля через `list=`. Поле саме
+  лишається вільним текстом (`validate_country_code` — і далі єдиний реальний гейт); англійські, не
+  українські назви — свідомо, немає перевіреного джерела українських назв ISO 3166-1, і хибний
+  переклад гірше за коректну англійську (той самий "locale lookup пізніше" підхід, що й `FIELD_HELP`
+  T-159, під T-151/i18n). Живо перевірено в Chrome (скретч-інстанс порту 8443): ввід "Ukraine" →
+  підказка "UA — Ukraine" → додавання/видалення `UA` в `/admin/geoip` пройшло коректно. Повний
+  запис: TASKS-DONE.md.
+- [x] T-228 — **Знайдено 2026-09-12, виправлено 2026-09-12.** Коли мережа офлайн
+  (`AdminStatusResponse.network == OFFLINE`), два контроли, що напряму запускають
+  мережевий фетч, лишались активними й мовчки провалювались: рейтинг-фільтр «бульбашка»'s
+  «Підтвердити ввімкнення»/«Зберегти зони» (будять `run_topn_updater` для будь-якої ще не
+  закешованої зони) та MaxMind-картка's «Зберегти» (POST-time перевірка ключа). Обидва
+  #rating-filter-body / #geoip-maxmind-body мають власний fetch/render-цикл поза 2с-поллінгом
+  (T-127/T-162), тож не бачили `status.network` напряму. Фікс: новий модульний
+  `lastNetworkStatus`, записуваний у `render(status)` на кожному тіку поллінгу, читається
+  обома картками — офлайн → `disabled=true` + `title` з причиною на кнопці, плюс той самий
+  текст у `errorLine`, якщо клік усе ж стався до наступного рендеру. Живо перевірено в Chrome
+  (скретч-інстанс порту 9444; `lastNetworkStatus` — bare global у не-module скрипті, підмінено
+  напряму через `evaluate_script` і перевірено обидва боки: OFFLINE → обидві кнопки disabled +
+  правильний title; ONLINE → знову активні). Комбобокс вибору зон і кнопка "Очистити" MaxMind
+  НЕ заблоковані — обидва лише міняють локальний/уже-завантажений стан, мережі не
+  потребують. Повний запис: TASKS-DONE.md.
+- [x] T-159 — **Контекстна довідка для полів налаштувань на `/admin/ui`, реалізовано 2026-09-12**
+  (виникло 2026-08-29). Обрано варіант (1) — нативний `<details><summary>?</summary><p>…</p></details>`
+  (нуль JS понад конструювання елемента, клавіатурна доступність із коробки, працює на
+  тач-екранах). П'ять карток, названих у первісному описі задачі: Провайдери-voter'и,
+  Поведінка при збої (timeout), Кеш, Списки виключень, Лог запитів — по одній підказці на
+  картку (обсяг картки, не кожне окреме поле всередині — практична одиниця для 1-2-реченевого
+  тексту). Текст живе в `UI-SPEC.md` §3.8 (власник — докс-мап) і дзеркалиться `main.js`'s
+  `FIELD_HELP`, один плаский об'єкт замість тексту, розсипаного по функціях рендеру —
+  **свідомо структуровано так через майбутній T-151 (i18n): одне місце для locale-lookup, не
+  полювання по всьому файлу** (користувач нагадав про це явно під час задачі). CSS — новий
+  `.field-help`/`summary`/`p` блок у `style.css`, скидає `text-transform`/`letter-spacing`
+  батьківського `h3` (інакше "?" і текст підказки теж стали б капсом). Живо перевірено в Chrome
+  (скретч-інстанс порту 9445): реальний клік по кожній з п'яти `<details>` показав правильний,
+  відповідний картці текст; a11y-дерево коректно читає їх як `DisclosureTriangle "Довідка"`.
+  GeoIP/MaxMind/рейтинг-фільтр — поза цим батчем (не названі в первісному описі задачі),
+  додати за тим самим патерном пізніше. Повний запис: TASKS-DONE.md.
+- [x] T-217 — **Знайдено Батч 4.5 (DECISIONS.md 2026-09-11), виправлено 2026-09-12.**
+  `dispatch.rs`'s `apply_admin_config`/`apply_cache_config`/`apply_geoip_change`/
+  `apply_provider_change` читали застарілий `state.persist.rating_filter.clone()` (статичний
+  знімок з `AppState::new`), не живий `state.rating_filter_config_snapshot()`. Фікс: усі чотири
+  сайти тепер читають `(*state.rating_filter_config_snapshot()).clone()` (не `*deref`, як для
+  `[personal_zone]`, — `RatingFilterConfig` містить `Vec<String>`, не `Copy`). Коментарі біля
+  кожного сайту, що описували стару (тепер невірну) причину "not admin-mutable", теж виправлено.
+  **Регресійний тест написаний test-first і перевірено, що він падає проти старого коду:**
+  `serve_admin_cache_config_apply_preserves_a_live_rating_filter_change` — `update_rating_filter_config`
+  напряму, тоді виклик непов'язаного `/admin/cache-config/apply`, перевірка, що `[rating_filter]`
+  на диску не відкотився до `RatingFilterConfig::default()`; тимчасово повернув старий код через
+  скретч-скрипт, підтвердив падіння з точним `left/right` diff, відновив фікс. Повний
+  build/clippy/fmt/test/conformance — зелено. Повний запис: TASKS-DONE.md.
+- [x] T-220 — **Знайдено 2026-09-12, виправлено 2026-09-13 (plan+advisor).** `trust_store.rs`'s
+  `NOT_FOUND_EXIT_CODE: i32 = 17` (T-49) — насправді POSIX-shell-truncated низький байт
+  `0x80090011`/`NTE_NOT_FOUND`, не те значення, яке повертає `ExitStatus::code()` на реальному
+  скомпільованому Windows-білді (`-2146893807`, без відтинання) — тож `confirmed_thumbprints_
+  for_common_name` ніколи не бачив підтвердженого "стор порожній" і `uninstall()` не міг повернути
+  `Ok(())` навіть на справді порожньому сторі. **Фікс:** константа тепер `0x8009_0011_u32.
+  cast_signed()` (той самий bit pattern, читабельний як HRESULT, не `#[allow]` навколо
+  `cast_possible_wrap` — `cast_signed()` не тригерить лінт). **Регрес-тест написаний test-first,
+  проти РЕАЛЬНОГО `certutil`, не синтетичного `ExitStatus`** (advisor-catch: синтетичний тест був
+  би циркулярним — довів би лише, що код збігається з тим, що вже написано в константі):
+  `confirmed_thumbprints_for_common_name_reports_a_sentinel_cn_as_confirmed_empty` викликає саму
+  функцію із CommonName, гарантовано відсутнім у реальному сторі (`-store` — лише читання, тому
+  безпечно для CI, той самий прецедент, що вже дозволяв `thumbprints_for_common_name`'s власний
+  тест); підтверджено падає проти старого `17` (`ListFailed(Some(-2146893807))`) і проходить проти
+  фіксу. Додатково 3 синтетичні тести для решти двох гілок (success→parse, довільний код→
+  `ListFailed`) через нову чисту `classify_confirmed_lookup(&Output)`, виділену з
+  `confirmed_thumbprints_for_common_name` заради тестованості (`ExitStatusExt::from_raw`, без
+  спавну процесу) — ці НЕ доводять правильність самої константи, лише гілки навколо неї. **Що
+  розблоковано, але НЕ живо перевірено цієї сесії** (застосунок зараз повністю видалений з машини,
+  T-222/сценарій 23): `cert_rotation::rotate_certificate` (трей "Перевипустити сертифікат") і
+  `local_state::remove_all`'s сертифікатний артефакт (мав завжди давати `Failed` навіть при
+  реальному видаленні — тепер має коректно повертати `Removed`). Обидва — прогнозовано, не
+  підтверджено живим прогоном; потребують живого підтвердження при наступній MSIX-установці.
+  Повний build/clippy/fmt/test (808, +4 нових) — зелено. Повний запис: TASKS-DONE.md.
+- [x] T-221 — **Знайдено 2026-09-12, виправлено 2026-09-13 (plan+advisor).** `[personal_zone].
+  enabled = true` в `resolver_config.toml` не долітав до живого гейта — `AppState::new` жорстко
+  ставив `personal_zone_config` на `PersonalZoneConfig::default()`, і `restore_personal_zone`
+  (єдиний виклик на старті, `orchestrate.rs`) приймала лише `stats`+`zone`, НІКОЛИ `config`, попри
+  власний doc-коментар, що обіцяв протилежне. **Фікс:** `restore_personal_zone` тепер бере третій
+  параметр `config: PersonalZoneConfig` і викликає `update_personal_zone_config(config)` (той
+  самий метод, яким і так користується `apply_admin_reset` — жодного нового шляху запису);
+  `orchestrate.rs` передає `resolver_config.personal_zone` (той самий уже завантажений TOML, що й
+  `rating_filter`/`cache`/`geoip` вище того самого виклику). **Регрес-тест test-first, підтверджено
+  падінням проти бага** (тимчасовий `let _ = config;` замість реального виклику — впав з очікуваним
+  паніком; відновлено, той самий тест пройшов): `restore_personal_zone_applies_its_config_argument`.
+  Два наявні тести (`rating_filter_status_view_includes_the_personal_zone_source_and_flag`,
+  `a_personal_zone_alone_never_activates_the_bubble`), що раніше самі демонстрували обхідний шлях
+  (окремий виклик `update_personal_zone_config` одразу після `restore_personal_zone`), тепер
+  передають `config` напряму третім аргументом — не приховують фікс за старим воркераундом. **Живо
+  підтверджено в скретч-інстансі:** `resolver_config.toml` з лише `[personal_zone]\nenabled = true`
+  (решта полів — дефолт через struct-level `#[serde(default)]`) → холодний старт → `GET
+  /admin/status` → `rating_filter.personal_zone_enabled: true` **одразу, без жодного
+  `/admin/reset`** — точна протилежність симптому, який був задокументований нижче. Повний
+  build/clippy/fmt/test (809 passed)/conformance (18 passed, 2 ignored)/doc — зелено. **Виправляє
+  наявний запис "Known limitations" пункт (f)** нижче (Rating filter) — дериваційні пороги й
+  запис візитів тепер застосовуються від старту, не лише після `/admin/reset`; сам розмір кільця
+  через рестарт і так рахувався коректно (не було зламано). Повний запис: TASKS-DONE.md.
+- [x] T-222 — **Знайдено 2026-09-12, виправлено 2026-09-13 (plan+advisor).** `self_uninstall.rs`'s
+  app-data wipe-хелпер спавнив НЕПАКОВАНИЙ `powershell.exe` з ЛОГІЧНИМ шляхом
+  (`%LOCALAPPDATA%\dns-quorum-filter`) — той самий клас MSIX-віртуалізації, що й T-219, в іншій
+  підсистемі: непакований дочірній процес бачить логічний шлях як неіснуючий, тож скрипт-хелпер's
+  `Test-Path`-цикл бив хибно на першій же ітерації, `Remove-Item` ніколи не виконувався, без
+  жодної помилки в логах. **Фікс:** новий `resolve_target` (impure shell) + `physical_app_data_dir`/
+  `package_family_name` (чисті) — перед спавном хелпера `dnsqb-tray` (пакований процес, бачить
+  віртуалізацію коректно) сам обчислює реальний фізичний шлях
+  (`%LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\Local\dns-quorum-filter`), парсячи
+  `PackageFamilyName` з власного `current_exe()`'s install-теки (`WindowsApps\<Name>_<Version>_
+  <Arch>__<PublisherHash>\`) — той самий "дай непакованому дочірньому процесу шлях, який він реально бачить" прийом, що T-219 вже застосував
+  для `-addstore`, тепер для видалення цілого каталогу, не одного файла. **Свідомо ніколи не хардкодить
+  конкретний хеш** — інший підписний
+  сертифікат (ефемерний тест-білд `pack-msix.ps1` без `-PfxPath`) дає інший `PublisherHash`
+  щоразу (підтверджено цієї сесії: реальний реліз і сценарій-24-тест-білд мали різні хеші). Для
+  непакованого dev/CI-білда (`target\debug`/`release`, немає `__`-роздільника) парсинг повертає
+  `None` → фолбек на логічний шлях без змін — той самий, вже коректний шлях для цього випадку.
+  5 нових юніт-тестів для чистих `package_family_name`/`physical_app_data_dir` (реальна
+  install-тека цієї сесії + непакований dev-шлях + деформований вхід). **НЕ живо перевірено**
+  (машина зараз без встановленого MSIX) — потребує підтвердження на наступній реальній
+  MSIX-установці: реальне «Повністю видалити» має справді стерти фізичний каталог без
+  допомоги побічного AppX-механізму видалення пакета (той самий фактор, що
+  маскував баг у сценарії 23). Повний build/clippy/fmt/test (dnsqb-tray 42 passed, workspace 809+42+3) — зелено. Повний запис:
+  TASKS-DONE.md.
+- [x] T-223 — MSIX-оновлення відмовляло з `0x80073D02`, поки застосунок не закрито вручну через
+  трей. Виправлено деплой-стороною (`-ForceTargetApplicationShutdown` в `Trust-TestCert.ps1`
+  `-Install` + README/packaging-README), не WinRT-подіями — вужчий, детермінований фікс без
+  потреби у власному коді підписки. Повний запис: TASKS-DONE.md.
+- [x] T-227 — Запит користувача 2026-09-12 (адаптивний дефолт бульбашки + чесна корекція
+  scope). **Початкова "Знахідка" в цьому пункті була помилковою** — пряма перевірка коду
+  показала, що `AVAILABLE_TOPN_LISTS` уже мала всі 11 кодів (`ua/us/de/pl/gb/global/gov-ua/
+  gov-us/gov-pl/gov-gb/edu`) з реальними закомміченими файлами й `.sha256`-сайдкарами,
+  повністю прокинутими через `dispatch.rs`/`admin_ui.rs` — пункт (2) запиту вже був
+  реалізований до T-227, ще до появи цієї задачі. Live-курація нового коду за запитом (3)
+  свідомо НЕ будується (рішення користувача: без курації в реальному часі, тільки готові
+  набори) — суперечило б DECISIONS.md 2026-09-09 (курація — офлайн human-review процес).
+  Реально збудовано: (1) — `install_region::detect_system_region` (реєстр `HKCU\Control
+  Panel\International\Geo`\`Name`, не локаль) → `suggested_list` — підказка (не автозастосування)
+  у `RatingFilterStatusView.suggested_list`, рендериться в zone-picker як кнопка "Додати",
+  ніколи не пречекнута. Повний запис: TASKS-DONE.md.
+- [x] T-229 — Користувач просив постійний знак оклику на трей-іконці за довгу відсутність
+  DoH-запитів; конфліктувало з чинним правилом «An always-on warning is functionally identical
+  to no warning» (Три Б). Прийнято компроміс: одноразове спливаюче вікно біля трею (не бейдж, не
+  balloon tip, не центрований діалог) — кастомне бордерлес `tao`-вікно на тому самому event loop,
+  намальоване через `softbuffer` (новий SECURITY.md-рядок). Повний запис: TASKS-DONE.md.
+- [x] T-136 — **Закрито без коду 2026-09-12 (рішення делеговане користувачем агенту, аудит бекложу).**
+  Merge публічних блок-листів (EasyList тощо) — окрема фіча поза quorum-логікою (Явно поза межами
+  MVP). Обсяг повністю поглинутий **T-218** (той самий клас — статичний шар блок-листів поряд із
+  кворумом), який уже має значно детальніший аналіз джерел/ліцензій/дизайн-питань (2026-09-11,
+  `data/blocklists/CANDIDATES.md`) — тримати паралельно як окрему задачу додавало б лише
+  дублювання, без окремої цінності. Якщо T-218 колись піднімається — весь скоуп T-136 вже
+  покритий її kickoff'ом, окремий T-136-прохід не потрібен. TASKS-DONE.md.
+- [x] T-104 — (Батч 4.0) **Метрик-проба зроблена 2026-09-07** — `examples/topn_fp_probe.rs`,
+  n=318: Ads-tier FP ≈ 0 %, Adult-tier «FP» переважно коректні блоки; per-country топ-N містить
+  реально-adult/gambling → курація зони мусить фільтрувати (T-108). Деталі — TASKS-DONE.md.
+- [x] T-105 — (Батч 4.0) **Підтверджено 2026-09-07** — `geoip_download`/`geoip_updater`
+  (TLS + `.sha256`-sidecar + atomic-swap, обкатаний з Ф2) переюзовується для per-country топ-N
+  файлу як є; новий тільки конвеєр курації.
+- [x] T-106 — (Батч 4.0) **Зроблено 2026-09-07** — Cloudflare Radar відхилено (CC BY-NC 4.0,
+  редистрибуція похідного списку в Apache-2.0-продукті несумісна); CrUX (CC BY 4.0) — провідний
+  кандидат. Джерела: `cloudflare-docs/.../radar/index.mdx`, `developer.chrome.com/docs/crux/methodology`,
+  `zakird/crux-top-lists`. (Відкриті питання п.7 закрито.)
+- [x] T-179 — (Батч 4.0) **Зроблено 2026-09-07** — Фаза 4 re-scope: §5.1 (voter-scope виключення
+  топ-сайтів) прибрано, злито в рейтинговий фільтр §5.3 «бульбашка»; §5.1.1 переюзано як 4-те
+  персональне джерело зон; рейтинг-фільтр Ф5→Ф4, Ф5 = ccTLD (§5.2) + i18n; `VoterScopeView` /
+  `LogEntry.voter_scope` видалено (жоден шлях не звужує voter-набір, `SECURITY_ONLY`
+  непродукований; поле ніколи не рендерилось UI). SPEC/DECISIONS/TASKS/CLAUDE/UI-SPEC/діаграми
+  синхронізовано; нова `diagrams/rating-filter.md`. Деталі — TASKS-DONE.md. (Відкриті питання
+  п.7, п.11 закрито.)
+- [x] T-107 — (Батч 4.1) **Зроблено 2026-09-09.** `examples/curate_topn.rs` (fetch CrUX top
+  bucket — per-country `InternetHealthReport/crux-top-lists-country` + `global` `zakird/crux-top-lists`
+  → нормалізація origin→registrable через пінований PSL → `data/topn/<list>.txt` + `.sha256`,
+  стабільні шляхи) + `.github/workflows/topn-curate.yml` (`workflow_dispatch`). **Без DNS.**
+  Перший датасет: `ua us de pl gb global` (202608). Згорнула стару T-121. Наратив — TASKS-DONE.md.
+- [x] T-108 — (Батч 4.1) **Переосмислено й перенесено в Батч 4.3 2026-09-09** (DECISIONS.md).
+  Гігієна — **не** bulk-скан при курації (1000 DoH-запитів/резолвер/регенерація = ризик бану
+  адреси; кворум усе одно стоїть далі), а **лінива, під час роботи** в клієнті: домен у зоні, який
+  кворум блокує, клієнт прибирає з локального набору зони. **Реалізовано з T-124 у Батчі 4.3
+  (2026-09-09):** in-memory overlay, окремий lock від зони, exact-match only (блок субдомену
+  нічого не прибирає); персистенція overlay — Батч 4.5. DECISIONS.md 2026-09-09 ×2.
+- [x] T-180 — (Батч 4.1) **Зроблено 2026-09-09.** CrUX (CC BY 4.0, © Google) + Public Suffix List
+  (MPL-2.0) у `<footer id="credits">` `/admin/ui` (тест `admin_ui`) + repo-side `data/topn/README.md`.
+- [x] T-120 — (Батч 4.1) **Закрито 2026-09-09.** Курація обкатана: `data/topn/{ua,us,de,pl,gb,global}.txt`
+  опубліковано (202608), `.sha256` звірені, 6 списків 822–892 registrable кожен, 0–1 skipped.
+- [x] T-122 — (Батч 4.2) **Зроблено 2026-09-11 (спрощено — без TLD-скан-інструмента, див. Батч 4.2
+  вище).** `ZoneSourceKind::GovernmentTopN(cc)` — blanket-suffix запис (`gov.ua`/`gov`/`gov.pl`/
+  `gov.uk`) на реєстратор-обмежений держ.-домен, `gov-{ua,us,pl,gb}.txt`; `de` — свідома прогалина.
+- [x] T-123 — (Батч 4.2) **Зроблено 2026-09-11 (спрощено — без формального PR/CODEOWNERS процесу,
+  див. Батч 4.2 вище).** `ZoneSourceKind::SciEdu`, `edu.txt` (13 записів), версіонований у
+  `data/topn/ZONES-CHANGELOG.md`.
+- [x] T-111 — (Батч 4.4) **Зроблено 2026-09-10.** Картка `#rating-filter-body` у `<details>`
+  «Розширені»: hand-rolled combobox пошуку зон (`input[role=combobox]` + `ul[role=listbox]`,
+  ↑↓/Enter/Esc, `aria-activedescendant`) із `available_lists` + стовпчик обраних із лічильником
+  доменів (`RatingFilterStatusView.loaded`, per-list) і `×`; кнопка «Зберегти зони» (один POST).
+  Розмір топ-N у UI немає (фіксує курація, Батч 4.1). Наратив — TASKS-DONE.md.
+- [x] T-124 — (Батч 4.3) **Зроблено 2026-09-09.** Крок 5 конвеєра в `pipeline::handle_query`
+  (після Cache, перед Quorum): `rating_filter` модуль (чиста `ZoneLists::zone_match` — suffix-walk,
+  без PSL), `topn_download`/`topn_updater` (той самий механізм, що GeoIP), `[rating_filter]`
+  конфіг-таблиця, `DecisionSource::RATING_FILTER` (поза-зони BLOCK не кешується). T-108 лінива
+  гігієна folded in (in-memory overlay, окремий lock, exact-match). Наратив — TASKS-DONE.md.
+- [x] T-125 — (Батч 4.3) **Зроблено 2026-09-09.** Лише BLOCK для поза-зони; у зоні → звичайний
+  конвеєр без force-ALLOW. Тест `in_zone_domain_continues_through_quorum_and_is_not_force_allowed`.
+- [x] T-126 — (Батч 4.3) **Зроблено 2026-09-09.** `[rating_filter].enabled` дефолт `false`;
+  `enabled` без `lists` — інертний, не помилка (Fork B). Round-trip тести в `config.rs`.
+- [x] T-127 — (Батч 4.4) **Зроблено 2026-09-10.** `POST /admin/rating-filter`
+  (`RatingFilterConfigUpdate`, повна заміна; `rating_filter_is_active` — єдиний авторитет;
+  `wake` + rebuild кешу при увімкненні) + поле `AdminStatusResponse.rating_filter`
+  (`RatingFilterStatusView`). Картка: обрамлений enable-блок, OFF→ON крок підтвердження
+  «буде недоступна переважна більшість інтернету», ON→OFF миттєве. `run_topn_updater` тепер
+  завжди спавниться (`main.rs`, `173cf56`). **Плюс:** `validate_rating_filter_lists` звужено
+  до членства в `AVAILABLE_TOPN_LISTS` (`+ConfigError::UnknownRatingFilterList`, DECISIONS.md
+  2026-09-10). Наратив — TASKS-DONE.md.
+- [x] T-128 — (Батч 4.4) **Зроблено 2026-09-10.** Бейдж `#rating-filter-badge` під hero
+  (2-с полл, порожній коли вимкнено; `active` / Fork B) + суфікс у підказці трею
+  (`TrayStatus::Filtering.rating_filter_active` → `compose_tooltip`, лише коли `active`,
+  колір іконки не чіпає). Наратив — TASKS-DONE.md.
+- [x] T-129 — (Батч 4.3) **Зроблено 2026-09-09.** `out_of_zone_domain_is_blocked_without_consulting_quorum`
+  — `MockClient::all_panic` при виклику; перевірено й «не кешується».
+- [x] T-130 — (Батч 4.3) **Зроблено 2026-09-09.** `in_zone_domain_continues_through_quorum_and_is_not_force_allowed`.
+- [x] T-131 — (Батч 4.3) **Зроблено 2026-09-09.** `user_allowlist_overrides_the_rating_filter`
+  (крок 1 вище крок 5).
+- [x] T-138 — (Батч 4.5) **Зроблено 2026-09-11.** `ZoneSourceKind::Personal`, окремий
+  `AppState.rating_filter_personal_zone`, 4-й секрет `personal-zone-key`, критерії
+  частота-∪-регулярність. Наратив — TASKS-DONE.md.
+### Фаза 5 — ccTLD-блок (§5.2) + інтернаціоналізація UI + CLI --help
+
+- [x] T-240 — **Заведено 2026-09-22 (T-238), закрито 2026-09-23.** Батч 5.4 регресія: форма
+  «Додати власний DoH-провайдер» не перекладалась на живому `setLocale()` (обидві знахідки —
+  видимий текст і `aria-label` — той самий кешований `customFormNode`, T-47). Повний діагноз і
+  фікс — TASKS-DONE.md, запис "T-240".
+- [x] T-235 — CLI `--help` для трьох бінарників. Повний нарис (архітектурне питання про
+  `windows_subsystem="windows"`, вирішене емпіричною перевіркою, а не unsafe-кодом; advisor-catch'і;
+  bulk-переклад) — TASKS-DONE.md, "Батч 5.6".
+### Батч RV — ремедіація внутрішнього код-ревʼю (2026-09-10) / RV.1 — тест-покриття (робити першими)
+
+- [x] T-197 — Тест `query_with_timeout` `Errored`-гілки (`timeout.rs`): мок-`DohClient`
+  повертає `Err(UpstreamError::Decode(_))` → `assert!(matches!(outcome,
+  VoterOutcome::Errored(_)))`. Покриті лише `Responded`/`TimedOut`. Чистий тест-add. (1.1-C)
+  — **готово 2026-09-10**: `FailingClient` (патерн `quorum::AdGuardErrorsClient`,
+  `std::future::ready`), `upstream_error_yields_errored_not_timed_out`; 723 unit passed.
+- [x] T-198 — `wire.rs`: негативний юніт `decode_wire_message` (обрізані/сміттєві байти →
+  `Err`) + `proptest` non-panic на довільному `&[u8]` (патерн `overrides::parse_pattern`
+  / `wire_bytes_from_get_never_panics`). **1.1-D(b) знято** — `attach_edns` НЕ мертвий код:
+  його викликає `tests/conformance/rfc_6891.rs`, і на його не-використання спирається
+  аргумент ECS-non-target у `rfc_7871.rs` (Правило 1 — перевірено перед виконанням). (1.1-D)
+  — **готово 2026-09-10**: `decode_wire_message_rejects_truncated_and_garbage_bytes`
+  (< 12-байт заголовок + QDCOUNT=1 без секції питання) + `..._never_panics_on_arbitrary_bytes`
+  (`proptest`, 64 кейси, `0..4096`); 725 unit passed.
+- [x] T-199 — `watchdog/transition.rs`: додати `assert_eq!` у
+  `verifying_pid_routes_on_the_check_result` для `VerifyingPid + PidCheck::Alive +
+  vote==Dead + !any_channel_degraded → ChannelDegraded` (перший операнд `||`, рядок ~55 —
+  зараз тестується лише другий). ~4 рядки. (1.3-A)
+  — **готово 2026-09-10**: додано assert для першого `||`-операнда (vote-Dead), 725 unit passed.
+- [x] T-200 — `upstream.rs`: закрити leak-вектор `UpstreamError::Http`. Рішення вже задане
+  доктриною репо (`SECURITY.md:160` — payload-несучий бік для файлів/URL з доменами):
+  прибрати `{0}` з `#[error("HTTP request to upstream failed: {0}")]` (Display перестає
+  рендерити URL), лишити `#[source] reqwest::Error` (ланцюг для дебагера). **Перевірити
+  Debug-шлях** (`#[derive(Debug)]` досі рендерить внутрішній `reqwest::Error` через
+  `{err:?}` — акцидентний leak-шлях у цьому проєкті саме Debug, `overrides.rs` gotcha):
+  якщо тече — рукописний терсний `impl Debug` (прецедент `overrides::InvalidEntry`).
+  + характеризаційний тест: `Display` **і** `Debug` `UpstreamError::Http` (з реального
+  `reqwest::Error` від запиту на `127.0.0.1:1` з `?dns=<base64>`) не містять ні URL, ні
+  підрядка `dns=` (еталон — `overrides::tests::…never_contains_the_raw_toml_input`).
+  Рекурентний баг-клас проєкту (витік домену в логи, T-29). (1.1-B)
+  — **готово 2026-09-10**: probe підтвердив — pre-fix і Display, і Debug несли
+  `127.0.0.1:1` + `dns=`. `{0}` прибрано з **усіх трьох** варіантів (`Encode`/`Decode`
+  теж несуть `ProtoError` з доменним лейблом — урок `overrides::InvalidEntry`), знято
+  `Debug` з derive + рукописний `impl Debug` (лише імʼя варіанта). `#[source]`
+  лишено, задокументовано в doc-коментарі як свідоме рішення. Тест
+  `http_error_display_and_debug_never_carry_the_request_url`; 726 unit passed.
+- [x] T-201 — Інтеграційний тест-модуль `AdminClient` round-trip + error-мапінг проти
+  ефемерного `serve()` з тестовим cert (`serve` уже генерик і тестовний). `AdminClient`
+  споживають `dnsqb-tray` **і** `dnsqb-watcher`, зараз 0 тестів між клієнтом і сервером.
+  Покрити: URL/метод/DTO-узгодження, `AdminClientError`-мапінг (сервіс лежить / не той
+  cert / non-200 / зламаний JSON). ≈½ дня. (1.2-B)
+  — **готово 2026-09-10** (пройшло `advisor` до старту): `tests/admin_client.rs` — 7
+  тестів, кожен піднімає реальний TLS-`serve()` на ефемерному loopback-порту з
+  `generate_self_signed_cert`, пінить `AdminClient`. Покрито: `status`/`health`/`apply`
+  round-trip + DTO-декод справжнім хендлером; `CertRead` (нема `cert.pem`), `ClientBuild`
+  (зіпсований PEM-конверт — «not a pem» рядок `Certificate::from_pem` мовчки терпить),
+  `Request` (порт мертвий; non-2xx через `remove_provider` невідомого id). **Не покрито:**
+  `200`+не-JSON — жоден роут такого не віддає, `error_for_status` усе одно зводить non-2xx
+  і decode-fail в один `Request`. `ci.yml` build-test += `cargo test --test admin_client`
+  (бо `--lib --bins` пропускає `tests/`). Знахідка: `tls::server_config_from_certified_key`
+  — `pub(crate)`, харнес дублює ~10 рядків `rustls`-збірки → до 4-B/T-210.
+- [x] T-202 — `dnsqb-tray`: виокремити routing `handle_menu_event` у чисту
+  `menu_action_for(id) -> MenuAction` (+ тест таблицею, ~15 пунктів меню → дії) і
+  `format_uninstall_report(&UninstallReport) -> String` (+ прямий тест). Патерн — як
+  `dnsqb-tray/status.rs`. `main.rs` 823 прод LOC, 0 тестів; mis-wire меню їде мовчки.
+  ≈½–1 день. (1.4-A)
+  — **готово 2026-09-10** (plan+advisor до старту): `menu_action_for` (13-варіантний
+  `MenuAction`, `Unknown` = старий `_ => {}`), `handle_menu_event` → тонкий делегатор
+  `match menu_action_for(id)` без wildcard — arm-и **дослівно** ті самі, той самий порядок
+  (git diff — чиста механічна заміна ключа). Звірено 1:1: `build_menu` будує 12 id → усі 12
+  обробляються, множини ідентичні, mis-wire сьогодні немає. `format_uninstall_report` вже
+  була окремою `fn`. `#[cfg(test)] mod tests` у `main.rs` (перший там): табличний тест
+  keyed на **літеральних** id-рядках (не константах) + Unknown-кейси + мапінг
+  `ArtifactOutcome`→фраза + незалежність полів; 37 tray bin-тестів (+5).
+- [x] T-203 — `dnsqb-watcher`: виокремити `fn observe(pipe, service_hb, watcher_hb, health)
+  -> ChannelObs` + тест мапінгу двох heartbeat-файлів на правильні напрямки. Ядро
+  (`LoopDriver::tick`) уже покрите; нетестований залишок — побудова `ChannelObs` із сирих
+  читань. <1 год. (1.4-B)
+  — **готово 2026-09-10** (та сама 1:1-дисципліна; окремий advisor не потрібен per його
+  вказівку): дві чисті `#[cfg(windows)]` fn — `peer_heartbeat_path` (читає `service.hb`,
+  не `watcher.hb` — суть 1.4-B) і `observe(ipc, &io::Result<HeartbeatFile>, health, pid,
+  now) -> ChannelObs` (folds `marker_ok && !is_stale`). git diff — заміна ключа/винесення,
+  логіка `file_signal` та `ChannelObs {…}` дослівно ті самі, `now` той самий. 3 нові
+  bin-тести (`dnsqb-watcher` мав 0): напрям файлу, `file_signal` лише для свіжого+маркованого,
+  прохід решти 3 каналів.
+### Батч RV — ремедіація внутрішнього код-ревʼю (2026-09-10) / RV.2 — архітектура / консистентність (після RV.1)
+
+- [x] T-204 — **`major`.** Вирішальна логіка `/admin/ui` (обчислення hero-state, guard
+  master-switch, стан-машина картки rating-filter) живе в `main.js` і верифікується лише
+  `assert!(MAIN_JS.contains("…"))` — керівна поверхня, логічний баг їде мовчки (рекурентний
+  урок T-59, масштабований). Перенести справді *вирішальну* логіку на сервер як обчислені
+  поля `AdminStatusResponse` (`hero_state: HeroStateView`, `master_switch_allowed: bool`) у
+  `admin.rs`; `main.js` → чистий рендер; чиста презентація лишається в JS. Патерн —
+  `rating_filter_is_active` «єдина влада» + `status.rs` виокремлення. **Власний
+  plan+advisor** (арх-зміна, торкається DTO/публічного API). ≈1–2 дні. (3-B / 1.2-A)
+  — **готово 2026-09-10** (plan+advisor kickoff+closing; обсяг «Максимум» — рішення
+  користувача — вкл. cert, тож T-211 зроблено окремим комітом перед цим). `admin.rs`:
+  `HeroStateView` (8 варіантів) + чиста `compute_hero_state(watchdog, network, paused,
+  has_active_provider, cert) -> HeroStateView` — сходи **дослівно** ті самі, що старий
+  `computeProtectionState` (watchdog > offline > paused > 0-voters > cert); `cert: None`
+  (ще не перевіряли) → `Protected`, не `CertUnknown` (advisor — та сама помилка, що T-188
+  виправив у треї). `SERVICE_UNREACHABLE` лишається клієнтським (сервер не бачить власної
+  недоступності). `ProvidersResponse` += `category_states: Vec<CategoryFilterView>`
+  (`Off`/`Partial`/`On` fold — колишній `categoryState()`) + `master_switch_targets:
+  Vec<Category>` (категорії з ≥1 сконфіг. воутером — guard проти opt-in дорослого, T-170).
+  Обидва білдери `AdminStatusResponse` кличуть `compute_hero_state`; `providers_view`
+  заповнює нові поля. `main.js`: `computeProtectionState` (77 р.) → `HERO_PRESENTATION`
+  const-мапа + `heroPresentation()`; `renderError` → літеральний `SERVICE_UNREACHABLE`;
+  видалено `certTrust`/`refreshCertStatus`/клієнтський fetch `/admin/cert-status`
+  (+visibilitychange); `categoryState()` → `categoryStateFrom(data)`; `flipAllCategories`
+  ітерує `data.master_switch_targets`. `admin_ui.rs`: 4 `contains`-тести перенацілено на
+  рендер-звʼязку — **вирішальні** ассерти тепер у `admin.rs::hero_and_category_tests` (15
+  тестів: сходи, паузо-не-зелений, `None`→Protected, folds, adult-guard, serde round-trip).
+  **Межа влади:** `hero_state` — тільки для hero `/admin/ui`; трей тримає власний ранкінг
+  (`status.rs::from_response`, Paused вище watchdog — DECISIONS.md 2026-09-07/08).
+  Гейт: 741 lib + 37 tray + 3 watcher + 7 admin_client + 18 conformance, clippy/fmt/doc.
+- [x] T-205 — Версіонувати адмін-DTO: `#[serde(default)]` на additive-полях
+  `AdminStatusResponse` + `schema_version: u32`; `AdminClient` логує warning на розбіжність
+  версій, не падає. Зараз це єдиний крос-процесний контракт репо без версіонування
+  (на відміну від `encrypted_file` VERSION / `PersistedFileV1` / `FRAME_VERSION` /
+  `STATE_SCHEMA_VERSION`). Вплив низький (MSIX атомарний), фікс ≈ derive-атрибути. (3-A)
+  — **готово 2026-09-11** (advisor був перевантажений на kickoff — Варіант 1 знахідки
+  прямолінійний; закривний advisor заплановано). `admin.rs`: `pub const
+  ADMIN_DTO_SCHEMA_VERSION: u32 = 1` + doc-коментар «бампати при додаванні поля».
+  `AdminStatusResponse.schema_version` (`#[serde(default)]` → відсутнє = `0`).
+  `#[serde(default)]` на **additive** полях (`serve_baseline_when_filters_unreachable`,
+  `network`, `paused`, `baseline_endpoint`, `watchdog`, `encrypted_persistence`,
+  `rating_filter`, `hero_state`) + `#[derive(Default)]` / `#[default]` на їх типах
+  (`NetworkStatusView`→`Online`, `BaselineEndpointView`→`Primary`, `HeroStateView`→
+  `Protected`, `EncryptedPersistenceView`/`RatingFilterStatusView`). **Load-bearing
+  Ф1-поля лишаються строгими** (`active_providers`/`timeout_mode`/`timeout_ms`/`port`/
+  `stats`/`persisted` — їх відсутність = «це не той DTO»). `ProvidersResponse`:
+  `#[serde(default)]` на T-204-полях (`category_states`/`master_switch_targets`).
+  `AdminClient::{status,apply,reset}` → `warn_on_schema_mismatch(resp.schema_version)`
+  після декоду, повертає `Ok`. Тести: `admin::dto_versioning_tests` (4 — additive
+  absent → Ok із safe-zeros, load-bearing absent → Err, `schema_version` round-trip,
+  `ProvidersResponse` без T-204-полів) + `serve_admin_status_returns_the_default_live_settings`
+  += перевірка стемпа. Гейт: 747 lib + 37 tray + 3 watcher + 7 admin_client + 18 conformance,
+  clippy/fmt/doc.
+- [x] T-206 — Характеризаційний тест cache-stampede (3-C / 1.1-A) — **готово 2026-09-11**.
+  `pipeline::tests::two_concurrent_misses_for_the_same_key_each_run_quorum`: спільний `Cache`,
+  новий `StampedeClient` (`AtomicU32` + `tokio::task::yield_now` — щоб два `handle_query` під
+  `tokio::join!` на current-thread обидва пройшли cache-miss до першого запису; `std::future::ready`
+  так не інтерлівить), `assert_eq!(calls, 2 * (voters + 1))` — обидва промахи роблять повний
+  fan-out (voters + завжди-запитуваний baseline) + follow-up виклик `MockClient::all_panic()
+  → Response` доводить, що вердикт таки потрапив у кеш (урок T-59: сам лічильник = 6 проходить
+  і для «один виклик fan-out'нув на 6»). `PERFORMANCE.md` «No request coalescing» + SPEC.md §4
+  булет «без single-flight — свідомо». **`moka::get_with` не додано.** Гейт: 754 lib.
+- [x] T-207 — Doc-тести з прикладами на 8 чистих leaf-функцій re-export поверхні `lib.rs`
+  (4-A) — **готово 2026-09-11**. `# Examples` на `normalize_domain`, `min_rrset_ttl`,
+  `negative_cache_ttl`, `should_serve_stale` (lib.rs), `next_backoff` (watchdog::backoff),
+  `channel_status` (watchdog::channel), `ZoneLists::zone_match` (rating_filter),
+  `SinkholeNet::contains` (upstream — через re-export `sinkhole_nets_for`, бо `SinkholeNet::v4/v6`
+  приватні). Дрімаючий гейт `cargo test --workspace --doc` тепер має зуби: 9 doc-тестів (8 нових
+  + наявний `admission::ConnectionGate`). `min_rrset_ttl`/`negative_cache_ttl` конструюють
+  `hickory_proto` `Record`/`SOA` — єдине місце, де doc-тест залежить від конструктор-API
+  транзитивної залежності (перевірено емпірично, що doctest її бачить). **Гейт розширено:
+  `cargo test --workspace --doc --locked` тепер частина обов'язкового набору** — `--lib --bins`
+  його не запускає. CLAUDE.md Commands оновлено. Гейт: 754 lib + 9 doc + clippy/fmt/rustdoc.
+- [x] T-208 — `Debug` на публічних типах (4-C, `rust.md` §3) — **готово 2026-09-11**.
+  `#[derive(Debug, Clone, Copy)]` на `pipeline::RatingFilterView` (`ZoneLists` вже `Debug`).
+  Рукописний терсний `impl Debug for dispatch::GeoipState` — похідний рекурсив би у
+  `maxminddb::Reader::Debug` (друкує весь mmdb-буфер), тож `reader: "present"/"absent"` +
+  `updated_at`. (`overrides::InvalidEntry` не чіпано — уже має рукописний редагувальний `Debug`.)
+  Гейт: 748 lib + 37 tray + 3 watcher, clippy/fmt.
+- [x] T-209 — мовчазні `Err(_)` → `tracing::debug!` зі статичною міткою (2-C) —
+  **готово 2026-09-11**. `dispatch::json_response` (`serde_json::to_vec` fail → 500) →
+  «status response serialization failed»; `dispatch::serve_admin_log` (`parse_log_query`
+  fail → 400) → «admin log query parse failed». Обидва як `let…else` (clippy
+  `manual_let_else`/`single_match_else` спрацьовує на блок-тіло `Err` арма). Мітки статичні —
+  `?domain_contains=` підрядок не потрапляє в лог. Гейт: 748 lib + 9 doc + 18 conformance +
+  7 admin_client, clippy/fmt.
+- [x] T-210 — *(опційно, лише разом із T-204)* Перенести оркестрацію
+  `dnsqb-service/src/main.rs` у lib як `pub fn run(...)`; звузити публічну поверхню. (4-B)
+  — **готово 2026-09-11** (Батч RV, plan+advisor kickoff, 2 коміти): (1) механічний рух —
+  новий модуль `orchestrate.rs` (`pub async fn run()` + всі приватні хелпери main.rs
+  дослівно), `main.rs` → 3-рядковий шим; нуль змін видимості (диф `lib.rs` — 2 додаткові
+  рядки). (2) звуження — компілятор-кероване видалення+відновлення (видалити реекспортну
+  групу цілком → зібрати → `E0432` називає точний символ і зовнішнього споживача →
+  повернути лише його), **не** `pub(crate) use` (unused_imports-шум, advisor-catch).
+  **Скоригована оцінка (advisor-catch):** `examples/*.rs` — пʼятий клас зовнішніх
+  споживачів (CI їх компілює й запускає), не врахований у першому чорновику — вони
+  тягнуть майже весь `upstream`/частину `quorum`/`wire`, тож реальне звуження менше за
+  первинну оцінку «~60→~25»: **49 → 32 `pub use`-рядки** (не «груп» — орієнтир, не точна
+  метрика review). Звужено те, що було виключно оркестраційним: `cache_persist`,
+  `log_persist`, `encrypted_file`, `tls`, `listener`, `key_store`, `reachability`,
+  `pause_watch`, `cert_watch`, частини `topn_updater`/`geoip_updater`/
+  `geoip_credentials`/`cert`/`cert_rotation`, `pipeline::*`, `quorum::resolve` та інше.
+  Звуження оголило 2 pre-existing gap'и: `BaselineSelector::on_primary()` (нуль
+  production-викликів, лише тести — видалено, тести → `active_index() == 0`) і
+  `watchdog::transition::transition`'s `&TransitionInput` параметр (тепер internal-only →
+  clippy `trivially_copy_pass_by_ref` вже не пригнічений публічним API-статусом → змінено
+  на by-value, `TransitionInput` вже `Copy`). Кілька внутрішніх модулів (`admin.rs`,
+  `dispatch.rs`) виявилися самі йшли через `crate::`-реекспорт замість модульного шляху —
+  переведено на прямі шляхи (`crate::reachability::NetworkReachability` тощо).
+  Doctest-гейт (advisor-catch): точно 9 до і після (демоутнутий символ з `# Examples`
+  мовчки губить свій doctest — `--doc` не бере `--document-private-items`). Ручний smoke:
+  реальний `dnsqb-service.exe` на скретч app-data — `/health` 200, `/admin/ui` 200
+  (13288 байт), реальний `GET /dns-query?dns=...` для `example.com` A → 200
+  `application/dns-message`, 61 байт (справжня квота-резолюція, не лише health-шлях).
+  §7.1 #7 межа названа явно в doc-коментарі `orchestrate::run`: `dnsqb-watcher` лінкує
+  той самий lib, але не повинен викликати `run()`/`run_service_to_watcher_watchdog`.
+- [x] T-211 — Кешувати `trust_store::is_trusted` у `AppState` на N с (патерн
+  `status::spawn_trust_watch`), щоб `GET /admin/cert-status` не спавнив 2 `certutil` на
+  кожен виклик. Добре пом'якшено вже (`127.0.0.1`, ConnectionGate, `CREATE_NO_WINDOW`) —
+  робити лише якщо `cert-status` піде на частий poll. (2-B)
+  — **готово 2026-09-10** (окремий коміт перед T-204, per advisor; T-204 «Максимум»
+  ставить cert-trust на 2 с-poll `/admin/status`, тож передумова «частий poll» тепер
+  виконана). Новий `cert_watch` модуль — `run_cert_trust_watch(cert_path, state)`
+  детачнутий 60 с-loop через `spawn_blocking(is_trusted)` → `AppState.cert_trust:
+  RwLock<Option<CertTrustView>>` (`None` = ще не перевіряли ≠ `Some(Unknown)` —
+  контракт `TrustState::is_confirmed`, T-188). `serve_admin_cert_status` → чисте
+  читання `cert_trust_snapshot()` (`None`→`UNKNOWN` на дроті), прибрано з
+  `FUZZ_EXCLUDED_ROUTES`. `/admin/install-cert` (→`Trusted`) та
+  `/admin/uninstall-local-state` (→`NotTrusted`, якщо cert-artefact не `Failed`)
+  синхронно поки́дають кеш, щоб hero не лагав. `main.rs`: `spawn_flag_watchers`
+  (виокремлено з `main()` разом із `run_pause_watcher` — `too_many_lines`).
+### Батч RV — ремедіація внутрішнього код-ревʼю (2026-09-10) / RV.3 — документаційні фікси DOC MAP (Батч RV, 2026-09-11)
+
+- [x] T-212 — CLAUDE.md «Known limitations in shipped code» — оновлено застарілий bullet про
+  admin-channel fuzz (T-58): `/dns-query` POST body **уже** фазиться
+  (`serve_never_panics_on_arbitrary_input_for_any_documented_route`, кермований `ROUTES`). (1.2-C)
+  Переписано на фактичну поверхню + два справжні залишкові gap'и (виключені мутуючі cert-роути;
+  шлях декоду upstream-відповіді). Коміт окремо.
+- [x] T-213 — `SECURITY.md` таблиця залежностей — додано рядок accepted-risk для
+  `aws-lc-sys` 0.44.0 після рядка `rustls`. Звірено `cargo tree -e no-dev --target
+  x86_64-pc-windows-msvc -i aws-lc-sys` (← `aws-lc-rs` 1.18.0 ← `rcgen`+`rustls`+`rustls-webpki`,
+  усі 3 бінарники) та `-i ring` → «nothing to print» (немає в ship-графі). Найбільша `unsafe`
+  C-поверхня в shipped binary; `#![forbid(unsafe_code)]` first-party інтакт. (2-A)
+- [x] T-214 — `crates/dnsqb-service/src/admin.rs` — прибрано згадку `dnsqb-ui` / Tauri
+  з doc-коментаря `AdminClient` (канал видалено T-149; споживачі — `dnsqb-tray` + `dnsqb-watcher`).
+  Рядок `reqwest`-versions-tracking лишено (він досі валідний). (2-D)
+- [x] T-215 — `crates/dnsqb-service/src/logging.rs` — уточнено doc (і модульний, і const):
+  `MAX_LOG_BYTES` — поріг, що перевіряється **раз на старті процесу**, не live-cap; довготривалий
+  watcher пише необмежений `<role>.log` до рестарту. (3-D)
+- [x] T-216 — CLAUDE.md «Commands» — додано, що `--lib --bins` так само не запускає `tests/`
+  integration-бінарники (третя категорія); кожен потребує власного `cargo test --test <name>`
+  (`conformance` + `admin_client`). Виявлено у T-201. (знахідка T-201)
