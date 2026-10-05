@@ -12,11 +12,16 @@
 //! `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` so that (a) a respawn never
 //! flashes a console window (the binaries are `windows_subsystem = "windows"`
 //! since T-181, but a console-subsystem debug build would otherwise still
-//! attach one), and (b) the child is not torn down together with the
-//! launcher's job object — Explorer and an MSIX container place the launched
-//! app in a job that kills its processes on close, which is exactly how a
-//! `v0.3.0` user lost the whole stack by closing one window. If the job
-//! forbids breakaway the spawn falls back to `DETACHED_PROCESS` alone.
+//! attach one), and (b) outside a package the child is not torn down
+//! together with the launcher's job object (a `v0.3.0` user lost the whole
+//! stack by closing one window). If the job forbids breakaway the spawn
+//! falls back to `DETACHED_PROCESS` alone.
+//!
+//! **Inside an MSIX package there is no breakaway (T-244).** The package job
+//! was measured as `BREAKAWAY_OK` without `KILL_ON_JOB_CLOSE`, so it never
+//! killed siblings; breaking away only hid them from `Add-AppxPackage
+//! -ForceTargetApplicationShutdown`, and the surviving old version then kept
+//! the new one from starting. See [`breakaway_wanted`].
 
 use std::path::{Path, PathBuf};
 
@@ -40,6 +45,24 @@ const fn detached_flags(allow_breakaway: bool) -> u32 {
     } else {
         DETACHED_PROCESS
     }
+}
+
+/// The manifest every MSIX install directory carries next to the binaries.
+const PACKAGE_MANIFEST: &str = "AppxManifest.xml";
+
+/// Whether `exe_dir` is an MSIX package install directory (T-244).
+fn is_packaged_layout(exe_dir: &Path) -> bool {
+    exe_dir.join(PACKAGE_MANIFEST).is_file()
+}
+
+/// Whether a sibling should leave the launcher's job (T-244). Inside a
+/// package the child must stay in the package job: `Add-AppxPackage
+/// -ForceTargetApplicationShutdown` closes only that job's processes, and a
+/// survivor holding the old version blocks the new one from starting
+/// (`0x80070020`). The package job has no `KILL_ON_JOB_CLOSE`, so staying in
+/// it costs nothing on a watcher crash.
+const fn breakaway_wanted(packaged: bool) -> bool {
+    !packaged
 }
 
 /// Why a sibling could not be spawned. Messages carry no paths — coarse only.
@@ -99,33 +122,37 @@ pub fn spawn_sibling(role: Role) -> Result<std::process::Child, SpawnError> {
     if !target.is_file() {
         return Err(SpawnError::NotFound);
     }
-    spawn_detached(&target).map_err(SpawnError::Spawn)
+    let packaged = target.parent().is_some_and(is_packaged_layout);
+    spawn_detached(&target, breakaway_wanted(packaged)).map_err(SpawnError::Spawn)
 }
 
-/// Spawn `target` detached from this process's console and job (T-182).
+/// Spawn `target` detached from this process's console (T-182) and, when
+/// `allow_breakaway`, from its job.
 ///
 /// Windows only carries `creation_flags`; on every other target this is a
-/// plain spawn. `CREATE_BREAKAWAY_FROM_JOB` is attempted first and, if the
-/// job forbids it (`ERROR_ACCESS_DENIED`, raw OS error 5), retried with
-/// `DETACHED_PROCESS` alone — a child that stays in the job is still better
-/// than no child.
+/// plain spawn. With `allow_breakaway`, `CREATE_BREAKAWAY_FROM_JOB` is
+/// attempted first and, if the job forbids it (`ERROR_ACCESS_DENIED`, raw OS
+/// error 5), retried with `DETACHED_PROCESS` alone — a child that stays in
+/// the job is still better than no child.
 #[cfg(windows)]
-fn spawn_detached(target: &Path) -> std::io::Result<std::process::Child> {
+fn spawn_detached(target: &Path, allow_breakaway: bool) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
 
     match std::process::Command::new(target)
-        .creation_flags(detached_flags(true))
+        .creation_flags(detached_flags(allow_breakaway))
         .spawn()
     {
-        Err(err) if err.raw_os_error() == Some(5) => std::process::Command::new(target)
-            .creation_flags(detached_flags(false))
-            .spawn(),
+        Err(err) if allow_breakaway && err.raw_os_error() == Some(5) => {
+            std::process::Command::new(target)
+                .creation_flags(detached_flags(false))
+                .spawn()
+        }
         other => other,
     }
 }
 
 #[cfg(not(windows))]
-fn spawn_detached(target: &Path) -> std::io::Result<std::process::Child> {
+fn spawn_detached(target: &Path, _allow_breakaway: bool) -> std::io::Result<std::process::Child> {
     std::process::Command::new(target).spawn()
 }
 
@@ -223,5 +250,49 @@ mod tests {
             detached_flags(false),
             "the fallback keeps every bit except breakaway"
         );
+    }
+
+    // T-244 happy path + boundary: inside a package the child stays in the
+    // package job (no breakaway bit), outside it keeps T-182's breakaway.
+    #[cfg(windows)]
+    #[test]
+    fn breakaway_is_dropped_only_inside_a_package() {
+        use super::{breakaway_wanted, detached_flags, CREATE_BREAKAWAY_FROM_JOB};
+        assert!(!breakaway_wanted(true));
+        assert!(breakaway_wanted(false));
+        assert_eq!(
+            detached_flags(breakaway_wanted(true)) & CREATE_BREAKAWAY_FROM_JOB,
+            0
+        );
+        assert_ne!(
+            detached_flags(breakaway_wanted(false)) & CREATE_BREAKAWAY_FROM_JOB,
+            0
+        );
+    }
+
+    // T-244: a directory is a package install dir iff `AppxManifest.xml` is a
+    // file in it. Misuse: a *directory* with that name does not count.
+    #[test]
+    fn appx_manifest_file_marks_a_packaged_layout() {
+        use super::{is_packaged_layout, PACKAGE_MANIFEST};
+        let plain = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("tempdir: {err}"),
+        };
+        assert!(!is_packaged_layout(plain.path()));
+
+        let fake = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(err) => panic!("tempdir: {err}"),
+        };
+        if let Err(err) = std::fs::create_dir(fake.path().join(PACKAGE_MANIFEST)) {
+            panic!("create_dir: {err}");
+        }
+        assert!(!is_packaged_layout(fake.path()));
+
+        if let Err(err) = std::fs::write(plain.path().join(PACKAGE_MANIFEST), "<Package/>") {
+            panic!("write: {err}");
+        }
+        assert!(is_packaged_layout(plain.path()));
     }
 }

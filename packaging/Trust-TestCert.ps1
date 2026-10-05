@@ -159,13 +159,27 @@ if ($Remove) {
 } else {
     if (-not $present) { throw "Add reported success but the certificate is not in the store." }
     $leaf = Split-Path -Leaf $PSCommandPath
-    Write-Host "Verified: trusted. Undo later with:  .\$leaf -Remove" -ForegroundColor Green
+    Write-Host "Verified: trusted. Undo later with:  powershell -ExecutionPolicy Bypass -File .\$leaf -Remove" -ForegroundColor Green
 }
 
 if ($Install -and -not $Remove) {
     $msix = Join-Path (Split-Path -Parent $CerPath) 'dns-quorum-filter.msix'
     if (-not (Test-Path -LiteralPath $msix)) {
         throw "Cannot -Install: '$msix' not found next to the certificate."
+    }
+    # T-244: versions up to 0.8.0 spawned the service and tray outside the
+    # package job, where -ForceTargetApplicationShutdown cannot see them, and a
+    # survivor keeps the new version from starting (0x80070020). Stop every
+    # process running from the installed package's own directory first.
+    foreach ($installed in @(Get-AppxPackage -Name 'dns-quorum-filter')) {
+        $dir = $installed.InstallLocation.TrimEnd('\') + '\'
+        Get-CimInstance Win32_Process |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } |
+            ForEach-Object {
+                Write-Host "Stopping $($_.Name) (PID $($_.ProcessId)) from the installed version ..."
+                # A process that already exited between the query and the stop is the goal.
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
     }
     Write-Host "Installing $msix ..."
     try {

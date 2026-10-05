@@ -5,6 +5,13 @@ name: Release
 # stops at the artifact; a `v*` tag also runs the `release` job.
 on:
   workflow_dispatch:
+    inputs:
+      # Test artifacts only (T-244): an installed test build above the crate
+      # version would otherwise refuse every later artifact as a downgrade.
+      msix_version:
+        description: 'MSIX version Major.Minor.Build for this test artifact (empty = crate version)'
+        required: false
+        default: ''
   push:
     tags:
       - 'v*'
@@ -165,19 +172,22 @@ jobs:
         env:
           CODESIGN_PFX: ${{ secrets.CODESIGN_PFX }}
           CODESIGN_PASSWORD: ${{ secrets.CODESIGN_PASSWORD }}
+          MSIX_VERSION: ${{ inputs.msix_version }}
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $versionArgs = @{}
+          if ($env:MSIX_VERSION) { $versionArgs.Version = $env:MSIX_VERSION }
           if ($env:CODESIGN_PFX) {
             $pfxPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
             [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODESIGN_PFX))
             try {
-              .\packaging\pack-msix.ps1 -BinDir bin -OutFile dist\dns-quorum-filter.msix -PfxPath $pfxPath -PfxPassword $env:CODESIGN_PASSWORD
+              .\packaging\pack-msix.ps1 @versionArgs -BinDir bin -OutFile dist\dns-quorum-filter.msix -PfxPath $pfxPath -PfxPassword $env:CODESIGN_PASSWORD
             } finally {
               Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
             }
           } else {
-            .\packaging\pack-msix.ps1 -BinDir bin -OutFile dist\dns-quorum-filter.msix
+            .\packaging\pack-msix.ps1 @versionArgs -BinDir bin -OutFile dist\dns-quorum-filter.msix
           }
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4

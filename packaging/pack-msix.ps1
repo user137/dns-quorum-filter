@@ -70,6 +70,7 @@ if (-not $Version) {
         $Version = $crateVersion
     }
 }
+if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "-Version must be Major.Minor.Build (got '$Version')" }
 $msixVersion = "$Version.0"
 Write-Host "MSIX version: $msixVersion"
 
