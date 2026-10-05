@@ -57,7 +57,7 @@ flowchart TD
 ## Паралельно — hero `/admin/ui` (той самий стан, інший поверхневий елемент)
 
 `computeProtectionState(status, reachable, certTrust)` (`main.js`) вставляє cert-гілку **після**
-0-voters, **перед** «Захищено»:
+0-voters, **перед** «Фільтр працює» (до 2026-10-05 — «Захищено»):
 
 - `certTrust == "NOT_TRUSTED"` → `is-bad` «Сертифікат не встановлено» + кнопка «Встановити
   сертифікат» → `POST /admin/install-cert` → на успіх `refreshCertStatus()`.
