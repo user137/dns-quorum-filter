@@ -738,17 +738,7 @@ fn handle_menu_event(
         // supervising it. Resume = remove the flag; `ensure_sibling_running` is
         // an idempotent no-op unless both the service and watcher died during
         // the pause. The label the user clicked tells us which.
-        MenuAction::TogglePause => {
-            if stop_flag_is_set(app_data) {
-                clear_stop_flag(app_data);
-                ensure_sibling_running(app_data, InstanceRole::Service);
-                tracing::info!("filtering resumed by the user");
-            } else if confirm_pause(locale) {
-                if let Err(err) = set_stop_flag(app_data) {
-                    tracing::warn!("could not write stop.flag: {err}");
-                }
-            }
-        }
+        MenuAction::TogglePause => toggle_pause(app_data, locale),
         // T-185: bring the watchdog back if it stopped (idempotent — a no-op
         // when a watcher is already running). This is the only actionable
         // recovery for a dead watcher; there is no automatic one yet.
@@ -777,6 +767,21 @@ fn handle_menu_event(
         // Filter" above is the one that stops everything.
         MenuAction::HideIcon => *control_flow = ControlFlow::Exit,
         MenuAction::Unknown => {}
+    }
+}
+
+/// Pause ↔ resume from the tray menu (T-185/T-193). Both outcomes are logged,
+/// so `tray.log` shows when and by whom filtering was switched off (T-251).
+fn toggle_pause(app_data: &Path, locale: &str) {
+    if stop_flag_is_set(app_data) {
+        clear_stop_flag(app_data);
+        ensure_sibling_running(app_data, InstanceRole::Service);
+        tracing::info!("filtering resumed by the user");
+    } else if confirm_pause(locale) {
+        match set_stop_flag(app_data) {
+            Ok(()) => tracing::info!("filtering paused by the user"),
+            Err(err) => tracing::warn!("could not write stop.flag: {err}"),
+        }
     }
 }
 

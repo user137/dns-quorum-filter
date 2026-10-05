@@ -1591,11 +1591,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Unicode. Відтворено на встановленому 0.8.0: `dnsqb-watcher.exe "qa<U+D800>arg"` (непарний
   сурогат UTF-16) → `panicked at …std/src/env.rs:878:51: called Result::unwrap() on an Err value`,
   код 101; звичайний аргумент → код 0. Виправлення — `args_os()` + `to_string_lossy()`.
-- [ ] T-251 — **Заведено 2026-10-03, QA-прохід (рядок `C-PAUSE_RESUME_ID-SB`).** Вдала пауза з трею
-  (`TogglePause` → `confirm_pause` → `set_stop_flag`, `crates/dnsqb-tray/src/main.rs:617-627`) не
-  пише жодного рядка в `tray.log`, тоді як відновлення пише `filtering resumed by the user` і невдалий
-  запис `stop.flag` пише `warn`. Діагностична асиметрія: з логу не видно, коли й ким фільтрацію
-  вимкнено. Помічено ще в смоуку v0.7.0 #11, не заводилось; підтверджено на 0.8.0. Низька тяжкість.
 - [ ] T-253 — **Заведено 2026-10-03, QA-прохід (рядок `D-tooltip-suffixes`).** Tooltip трею обрізається
   до 64 символів, тож усі суфікси (`tooltip.degradedSuffixTemplate`, `tooltip.ratingFilterSuffix`,
   `tooltip.certWarningSuffix`) в українській ніколи не видно. Спостережено наживо на 0.8.0: з
