@@ -55,14 +55,7 @@ async fn main() {
     // logging, no single-instance guard. A `--help` that took the guard
     // would make the flag unusable exactly while the app is already
     // running, which is when someone is most likely to reach for it.
-    // `dnsqb_service::cli_help`'s own module doc explains why plain
-    // `println!` is safe here even in a `windows_subsystem = "windows"`
-    // release build (empirically verified, not assumed).
-    if dnsqb_service::wants_help(std::env::args().skip(1)) {
-        println!(
-            "{}",
-            dnsqb_service::help_text(dnsqb_service::CliHelpBinary::Watcher)
-        );
+    if dnsqb_service::print_help_if_requested(dnsqb_service::CliHelpBinary::Watcher) {
         return;
     }
 

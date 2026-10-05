@@ -265,14 +265,8 @@ fn configured_port(app_data: &Path) -> u16 {
 
 fn main() {
     // T-235 Батч 5.6: checked before anything else - no app-data dir, no
-    // logging, no single-instance guard. `dnsqb_service::cli_help`'s own
-    // module doc explains why plain `println!` is safe here even in a
-    // `windows_subsystem = "windows"` release build (empirically verified).
-    if dnsqb_service::wants_help(std::env::args().skip(1)) {
-        println!(
-            "{}",
-            dnsqb_service::help_text(dnsqb_service::CliHelpBinary::Tray)
-        );
+    // logging, no single-instance guard.
+    if dnsqb_service::print_help_if_requested(dnsqb_service::CliHelpBinary::Tray) {
         return;
     }
 

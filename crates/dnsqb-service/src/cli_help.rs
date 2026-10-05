@@ -16,15 +16,24 @@
 //!
 //! **No `AttachConsole`/`MessageBoxW`, no `unsafe` code at all.** Confirmed
 //! empirically before writing this (not assumed): a `windows_subsystem =
-//! "windows"` binary's `println!`/`eprintln!` (1) print correctly when the
-//! process is launched from an existing console (inherited handles) and (2)
-//! neither panic nor error when launched with no console at all - verified
-//! via a real `ShellExecute` launch (`UseShellExecute=true`, the exact
-//! mechanism a Windows Explorer double-click uses), `panic::catch_unwind`
-//! around the print calls, result written to a file: no panic, exit 0. A
-//! `--help` invocation only makes sense from an existing terminal anyway
-//! (that is the only way to type the flag), so the double-click case - which
-//! silently prints nothing - is not a regression from today's behaviour.
+//! "windows"` binary's stdout (1) prints correctly when the process is
+//! launched from an existing console (inherited handles) and (2) neither
+//! panics nor errors when launched with no console at all - verified via a
+//! real `ShellExecute` launch (`UseShellExecute=true`, the exact mechanism a
+//! Windows Explorer double-click uses). A `--help` invocation only makes
+//! sense from an existing terminal anyway (that is the only way to type the
+//! flag), so the double-click case - which silently prints nothing - is not
+//! a regression from today's behaviour.
+//!
+//! **But `println!` was not safe** (T-246, wrongly claimed so at T-235): a
+//! stdout whose reader already went away (`--help | Select -First 1`, or
+//! PowerShell 7 not waiting for a GUI-subsystem process on `> file`) makes it
+//! panic with os error 232. Hence [`print_help_if_requested`] writes through
+//! `writeln!` and drops the error, and reads `args_os()` rather than
+//! `args()`, which panicked on a non-Unicode argument.
+
+use std::ffi::OsString;
+use std::io::Write;
 
 macro_rules! i18n_dicts {
     ($($code:literal),+ $(,)?) => {
@@ -149,9 +158,59 @@ where
         .any(|arg| matches!(arg.as_ref(), "--help" | "-h" | "/?"))
 }
 
+/// The whole `--help` path for one binary's `main`: `true` (help printed,
+/// caller returns) when the process arguments asked for it.
+#[must_use]
+pub fn print_help_if_requested(binary: Binary) -> bool {
+    write_help_if_requested(std::env::args_os().skip(1), binary, &mut std::io::stdout())
+}
+
+fn write_help_if_requested<I, W>(args: I, binary: Binary, out: &mut W) -> bool
+where
+    I: IntoIterator<Item = OsString>,
+    W: Write,
+{
+    if !wants_help(
+        args.into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned()),
+    ) {
+        return false;
+    }
+    // A closed stdout means nobody is left to read the text; nothing to recover.
+    let _ = writeln!(out, "{}", help_text(binary));
+    true
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{dict, help_text, wants_help, Binary, I18N_DICTS};
+    use super::{dict, help_text, wants_help, write_help_if_requested, Binary, I18N_DICTS};
+    use std::ffi::OsString;
+    use std::io;
+
+    /// T-246 (4): a lone UTF-16 surrogate - what `std::env::args()` panicked on.
+    #[cfg(windows)]
+    fn non_unicode_arg() -> OsString {
+        use std::os::windows::ffi::OsStringExt;
+        OsString::from_wide(&[0x71, 0x61, 0xD800, 0x61])
+    }
+
+    #[cfg(unix)]
+    fn non_unicode_arg() -> OsString {
+        use std::os::unix::ffi::OsStringExt;
+        OsString::from_vec(vec![b'q', b'a', 0xFF, b'a'])
+    }
+
+    /// A stdout whose reader has gone away (`--help | Select -First 1`).
+    struct ClosedPipe;
+
+    impl io::Write for ClosedPipe {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::from(io::ErrorKind::BrokenPipe))
+        }
+    }
 
     #[test]
     fn every_locale_dictionary_is_valid_json() {
@@ -225,6 +284,54 @@ mod tests {
         assert!(!wants_help(Vec::<&str>::new()));
         assert!(!wants_help(["dnsqb-service"]));
         assert!(!wants_help(["dnsqb-service", "--version"]));
+    }
+
+    #[test]
+    fn a_non_unicode_argument_neither_panics_nor_hides_help() {
+        let mut out = Vec::new();
+        assert!(write_help_if_requested(
+            [non_unicode_arg(), OsString::from("--help")],
+            Binary::Watcher,
+            &mut out
+        ));
+        assert!(!out.is_empty());
+        let mut out = Vec::new();
+        assert!(!write_help_if_requested(
+            [non_unicode_arg()],
+            Binary::Watcher,
+            &mut out
+        ));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn help_to_a_closed_pipe_does_not_panic() {
+        for binary in [Binary::Service, Binary::Tray, Binary::Watcher] {
+            assert!(write_help_if_requested(
+                [OsString::from("--help")],
+                binary,
+                &mut ClosedPipe
+            ));
+        }
+    }
+
+    #[test]
+    fn help_is_written_in_full_with_a_trailing_newline() {
+        let mut out = Vec::new();
+        assert!(write_help_if_requested(
+            [OsString::from("-h")],
+            Binary::Service,
+            &mut out
+        ));
+        assert_eq!(
+            out,
+            format!(
+                "{}
+",
+                help_text(Binary::Service)
+            )
+            .into_bytes()
+        );
     }
 
     #[test]
