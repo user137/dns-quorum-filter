@@ -219,7 +219,7 @@
   "advanced.summaryLabel": "高级设置",
   "advanced.summaryHint": "面向有经验的用户",
   "danger.heading": "完全删除",
-  "danger.warning": "停止 DNS Quorum Filter 并删除它在这台计算机上留下的一切: 受信任证书、已保存的密钥和凭据(TLS 密钥、日志和缓存的加密密钥、MaxMind 凭据(如有))以及整个数据文件夹，然后打开 Windows 设置，以便你删除应用本身。这与托盘图标菜单中的“移除全部”是同一个操作；需要在 DNS Quorum Filter 窗口中确认。",
+  "danger.warning": "停止 DNS Quorum Filter 并删除它在这台计算机上留下的一切: 受信任证书、已保存的密钥和凭据(TLS 密钥、日志和缓存的加密密钥、个人区域密钥、MaxMind 凭据(如有))以及整个数据文件夹，然后打开 Windows 设置，以便你删除应用本身。这与托盘图标菜单中的“移除全部”是同一个操作；需要在 DNS Quorum Filter 窗口中确认。",
   "danger.uninstallButton": "移除全部",
   "danger.confirmUninstallButton": "确定要删除所有内容吗？",
   "danger.requested": "请求已发送。请在 DNS Quorum Filter 窗口中确认删除 - 之后应用将关闭，此页面将停止响应。",

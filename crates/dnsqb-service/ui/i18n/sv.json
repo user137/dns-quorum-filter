@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Avancerade inställningar",
   "advanced.summaryHint": "för erfarna användare",
   "danger.heading": "Fullständig borttagning",
-  "danger.warning": "Stoppar DNS Quorum Filter och tar bort allt den lämnat på den här datorn: det betrodda certifikatet, de sparade nycklarna och autentiseringsuppgifterna (TLS-nyckel, krypteringsnyckeln för logg och cache, MaxMind-uppgifter om några finns) och hela datamappen, och öppnar sedan Windows-inställningar så att du kan ta bort själva appen. Det är samma åtgärd som menyalternativet ”Ta bort allt” för ikonen i aktivitetsfältet; du bekräftar den i DNS Quorum Filter-fönstret.",
+  "danger.warning": "Stoppar DNS Quorum Filter och tar bort allt den lämnat på den här datorn: det betrodda certifikatet, de sparade nycklarna och autentiseringsuppgifterna (TLS-nyckel, krypteringsnyckeln för logg och cache, nyckeln för den personliga zonen, MaxMind-uppgifter om några finns) och hela datamappen, och öppnar sedan Windows-inställningar så att du kan ta bort själva appen. Det är samma åtgärd som menyalternativet ”Ta bort allt” för ikonen i aktivitetsfältet; du bekräftar den i DNS Quorum Filter-fönstret.",
   "danger.uninstallButton": "Ta bort allt",
   "danger.confirmUninstallButton": "Ta bort allt på riktigt?",
   "danger.requested": "Begäran skickad. Bekräfta borttagningen i DNS Quorum Filter-fönstret - därefter stängs appen och den här sidan slutar svara.",

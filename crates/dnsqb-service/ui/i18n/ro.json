@@ -223,7 +223,7 @@
   "advanced.summaryLabel": "Setări avansate",
   "advanced.summaryHint": "pentru utilizatori experimentați",
   "danger.heading": "Eliminare completă",
-  "danger.warning": "Oprește DNS Quorum Filter și elimină tot ce a lăsat pe acest computer: certificatul de încredere, cheile și acreditările salvate (cheia TLS, cheia de criptare a jurnalului și a cache-ului, acreditările MaxMind, dacă există) și întregul folder de date, apoi deschide Setările Windows ca să eliminați aplicația propriu-zisă. Este aceeași acțiune ca elementul „Elimină totul” din meniul pictogramei din zona de notificare; o confirmați în fereastra DNS Quorum Filter.",
+  "danger.warning": "Oprește DNS Quorum Filter și elimină tot ce a lăsat pe acest computer: certificatul de încredere, cheile și acreditările salvate (cheia TLS, cheia de criptare a jurnalului și a cache-ului, cheia zonei personale, acreditările MaxMind, dacă există) și întregul folder de date, apoi deschide Setările Windows ca să eliminați aplicația propriu-zisă. Este aceeași acțiune ca elementul „Elimină totul” din meniul pictogramei din zona de notificare; o confirmați în fereastra DNS Quorum Filter.",
   "danger.uninstallButton": "Elimină totul",
   "danger.confirmUninstallButton": "Sigur eliminați tot?",
   "danger.requested": "Cerere trimisă. Confirmați eliminarea în fereastra DNS Quorum Filter - apoi aplicația se va închide, iar această pagină nu va mai răspunde.",

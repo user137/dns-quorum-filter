@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Speciális beállítások",
   "advanced.summaryHint": "tapasztalt felhasználóknak",
   "danger.heading": "Teljes eltávolítás",
-  "danger.warning": "Leállítja a DNS Quorum Filtert, és eltávolít mindent, amit ezen a számítógépen hagyott: a megbízható tanúsítványt, a tárolt kulcsokat és hitelesítő adatokat (TLS-kulcs, a napló és a gyorsítótár titkosítási kulcsa, MaxMind hitelesítő adatok, ha vannak) és a teljes adatmappát, majd megnyitja a Windows Beállításokat, hogy magát az alkalmazást is eltávolíthassa. Ez ugyanaz a művelet, mint a tálcaikon menüjének „Minden eltávolítása” eleme; a DNS Quorum Filter ablakában kell megerősíteni.",
+  "danger.warning": "Leállítja a DNS Quorum Filtert, és eltávolít mindent, amit ezen a számítógépen hagyott: a megbízható tanúsítványt, a tárolt kulcsokat és hitelesítő adatokat (TLS-kulcs, a napló és a gyorsítótár titkosítási kulcsa, a személyes zóna kulcsa, MaxMind hitelesítő adatok, ha vannak) és a teljes adatmappát, majd megnyitja a Windows Beállításokat, hogy magát az alkalmazást is eltávolíthassa. Ez ugyanaz a művelet, mint a tálcaikon menüjének „Minden eltávolítása” eleme; a DNS Quorum Filter ablakában kell megerősíteni.",
   "danger.uninstallButton": "Minden eltávolítása",
   "danger.confirmUninstallButton": "Tényleg mindent eltávolít?",
   "danger.requested": "Kérés elküldve. Erősítse meg az eltávolítást a DNS Quorum Filter ablakában - ezután az alkalmazás bezárul, és ez az oldal nem válaszol tovább.",

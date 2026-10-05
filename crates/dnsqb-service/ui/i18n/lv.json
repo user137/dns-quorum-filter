@@ -223,7 +223,7 @@
   "advanced.summaryLabel": "Papildu iestatījumi",
   "advanced.summaryHint": "pieredzējušiem lietotājiem",
   "danger.heading": "Pilnīga noņemšana",
-  "danger.warning": "Aptur DNS Quorum Filter un noņem visu, ko tā atstājusi šajā datorā: uzticamo sertifikātu, saglabātās atslēgas un akreditācijas datus (TLS atslēgu, žurnāla un kešatmiņas šifrēšanas atslēgu, MaxMind akreditācijas datus, ja tādi ir) un visu datu mapi, un pēc tam atver Windows iestatījumus, lai jūs noņemtu pašu lietotni. Tā ir tā pati darbība kā paziņojumu apgabala ikonas izvēlnes vienums “Noņemt visu”; to apstiprina DNS Quorum Filter logā.",
+  "danger.warning": "Aptur DNS Quorum Filter un noņem visu, ko tā atstājusi šajā datorā: uzticamo sertifikātu, saglabātās atslēgas un akreditācijas datus (TLS atslēgu, žurnāla un kešatmiņas šifrēšanas atslēgu, personīgās zonas atslēgu, MaxMind akreditācijas datus, ja tādi ir) un visu datu mapi, un pēc tam atver Windows iestatījumus, lai jūs noņemtu pašu lietotni. Tā ir tā pati darbība kā paziņojumu apgabala ikonas izvēlnes vienums “Noņemt visu”; to apstiprina DNS Quorum Filter logā.",
   "danger.uninstallButton": "Noņemt visu",
   "danger.confirmUninstallButton": "Vai tiešām noņemt visu?",
   "danger.requested": "Pieprasījums nosūtīts. Apstipriniet noņemšanu DNS Quorum Filter logā - pēc tam lietotne aizvērsies un šī lapa vairs neatbildēs.",

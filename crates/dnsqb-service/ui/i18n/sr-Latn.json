@@ -223,7 +223,7 @@
   "advanced.summaryLabel": "Napredna podešavanja",
   "advanced.summaryHint": "za iskusne korisnike",
   "danger.heading": "Potpuno uklanjanje",
-  "danger.warning": "Zaustavlja DNS Quorum Filter i uklanja sve što je ostavio na ovom računaru: pouzdani sertifikat, sačuvane ključeve i akreditive (TLS ključ, ključ za šifrovanje dnevnika i keša, MaxMind akreditive ako postoje) i ceo direktorijum sa podacima, a zatim otvara Windows podešavanja da biste uklonili samu aplikaciju. To je ista radnja kao stavka „Ukloni sve“ u meniju ikone na sistemskoj traci; potvrđuje se u prozoru DNS Quorum Filter.",
+  "danger.warning": "Zaustavlja DNS Quorum Filter i uklanja sve što je ostavio na ovom računaru: pouzdani sertifikat, sačuvane ključeve i akreditive (TLS ključ, ključ za šifrovanje dnevnika i keša, ključ lične zone, MaxMind akreditive ako postoje) i ceo direktorijum sa podacima, a zatim otvara Windows podešavanja da biste uklonili samu aplikaciju. To je ista radnja kao stavka „Ukloni sve“ u meniju ikone na sistemskoj traci; potvrđuje se u prozoru DNS Quorum Filter.",
   "danger.uninstallButton": "Ukloni sve",
   "danger.confirmUninstallButton": "Zaista ukloniti sve?",
   "danger.requested": "Zahtev poslat. Potvrdite uklanjanje u prozoru DNS Quorum Filter - posle toga aplikacija će se zatvoriti, a ova stranica će prestati da odgovara.",

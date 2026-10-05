@@ -225,7 +225,7 @@
   "advanced.summaryLabel": "Rozšírené nastavenia",
   "advanced.summaryHint": "pre skúsených používateľov",
   "danger.heading": "Úplné odstránenie",
-  "danger.warning": "Zastaví DNS Quorum Filter a odstráni všetko, čo na tomto počítači zanechal: dôveryhodný certifikát, uložené kľúče a prihlasovacie údaje (kľúč TLS, šifrovací kľúč denníka a vyrovnávacej pamäte, prihlasovacie údaje MaxMind, ak existujú) a celý priečinok s dátami, a potom otvorí Nastavenia Windows, aby ste odstránili samotnú aplikáciu. Je to rovnaká akcia ako položka „Odstrániť všetko“ v ponuke ikony v oblasti oznámení; potvrdzuje sa v okne DNS Quorum Filter.",
+  "danger.warning": "Zastaví DNS Quorum Filter a odstráni všetko, čo na tomto počítači zanechal: dôveryhodný certifikát, uložené kľúče a prihlasovacie údaje (kľúč TLS, šifrovací kľúč denníka a vyrovnávacej pamäte, kľúč osobnej zóny, prihlasovacie údaje MaxMind, ak existujú) a celý priečinok s dátami, a potom otvorí Nastavenia Windows, aby ste odstránili samotnú aplikáciu. Je to rovnaká akcia ako položka „Odstrániť všetko“ v ponuke ikony v oblasti oznámení; potvrdzuje sa v okne DNS Quorum Filter.",
   "danger.uninstallButton": "Odstrániť všetko",
   "danger.confirmUninstallButton": "Naozaj odstrániť všetko?",
   "danger.requested": "Požiadavka odoslaná. Potvrďte odstránenie v okne DNS Quorum Filter - potom sa aplikácia zatvorí a táto stránka prestane odpovedať.",

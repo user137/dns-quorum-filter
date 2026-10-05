@@ -191,7 +191,14 @@ mod tests {
         for outcome in ["REQUESTED", "danger.trayNotRunning"] {
             assert!(MAIN_JS.contains(outcome), "main.js must handle {outcome}");
         }
-        for word in ["сертифікат", "TLS-ключ", "MaxMind", "теку даних"] {
+        for word in [
+            "сертифікат",
+            "TLS-ключ",
+            "ключ шифрування журналу й кешу",
+            "ключ особистої зони",
+            "MaxMind",
+            "теку даних",
+        ] {
             assert!(
                 INDEX_HTML.contains(word),
                 "the danger-zone warning must name {word} as something it removes"

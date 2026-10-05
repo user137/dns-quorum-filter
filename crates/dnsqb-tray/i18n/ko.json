@@ -15,7 +15,7 @@
   "confirm.installCert.description": "로컬 dns-quorum-filter 인증서가 현재 사용자의 신뢰할 수 있는 루트 인증서(CurrentUser\\Root)에 추가됩니다. 이렇게 하면 설정 페이지에서 브라우저의 신뢰할 수 없는 인증서 경고가 사라집니다. Windows에서 자체 확인 대화 상자를 표시할 수 있습니다. 계속하시겠습니까?",
   "confirm.uninstallCert.description": "로컬 dns-quorum-filter 인증서가 신뢰할 수 있는 루트 인증서에서 제거됩니다. 인증서를 다시 설치할 때까지 브라우저는 설정 페이지에서 신뢰할 수 없는 인증서 경고를 다시 표시합니다. 계속하시겠습니까?",
   "confirm.rotateCert.description": "새 키로 새로운 로컬 dns-quorum-filter 인증서가 생성됩니다. 이 프로젝트의 이전 항목은 신뢰할 수 있는 루트 인증서(CurrentUser\\Root)에서 제거되고, 새 인증서가 그 자리에 설치됩니다. 새 인증서가 적용되려면 dnsqb-service를 다시 시작해야 합니다 — 그때까지 서비스는 이전 인증서를 계속 제공하며, 브라우저는 설정 페이지에서 신뢰할 수 없는 인증서 경고를 표시합니다. 다시 시작한 후에는 사라집니다. 계속하시겠습니까?",
-  "confirm.removeAll.description": "dns-quorum-filter의 로컬 데이터가 완전히 삭제됩니다: 신뢰할 수 있는 인증서, TLS 키, 로그/캐시 암호화 키, Windows 자격 증명 관리자에 저장된 MaxMind 자격 증명, 그리고 앱 데이터 폴더 전체(로그, 캐시, 설정). 앱이 종료되고 Windows 설정이 열립니다 — 거기서 dns-quorum-filter의 «제거»를 클릭하세요. 계속하시겠습니까?",
+  "confirm.removeAll.description": "dns-quorum-filter의 로컬 데이터가 완전히 삭제됩니다: 신뢰할 수 있는 인증서, TLS 키, 로그/캐시 암호화 키, 개인 존 키, Windows 자격 증명 관리자에 저장된 MaxMind 자격 증명, 그리고 앱 데이터 폴더 전체(로그, 캐시, 설정). 앱이 종료되고 Windows 설정이 열립니다 — 거기서 dns-quorum-filter의 «제거»를 클릭하세요. 계속하시겠습니까?",
   "confirm.pause.description": "DNS는 계속 작동하지만 필터링은 꺼집니다: 쿼럼 검사와 GeoIP가 적용되지 않으며, 도메인은 기준 리졸버를 통해 직접 확인됩니다. 사용자 자신의 허용/차단 목록은 계속 작동합니다. 재개는 동일한 메뉴 항목에서 하거나 앱을 다시 시작하면 됩니다. 계속하시겠습니까?",
   "confirm.quit.title": "종료",
   "confirm.quit.description": "앱이 완전히 중지됩니다: DNS 필터링, 백그라운드 감독, 그리고 이 아이콘. 시작 메뉴에서 앱을 다시 시작할 때까지, 보안 DNS가 자동 모드인 브라우저는 알림 없이 시스템 DNS로 전환되고(사이트는 열리지만 필터링되지 않음), 이 앱의 주소로 엄격하게 설정된 브라우저는 사이트를 열 수 없게 됩니다. 계속하시겠습니까?",

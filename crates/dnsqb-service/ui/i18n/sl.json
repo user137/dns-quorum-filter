@@ -225,7 +225,7 @@
   "advanced.summaryLabel": "Napredne nastavitve",
   "advanced.summaryHint": "za izkušene uporabnike",
   "danger.heading": "Popolna odstranitev",
-  "danger.warning": "Ustavi DNS Quorum Filter in odstrani vse, kar je pustil na tem računalniku: zaupanja vredno potrdilo, shranjene ključe in poverilnice (ključ TLS, šifrirni ključ dnevnika in predpomnilnika, poverilnice MaxMind, če obstajajo) in celotno mapo s podatki, nato pa odpre Nastavitve sistema Windows, da odstranite samo aplikacijo. To je isto dejanje kot element „Odstrani vse“ v meniju ikone v sistemski vrstici; potrdite ga v oknu DNS Quorum Filter.",
+  "danger.warning": "Ustavi DNS Quorum Filter in odstrani vse, kar je pustil na tem računalniku: zaupanja vredno potrdilo, shranjene ključe in poverilnice (ključ TLS, šifrirni ključ dnevnika in predpomnilnika, ključ osebnega območja, poverilnice MaxMind, če obstajajo) in celotno mapo s podatki, nato pa odpre Nastavitve sistema Windows, da odstranite samo aplikacijo. To je isto dejanje kot element „Odstrani vse“ v meniju ikone v sistemski vrstici; potrdite ga v oknu DNS Quorum Filter.",
   "danger.uninstallButton": "Odstrani vse",
   "danger.confirmUninstallButton": "Res odstranim vse?",
   "danger.requested": "Zahteva poslana. Potrdite odstranitev v oknu DNS Quorum Filter - nato se bo aplikacija zaprla in ta stran ne bo več odgovarjala.",

@@ -219,7 +219,7 @@
   "advanced.summaryLabel": "詳細設定",
   "advanced.summaryHint": "上級ユーザー向け",
   "danger.heading": "完全に削除",
-  "danger.warning": "DNS Quorum Filter を停止し、このコンピューターに残したものをすべて削除します: 信頼済み証明書、保存されているキーと資格情報(TLSキー、ログとキャッシュの暗号化キー、ある場合はMaxMind資格情報)、データフォルダー全体。その後、アプリ本体を削除できるようにWindowsの設定を開きます。これはトレイアイコンのメニューの「すべて削除」と同じ操作で、DNS Quorum Filter のウィンドウで確定します。",
+  "danger.warning": "DNS Quorum Filter を停止し、このコンピューターに残したものをすべて削除します: 信頼済み証明書、保存されているキーと資格情報(TLSキー、ログとキャッシュの暗号化キー、パーソナルゾーンキー、ある場合はMaxMind資格情報)、データフォルダー全体。その後、アプリ本体を削除できるようにWindowsの設定を開きます。これはトレイアイコンのメニューの「すべて削除」と同じ操作で、DNS Quorum Filter のウィンドウで確定します。",
   "danger.uninstallButton": "すべて削除",
   "danger.confirmUninstallButton": "本当にすべて削除しますか?",
   "danger.requested": "リクエストを送信しました。DNS Quorum Filter のウィンドウで削除を確定してください - その後アプリは終了し、このページは応答しなくなります。",

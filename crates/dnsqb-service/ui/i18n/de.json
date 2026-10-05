@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Erweiterte Einstellungen",
   "advanced.summaryHint": "für erfahrene Nutzer",
   "danger.heading": "Vollständiges Entfernen",
-  "danger.warning": "Beendet DNS Quorum Filter und entfernt alles, was es auf diesem Computer hinterlassen hat: das vertrauenswürdige Zertifikat, die gespeicherten Schlüssel und Anmeldedaten (TLS-Schlüssel, Verschlüsselungsschlüssel für Protokoll und Cache, MaxMind-Anmeldedaten falls vorhanden) und den gesamten Datenordner, und öffnet dann die Windows-Einstellungen, damit Sie die App selbst entfernen können. Dies ist dieselbe Aktion wie der Eintrag „Alles entfernen“ im Menü des Tray-Symbols; Sie bestätigen sie im Fenster von DNS Quorum Filter.",
+  "danger.warning": "Beendet DNS Quorum Filter und entfernt alles, was es auf diesem Computer hinterlassen hat: das vertrauenswürdige Zertifikat, die gespeicherten Schlüssel und Anmeldedaten (TLS-Schlüssel, Verschlüsselungsschlüssel für Protokoll und Cache, Schlüssel der persönlichen Zone, MaxMind-Anmeldedaten falls vorhanden) und den gesamten Datenordner, und öffnet dann die Windows-Einstellungen, damit Sie die App selbst entfernen können. Dies ist dieselbe Aktion wie der Eintrag „Alles entfernen“ im Menü des Tray-Symbols; Sie bestätigen sie im Fenster von DNS Quorum Filter.",
   "danger.uninstallButton": "Alles entfernen",
   "danger.confirmUninstallButton": "Wirklich alles entfernen?",
   "danger.requested": "Anfrage gesendet. Bestätigen Sie die Entfernung im Fenster von DNS Quorum Filter - danach wird die App geschlossen und diese Seite reagiert nicht mehr.",

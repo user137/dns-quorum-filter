@@ -225,7 +225,7 @@
   "advanced.summaryLabel": "Išplėstiniai nustatymai",
   "advanced.summaryHint": "patyrusiems naudotojams",
   "danger.heading": "Visiškas pašalinimas",
-  "danger.warning": "Sustabdo DNS Quorum Filter ir pašalina viską, ką paliko šiame kompiuteryje: patikimą sertifikatą, saugomus raktus ir prisijungimo duomenis (TLS raktą, žurnalo ir talpyklos šifravimo raktą, MaxMind prisijungimo duomenis, jei yra) ir visą duomenų aplanką, o tada atidaro Windows parametrus, kad pašalintumėte pačią programą. Tai tas pats veiksmas kaip pranešimų srities piktogramos meniu elementas „Pašalinti viską“; jis patvirtinamas DNS Quorum Filter lange.",
+  "danger.warning": "Sustabdo DNS Quorum Filter ir pašalina viską, ką paliko šiame kompiuteryje: patikimą sertifikatą, saugomus raktus ir prisijungimo duomenis (TLS raktą, žurnalo ir talpyklos šifravimo raktą, asmeninės zonos raktą, MaxMind prisijungimo duomenis, jei yra) ir visą duomenų aplanką, o tada atidaro Windows parametrus, kad pašalintumėte pačią programą. Tai tas pats veiksmas kaip pranešimų srities piktogramos meniu elementas „Pašalinti viską“; jis patvirtinamas DNS Quorum Filter lange.",
   "danger.uninstallButton": "Pašalinti viską",
   "danger.confirmUninstallButton": "Tikrai pašalinti viską?",
   "danger.requested": "Užklausa išsiųsta. Patvirtinkite pašalinimą DNS Quorum Filter lange - tada programa užsidarys, o šis puslapis nustos atsakyti.",

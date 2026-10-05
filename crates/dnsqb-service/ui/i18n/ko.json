@@ -219,7 +219,7 @@
   "advanced.summaryLabel": "고급 설정",
   "advanced.summaryHint": "숙련된 사용자용",
   "danger.heading": "완전 삭제",
-  "danger.warning": "DNS Quorum Filter를 중지하고 이 컴퓨터에 남긴 모든 것을 삭제합니다: 신뢰 인증서, 저장된 키와 자격 증명(TLS 키, 로그 및 캐시 암호화 키, 있는 경우 MaxMind 자격 증명) 및 전체 데이터 폴더. 그런 다음 앱 자체를 제거할 수 있도록 Windows 설정을 엽니다. 트레이 아이콘 메뉴의 \"모두 제거\" 항목과 같은 작업이며, DNS Quorum Filter 창에서 확인합니다.",
+  "danger.warning": "DNS Quorum Filter를 중지하고 이 컴퓨터에 남긴 모든 것을 삭제합니다: 신뢰 인증서, 저장된 키와 자격 증명(TLS 키, 로그 및 캐시 암호화 키, 개인 존 키, 있는 경우 MaxMind 자격 증명) 및 전체 데이터 폴더. 그런 다음 앱 자체를 제거할 수 있도록 Windows 설정을 엽니다. 트레이 아이콘 메뉴의 \"모두 제거\" 항목과 같은 작업이며, DNS Quorum Filter 창에서 확인합니다.",
   "danger.uninstallButton": "모두 제거",
   "danger.confirmUninstallButton": "정말 모두 삭제하시겠습니까?",
   "danger.requested": "요청을 보냈습니다. DNS Quorum Filter 창에서 삭제를 확인하세요 - 그러면 앱이 종료되고 이 페이지는 더 이상 응답하지 않습니다.",

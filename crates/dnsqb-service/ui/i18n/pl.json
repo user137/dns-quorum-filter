@@ -225,7 +225,7 @@
   "advanced.summaryLabel": "Ustawienia zaawansowane",
   "advanced.summaryHint": "dla doświadczonych użytkowników",
   "danger.heading": "Całkowite usunięcie",
-  "danger.warning": "Zatrzymuje DNS Quorum Filter i usuwa wszystko, co pozostawił na tym komputerze: zaufany certyfikat, zapisane klucze i poświadczenia (klucz TLS, klucz szyfrowania dziennika i pamięci podręcznej, poświadczenia MaxMind, jeśli są) oraz cały folder z danymi, a następnie otwiera Ustawienia systemu Windows, aby usunąć samą aplikację. To ta sama czynność co pozycja „Usuń wszystko” w menu ikony w zasobniku; potwierdza się ją w oknie DNS Quorum Filter.",
+  "danger.warning": "Zatrzymuje DNS Quorum Filter i usuwa wszystko, co pozostawił na tym komputerze: zaufany certyfikat, zapisane klucze i poświadczenia (klucz TLS, klucz szyfrowania dziennika i pamięci podręcznej, klucz strefy osobistej, poświadczenia MaxMind, jeśli są) oraz cały folder z danymi, a następnie otwiera Ustawienia systemu Windows, aby usunąć samą aplikację. To ta sama czynność co pozycja „Usuń wszystko” w menu ikony w zasobniku; potwierdza się ją w oknie DNS Quorum Filter.",
   "danger.uninstallButton": "Usuń wszystko",
   "danger.confirmUninstallButton": "Na pewno usunąć wszystko?",
   "danger.requested": "Żądanie wysłane. Potwierdź usunięcie w oknie DNS Quorum Filter - potem aplikacja się zamknie, a ta strona przestanie odpowiadać.",

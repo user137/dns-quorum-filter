@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Gelişmiş ayarlar",
   "advanced.summaryHint": "deneyimli kullanıcılar için",
   "danger.heading": "Tamamen kaldır",
-  "danger.warning": "DNS Quorum Filter'ı durdurur ve bu bilgisayarda bıraktığı her şeyi kaldırır: güvenilir sertifikayı, kayıtlı anahtarları ve kimlik bilgilerini (TLS anahtarı, günlük ve önbellek şifreleme anahtarı, varsa MaxMind kimlik bilgileri) ve tüm veri klasörünü; ardından uygulamanın kendisini kaldırabilmeniz için Windows Ayarları'nı açar. Bu, bildirim alanı simgesi menüsündeki \"Her şeyi kaldır\" öğesiyle aynı işlemdir; DNS Quorum Filter penceresinde onaylanır.",
+  "danger.warning": "DNS Quorum Filter'ı durdurur ve bu bilgisayarda bıraktığı her şeyi kaldırır: güvenilir sertifikayı, kayıtlı anahtarları ve kimlik bilgilerini (TLS anahtarı, günlük ve önbellek şifreleme anahtarı, kişisel bölge anahtarı, varsa MaxMind kimlik bilgileri) ve tüm veri klasörünü; ardından uygulamanın kendisini kaldırabilmeniz için Windows Ayarları'nı açar. Bu, bildirim alanı simgesi menüsündeki \"Her şeyi kaldır\" öğesiyle aynı işlemdir; DNS Quorum Filter penceresinde onaylanır.",
   "danger.uninstallButton": "Her şeyi kaldır",
   "danger.confirmUninstallButton": "Gerçekten her şey kaldırılsın mı?",
   "danger.requested": "İstek gönderildi. Kaldırma işlemini DNS Quorum Filter penceresinde onaylayın - ardından uygulama kapanacak ve bu sayfa yanıt vermeyi bırakacak.",

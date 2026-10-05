@@ -219,7 +219,7 @@
   "advanced.summaryLabel": "Pengaturan lanjutan",
   "advanced.summaryHint": "untuk pengguna berpengalaman",
   "danger.heading": "Penghapusan penuh",
-  "danger.warning": "Menghentikan DNS Quorum Filter dan menghapus semua yang ditinggalkannya di komputer ini: sertifikat tepercaya, kunci dan kredensial tersimpan (kunci TLS, kunci enkripsi log dan cache, kredensial MaxMind jika ada) dan seluruh folder data, lalu membuka Pengaturan Windows agar Anda dapat menghapus aplikasinya sendiri. Ini adalah tindakan yang sama dengan item \"Hapus semua\" di menu ikon baki sistem; Anda mengonfirmasinya di jendela DNS Quorum Filter.",
+  "danger.warning": "Menghentikan DNS Quorum Filter dan menghapus semua yang ditinggalkannya di komputer ini: sertifikat tepercaya, kunci dan kredensial tersimpan (kunci TLS, kunci enkripsi log dan cache, kunci zona pribadi, kredensial MaxMind jika ada) dan seluruh folder data, lalu membuka Pengaturan Windows agar Anda dapat menghapus aplikasinya sendiri. Ini adalah tindakan yang sama dengan item \"Hapus semua\" di menu ikon baki sistem; Anda mengonfirmasinya di jendela DNS Quorum Filter.",
   "danger.uninstallButton": "Hapus semua",
   "danger.confirmUninstallButton": "Yakin hapus semuanya?",
   "danger.requested": "Permintaan terkirim. Konfirmasikan penghapusan di jendela DNS Quorum Filter - setelah itu aplikasi akan ditutup dan halaman ini berhenti merespons.",

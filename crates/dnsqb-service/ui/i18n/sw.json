@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Mipangilio ya kina",
   "advanced.summaryHint": "kwa watumiaji wenye uzoefu",
   "danger.heading": "Kuondoa kabisa",
-  "danger.warning": "Husimamisha DNS Quorum Filter na kuondoa kila kitu ilichoacha kwenye kompyuta hii: cheti kinachoaminika, funguo na vitambulisho vilivyohifadhiwa (ufunguo wa TLS, ufunguo wa usimbaji fiche wa kumbukumbu na akiba, vitambulisho vya MaxMind ikiwa vipo) na folda nzima ya data, kisha hufungua Mipangilio ya Windows ili uondoe programu yenyewe. Hiki ni kitendo kilekile cha kipengee \"Ondoa kila kitu\" kwenye menyu ya aikoni ya trei; unakithibitisha kwenye dirisha la DNS Quorum Filter.",
+  "danger.warning": "Husimamisha DNS Quorum Filter na kuondoa kila kitu ilichoacha kwenye kompyuta hii: cheti kinachoaminika, funguo na vitambulisho vilivyohifadhiwa (ufunguo wa TLS, ufunguo wa usimbaji fiche wa kumbukumbu na akiba, ufunguo wa eneo binafsi, vitambulisho vya MaxMind ikiwa vipo) na folda nzima ya data, kisha hufungua Mipangilio ya Windows ili uondoe programu yenyewe. Hiki ni kitendo kilekile cha kipengee \"Ondoa kila kitu\" kwenye menyu ya aikoni ya trei; unakithibitisha kwenye dirisha la DNS Quorum Filter.",
   "danger.uninstallButton": "Ondoa kila kitu",
   "danger.confirmUninstallButton": "Una uhakika kuondoa kila kitu?",
   "danger.requested": "Ombi limetumwa. Thibitisha uondoaji kwenye dirisha la DNS Quorum Filter - kisha programu itafungwa na ukurasa huu utaacha kujibu.",

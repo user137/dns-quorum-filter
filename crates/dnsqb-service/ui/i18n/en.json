@@ -221,7 +221,7 @@
   "advanced.summaryLabel": "Advanced settings",
   "advanced.summaryHint": "for experienced users",
   "danger.heading": "Full removal",
-  "danger.warning": "Stops DNS Quorum Filter and removes everything it left on this computer: the trusted certificate, the stored keys and credentials (TLS key, the log/cache encryption key, MaxMind credentials if any) and the whole data folder, then opens Windows Settings so you can remove the app itself. This is the same action as the \"Remove everything\" item in the tray icon menu; you confirm it in the DNS Quorum Filter window.",
+  "danger.warning": "Stops DNS Quorum Filter and removes everything it left on this computer: the trusted certificate, the stored keys and credentials (TLS key, the log/cache encryption key, the personal-zone key, MaxMind credentials if any) and the whole data folder, then opens Windows Settings so you can remove the app itself. This is the same action as the \"Remove everything\" item in the tray icon menu; you confirm it in the DNS Quorum Filter window.",
   "danger.uninstallButton": "Remove everything",
   "danger.confirmUninstallButton": "Really remove everything?",
   "danger.requested": "Request sent. Confirm the removal in the DNS Quorum Filter window - the app will then close and this page will stop responding.",

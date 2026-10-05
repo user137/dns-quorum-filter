@@ -15,7 +15,7 @@
   "confirm.installCert.description": "本地 dns-quorum-filter 证书将被添加到当前用户的受信任根证书 (CurrentUser\\Root) 中。这会消除设置页面上浏览器关于不受信任证书的警告。Windows 可能会显示自己的确认对话框。是否继续？",
   "confirm.uninstallCert.description": "本地 dns-quorum-filter 证书将从受信任根证书中移除。在证书重新安装之前，浏览器会在设置页面上再次显示不受信任证书的警告。是否继续？",
   "confirm.rotateCert.description": "将生成一个带有新密钥的新本地 dns-quorum-filter 证书。此项目的旧条目会从受信任根证书 (CurrentUser\\Root) 中移除，新证书将安装在其位置。需要重启 dnsqb-service 新证书才会生效——在此之前，服务仍会提供之前的证书，浏览器会在设置页面上显示不受信任证书的警告，重启后消失。是否继续？",
-  "confirm.removeAll.description": "dns-quorum-filter 的本地数据将被完全移除：受信任证书、TLS 密钥、日志/缓存加密密钥，以及保存在 Windows 凭据管理器中的 MaxMind 凭据，还有整个应用数据文件夹（日志、缓存、设置）。应用将关闭，并打开 Windows 设置——请在那里点击 dns-quorum-filter 的“卸载”。是否继续？",
+  "confirm.removeAll.description": "dns-quorum-filter 的本地数据将被完全移除：受信任证书、TLS 密钥、日志/缓存加密密钥，个人区域密钥，以及保存在 Windows 凭据管理器中的 MaxMind 凭据，还有整个应用数据文件夹（日志、缓存、设置）。应用将关闭，并打开 Windows 设置——请在那里点击 dns-quorum-filter 的“卸载”。是否继续？",
   "confirm.pause.description": "DNS 将继续工作，但过滤将被关闭：法定人数检查和 GeoIP 将不再生效，域名将直接通过基线解析器解析。您自己的允许/阻止列表仍将继续生效。恢复——通过同一菜单项或重启应用即可。是否继续？",
   "confirm.quit.title": "退出",
   "confirm.quit.description": "应用将完全停止：DNS 过滤、后台监督以及此图标。在您从「开始」菜单再次启动应用之前，安全 DNS 设为自动模式的浏览器会悄悄改用系统 DNS（网站可以打开，但不经过滤），而严格设为本应用地址的浏览器将无法打开网站。是否继续？",
