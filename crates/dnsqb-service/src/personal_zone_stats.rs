@@ -293,10 +293,10 @@ impl PersonalZoneStats {
             .map(|(d, s)| ((s.last_visited, sum_last(&s.counts, s.counts.len())), d))
             .collect();
         let n = EVICTION_BATCH.min(ranked.len());
-        if n == 0 {
+        let Some(last) = n.checked_sub(1) else {
             return;
-        }
-        ranked.select_nth_unstable_by_key(n - 1, |(key, _)| *key);
+        };
+        ranked.select_nth_unstable_by_key(last, |(key, _)| *key);
         ranked.truncate(n);
         let victims: Vec<String> = ranked.into_iter().map(|(_, d)| d.clone()).collect();
         for victim in &victims {
