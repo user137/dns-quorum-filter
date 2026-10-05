@@ -32,7 +32,7 @@
   "hero.installingLabel": "Đang cài đặt…",
   "hero.installFailedLabel": "Thất bại — hãy dùng menu biểu tượng khay hệ thống thay thế",
   "startupTask.disabled": "Tự khởi động đang tắt: sau khi khởi động lại, bộ lọc sẽ không tự chạy và trình duyệt sẽ không có DNS.",
-  "startupTask.openSettings": "Bật trong Cài đặt → Ứng dụng khởi động",
+  "startupTask.openSettings": "Mở cài đặt khởi động",
   "startupTask.disabledByPolicy": "Tự khởi động bị tắt theo chính sách của tổ chức — chỉ quản trị viên mới bật được. Sau khi khởi động lại, hãy mở ứng dụng thủ công.",
   "error.generic": "Lỗi: {message}",
   "app.statsHeading": "Thống kê (cửa sổ nhật ký hiện tại)",

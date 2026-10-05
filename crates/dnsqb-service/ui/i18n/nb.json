@@ -32,7 +32,7 @@
   "hero.installingLabel": "Installerer…",
   "hero.installFailedLabel": "Mislyktes — bruk menyen til systemstatusikonet i stedet",
   "startupTask.disabled": "Automatisk oppstart er av: etter en omstart starter ikke filteret av seg selv, og nettleseren blir stående uten DNS.",
-  "startupTask.openSettings": "Slå det på under Innstillinger → Oppstartsapper",
+  "startupTask.openSettings": "Åpne innstillinger for oppstart",
   "startupTask.disabledByPolicy": "Automatisk oppstart er deaktivert av organisasjonens policy — bare en administrator kan slå det på. Start appen manuelt etter en omstart.",
   "error.generic": "Feil: {message}",
   "app.statsHeading": "Statistikk (nåværende loggvindu)",

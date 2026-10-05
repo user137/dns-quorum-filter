@@ -32,7 +32,7 @@
   "hero.installingLabel": "Menginstal…",
   "hero.installFailedLabel": "Gagal — gunakan menu ikon baki sebagai gantinya",
   "startupTask.disabled": "Mulai otomatis nonaktif: setelah restart, filter tidak akan berjalan sendiri, dan browser akan tanpa DNS.",
-  "startupTask.openSettings": "Aktifkan di Pengaturan → Aplikasi startup",
+  "startupTask.openSettings": "Buka pengaturan startup",
   "startupTask.disabledByPolicy": "Mulai otomatis dinonaktifkan oleh kebijakan organisasi Anda — hanya administrator yang dapat mengaktifkannya. Setelah restart, jalankan aplikasi secara manual.",
   "error.generic": "Kesalahan: {message}",
   "app.statsHeading": "Statistik (jendela log saat ini)",

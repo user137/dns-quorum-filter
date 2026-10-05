@@ -32,7 +32,7 @@
   "hero.installingLabel": "Installerar…",
   "hero.installFailedLabel": "Misslyckades — använd fackikonens meny istället",
   "startupTask.disabled": "Autostart är av: efter en omstart startar filtret inte av sig självt, och webbläsaren blir utan DNS.",
-  "startupTask.openSettings": "Slå på det i Inställningar → Startappar",
+  "startupTask.openSettings": "Öppna startinställningar",
   "startupTask.disabledByPolicy": "Autostart är inaktiverat av organisationens princip — bara en administratör kan slå på det. Starta appen manuellt efter en omstart.",
   "error.generic": "Fel: {message}",
   "app.statsHeading": "Statistik (nuvarande loggfönster)",

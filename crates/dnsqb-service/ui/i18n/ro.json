@@ -32,7 +32,7 @@
   "hero.installingLabel": "Se instalează…",
   "hero.installFailedLabel": "Eșuat — folosiți în schimb meniul pictogramei din bara de sistem",
   "startupTask.disabled": "Pornirea automată este dezactivată: după o repornire, filtrul nu va porni singur, iar browserul va rămâne fără DNS.",
-  "startupTask.openSettings": "Activați-o în Setări → Aplicații de pornire",
+  "startupTask.openSettings": "Deschideți setările de pornire",
   "startupTask.disabledByPolicy": "Pornirea automată este dezactivată de politica organizației — doar un administrator o poate activa. După o repornire, porniți aplicația manual.",
   "error.generic": "Eroare: {message}",
   "app.statsHeading": "Statistici (fereastra curentă a jurnalului)",

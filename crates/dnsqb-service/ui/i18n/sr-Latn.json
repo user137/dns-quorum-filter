@@ -32,7 +32,7 @@
   "hero.installingLabel": "Instaliranje…",
   "hero.installFailedLabel": "Neuspešno — umesto toga koristite meni ikonice u traci",
   "startupTask.disabled": "Automatsko pokretanje je isključeno: posle ponovnog pokretanja filter se neće sam pokrenuti, a pregledač će ostati bez DNS-a.",
-  "startupTask.openSettings": "Uključite ga u Podešavanja → Aplikacije pri pokretanju",
+  "startupTask.openSettings": "Otvori podešavanja pokretanja",
   "startupTask.disabledByPolicy": "Automatsko pokretanje je onemogućeno smernicama vaše organizacije — može ga uključiti samo administrator. Posle ponovnog pokretanja pokrenite aplikaciju ručno.",
   "error.generic": "Greška: {message}",
   "app.statsHeading": "Statistika (trenutni prozor dnevnika)",

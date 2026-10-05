@@ -32,7 +32,7 @@
   "hero.installingLabel": "Installeren…",
   "hero.installFailedLabel": "Mislukt — gebruik in plaats daarvan het menu van het systeemvakpictogram",
   "startupTask.disabled": "Automatisch starten staat uit: na een herstart start het filter niet vanzelf en blijft de browser zonder DNS.",
-  "startupTask.openSettings": "Zet het aan via Instellingen → Opstart-apps",
+  "startupTask.openSettings": "Opstartinstellingen openen",
   "startupTask.disabledByPolicy": "Automatisch starten is uitgeschakeld door het beleid van uw organisatie — alleen een beheerder kan het aanzetten. Start de app na een herstart handmatig.",
   "error.generic": "Fout: {message}",
   "app.statsHeading": "Statistieken (huidig logvenster)",

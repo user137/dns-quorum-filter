@@ -32,7 +32,7 @@
   "hero.installingLabel": "Paigaldamine…",
   "hero.installFailedLabel": "Ebaõnnestus — kasutage selle asemel salvealuse ikooni menüüd",
   "startupTask.disabled": "Automaatkäivitus on välja lülitatud: pärast taaskäivitust filter ise ei käivitu ja brauser jääb DNS-ita.",
-  "startupTask.openSettings": "Lülitage see sisse: Sätted → Käivitusrakendused",
+  "startupTask.openSettings": "Ava käivitussätted",
   "startupTask.disabledByPolicy": "Automaatkäivitus on organisatsiooni poliitikaga keelatud — sisse saab selle lülitada ainult administraator. Pärast taaskäivitust käivitage rakendus käsitsi.",
   "error.generic": "Viga: {message}",
   "app.statsHeading": "Statistika (praegune logiaken)",

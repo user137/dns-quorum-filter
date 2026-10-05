@@ -32,7 +32,7 @@
   "hero.installingLabel": "インストール中…",
   "hero.installFailedLabel": "失敗しました — 代わりにトレイアイコンのメニューを使用してください",
   "startupTask.disabled": "自動起動がオフです: 再起動後にフィルターは自動で起動せず、ブラウザーは DNS を使えなくなります。",
-  "startupTask.openSettings": "設定 → スタートアップ アプリでオンにする",
+  "startupTask.openSettings": "スタートアップの設定を開く",
   "startupTask.disabledByPolicy": "自動起動は組織のポリシーで無効になっています。オンにできるのは管理者だけです。再起動後はアプリを手動で起動してください。",
   "error.generic": "エラー: {message}",
   "app.statsHeading": "統計(現在のログウィンドウ)",

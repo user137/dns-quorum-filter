@@ -32,7 +32,7 @@
   "hero.installingLabel": "Installing…",
   "hero.installFailedLabel": "Failed — use the tray icon menu instead",
   "startupTask.disabled": "Autostart is off: after a restart the filter won't start by itself, and the browser will be left without DNS.",
-  "startupTask.openSettings": "Turn it on in Settings → Startup apps",
+  "startupTask.openSettings": "Open startup settings",
   "startupTask.disabledByPolicy": "Autostart is disabled by your organization's policy — only an administrator can turn it on. After a restart, start the app manually.",
   "error.generic": "Error: {message}",
   "app.statsHeading": "Statistics (current log window)",

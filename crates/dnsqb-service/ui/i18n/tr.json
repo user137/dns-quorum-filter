@@ -32,7 +32,7 @@
   "hero.installingLabel": "Yükleniyor…",
   "hero.installFailedLabel": "Başarısız — bunun yerine tepsi simgesi menüsünü kullanın",
   "startupTask.disabled": "Otomatik başlatma kapalı: yeniden başlatmadan sonra filtre kendiliğinden başlamaz ve tarayıcı DNS'siz kalır.",
-  "startupTask.openSettings": "Ayarlar → Başlangıç uygulamaları bölümünden açın",
+  "startupTask.openSettings": "Başlangıç ayarlarını aç",
   "startupTask.disabledByPolicy": "Otomatik başlatma kuruluşunuzun ilkesiyle devre dışı bırakıldı — yalnızca bir yönetici açabilir. Yeniden başlatmadan sonra uygulamayı elle başlatın.",
   "error.generic": "Hata: {message}",
   "app.statsHeading": "İstatistikler (mevcut günlük penceresi)",

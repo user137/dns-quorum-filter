@@ -2956,6 +2956,10 @@ mod hero_and_category_tests {
         assert_eq!(json(&HeroStateView::WatchdogGaveUp), "\"WATCHDOG_GAVE_UP\"");
         assert_eq!(json(&HeroStateView::Paused), "\"PAUSED\"");
         assert_eq!(json(&HeroStateView::CertNotTrusted), "\"CERT_NOT_TRUSTED\"");
+        assert_eq!(
+            json(&HeroStateView::FiltersDegraded),
+            "\"FILTERS_DEGRADED\""
+        );
         assert_eq!(json(&HeroStateView::Protected), "\"PROTECTED\"");
     }
 
@@ -2991,6 +2995,10 @@ mod hero_and_category_tests {
             Err(err) => panic!("must decode: {err}"),
         };
         assert_eq!(parsed.hero_state, HeroStateView::Paused);
+        // Wave 3 (schema 7): fields an older service never sends fall back to
+        // their safe zero — no autostart row, no last-query time.
+        assert_eq!(parsed.startup_task, super::StartupTaskView::Unknown);
+        assert_eq!(parsed.stats.last_query_unix_ms, None);
     }
 
     #[test]
@@ -3108,6 +3116,10 @@ mod dto_versioning_tests {
         };
         assert_eq!(parsed.schema_version, 0, "absent ⇒ 0, the rebuild signal");
         assert_eq!(parsed.hero_state, HeroStateView::Protected);
+        // Wave 3 (schema 7): fields an older service never sends fall back to
+        // their safe zero — no autostart row, no last-query time.
+        assert_eq!(parsed.startup_task, super::StartupTaskView::Unknown);
+        assert_eq!(parsed.stats.last_query_unix_ms, None);
         assert_eq!(parsed.network, NetworkStatusView::Online);
         assert_eq!(parsed.baseline_endpoint, BaselineEndpointView::Primary);
         assert!(!parsed.paused);

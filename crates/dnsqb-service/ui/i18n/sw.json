@@ -32,7 +32,7 @@
   "hero.installingLabel": "Inasakinisha…",
   "hero.installFailedLabel": "Imeshindwa — tumia menyu ya aikoni ya tray badala yake",
   "startupTask.disabled": "Kuanza kiotomatiki kumezimwa: baada ya kuwasha upya, kichujio hakitaanza chenyewe, na kivinjari kitabaki bila DNS.",
-  "startupTask.openSettings": "Kiwashe katika Mipangilio → Programu za kuanza",
+  "startupTask.openSettings": "Fungua mipangilio ya kuanza",
   "startupTask.disabledByPolicy": "Kuanza kiotomatiki kumezimwa na sera ya shirika lako — msimamizi pekee ndiye anayeweza kukiwasha. Baada ya kuwasha upya, anzisha programu wewe mwenyewe.",
   "error.generic": "Hitilafu: {message}",
   "app.statsHeading": "Takwimu (dirisha la sasa la kumbukumbu)",

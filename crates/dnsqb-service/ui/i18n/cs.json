@@ -32,7 +32,7 @@
   "hero.installingLabel": "Instaluje se…",
   "hero.installFailedLabel": "Nezdařilo se — použijte místo toho položku v nabídce ikony v systémové liště",
   "startupTask.disabled": "Automatické spuštění je vypnuté: po restartu se filtr sám nespustí a prohlížeč zůstane bez DNS.",
-  "startupTask.openSettings": "Zapněte ho v Nastavení → Aplikace po spuštění",
+  "startupTask.openSettings": "Otevřít nastavení spouštění",
   "startupTask.disabledByPolicy": "Automatické spuštění je zakázáno zásadami organizace — zapnout ho může jen správce. Po restartu spusťte aplikaci ručně.",
   "error.generic": "Chyba: {message}",
   "app.statsHeading": "Statistika (aktuální okno protokolu)",

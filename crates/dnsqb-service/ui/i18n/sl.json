@@ -32,7 +32,7 @@
   "hero.installingLabel": "Nameščanje…",
   "hero.installFailedLabel": "Ni uspelo — namesto tega uporabite meni ikone v pladnju",
   "startupTask.disabled": "Samodejni zagon je izklopljen: po ponovnem zagonu se filter ne bo zagnal sam in brskalnik bo ostal brez DNS.",
-  "startupTask.openSettings": "Vklopite ga v Nastavitve → Zagonske aplikacije",
+  "startupTask.openSettings": "Odpri nastavitve zagona",
   "startupTask.disabledByPolicy": "Samodejni zagon je onemogočil pravilnik vaše organizacije — vklopi ga lahko le skrbnik. Po ponovnem zagonu aplikacijo zaženite ročno.",
   "error.generic": "Napaka: {message}",
   "app.statsHeading": "Statistika (trenutno okno dnevnika)",

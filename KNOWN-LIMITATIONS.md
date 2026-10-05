@@ -9,6 +9,10 @@ state" section: a finished task adds a bullet here only if it leaves a live limi
 the task's own narrative (rationale, advisor catches, verification notes) goes to
 TASKS-DONE.md, never here.
 
+- **Autostart needs one launch (T-243)** — Windows registers the MSIX `DnsqbWatcherStartup` task
+  only after the app's first launch; an install that is never launched starts nothing after a
+  reboot. Told in README/release notes; `/admin/ui` can only show a task that already exists
+  (`ImmediateRegistration` is Store-only, T-239).
 - **Rating filter (T-124)** — ~~(a) enable-needs-restart~~ / ~~(b) already-cached domains outlive
   a new bubble~~ **both closed in Батч 4.4** (T-127: `run_topn_updater` always spawns; the enable
   route rebuilds the verdict cache). ~~(c) The lazy-hygiene removal overlay is in-memory only~~

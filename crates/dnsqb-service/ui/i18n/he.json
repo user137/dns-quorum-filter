@@ -32,7 +32,7 @@
   "hero.installingLabel": "מתקין…",
   "hero.installFailedLabel": "נכשל — השתמשו בתפריט סמל מגש המערכת במקום",
   "startupTask.disabled": "ההפעלה האוטומטית כבויה: אחרי הפעלה מחדש המסנן לא יופעל מעצמו, והדפדפן יישאר בלי DNS.",
-  "startupTask.openSettings": "הפעילו אותה בהגדרות ← אפליקציות בהפעלה",
+  "startupTask.openSettings": "פתיחת הגדרות ההפעלה",
   "startupTask.disabledByPolicy": "ההפעלה האוטומטית הושבתה על ידי מדיניות הארגון — רק מנהל מערכת יכול להפעיל אותה. אחרי הפעלה מחדש, הפעילו את האפליקציה ידנית.",
   "error.generic": "שגיאה: {message}",
   "app.statsHeading": "סטטיסטיקה (חלון היומן הנוכחי)",

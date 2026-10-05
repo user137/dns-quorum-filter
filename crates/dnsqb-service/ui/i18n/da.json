@@ -32,7 +32,7 @@
   "hero.installingLabel": "Installerer…",
   "hero.installFailedLabel": "Mislykkedes — brug bakkeikonets menu i stedet",
   "startupTask.disabled": "Automatisk start er slået fra: efter en genstart starter filteret ikke af sig selv, og browseren står uden DNS.",
-  "startupTask.openSettings": "Slå det til under Indstillinger → Startapps",
+  "startupTask.openSettings": "Åbn indstillinger for opstart",
   "startupTask.disabledByPolicy": "Automatisk start er deaktiveret af organisationens politik — kun en administrator kan slå det til. Start appen manuelt efter en genstart.",
   "error.generic": "Fejl: {message}",
   "app.statsHeading": "Statistik (nuværende logvindue)",

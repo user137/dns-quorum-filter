@@ -32,7 +32,7 @@
   "hero.installingLabel": "इंस्टॉल हो रहा है…",
   "hero.installFailedLabel": "विफल — इसके बजाय ट्रे आइकन मेनू का उपयोग करें",
   "startupTask.disabled": "ऑटोस्टार्ट बंद है: रीस्टार्ट के बाद फ़िल्टर अपने आप शुरू नहीं होगा, और ब्राउज़र DNS के बिना रह जाएगा।",
-  "startupTask.openSettings": "इसे सेटिंग्स → स्टार्टअप ऐप्स में चालू करें",
+  "startupTask.openSettings": "स्टार्टअप सेटिंग्स खोलें",
   "startupTask.disabledByPolicy": "ऑटोस्टार्ट आपके संगठन की नीति से बंद है — इसे केवल व्यवस्थापक चालू कर सकता है। रीस्टार्ट के बाद ऐप को हाथ से शुरू करें।",
   "error.generic": "त्रुटि: {message}",
   "app.statsHeading": "आँकड़े (वर्तमान लॉग विंडो)",

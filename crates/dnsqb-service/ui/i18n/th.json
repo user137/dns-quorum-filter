@@ -32,7 +32,7 @@
   "hero.installingLabel": "กำลังติดตั้ง…",
   "hero.installFailedLabel": "ล้มเหลว — ใช้เมนูไอคอนถาดระบบแทน",
   "startupTask.disabled": "การเริ่มอัตโนมัติปิดอยู่: หลังรีสตาร์ต ตัวกรองจะไม่เริ่มเอง และเบราว์เซอร์จะไม่มี DNS",
-  "startupTask.openSettings": "เปิดใช้ใน การตั้งค่า → แอปเริ่มต้น",
+  "startupTask.openSettings": "เปิดการตั้งค่าการเริ่มต้น",
   "startupTask.disabledByPolicy": "การเริ่มอัตโนมัติถูกปิดโดยนโยบายขององค์กร — มีเพียงผู้ดูแลระบบที่เปิดได้ หลังรีสตาร์ตให้เปิดแอปด้วยตนเอง",
   "error.generic": "ข้อผิดพลาด: {message}",
   "app.statsHeading": "สถิติ (หน้าต่างบันทึกปัจจุบัน)",

@@ -32,7 +32,7 @@
   "hero.installingLabel": "Telepítés…",
   "hero.installFailedLabel": "Sikertelen — használja helyette a tálcaikon menüjét",
   "startupTask.disabled": "Az automatikus indítás ki van kapcsolva: újraindítás után a szűrő nem indul el magától, és a böngésző DNS nélkül marad.",
-  "startupTask.openSettings": "Kapcsolja be: Gépházban → Indítási alkalmazások",
+  "startupTask.openSettings": "Indítási beállítások megnyitása",
   "startupTask.disabledByPolicy": "Az automatikus indítást a szervezet házirendje letiltotta — csak rendszergazda kapcsolhatja be. Újraindítás után indítsa el kézzel az alkalmazást.",
   "error.generic": "Hiba: {message}",
   "app.statsHeading": "Statisztika (jelenlegi naplóablak)",

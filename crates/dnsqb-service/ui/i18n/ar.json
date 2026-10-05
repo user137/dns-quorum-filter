@@ -32,7 +32,7 @@
   "hero.installingLabel": "جارٍ التثبيت…",
   "hero.installFailedLabel": "فشل — استخدم قائمة أيقونة شريط المهام بدلاً من ذلك",
   "startupTask.disabled": "التشغيل التلقائي متوقف: بعد إعادة التشغيل لن يبدأ المرشِّح من تلقاء نفسه، وسيبقى المتصفح دون DNS.",
-  "startupTask.openSettings": "فعِّله في الإعدادات ← تطبيقات بدء التشغيل",
+  "startupTask.openSettings": "فتح إعدادات بدء التشغيل",
   "startupTask.disabledByPolicy": "التشغيل التلقائي معطَّل بسياسة مؤسستك — لا يمكن تفعيله إلا للمسؤول. بعد إعادة التشغيل، شغِّل التطبيق يدويًا.",
   "error.generic": "خطأ: {message}",
   "app.statsHeading": "الإحصاءات (نافذة السجل الحالية)",

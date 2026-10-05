@@ -32,7 +32,7 @@
   "hero.installingLabel": "Instalē…",
   "hero.installFailedLabel": "Neizdevās — tā vietā izmantojiet ikonjoslas ikonas izvēlni",
   "startupTask.disabled": "Automātiskā palaišana ir izslēgta: pēc restartēšanas filtrs pats nepalaidīsies, un pārlūks paliks bez DNS.",
-  "startupTask.openSettings": "Ieslēdziet to sadaļā Iestatījumi → Startēšanas programmas",
+  "startupTask.openSettings": "Atvērt startēšanas iestatījumus",
   "startupTask.disabledByPolicy": "Automātisko palaišanu ir atspējojusi jūsu organizācijas politika — ieslēgt to var tikai administrators. Pēc restartēšanas palaidiet lietotni manuāli.",
   "error.generic": "Kļūda: {message}",
   "app.statsHeading": "Statistika (pašreizējais žurnāla logs)",

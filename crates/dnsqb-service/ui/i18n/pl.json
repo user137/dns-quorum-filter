@@ -32,7 +32,7 @@
   "hero.installingLabel": "Instalowanie…",
   "hero.installFailedLabel": "Nie powiodło się — użyj zamiast tego menu ikony w zasobniku systemowym",
   "startupTask.disabled": "Autostart jest wyłączony: po ponownym uruchomieniu filtr nie włączy się sam, a przeglądarka zostanie bez DNS.",
-  "startupTask.openSettings": "Włącz go w Ustawienia → Aplikacje autostartu",
+  "startupTask.openSettings": "Otwórz ustawienia autostartu",
   "startupTask.disabledByPolicy": "Autostart jest wyłączony przez zasady organizacji — włączyć go może tylko administrator. Po ponownym uruchomieniu uruchom aplikację ręcznie.",
   "error.generic": "Błąd: {message}",
   "app.statsHeading": "Statystyki (bieżące okno dziennika)",

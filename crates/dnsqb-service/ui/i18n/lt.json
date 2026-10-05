@@ -32,7 +32,7 @@
   "hero.installingLabel": "Diegiama…",
   "hero.installFailedLabel": "Nepavyko — vietoj to naudokite dėklo piktogramos meniu",
   "startupTask.disabled": "Automatinis paleidimas išjungtas: po perkrovimo filtras nepasileis pats, o naršyklė liks be DNS.",
-  "startupTask.openSettings": "Įjunkite jį: Parametrai → Paleisties programos",
+  "startupTask.openSettings": "Atidaryti paleisties nustatymus",
   "startupTask.disabledByPolicy": "Automatinį paleidimą išjungė jūsų organizacijos politika — įjungti jį gali tik administratorius. Po perkrovimo paleiskite programą rankiniu būdu.",
   "error.generic": "Klaida: {message}",
   "app.statsHeading": "Statistika (dabartinis žurnalo langas)",

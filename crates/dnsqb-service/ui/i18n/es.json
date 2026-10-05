@@ -32,7 +32,7 @@
   "hero.installingLabel": "Instalando…",
   "hero.installFailedLabel": "Error — use el icono de la bandeja en su lugar",
   "startupTask.disabled": "El inicio automático está desactivado: tras reiniciar, el filtro no se iniciará solo y el navegador se quedará sin DNS.",
-  "startupTask.openSettings": "Actívelo en Configuración → Aplicaciones de arranque",
+  "startupTask.openSettings": "Abrir la configuración de inicio",
   "startupTask.disabledByPolicy": "El inicio automático está deshabilitado por una directiva de su organización: solo un administrador puede activarlo. Tras reiniciar, inicie la aplicación manualmente.",
   "error.generic": "Error: {message}",
   "app.statsHeading": "Estadísticas (ventana de registro actual)",

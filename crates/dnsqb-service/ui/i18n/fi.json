@@ -32,7 +32,7 @@
   "hero.installingLabel": "Asennetaan…",
   "hero.installFailedLabel": "Epäonnistui — käytä sen sijaan ilmaisinalueen kuvakkeen valikkoa",
   "startupTask.disabled": "Automaattinen käynnistys on pois päältä: uudelleenkäynnistyksen jälkeen suodatin ei käynnisty itsestään, ja selain jää ilman DNS:ää.",
-  "startupTask.openSettings": "Ota se käyttöön kohdassa Asetukset → Käynnistyssovellukset",
+  "startupTask.openSettings": "Avaa käynnistysasetukset",
   "startupTask.disabledByPolicy": "Organisaatiosi käytäntö on poistanut automaattisen käynnistyksen käytöstä — vain järjestelmänvalvoja voi ottaa sen käyttöön. Käynnistä sovellus käsin uudelleenkäynnistyksen jälkeen.",
   "error.generic": "Virhe: {message}",
   "app.statsHeading": "Tilastot (nykyinen lokiaikaikkuna)",

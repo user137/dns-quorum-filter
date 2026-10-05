@@ -32,7 +32,7 @@
   "hero.installingLabel": "انسٹال ہو رہا ہے…",
   "hero.installFailedLabel": "ناکام — اس کے بجائے ٹرے آئیکن مینو استعمال کریں",
   "startupTask.disabled": "خودکار آغاز بند ہے: ری اسٹارٹ کے بعد فلٹر خود شروع نہیں ہوگا، اور براؤزر DNS کے بغیر رہ جائے گا۔",
-  "startupTask.openSettings": "اسے ترتیبات ← اسٹارٹ اپ ایپس میں آن کریں",
+  "startupTask.openSettings": "اسٹارٹ اپ کی ترتیبات کھولیں",
   "startupTask.disabledByPolicy": "خودکار آغاز آپ کی تنظیم کی پالیسی نے غیر فعال کیا ہے — صرف منتظم اسے آن کر سکتا ہے۔ ری اسٹارٹ کے بعد ایپ خود شروع کریں۔",
   "error.generic": "خرابی: {message}",
   "app.statsHeading": "اعداد و شمار (موجودہ لاگ ونڈو)",

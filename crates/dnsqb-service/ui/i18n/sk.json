@@ -32,7 +32,7 @@
   "hero.installingLabel": "Inštaluje sa…",
   "hero.installFailedLabel": "Zlyhalo — namiesto toho použite ponuku ikony na paneli úloh",
   "startupTask.disabled": "Automatické spustenie je vypnuté: po reštarte sa filter sám nespustí a prehliadač zostane bez DNS.",
-  "startupTask.openSettings": "Zapnite ho v Nastavenia → Aplikácie pri spustení",
+  "startupTask.openSettings": "Otvoriť nastavenia spúšťania",
   "startupTask.disabledByPolicy": "Automatické spustenie je zakázané politikou organizácie — zapnúť ho môže len správca. Po reštarte spustite aplikáciu ručne.",
   "error.generic": "Chyba: {message}",
   "app.statsHeading": "Štatistiky (aktuálne okno denníka)",
