@@ -381,7 +381,7 @@ ui("browser-setup", "#browser-setup-body, #doh-url, #doh-url-copy, #browser-setu
    "#browser-steps-chromium, #chromium-settings-url, #chromium-settings-copy, #browser-steps-firefox, "
    "#firefox-settings-url, #firefox-settings-copy, #browser-steps-other, #browser-setup-result", "HP",
    "розгорнути, кожна кнопка копіювання -> буфер; Chrome і Firefox (UA)", "правильний блок кроків, DoH URL з реальним портом",
-   ["browser_setup_card_has_a_static_step_block_per_browser_family",
+   ["browser_setup_card_has_a_static_step_block_per_browser",
     "browser_setup_card_carries_the_doh_url_field_and_the_verification_pointer"])
 ui("browser-setup", "#doh-url-copy", "EP", "копіювання без дозволу clipboard", "видимий fallback/повідомлення, без винятку в консолі", [])
 ui("overrides", "#overrides-body (поле, «Додати», remove, `?` fieldHelp.overrides)", "HP",
@@ -436,7 +436,7 @@ ui("rating", "#rating-filter-body (switch, confirm, combobox, підказка �
     "main_js_rating_filter_suggestion_is_a_hint_not_an_auto_pick"])
 ui("danger", "#danger-zone-body, #uninstall-local-state-btn, #uninstall-local-state-result", "HP",
    "ЛИШЕ в кінці G, з явним «так»", "двокрокове підтвердження, результат з 5 рядків",
-   ["danger_zone_calls_the_uninstall_route_and_names_every_consequence", "smoke.js:renderUninstallResult"], "USER")
+   ["danger_zone_requests_the_tray_removal_and_names_every_consequence", "smoke.js:renderRemoveAllResult"], "USER")
 ui("credits", "#credits", "HP", "перевірити посилання й атрибуції", "Apache-2.0, DB-IP/sapics атрибуції, робочі `href`",
    ["index_html_carries_the_required_geoip_data_attributions"])
 ui("app-body", "#app-body / консоль / CSP", "SB", "після кожного екрана: консоль і мережа (chrome-devtools)",
@@ -789,6 +789,25 @@ NA = {
     "C-ABOUT_ID": {"EP": "N/A -- діалог не залежить від сервісу (порт з конфігу)"},
     "C-CLOSE_ID": {"EP": "N/A -- лише вихід процесу трею"},
 }
+# Wave 12 (2026-10-05): the F template's SB/MF/EP cases do not vary by state, so one
+# representative row per case carries the real tests (EXTRA_COV below) and the rest point to it.
+_F_SB = "N/A -- pid-ідентичність перевіряється лише у VerifyingPid і лаунчері: див. F-state-VerifyingPid-SB, F-launcher-order-SB"
+_F_MF = "N/A -- не залежить від стану: див. F-state-Healthy-MF"
+_F_EP = "N/A -- не залежить від стану/точки: див. F-state-Healthy-EP"
+for _s in ("Healthy", "ChannelDegraded", "SuspectDead", "VerifyingPid", "Restarting", "BackoffWait", "GaveUp"):
+    _na = {}
+    if _s != "VerifyingPid":
+        _na["SB"] = _F_SB
+    if _s != "Healthy":
+        _na.update(MF=_F_MF, EP=_F_EP)
+    NA[f"F-state-{_s}"] = _na
+NA["F-start-flags"] = {"SB": _F_SB, "EP": _F_EP}
+NA["F-launcher-order"] = {"EP": _F_EP}
+NA["D-browser-nudge"] = {
+    "SB": "N/A -- нудж не є індикатором стану (шаблон D про колір); false-safe -- рядки D-icon-*",
+    "MF": "N/A -- одноразовий попап, не колір; латч і маркер -- D-browser-nudge-HP і H-file-browser-nudge-*",
+    "EP": "N/A -- без /admin/status нудж не спрацьовує (немає total_queries): does_not_fire_without_total_queries_or_a_first_seen_stamp",
+}
 _stems = {}
 for r in ROWS:
     if re.match(r"(KL-|DIAG-|H-file-|A-routes-unused|A-dto-|A-tls|A-unknown-path)", r["id"]):
@@ -920,6 +939,36 @@ EXTRA_COV.update({f"H-cfg-{f}-SB": [CFG_ALL] for f in CFG_UNSIGNED})
 EXTRA_COV.update({f"E-{b}-help-SB": [HELP_LONG] for b in ("service", "tray", "watcher")})
 EXTRA_COV.update({f"B-{s}-SB": [XSS_ALL] for s in (
     "overrides", "providers", "log", "maxmind", "geoip", "rating", "blocklist", "timeout")})
+# Wave 12 (2026-10-05): CODE-ONLY rows wired to the tests that assert their expectation.
+EXTRA_COV.update({
+    "F-state-VerifyingPid-SB": ["verifying_pid_routes_on_the_check_result", "live_pid_with_a_foreign_exe_is_a_mismatch"],
+    "F-launcher-order-SB": ["stale_or_recycled_pid_file_means_spawn", "live_pid_with_a_foreign_exe_is_a_mismatch"],
+    "F-state-Healthy-MF": ["a_corrupt_file_is_invalid_data", "all_channels_signalling_stays_healthy_and_writes_every_tick",
+                           "one_silent_channel_degrades_but_never_restarts"],
+    "F-launcher-order-MF": ["pid_file_errors_are_returned_not_panicked", "pid_check_that_did_not_run_means_spawn"],
+    "F-start-flags-MF": ["clearing_an_absent_flag_is_not_an_error"],
+    "F-state-Healthy-EP": ["write_errors_and_leaves_no_temp_file"],
+    "H-file-cert-pem": ["cert_origin_is_replaced_when_files_existed_but_load_failed",
+                        "server_config_rejects_a_mismatched_cert_and_key_pair",
+                        "load_server_config_from_dir_fails_on_corrupt_cert_pem_content"],
+    "H-file-geoip-mmdb": ["checksum_matches_sha256_rejects_a_wrong_digest",
+                          "persist_atomically_replaces_an_existing_file_and_the_old_reader_stays_usable"],
+    "H-file-onboarding-seen": ["a_written_marker_suppresses_the_automatic_offer_and_round_trips"],
+    "H-file-browser-nudge-seen-first-seen-stamp": ["first_seen_reads_back_none_for_a_corrupt_stamp_file",
+                                                   "browser_nudge_seen_marker_round_trips"],
+    "H-file-blocklists-id-txt-id-count": ["write_and_hash_blocking_does_not_poison_an_existing_last_known_good_file",
+                                          "write_and_hash_blocking_rejects_a_suspicious_growth_and_never_updates_either_file"],
+    "H-file-key-pem-geoip-maxmind-toml-legacy": ["migration_action_moves_only_when_store_empty_and_legacy_present",
+                                                 "migration_moves_a_legacy_file_into_the_store_and_erases_it",
+                                                 "migration_rejects_an_oversized_legacy_file_and_leaves_it_in_place"],
+    "DIAG-rf-inz-personal": ["personal_zone_domain_is_reached_when_topn_zone_misses"],
+    "DIAG-rf-rm": ["lazy_hygiene_surfaces_zone_removal_only_for_an_exact_registrable_block",
+                   "lazy_hygiene_evicts_a_personal_zone_domain_on_a_fresh_quorum_block"],
+    "DIAG-rf-noop": ["lazy_hygiene_surfaces_zone_removal_only_for_an_exact_registrable_block"],
+})
+EXTRA_COV.update({f"H-file-{f}": ["a_file_without_its_key_is_moved_aside_and_never_overwritten",
+                                  "an_undecryptable_file_is_moved_aside_and_never_overwritten"]
+                  for f in ("query-log-enc", "cache-enc", "zone-removals-enc", "personal-zone-enc")})
 _by_id = {r["id"]: r for r in ROWS}
 for _rid, _extra in EXTRA_COV.items():
     _by_id[_rid]["cov"].extend(c for c in _extra if c not in _by_id[_rid]["cov"])
