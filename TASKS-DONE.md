@@ -7881,3 +7881,20 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   режим. Firefox «Посилений захист» з адресою застосунку теж тихо переходить на системний DNS, хоча
   користувач «налаштував адресу». Хто йде інструкціям хвилі 10 (Firefox — «Максимальний захист»),
   отримує правдивий текст.
+- [x] T-264 — **Заведено 2026-10-04, QA-прохід (рядки `D-tooltip-*`).** Видима підказка іконки трею
+  правильна («protecting - blocked 2/5…»), але UIA-ім'я кнопки в області сповіщень — склейка
+  «DNS Quorum Filter: service unreachable DNS Quorum Filter: protecting - …» (бачив двічі, після
+  ребуту й після запуску плиткою). Скрінрідер оголошує спершу застарілий стан «service
+  unreachable». Діагностувати: стартовий tooltip до першого опитування + як `tray-icon`
+  оновлює `szTip`/`NIF_SHOWTIP` на Windows 11.
+  **Доказ 2026-10-05 (хвиля 6, ARCH-19 б):** UIA-ім'я з кнопок оверфлоу (`TopLevelWindowForOverflowXamlIsland`)
+  — встановлена 0.8.902: «DNS Quorum Filter: service unreachable DNS Quorum Filter: protecting -
+  blocked 0/190, requests now: 0»; scratch-збірка з ARCH-19 б — та сама склейка («…protecting -
+  blocked 0/0, requests now: 0 - c…»). Тобто не регресія (б), існує з 0.8.902 і раніше.
+  **Виконано 2026-10-05 (хвиля 6).** Діагноз: `tray-icon` 0.21.3 реєструє іконку `NIM_ADD` з
+  `NIF_TIP`, коли задано `with_tooltip`; Explorer Windows 11 будує UIA-ім'я кнопки як «текст з
+  `NIM_ADD`» + пробіл + поточний `szTip` (з `NIM_MODIFY`). Експеримент: scratch-збірка без
+  `with_tooltip` і з `set_tooltip` одразу після `build` → UIA-ім'я « DNS Quorum Filter: protecting…»
+  (порожній префікс), встановлена 0.8.902 поруч — зі склейкою. Фікс — саме це (`build_tray_icon`).
+  Unit-тест неможливий (стан Explorer); перевірка — UIA-читання з оверфлоу.
+  Re-test `D-tooltip-*` на артефакті.

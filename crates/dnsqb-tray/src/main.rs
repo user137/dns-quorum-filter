@@ -450,14 +450,22 @@ fn build_tray_icon(app_data: &Path, locale: &str) -> (TrayIcon, TrayIcons, MenuI
     };
     let (menu, menu_items) = build_menu(app_data, locale);
     // Start on red, matching the initial `TrayStatus::Unreachable` tooltip
-    // below — icon and tooltip agree from the first frame.
+    // below — icon and tooltip agree from the first frame. The tooltip is set
+    // after `build`, not with `with_tooltip` (T-264): Explorer keeps the text
+    // registered at `NIM_ADD` as a permanent prefix of the icon's UIA name, so
+    // a screen reader announced "service unreachable" before every later
+    // status (verified live: no add-time text → no stale prefix).
     let tray_icon = match TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_icon(icons.get(IconColour::Red))
-        .with_tooltip(TrayStatus::Unreachable.tooltip(locale))
         .build()
     {
-        Ok(tray_icon) => tray_icon,
+        Ok(tray_icon) => {
+            if let Err(err) = tray_icon.set_tooltip(Some(TrayStatus::Unreachable.tooltip(locale))) {
+                tracing::warn!("could not set the initial tray tooltip: {err}");
+            }
+            tray_icon
+        }
         Err(err) => {
             tracing::error!("failed to create the tray icon: {err}");
             std::process::exit(1);

@@ -1652,16 +1652,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Cloudflare — 1. Не діагностовано: тип помилки за `kind="http"` (reset/GOAWAY HTTP/2, 5xx,
   тайм-аут з'єднання?) і чи вона коштує користувачу вердикту (fail-open = голос Quad9 втрачено).
   Спершу — детальніший (без доменів) підтип помилки в лозі, потім рішення.
-- [ ] T-264 — **Заведено 2026-10-04, QA-прохід (рядки `D-tooltip-*`).** Видима підказка іконки трею
-  правильна («protecting - blocked 2/5…»), але UIA-ім'я кнопки в області сповіщень — склейка
-  «DNS Quorum Filter: service unreachable DNS Quorum Filter: protecting - …» (бачив двічі, після
-  ребуту й після запуску плиткою). Скрінрідер оголошує спершу застарілий стан «service
-  unreachable». Діагностувати: стартовий tooltip до першого опитування + як `tray-icon`
-  оновлює `szTip`/`NIF_SHOWTIP` на Windows 11.
-  **Доказ 2026-10-05 (хвиля 6, ARCH-19 б):** UIA-ім'я з кнопок оверфлоу (`TopLevelWindowForOverflowXamlIsland`)
-  — встановлена 0.8.902: «DNS Quorum Filter: service unreachable DNS Quorum Filter: protecting -
-  blocked 0/190, requests now: 0»; scratch-збірка з ARCH-19 б — та сама склейка («…protecting -
-  blocked 0/0, requests now: 0 - c…»). Тобто не регресія (б), існує з 0.8.902 і раніше.
 - [ ] T-265 — **Заведено 2026-10-04, QA-прохід (знімок Credential Manager перед кроком d).**
   У справжньому сховищі облікових даних користувача лежать 62 записи `*.dns-quorum-filter`, з
   них 7 `test:round-trip:…`/`test:overwrite:…` і десятки `doh-tls-private-key:<hash>`/
