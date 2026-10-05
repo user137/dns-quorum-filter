@@ -148,6 +148,7 @@ mod lifecycle;
 mod listener;
 mod local_state;
 mod log_persist;
+mod log_throttle;
 mod logging;
 mod orchestrate;
 mod overrides;

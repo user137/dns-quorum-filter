@@ -52,6 +52,7 @@ use crate::geoip_credentials::{load as load_maxmind_credentials, migrate_legacy_
 use crate::geoip_updater::{run_geoip_updater, GeoipSource};
 use crate::listener::{bind_listener, BindError};
 use crate::log_persist::{load_persisted_query_log, run_query_log_persister, QueryLogInit};
+use crate::log_throttle::WarnThrottle;
 use crate::logging::init as init_logging;
 use crate::overrides::{InvalidEntry, OverrideLists};
 use crate::paths::app_data_dir;
@@ -81,7 +82,7 @@ use hyper_util::server::graceful::GracefulShutdown;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio_rustls::TlsAcceptor;
 use zeroize::Zeroizing;
 
@@ -846,6 +847,7 @@ async fn serve_until_shutdown(
 ) {
     let mut shutdown_rx = state.shutdown_handle();
     let graceful = GracefulShutdown::new();
+    let handshake_warn = Arc::new(parking_lot::Mutex::new(WarnThrottle::default()));
 
     loop {
         tokio::select! {
@@ -867,6 +869,7 @@ async fn serve_until_shutdown(
                 let acceptor = acceptor.clone();
                 let state = Arc::clone(&state);
                 let watcher = graceful.watcher();
+                let handshake_warn = Arc::clone(&handshake_warn);
                 tokio::spawn(async move {
                     // Permit acquired before the spawn (above) and moved in
                     // here: held for the whole connection, released on drop
@@ -886,7 +889,13 @@ async fn serve_until_shutdown(
                     {
                         Ok(Ok(stream)) => stream,
                         Ok(Err(err)) => {
-                            tracing::warn!("TLS handshake failed: {err}");
+                            let admitted = handshake_warn.lock().admit(Instant::now());
+                            if let Some(suppressed) = admitted {
+                                tracing::warn!(
+                                    "TLS handshake failed: {err} \
+                                     ({suppressed} more suppressed since the last such line)"
+                                );
+                            }
                             return;
                         }
                         Err(_elapsed) => {
