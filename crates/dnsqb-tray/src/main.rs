@@ -51,8 +51,8 @@ mod status;
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
     set_quit_flag, set_reset_config_flag, set_retry_flag, set_stop_flag, stop_flag_is_set,
-    write_pid_file, AdminClient, AdminClientError, GuardError, InstanceGuard, InstanceRole,
-    ResolverConfig,
+    take_remove_all_flag, write_pid_file, AdminClient, AdminClientError, GuardError, InstanceGuard,
+    InstanceRole, RemoveAllTake, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -298,6 +298,12 @@ fn main() {
         return;
     };
 
+    // Хвиля 14: a request left over from before this tray started is never
+    // acted on - only one made while this tray is watching may prompt.
+    if take_remove_all_flag(&app_data, SystemTime::now()) != RemoveAllTake::Absent {
+        tracing::info!("discarded a remove-all request from before this tray started");
+    }
+
     // T-229: the earliest-launch stamp for the browser-nudge threshold below
     // must be written unconditionally at every startup (idempotent — only the
     // first call ever actually creates the file), not lazily on first poll
@@ -329,6 +335,7 @@ fn main() {
         first_seen: browser_nudge::first_seen(&app_data),
     };
     let mut browser_nudge_popup: Option<nudge_popup::NudgePopup> = None;
+    let mut remove_all_owner: Option<tao::window::Window> = None;
 
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::WaitUntil(Instant::now() + EVENT_POLL_INTERVAL);
@@ -390,6 +397,7 @@ fn main() {
                 menu_items.pause_resume.set_text(&label);
                 last_paused = paused;
             }
+            poll_remove_all_request(&mut remove_all_owner, &app_data, locale, target);
         }
 
         handle_menu_events(&menu_events, &app_data, port, control_flow, &trust, locale);
@@ -744,7 +752,12 @@ fn handle_menu_event(
             }
         }
         MenuAction::RemoveAllLocalState => {
-            if confirm_remove_all_local_state(locale) {
+            if REMOVE_ALL_PROMPT_ACTIVE.load(Ordering::SeqCst) {
+                tracing::info!("a remove-all confirm from /admin/ui is already open");
+            } else if confirm_remove_all_local_state(locale) {
+                // Same latch as the /admin/ui path: no second prompt while the
+                // app goes down.
+                REMOVE_ALL_PROMPT_ACTIVE.store(true, Ordering::SeqCst);
                 spawn_remove_all_and_quit(app_data.to_path_buf(), locale.to_string());
             }
         }
@@ -975,6 +988,61 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
         self_uninstall::spawn_app_data_dir_wipe(&app_data);
         browser::open_windows_apps_settings();
         QUIT_REQUESTED.store(true, Ordering::SeqCst);
+        wake_event_loop();
+    });
+}
+
+/// Set while a remove-all confirm requested from `/admin/ui` is open, so a
+/// second click (or a second tab, or the menu item) can't stack another one.
+static REMOVE_ALL_PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Хвиля 14 (T-268): the `/admin/ui` danger-zone button asks for the same
+/// «Повністю видалити» as the menu item, via a fresh `remove-all.flag`
+/// (`dnsqb_service::lifecycle`). The tray shows its own native confirm — a
+/// request from the browser alone never removes anything — on a throwaway
+/// thread, above the browser through a hidden topmost owner (T-269: the tray
+/// is a background process, Windows would open the dialog behind the page
+/// the user just clicked in). Requests that arrive while it is open are
+/// consumed and dropped. «Так» → [`spawn_remove_all_and_quit`], unchanged.
+fn poll_remove_all_request(
+    owner: &mut Option<tao::window::Window>,
+    app_data: &Path,
+    locale: &str,
+    target: &tao::event_loop::EventLoopWindowTarget<()>,
+) {
+    if owner.is_some() && !REMOVE_ALL_PROMPT_ACTIVE.load(Ordering::SeqCst) {
+        *owner = None;
+    }
+    if take_remove_all_flag(app_data, SystemTime::now()) != RemoveAllTake::Fresh {
+        return;
+    }
+    if QUIT_REQUESTED.load(Ordering::SeqCst)
+        || REMOVE_ALL_PROMPT_ACTIVE.swap(true, Ordering::SeqCst)
+    {
+        tracing::info!("dropped a remove-all request: one is already open or running");
+        return;
+    }
+    *owner = topmost_owner(target);
+    let mut dialog = confirm_dialog(
+        &i18n::t(locale, "menu.removeAll"),
+        &i18n::t(locale, "confirm.removeAll.description"),
+        rfd::MessageLevel::Warning,
+    );
+    if let Some(owner) = owner.as_ref() {
+        dialog = dialog.set_parent(owner);
+    }
+    let app_data = app_data.to_path_buf();
+    let locale = locale.to_string();
+    std::thread::spawn(move || {
+        if dialog.show() == rfd::MessageDialogResult::Yes {
+            tracing::info!("full removal requested from /admin/ui confirmed by the user");
+            // The latch stays set: the app is going down, nothing may prompt
+            // again before `QUIT_REQUESTED` lands.
+            spawn_remove_all_and_quit(app_data, locale);
+        } else {
+            tracing::info!("full removal requested from /admin/ui declined by the user");
+            REMOVE_ALL_PROMPT_ACTIVE.store(false, Ordering::SeqCst);
+        }
         wake_event_loop();
     });
 }
