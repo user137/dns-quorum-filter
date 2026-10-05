@@ -1809,6 +1809,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
     let network = NetworkStatusView::from(state.reachability_snapshot());
     let paused = state.filtering_paused_snapshot();
     let watchdog = read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now());
+    let log_stats = live_stats(state, &entries);
     AdminStatusResponse {
         schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
@@ -1816,6 +1817,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
             network,
             paused,
             !active_providers.is_empty(),
+            &log_stats,
             state.cert_trust_snapshot(),
         ),
         active_providers,
@@ -1828,7 +1830,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
             state.baseline.read().active_index(),
         ),
         port: state.persist.port,
-        stats: live_stats(state, &entries),
+        stats: log_stats,
         watchdog,
         persisted,
         encrypted_persistence: EncryptedPersistenceView {
@@ -1839,6 +1841,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        startup_task: crate::startup_task::read_startup_task(),
     }
 }
 
@@ -1952,6 +1955,7 @@ fn apply_admin_config<C: DohClient + Sync>(
     let active_providers = ProviderStatusView::active_from(&state.providers.read());
     let network = NetworkStatusView::from(state.reachability_snapshot());
     let paused = state.filtering_paused_snapshot();
+    let log_stats = live_stats(state, &state.query_log.snapshot(SystemTime::now()));
     AdminStatusResponse {
         schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
@@ -1959,6 +1963,7 @@ fn apply_admin_config<C: DohClient + Sync>(
             network,
             paused,
             !active_providers.is_empty(),
+            &log_stats,
             state.cert_trust_snapshot(),
         ),
         active_providers,
@@ -1971,7 +1976,7 @@ fn apply_admin_config<C: DohClient + Sync>(
             state.baseline.read().active_index(),
         ),
         port: state.persist.port,
-        stats: live_stats(state, &state.query_log.snapshot(SystemTime::now())),
+        stats: log_stats,
         watchdog,
         persisted,
         encrypted_persistence: EncryptedPersistenceView {
@@ -1982,6 +1987,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
+        startup_task: crate::startup_task::read_startup_task(),
     }
 }
 
@@ -5309,10 +5315,21 @@ pub(crate) mod tests {
             "default fixture: providers active, not paused, cert unread"
         );
 
+        // T-254: the route feeds the live log's degraded counts into the ladder.
+        let mut timed_out = sample_log_entry("dead.example", crate::query_log::Decision::Allowed);
+        timed_out.voters[0].verdict = VoterVerdict::Timeout;
+        state.query_log.push(timed_out);
+        assert_eq!(
+            hero_of(Arc::clone(&state)).await,
+            HeroStateView::FiltersDegraded,
+            "every recent quorum query had a voter time out"
+        );
+
         state.update_cert_trust(CertTrustView::NotTrusted);
         assert_eq!(
             hero_of(Arc::clone(&state)).await,
-            HeroStateView::CertNotTrusted
+            HeroStateView::CertNotTrusted,
+            "an untrusted cert outranks the degraded reading"
         );
 
         state.update_filtering_paused(true);

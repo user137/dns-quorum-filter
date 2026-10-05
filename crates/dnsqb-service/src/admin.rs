@@ -53,7 +53,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 6;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 7;
 
 /// Emits a `tracing::warn!` when a decoded [`AdminStatusResponse`] carries a
 /// schema version this build doesn't recognise (T-205). Never fails — the
@@ -219,6 +219,35 @@ pub struct AdminStatusResponse {
     /// showing a placeholder — never a fabricated number.
     #[serde(default)]
     pub app_version: String,
+    /// T-243 (хвиля 3) — the MSIX `DnsqbWatcherStartup` task's state, read
+    /// from the registry by [`crate::startup_task::read_startup_task`] on
+    /// every status build. `/admin/ui` shows a row with a Settings link only
+    /// while it is off. `#[serde(default)]` (T-205): an absent value reads as
+    /// [`StartupTaskView::Unknown`], which shows nothing.
+    #[serde(default)]
+    pub startup_task: StartupTaskView,
+}
+
+/// T-243 — DTO form of the MSIX startup task's registry `State`
+/// (`Windows.ApplicationModel.StartupTaskState`). The task only exists after
+/// the app's first launch (Microsoft-documented), and a user can switch it
+/// off in Settings → Apps → Startup, which the app itself cannot undo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum StartupTaskView {
+    /// The service starts at sign-in (`Enabled` or `EnabledByPolicy`).
+    Enabled,
+    /// Off — by the user in Settings, or never enabled (`Disabled`,
+    /// `DisabledByUser`). Settings can turn it back on.
+    Disabled,
+    /// Off by group policy — Settings cannot turn it on, so `/admin/ui`
+    /// offers no Settings link.
+    DisabledByPolicy,
+    /// Not an installed package (a dev build), the task is not registered
+    /// yet, or the value could not be read. Also the `#[default]`: shows
+    /// nothing, never a fabricated warning.
+    #[default]
+    Unknown,
 }
 
 /// T-96 / T-97 — the passive "this store is written to disk (encrypted)"
@@ -402,6 +431,10 @@ pub enum HeroStateView {
     /// Filtering is up, but the local `cert.pem` is not trusted, so the
     /// browser may not be sending DNS through this service at all (T-188).
     CertNotTrusted,
+    /// T-254 — filtering is up, but every recent quorum-decided query had
+    /// at least one filter not answer ([`AdminStats::filters_degraded`], the
+    /// same condition the tray turns amber on). Protection may be partial.
+    FiltersDegraded,
     /// Filtering is up, but the cert-trust check could not answer (T-188 —
     /// "unknown ≠ untrusted").
     CertUnknown,
@@ -415,7 +448,10 @@ pub enum HeroStateView {
 /// The `/admin/ui` protection-hero priority ladder (T-204) — the exact order
 /// `main.js`'s `computeProtectionState` used before this logic moved to the
 /// server, mirroring `pipeline::handle_query`'s own fast-path order
-/// (offline → paused → no-voters). `cert` is [`None`] until the background
+/// (offline → paused → no-voters). T-254 puts [`HeroStateView::FiltersDegraded`]
+/// after `CertNotTrusted` (an untrusted cert stops new queries, so the
+/// degraded counts could only be stale) and before `CertUnknown` (a real
+/// degraded reading beats "couldn't check the cert"). `cert` is [`None`] until the background
 /// [`crate::cert_watch::run_cert_trust_watch`] poll has produced a reading —
 /// treated as "surface no cert warning", never a fabricated one (the same
 /// "unknown ≠ not-yet-known" contract as the tray's `TrustState`, T-188).
@@ -425,6 +461,7 @@ pub(crate) fn compute_hero_state(
     network: NetworkStatusView,
     paused: bool,
     has_active_provider: bool,
+    stats: &AdminStats,
     cert: Option<CertTrustView>,
 ) -> HeroStateView {
     match watchdog {
@@ -441,10 +478,15 @@ pub(crate) fn compute_hero_state(
     if !has_active_provider {
         return HeroStateView::NoProviders;
     }
+    if cert == Some(CertTrustView::NotTrusted) {
+        return HeroStateView::CertNotTrusted;
+    }
+    if stats.filters_degraded() {
+        return HeroStateView::FiltersDegraded;
+    }
     match cert {
-        Some(CertTrustView::NotTrusted) => HeroStateView::CertNotTrusted,
         Some(CertTrustView::Unknown) => HeroStateView::CertUnknown,
-        Some(CertTrustView::Trusted) | None => HeroStateView::Protected,
+        Some(CertTrustView::NotTrusted | CertTrustView::Trusted) | None => HeroStateView::Protected,
     }
 }
 
@@ -600,6 +642,27 @@ pub struct AdminStats {
     /// log-derived treatment (`compute_stats` sets `0`, `live_stats` fills
     /// it from `ConnectionGate::active`).
     pub active_connections: u64,
+    /// ARCH-04 (хвиля 3) — Unix-epoch milliseconds of the newest entry in
+    /// the current log window, `None` when the window is empty (no query
+    /// yet, the log was cleared, or every entry aged out). Only `DoH` queries
+    /// write log entries — `/health` and the reachability probe don't — so
+    /// this is "when a browser last asked". An absolute time, not an age, so
+    /// an idle status stays byte-identical and the 1 s SSE sampler sends
+    /// nothing; `main.js` turns it into "N хв тому". `#[serde(default)]`
+    /// (T-205).
+    #[serde(default)]
+    pub last_query_unix_ms: Option<u64>,
+}
+
+impl AdminStats {
+    /// T-254 — every recent quorum-decided entry had a voter fail, over a
+    /// non-empty window. The `/admin/ui` hero's amber condition; the tray's
+    /// own `degraded_events == degraded_window` rule is the same reading but
+    /// stays the tray's authority (`status.rs`).
+    #[must_use]
+    pub fn filters_degraded(&self) -> bool {
+        self.degraded_window > 0 && self.degraded_events == self.degraded_window
+    }
 }
 
 /// `POST /admin/config`'s body — always a full replace of every field, never
@@ -1561,6 +1624,11 @@ pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
         in_flight: 0,
         rejected_connections: 0,
         active_connections: 0,
+        last_query_unix_ms: entries
+            .iter()
+            .map(|entry| entry.timestamp)
+            .max()
+            .map(unix_millis),
     }
 }
 
@@ -2144,6 +2212,19 @@ mod tests {
         }
     }
 
+    // ARCH-04 — the newest entry's time, independent of slice order.
+    #[test]
+    fn last_query_unix_ms_is_the_newest_entry_time() {
+        let at = |ms: u64| LogEntry {
+            timestamp: std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms),
+            ..entry(Decision::Allowed)
+        };
+        assert_eq!(
+            compute_stats(&[at(5_000), at(9_000), at(7_000)]).last_query_unix_ms,
+            Some(9_000)
+        );
+    }
+
     #[test]
     fn compute_stats_counts_blocked_separately_from_allowed_and_failed() {
         let entries = vec![
@@ -2152,6 +2233,11 @@ mod tests {
             entry(Decision::Blocked),
             entry(Decision::Failed),
         ];
+        let newest = entries
+            .iter()
+            .map(|e| e.timestamp)
+            .max()
+            .map(super::unix_millis);
         assert_eq!(
             compute_stats(&entries),
             AdminStats {
@@ -2162,6 +2248,7 @@ mod tests {
                 in_flight: 0,
                 rejected_connections: 0,
                 active_connections: 0,
+                last_query_unix_ms: newest,
             }
         );
     }
@@ -2178,6 +2265,7 @@ mod tests {
                 in_flight: 0,
                 rejected_connections: 0,
                 active_connections: 0,
+                last_query_unix_ms: None,
             }
         );
     }
@@ -2626,8 +2714,9 @@ mod maxmind_dto_tests {
 #[cfg(test)]
 mod hero_and_category_tests {
     use super::{
-        category_filter_views, compute_hero_state, master_switch_targets, AdminStatusResponse,
-        CategoryToggleState, CertTrustView, HeroStateView, NetworkStatusView, WatchdogStatusView,
+        category_filter_views, compute_hero_state, master_switch_targets, AdminStats,
+        AdminStatusResponse, CategoryToggleState, CertTrustView, HeroStateView, NetworkStatusView,
+        WatchdogStatusView,
     };
     use crate::upstream::{BlockSignature, Category, ProviderEntry, ProviderSpec};
 
@@ -2644,10 +2733,108 @@ mod hero_and_category_tests {
         }
     }
 
+    fn stats(degraded_window: u64, degraded_events: u64) -> AdminStats {
+        AdminStats {
+            total: degraded_window,
+            blocked: 0,
+            degraded_window,
+            degraded_events,
+            in_flight: 0,
+            rejected_connections: 0,
+            active_connections: 0,
+            last_query_unix_ms: None,
+        }
+    }
+
+    /// The pre-T-254 ladder with healthy filters — the axis every older test
+    /// below leaves alone.
+    fn hero(
+        watchdog: Option<WatchdogStatusView>,
+        network: NetworkStatusView,
+        paused: bool,
+        has_active_provider: bool,
+        cert: Option<CertTrustView>,
+    ) -> HeroStateView {
+        compute_hero_state(
+            watchdog,
+            network,
+            paused,
+            has_active_provider,
+            &stats(20, 0),
+            cert,
+        )
+    }
+
+    fn with_stats(stats: &AdminStats, cert: Option<CertTrustView>) -> HeroStateView {
+        compute_hero_state(None, NetworkStatusView::Online, false, true, stats, cert)
+    }
+
+    // T-254 — happy path: every recent query degraded → amber, not "Захищено".
+    #[test]
+    fn hero_state_is_filters_degraded_when_every_recent_query_degraded() {
+        assert_eq!(
+            with_stats(&stats(20, 20), Some(CertTrustView::Trusted)),
+            HeroStateView::FiltersDegraded
+        );
+    }
+
+    // T-254 — boundary: one healthy query in the window is a recovered blip.
+    #[test]
+    fn hero_state_stays_protected_on_a_partial_degraded_count() {
+        assert_eq!(
+            with_stats(&stats(20, 19), Some(CertTrustView::Trusted)),
+            HeroStateView::Protected
+        );
+    }
+
+    // T-254 — boundary: an empty window is "no signal", never degraded.
+    #[test]
+    fn hero_state_empty_degraded_window_is_not_degraded() {
+        assert_eq!(
+            with_stats(&stats(0, 0), Some(CertTrustView::Trusted)),
+            HeroStateView::Protected
+        );
+    }
+
+    // T-254 — ordering: an untrusted cert stops new queries (degraded counts
+    // can only be stale), so its one-click fix wins; a real degraded reading
+    // beats "couldn't check the cert"; `None` cert still shows degraded.
+    #[test]
+    fn hero_state_degraded_sits_between_cert_not_trusted_and_cert_unknown() {
+        let degraded = stats(5, 5);
+        assert_eq!(
+            with_stats(&degraded, Some(CertTrustView::NotTrusted)),
+            HeroStateView::CertNotTrusted
+        );
+        assert_eq!(
+            with_stats(&degraded, Some(CertTrustView::Unknown)),
+            HeroStateView::FiltersDegraded
+        );
+        assert_eq!(with_stats(&degraded, None), HeroStateView::FiltersDegraded);
+    }
+
+    // T-254 — the states above it still win: pause, 0 voters, offline.
+    #[test]
+    fn hero_state_degraded_is_outranked_by_paused_and_no_providers() {
+        let degraded = stats(5, 5);
+        let at = |paused, active| {
+            compute_hero_state(
+                None,
+                NetworkStatusView::Online,
+                paused,
+                active,
+                &degraded,
+                None,
+            )
+        };
+        assert_eq!(at(true, true), HeroStateView::Paused);
+        assert_eq!(at(false, false), HeroStateView::NoProviders);
+    }
+
     /// The all-clear reading, used as the base each ladder test perturbs one
     /// axis of.
     fn all_clear() -> HeroStateView {
-        compute_hero_state(
+        hero(
             None,
             NetworkStatusView::Online,
             false,
@@ -2665,7 +2852,7 @@ mod hero_and_category_tests {
     fn hero_state_is_paused_when_filtering_paused_even_if_providers_active() {
         // The regression this whole task exists to prevent: a pause must never
         // read as green "Захищено".
-        let state = compute_hero_state(
+        let state = hero(
             None,
             NetworkStatusView::Online,
             true,
@@ -2678,7 +2865,7 @@ mod hero_and_category_tests {
     #[test]
     fn hero_state_watchdog_gave_up_outranks_everything() {
         // Every lower-priority axis also tripped — GaveUp still wins.
-        let state = compute_hero_state(
+        let state = hero(
             Some(WatchdogStatusView::GaveUp),
             NetworkStatusView::Offline,
             true,
@@ -2690,7 +2877,7 @@ mod hero_and_category_tests {
 
     #[test]
     fn hero_state_restarting_outranks_offline_and_below() {
-        let state = compute_hero_state(
+        let state = hero(
             Some(WatchdogStatusView::Restarting),
             NetworkStatusView::Offline,
             true,
@@ -2703,7 +2890,7 @@ mod hero_and_category_tests {
     #[test]
     fn hero_state_offline_outranks_paused() {
         // Matches `pipeline::handle_query`'s fast-path order (offline > paused).
-        let state = compute_hero_state(
+        let state = hero(
             None,
             NetworkStatusView::Offline,
             true,
@@ -2717,7 +2904,7 @@ mod hero_and_category_tests {
     fn hero_state_no_providers_outranks_the_cert_branch() {
         // A cert problem must not mask "0 voters" — both are is-bad, but the
         // 0-voters copy is the actionable one.
-        let state = compute_hero_state(
+        let state = hero(
             None,
             NetworkStatusView::Online,
             false,
@@ -2730,7 +2917,7 @@ mod hero_and_category_tests {
     #[test]
     fn hero_state_cert_not_trusted_and_unknown_are_distinct_and_last() {
         assert_eq!(
-            compute_hero_state(
+            hero(
                 None,
                 NetworkStatusView::Online,
                 false,
@@ -2740,7 +2927,7 @@ mod hero_and_category_tests {
             HeroStateView::CertNotTrusted
         );
         assert_eq!(
-            compute_hero_state(
+            hero(
                 None,
                 NetworkStatusView::Online,
                 false,
@@ -2756,7 +2943,7 @@ mod hero_and_category_tests {
         // `None` = the background poll hasn't produced a reading yet; it must
         // NOT manufacture a `CertUnknown` warn state (T-188's "unknown ≠
         // not-yet-known" — the tray made this exact mistake once).
-        let state = compute_hero_state(None, NetworkStatusView::Online, false, true, None);
+        let state = hero(None, NetworkStatusView::Online, false, true, None);
         assert_eq!(state, HeroStateView::Protected);
     }
 

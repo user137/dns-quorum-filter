@@ -160,6 +160,9 @@ const bigLogData = { entries: Array.from({ length: 120 }, (_, i) => Object.assig
 const calls = [
   ["renderProtectionHero", `renderProtectionHero(heroPresentation("PROTECTED", {blocked: 3}))`],
   ["renderProtectionHeroCert", `renderProtectionHero(heroPresentation("CERT_NOT_TRUSTED", {blocked: 0}))`],
+  ["renderProtectionHeroDegraded", `renderProtectionHero(heroPresentation("FILTERS_DEGRADED", {blocked: 0}))`],
+  ["renderLastQuery", `renderLastQuery(null); renderLastQuery(Date.now() - 20e3); renderLastQuery(Date.now() - 7 * 60e3); renderLastQuery(Date.now() - 5 * 3600e3); renderLastQuery(Date.now() - 3 * 86400e3)`],
+  ["renderStartupTask", `renderStartupTask("DISABLED"); renderStartupTask("DISABLED_BY_POLICY"); renderStartupTask("ENABLED")`],
   ["renderTimeoutConfig", `renderTimeoutConfig(${JSON.stringify(status({ timeout_mode: "fail_open", serve_baseline_when_filters_unreachable: false }))})`],
   ["renderOverrides", `renderOverrides(${JSON.stringify({ allowlist: [{ domain: "a.com", is_wildcard: false }], blocklist: [{ domain: "a.com", is_wildcard: true }], conflicts: ["a.com"], persisted: false })})`],
   ["renderCacheConfig", `renderCacheConfig(${JSON.stringify({ clamp_min_secs: 1, clamp_max_secs: 2, block_verdict_ttl_secs: 3, stale_grace_secs: 4, max_capacity: 5, persisted: false })})`],
@@ -184,7 +187,7 @@ const calls = [
   ["cctldSu", `cctldLabel("su"); cctldLabel("ru")`],
 ];
 
-const RAW_KEY = /^(hero|error|app|warning|common|timeoutConfig|overrides|cacheConfig|cctldBlock|geoip|maxmind|log|providers|filterControls|browserSetup|advanced|danger|rating|blocklist|footer|fieldHelp|localeSwitcher)\.[A-Za-z0-9.]+$/;
+const RAW_KEY = /^(hero|startupTask|error|app|warning|common|timeoutConfig|overrides|cacheConfig|cctldBlock|geoip|maxmind|log|providers|filterControls|browserSetup|advanced|danger|rating|blocklist|footer|fieldHelp|localeSwitcher)\.[A-Za-z0-9.]+$/;
 const TOKEN = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
 let failures = 0;
 for (const loc of Object.keys(dicts).sort()) {

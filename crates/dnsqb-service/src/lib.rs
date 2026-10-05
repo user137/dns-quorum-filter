@@ -163,6 +163,7 @@ mod quorum;
 mod rating_filter;
 mod reachability;
 mod startup_failure;
+mod startup_task;
 mod timeout;
 mod tls;
 mod topn_download;
@@ -177,7 +178,7 @@ pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
     BaselineEndpointView, BlocklistBundlesStatusView, BlocklistSourceStatusView,
     CctldBlockStatusView, EncryptedPersistenceView, HeroStateView, NetworkStatusView,
-    ProviderStatusView, RatingFilterStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    ProviderStatusView, RatingFilterStatusView, StartupTaskView, ADMIN_DTO_SCHEMA_VERSION,
 };
 pub use admission::ConnectionGate;
 pub use baseline_selector::BASELINE_CHAIN;

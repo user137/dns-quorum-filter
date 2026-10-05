@@ -27,6 +27,12 @@
        surfaced as a hero instead of a header pill). Empty until the first
        render; carries no layout of its own when empty. -->
   <div id="protection-hero"></div>
+  <!-- ARCH-04 / T-243 (хвиля 3): when a browser last sent a query (no colour
+       of its own - the browser may simply be closed) and, only while the MSIX
+       autostart task is off, a row linking to Settings. Updated in place by
+       main.js, outside the hero's own re-render. -->
+  <p id="hero-last-query" class="hero-subline" hidden></p>
+  <div id="startup-task-row"></div>
 
   <!-- T-128: always-visible rating-filter «bubble» activity indicator. Filled
        by the 2s status poll (renderRatingFilterBadge, in render()) so it can't

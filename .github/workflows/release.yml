@@ -269,7 +269,7 @@ jobs:
           Automated **draft** release for ``$tag``. A maintainer reviews and publishes it.
 
           **Windows x64 binaries:** ``dnsqb-service.exe``, ``dnsqb-watcher.exe``, ``dnsqb-tray.exe``
-          **MSIX package:** ``dns-quorum-filter.msix`` -- Start-menu tile + autostart (Settings > Apps > Startup), both via ``dnsqb-watcher.exe``'s idempotent launcher.
+          **MSIX package:** ``dns-quorum-filter.msix`` -- Start-menu tile + autostart (Settings > Apps > Startup), both via ``dnsqb-watcher.exe``'s idempotent launcher. **Launch the app once from the Start menu after installing** -- Windows registers the autostart task only on the first launch, so until then nothing starts after a reboot.
           **Sideload trust helper:** ``Trust-TestCert.ps1`` -- one self-elevating step to trust ``dns-quorum-filter.cer`` for ``Add-AppxPackage`` (see below).
           **Checksums:** ``SHA256SUMS`` -- verify with ``Get-FileHash <file> -Algorithm SHA256``.
 

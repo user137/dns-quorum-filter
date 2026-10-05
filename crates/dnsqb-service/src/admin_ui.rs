@@ -918,6 +918,7 @@ mod tests {
                 "PAUSED",
                 "NO_PROVIDERS",
                 "CERT_NOT_TRUSTED",
+                "FILTERS_DEGRADED",
                 "CERT_UNKNOWN",
                 "PROTECTED",
             ] {

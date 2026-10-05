@@ -16,6 +16,8 @@ const geoipMaxmindBody = document.getElementById("geoip-maxmind-body");
 const logBody = document.getElementById("log-body");
 // T-176:
 const protectionHero = document.getElementById("protection-hero");
+const heroLastQuery = document.getElementById("hero-last-query");
+const startupTaskRow = document.getElementById("startup-task-row");
 const filterControlsBody = document.getElementById("filter-controls-body");
 const timeoutConfigBody = document.getElementById("timeout-config-body");
 // T-127/T-128: the rating-filter «bubble» card + its always-visible badge.
@@ -474,6 +476,7 @@ const HERO_PRESENTATION = {
   PAUSED: { cls: "is-warn" },
   NO_PROVIDERS: { cls: "is-bad" },
   CERT_NOT_TRUSTED: { cls: "is-bad", action: "install-cert" },
+  FILTERS_DEGRADED: { cls: "is-warn" },
   CERT_UNKNOWN: { cls: "is-warn" },
   PROTECTED: { cls: "is-ok" },
 };
@@ -493,6 +496,82 @@ function heroPresentation(heroState, stats) {
 }
 
 const HERO_MARK = { "is-ok": "✓", "is-bad": "✕", "is-warn": "↺" };
+
+// ARCH-04: the server sends an absolute time (stats.last_query_unix_ms), so an
+// idle status stays unchanged and pushes nothing; the age is worked out here
+// and refreshed by a 30 s timer. Kept out of renderProtectionHero's signature
+// so the hero's button keeps focus while the age ticks. `undefined` = no
+// status yet (or the service is unreachable), `null` = empty log window.
+let lastQueryUnixMs;
+
+function lastQueryText(unixMs) {
+  if (unixMs === null) {
+    return t("hero.lastQuery.none");
+  }
+  const minutes = Math.max(0, Math.floor((Date.now() - unixMs) / 60000));
+  const rtf = new Intl.RelativeTimeFormat(CURRENT_LOCALE, { numeric: "auto" });
+  let when;
+  if (minutes < 60) {
+    when = rtf.format(-minutes, "minute");
+  } else if (minutes < 1440) {
+    when = rtf.format(-Math.floor(minutes / 60), "hour");
+  } else {
+    when = rtf.format(-Math.floor(minutes / 1440), "day");
+  }
+  return t("hero.lastQuery.template", { when });
+}
+
+function renderLastQuery(unixMs) {
+  lastQueryUnixMs = unixMs;
+  if (unixMs === undefined) {
+    heroLastQuery.hidden = true;
+    return;
+  }
+  const text = lastQueryText(unixMs);
+  if (heroLastQuery.textContent !== text) {
+    heroLastQuery.textContent = text;
+  }
+  heroLastQuery.hidden = false;
+}
+
+setInterval(() => {
+  if (lastQueryUnixMs !== undefined) {
+    renderLastQuery(lastQueryUnixMs);
+  }
+}, 30000);
+
+// T-243: Windows registers the autostart task only after the first launch,
+// and a user can switch it off in Settings, which the app cannot undo. A row
+// appears only while it is off; policy-disabled gets no Settings link (the
+// user can't change it there). ENABLED/UNKNOWN show nothing.
+function renderStartupTask(view) {
+  let key = null;
+  if (view === "DISABLED") {
+    key = "disabled";
+  } else if (view === "DISABLED_BY_POLICY") {
+    key = "disabledByPolicy";
+  }
+  const signature = key === null ? "" : `${key}|${CURRENT_LOCALE}`;
+  if (startupTaskRow.dataset.rendered === signature) {
+    return;
+  }
+  startupTaskRow.dataset.rendered = signature;
+  startupTaskRow.textContent = "";
+  if (key === null) {
+    return;
+  }
+  const box = document.createElement("div");
+  box.className = "notice warn";
+  box.textContent = t(`startupTask.${key}`);
+  if (key === "disabled") {
+    box.appendChild(document.createTextNode(" "));
+    const link = document.createElement("a");
+    link.href = "ms-settings:startupapps";
+    link.textContent = t("startupTask.openSettings");
+    box.appendChild(link);
+  }
+  startupTaskRow.appendChild(box);
+}
 
 function renderProtectionHero(state) {
   // T-277: status frames arrive about once a second; an unchanged hero is
@@ -759,6 +838,8 @@ function render(status) {
   // and lock out the two guarded controls below.
   lastNetworkStatus = status.network || "ONLINE";
   renderProtectionHero(heroPresentation(status.hero_state, status.stats));
+  renderLastQuery(status.stats ? (status.stats.last_query_unix_ms ?? null) : null);
+  renderStartupTask(status.startup_task);
   // T-128: the always-visible rating-filter «bubble» badge. On the 2s poll
   // path (unlike the #rating-filter-body card) so it can't go stale; a
   // no-op empty div whenever the bubble is off, which is the common case.
@@ -828,6 +909,8 @@ function renderError(err) {
   // shipped with Батч 5.2 rendered a blank hero headline/detail on a fetch
   // failure.
   renderProtectionHero(heroPresentation("SERVICE_UNREACHABLE"));
+  renderLastQuery(undefined);
+  renderStartupTask("UNKNOWN");
   appBody.textContent = "";
   delete appBody.dataset.rendered;
   const panel = document.createElement("div");
@@ -923,6 +1006,8 @@ function pushLost(unreachable) {
   setPushLive(false);
   if (unreachable) {
     renderProtectionHero(heroPresentation("SERVICE_UNREACHABLE"));
+    renderLastQuery(undefined);
+    renderStartupTask("UNKNOWN");
   }
   startPolling();
   if (reconnectTimer === null) {

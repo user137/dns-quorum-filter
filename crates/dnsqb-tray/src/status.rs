@@ -453,8 +453,9 @@ mod tests {
         }
     }
     use dnsqb_service::{
-        write_watchdog_state, AdminStats, AdminStatusResponse, ProviderStatusView, TimeoutMode,
-        WatchdogState, WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
+        write_watchdog_state, AdminStats, AdminStatusResponse, ProviderStatusView, StartupTaskView,
+        TimeoutMode, WatchdogState, WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME,
+        STATE_SCHEMA_VERSION,
     };
     use std::time::SystemTime;
 
@@ -569,6 +570,7 @@ mod tests {
             // T-241 follow-up: `/admin/ui`-only display field, same reasoning
             // as `blocklist_bundles`/`cctld_block` above.
             app_version: String::new(),
+            startup_task: StartupTaskView::Unknown,
         }
     }
 
@@ -581,6 +583,7 @@ mod tests {
             in_flight: 0,
             rejected_connections: 0,
             active_connections: 0,
+            last_query_unix_ms: None,
         }
     }
 
