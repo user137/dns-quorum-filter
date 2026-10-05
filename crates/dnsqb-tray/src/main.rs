@@ -371,7 +371,9 @@ fn main() {
 
         // T-185: flip the pause/resume label when `stop.flag` appears or is
         // removed (by this menu, or by a fresh watcher launch clearing it) —
-        // re-stat it at most once a second, not on every 100 ms tick.
+        // re-stat it at most once a second, not on every wake-up. Every event
+        // pushes the fallback deadline out by a second, so the label can lag up
+        // to ~2 s (ARCH-19 b).
         if last_flag_check.elapsed() >= FLAG_CHECK_INTERVAL {
             last_flag_check = Instant::now();
             let paused = stop_flag_is_set(&app_data);
@@ -476,7 +478,7 @@ struct MenuItems {
 impl MenuItems {
     /// Хвиля 13b: the recovery items are live only while the service is down
     /// for good (`GaveUp`); the reset only for an invalid config. `last` keeps
-    /// the native menu from being touched on every 100 ms tick.
+    /// the native menu from being touched on every event-loop wake-up.
     fn sync_recovery(&self, status: TrayStatus, last: &mut (bool, bool)) {
         let wanted = status::recovery_actions(status);
         if wanted != *last {

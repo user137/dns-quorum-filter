@@ -2,7 +2,8 @@ SOURCES: SPEC.md §8 («Онбординг першого запуску», T-18
 (T-188 — майстер першого запуску; три-стан `cert-status`), 2026-09-08 (T-191 — «unknown ≠
 untrusted» seed); TASKS.md T-188, T-189, T-190; TASKS-DONE.md §«Батч 3.13»; SERVICES.md §dnsqb-tray
 «Меню», «Онбординг першого запуску»; UI-SPEC.md §2.1 (hero); `diagrams/ui-status-indicator.md`
-(cert-гілка hero); `diagrams/ui-navigation.md` (Dashboard). Код:
+(cert-гілка hero); `diagrams/ui-navigation.md` (Dashboard); `review/arch/06-ECONOMY.md`
+(ARCH-19 — латч і пробудження циклу). Код:
 `crates/dnsqb-tray/src/{onboarding.rs,main.rs,status.rs}`;
 `crates/dnsqb-service/src/{dispatch.rs,admin.rs}`; `crates/dnsqb-service/ui/main.js`.
 
@@ -32,7 +33,8 @@ T-189).
 `maybe_offer_onboarding` кличеться щотік event-loop трея (після `refresh_tray`), з латчем
 `onboarding_offered: bool` — раз на процес. Щотік іде через `onboarding::check_onboarding`
 (ARCH-19 а): `seen` (файлова перевірка) читається лише коли `cert_confirmed && !cert_trusted`, а
-присутній marker (`Never`) закриває латч назавжди — без файлового I/O на кожному 100-мс тіку.
+присутній marker (`Never`) закриває латч назавжди — без файлового I/O на кожному пробудженні циклу (з ARCH-19 б цикл будять події, запасний
+дедлайн — 1 с, а не 100-мс тік).
 
 ## Потік
 

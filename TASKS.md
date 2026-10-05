@@ -1677,6 +1677,10 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   ребуту й після запуску плиткою). Скрінрідер оголошує спершу застарілий стан «service
   unreachable». Діагностувати: стартовий tooltip до першого опитування + як `tray-icon`
   оновлює `szTip`/`NIF_SHOWTIP` на Windows 11.
+  **Доказ 2026-10-05 (хвиля 6, ARCH-19 б):** UIA-ім'я з кнопок оверфлоу (`TopLevelWindowForOverflowXamlIsland`)
+  — встановлена 0.8.902: «DNS Quorum Filter: service unreachable DNS Quorum Filter: protecting -
+  blocked 0/190, requests now: 0»; scratch-збірка з ARCH-19 б — та сама склейка («…protecting -
+  blocked 0/0, requests now: 0 - c…»). Тобто не регресія (б), існує з 0.8.902 і раніше.
 - [ ] T-265 — **Заведено 2026-10-04, QA-прохід (знімок Credential Manager перед кроком d).**
   У справжньому сховищі облікових даних користувача лежать 62 записи `*.dns-quorum-filter`, з
   них 7 `test:round-trip:…`/`test:overwrite:…` і десятки `doh-tls-private-key:<hash>`/
@@ -1736,7 +1740,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
 - [x] Хвиля 3 — hero при мертвих фільтрах + стан автозапуску + вік останнього запиту (T-254, T-243; рішення 2026-10-04; + ARCH-04) — виконано 2026-10-05, `TASKS-DONE.md`
 - [ ] Хвиля 4 — стійкість CLI (T-246 п. 2, 4)
 - [ ] Хвиля 5 — tooltip трею, залежність `tray-icon` (T-253)
-- [ ] Хвиля 6 — трей: ціна простою + дрібниці (ARCH-19 першим; T-255, T-251, T-263, T-264, T-269; рядок ARCH-04; T-278 останнім)
+- [ ] Хвиля 6 — трей: ціна простою + дрібниці (ARCH-19 першим; T-255, T-251, T-263, T-264, T-269; рядок ARCH-04; T-278 останнім). ARCH-19 (а)+(б) виконано 2026-10-05 (TASKS-DONE.md)
 - Хвиля 7 — злито в 13a (T-252)
 - [ ] Хвиля 8 — помилки POST у `/admin/ui` (T-250)
 - [x] Хвиля 9 — поглинута T-277 (T-248, T-242, тест ARCH-12) — виконано 2026-10-04, `TASKS-DONE.md`

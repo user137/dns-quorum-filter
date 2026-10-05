@@ -252,6 +252,10 @@ T-277 (push-оновлення `/admin/ui`, рішення 2026-10-04) погл�
   `tray-icon`), потім фікс або обмеження.
 - Коміти: 6–7 (по задачі; ARCH-19 — два). Артефакт: так. Re-test: `A-admin-install-cert-HP`, `C-PAUSE_RESUME_ID-SB`,
   `C-QUIT_APP_ID-HP`, `D-tooltip-suffixes`, `G-first-run` (свіжий інстал, T-269).
+- **Виконано 2026-10-05:** ARCH-19 (а) `d294eba`, (б) `b7da772` + `packaging/measure-tray-idle.ps1`.
+  Встановлена 0.8.902 «до»: 1.56 с CPU / 60 с, Read 3386, Other 45368. Scratch: (а) 1.16 → 0.20–0.55 с,
+  Other 20287 → 415; (б) 0.11–0.16 с (n=3), I/O без змін. «Після» на встановленому — на артефакті
+  ≥0.8.903. Деталі й зміна поведінки nudge — TASKS-DONE.md ARCH-19.
 
 ### Хвиля 7 — злито в 13a (ревізія 2026-10-04)
 - T-252 переїхала в 13a: те саме місце коду (`orchestrate::load_resolver_config`), що й атомарний запис

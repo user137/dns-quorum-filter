@@ -1011,7 +1011,7 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
                 // unfiltered baseline while the flag exists), so `/admin/status`
                 // would report a healthy, filtering-looking service — this
                 // check is what still surfaces the pause. Checked on this 2s
-                // poll cadence, not on the main thread's 100ms event-loop tick.
+                // poll cadence, not on the main thread's event loop.
                 //
                 // T-95: the watchdog's own state file wins over anything the
                 // admin channel could say — a restarting or given-up service is
