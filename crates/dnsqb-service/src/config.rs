@@ -684,18 +684,15 @@ pub struct ResolverConfig {
     /// T-218 Фаза 7, Батч 7.3 — the `[blocklist_bundles]` public
     /// blocklist-bundle layer (SPEC.md §5 step 2 extension). Default off, no
     /// admin route yet (7.4+, hand-edit only for now, same as
-    /// `[personal_zone]` before its own route lands); every
-    /// `ResolverConfig`-literal write site in `dispatch.rs` reads a **live**
-    /// `blocklist_bundles_config_snapshot()` instead of this field (the same
-    /// T-217 live-read fix `rating_filter`/`personal_zone` already apply —
-    /// never added to `PersistTarget`).
+    /// `[personal_zone]` before its own route lands); every config write
+    /// persists the **live** value via `AppState::live_resolver_config`
+    /// (ARCH-09) — never added to `PersistTarget`.
     pub blocklist_bundles: BlocklistBundlesConfig,
     /// Фаза 5, T-115 — the `[cctld_block]` pipeline step 3 (SPEC.md §5.2).
     /// Default off (empty list). Has an admin route from day one (T-118
-    /// consumes it) — every `ResolverConfig`-literal write site in
-    /// `dispatch.rs` reads a **live** `cctld_block_snapshot()`, the same
-    /// T-217 live-read discipline `rating_filter`/`blocklist_bundles` apply,
-    /// never a stale `PersistTarget` echo.
+    /// consumes it) — every config write persists the **live** value via
+    /// `AppState::live_resolver_config` (ARCH-09), never a stale
+    /// `PersistTarget` echo.
     pub cctld_block: CctldBlockConfig,
 }
 

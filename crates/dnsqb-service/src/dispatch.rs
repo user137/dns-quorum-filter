@@ -80,7 +80,7 @@ use hickory_proto::ProtoError;
 use http::{header, Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Body;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, MutexGuard, RwLock};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::convert::Infallible;
@@ -916,12 +916,9 @@ pub struct AppState<C: DohClient + Sync> {
     /// T-218 Фаза 7, Батч 7.3 — the live `[blocklist_bundles]` config
     /// snapshot. Same shape/role as `rating_filter_config`: set once at
     /// startup (`orchestrate::run`), reloaded by `apply_admin_reset`,
-    /// re-read fresh every `run_blocklist_updater` cycle. **Every
-    /// `ResolverConfig`-literal write site in this file must read this live**
-    /// (`(*state.blocklist_bundles_config_snapshot()).clone()`), never
-    /// `state.persist` — the same T-217 cross-field-read requirement
-    /// `rating_filter`/`personal_zone` already have; this field was never
-    /// added to `PersistTarget` for exactly that reason.
+    /// re-read fresh every `run_blocklist_updater` cycle. Persisted from
+    /// here by [`AppState::live_resolver_config`] (ARCH-09), never from
+    /// `state.persist` — this field was never added to `PersistTarget`.
     blocklist_bundles_config: RwLock<Arc<BlocklistBundlesConfig>>,
     /// T-218 Фаза 7, Батч 7.3 — wakes `run_blocklist_updater` out of its
     /// inter-cycle sleep when `apply_admin_reset` reloads a hand-edited
@@ -1322,8 +1319,7 @@ impl<C: DohClient + Sync> AppState<C> {
 
     /// One `Arc::clone` snapshot of the live `[blocklist_bundles]` config
     /// (T-218 Батч 7.3) — read once per `run_blocklist_updater` cycle and by
-    /// every `ResolverConfig`-literal write site in this file (see the
-    /// field's own doc comment for why).
+    /// [`AppState::live_resolver_config`].
     pub(crate) fn blocklist_bundles_config_snapshot(&self) -> Arc<BlocklistBundlesConfig> {
         Arc::clone(&self.blocklist_bundles_config.read())
     }
@@ -1541,6 +1537,59 @@ impl<C: DohClient + Sync> AppState<C> {
     /// read-modify-write it or re-serialize it to disk.
     pub(crate) fn providers_snapshot(&self) -> Vec<ProviderEntry> {
         self.providers.read().as_ref().clone()
+    }
+
+    /// Every `resolver_config.toml` field as it is live right now (ARCH-09).
+    /// A full struct literal on purpose: a new `ResolverConfig` field fails to
+    /// compile here, in the one place every config writer reads from.
+    /// `port`/`limits`/`persist_*` come from [`PersistTarget`] — they change
+    /// only with a restart.
+    fn live_resolver_config(&self) -> ResolverConfig {
+        let runtime = *self.runtime.read();
+        ResolverConfig {
+            port: self.persist.port,
+            timeout_mode: runtime.timeout.mode,
+            timeout_ms: timeout_ms(runtime.timeout.duration),
+            providers: self.providers_snapshot(),
+            cache: self.cache.read().config,
+            geoip: GeoipConfig {
+                blocked_countries: self.geoip_countries.read().as_ref().clone(),
+            },
+            limits: self.persist.limits,
+            serve_baseline_when_filters_unreachable: runtime
+                .serve_baseline_when_filters_unreachable,
+            persist_query_log: self.persist.persist_query_log,
+            persist_cache: self.persist.persist_cache,
+            rating_filter: (*self.rating_filter_config_snapshot()).clone(),
+            personal_zone: *self.personal_zone_config_snapshot(),
+            blocklist_bundles: (*self.blocklist_bundles_config_snapshot()).clone(),
+            cctld_block: CctldBlockConfig {
+                blocked_codes: (*self.cctld_block_snapshot()).clone(),
+            },
+        }
+    }
+
+    /// The one `resolver_config.toml` write path (ARCH-09): saves
+    /// [`Self::live_resolver_config`]. Every caller live-applies its own change
+    /// first, under the same `persist_lock`, so the file gets that change plus
+    /// every other writer's current value — no per-route field list to go
+    /// stale. `held` must be this state's `persist_lock` guard; `what` names
+    /// the change in the warning. Returns the `persisted` flag.
+    fn persist_live_config(&self, held: &MutexGuard<'_, ()>, what: &str) -> bool {
+        if !std::ptr::eq(MutexGuard::mutex(held), &raw const self.persist_lock) {
+            tracing::warn!("not persisting {what}: persist_lock is not held");
+            return false;
+        }
+        let Some(paths) = self.persist.paths.as_ref() else {
+            return false;
+        };
+        match self.live_resolver_config().save(&paths.config) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!("failed to persist {what} to disk: {err}");
+                false
+            }
+        }
     }
 
     /// Subscribes a new receiver for the shutdown signal (T-149) — each call
@@ -1877,14 +1926,9 @@ fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) ->
 /// write-then-persist sequence, acquired *before* `runtime`'s own lock — see
 /// its own doc comment for why this is what keeps concurrent admin-channel
 /// POSTs' disk-write order matching their in-memory-write order, without
-/// holding `runtime` itself across the blocking `fs::write`. Also reads
-/// `state.cache`'s current config and `state.geoip_countries`'s current list
-/// (not just `runtime`) while still holding the lock, so the file this
-/// writes reflects both other fields' live values too, not stale/default
-/// ones — see `persist_lock`'s own doc comment for why this cross-field read
-/// has to happen here (T-76 extended it to `geoip_countries`: without this,
-/// an ordinary providers/timeout toggle would silently overwrite a
-/// hand-edited `[geoip] blocked_countries` with an empty list on save).
+/// holding `runtime` itself across the blocking `fs::write`. The file is
+/// written by [`AppState::persist_live_config`] while the lock is still held,
+/// so it carries every other field's live value too (ARCH-09).
 fn apply_admin_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: AdminConfigUpdate,
@@ -1893,7 +1937,7 @@ fn apply_admin_config<C: DohClient + Sync>(
     // `fs::metadata` + `fs::read` with nothing to do with the config write, and
     // `persist_lock` is the one lock that orders every concurrent admin write.
     let watchdog = read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now());
-    let _persist_guard = state.persist_lock.lock();
+    let persist_guard = state.persist_lock.lock();
     // Captured inside the write guard's own scope, not re-read via a second
     // lock acquisition afterward — advisor-caught: re-reading opened a
     // window where a concurrent `POST` could persist *its* values under
@@ -1907,57 +1951,7 @@ fn apply_admin_config<C: DohClient + Sync>(
             update.serve_baseline_when_filters_unreachable;
         *guard
     };
-    let cache_config = state.cache.read().config;
-    let blocked_countries = state.geoip_countries.read().as_ref().clone();
-    // Cross-field read (T-72/T-73): the voter list is edited by
-    // `/admin/providers/*`, not here, but this write re-serializes the whole
-    // `resolver_config.toml`, so it must carry the list's live value too or
-    // an unrelated timeout toggle would blank `[[providers]]` on save.
-    let providers = state.providers_snapshot();
-    let persisted = match state.persist.paths.as_ref() {
-        Some(paths) => {
-            let config = ResolverConfig {
-                port: state.persist.port,
-                timeout_mode: settings.timeout.mode,
-                timeout_ms: timeout_ms(settings.timeout.duration),
-                providers,
-                cache: cache_config,
-                geoip: GeoipConfig { blocked_countries },
-                // T-155: `settings` already reflects `update`'s value (set
-                // in the write guard above), so this persists the new toggle
-                // alongside the timeout mode in one write.
-                serve_baseline_when_filters_unreachable: settings
-                    .serve_baseline_when_filters_unreachable,
-                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
-                // this write rewrites the whole file so it must carry the
-                // live values or an unrelated toggle would blank them.
-                persist_query_log: state.persist.persist_query_log,
-                persist_cache: state.persist.persist_cache,
-                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
-                // a static construction-time snapshot, stale as soon as
-                // `POST /admin/rating-filter` (T-127) changed the live value):
-                // reads the *live* config, same as `personal_zone` below.
-                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
-                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
-                // above — no dedicated admin route exists to have gone stale
-                // against, so there was no reason to introduce that gap here.
-                personal_zone: *state.personal_zone_config_snapshot(),
-                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
-                cctld_block: CctldBlockConfig {
-                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
-                },
-                limits: state.persist.limits,
-            };
-            match config.save(&paths.config) {
-                Ok(()) => true,
-                Err(err) => {
-                    tracing::warn!("failed to persist an admin config change to disk: {err}");
-                    false
-                }
-            }
-        }
-        None => false,
-    };
+    let persisted = state.persist_live_config(&persist_guard, "an admin config change");
     let active_providers = ProviderStatusView::active_from(&state.providers.read());
     let network = NetworkStatusView::from(state.reachability_snapshot());
     let paused = state.filtering_paused_snapshot();
@@ -2494,56 +2488,13 @@ fn apply_cache_config<C: DohClient + Sync>(
     state: &AppState<C>,
     update: CacheConfigUpdate,
 ) -> Result<CacheConfigView, CacheConfigError> {
-    let _persist_guard = state.persist_lock.lock();
+    let persist_guard = state.persist_lock.lock();
     let new_config = update.into_config()?;
     *state.cache.write() = Arc::new(CacheState {
         cache: Cache::new(&new_config),
         config: new_config,
     });
-    let runtime = *state.runtime.read();
-    let blocked_countries = state.geoip_countries.read().as_ref().clone();
-    let providers = state.providers_snapshot();
-    let persisted = match state.persist.paths.as_ref() {
-        Some(paths) => {
-            let config = ResolverConfig {
-                port: state.persist.port,
-                timeout_mode: runtime.timeout.mode,
-                timeout_ms: timeout_ms(runtime.timeout.duration),
-                serve_baseline_when_filters_unreachable: runtime
-                    .serve_baseline_when_filters_unreachable,
-                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
-                // this write rewrites the whole file so it must carry the
-                // live values or an unrelated toggle would blank them.
-                persist_query_log: state.persist.persist_query_log,
-                persist_cache: state.persist.persist_cache,
-                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
-                // a static construction-time snapshot, stale as soon as
-                // `POST /admin/rating-filter` (T-127) changed the live value):
-                // reads the *live* config, same as `personal_zone` below.
-                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
-                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
-                // above — no dedicated admin route exists to have gone stale
-                // against, so there was no reason to introduce that gap here.
-                personal_zone: *state.personal_zone_config_snapshot(),
-                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
-                cctld_block: CctldBlockConfig {
-                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
-                },
-                limits: state.persist.limits,
-                providers,
-                cache: new_config,
-                geoip: GeoipConfig { blocked_countries },
-            };
-            match config.save(&paths.config) {
-                Ok(()) => true,
-                Err(err) => {
-                    tracing::warn!("failed to persist an admin cache-config change to disk: {err}");
-                    false
-                }
-            }
-        }
-        None => false,
-    };
+    let persisted = state.persist_live_config(&persist_guard, "an admin cache-config change");
     Ok(CacheConfigView::from_config(&new_config, persisted))
 }
 
@@ -2656,56 +2607,11 @@ fn apply_geoip_change<C: DohClient + Sync>(
     state: &AppState<C>,
     compute_new: impl FnOnce(&[String]) -> Result<Vec<String>, ConfigError>,
 ) -> Result<GeoipCountriesResponse, ConfigError> {
-    let _persist_guard = state.persist_lock.lock();
+    let persist_guard = state.persist_lock.lock();
     let before = state.geoip_countries.read().as_ref().clone();
     let after = compute_new(&before)?;
     state.update_geoip_countries(after.clone());
-    let runtime = *state.runtime.read();
-    let cache_config = state.cache.read().config;
-    let providers = state.providers_snapshot();
-    let persisted = match state.persist.paths.as_ref() {
-        Some(paths) => {
-            let config = ResolverConfig {
-                port: state.persist.port,
-                timeout_mode: runtime.timeout.mode,
-                timeout_ms: timeout_ms(runtime.timeout.duration),
-                serve_baseline_when_filters_unreachable: runtime
-                    .serve_baseline_when_filters_unreachable,
-                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
-                // this write rewrites the whole file so it must carry the
-                // live values or an unrelated toggle would blank them.
-                persist_query_log: state.persist.persist_query_log,
-                persist_cache: state.persist.persist_cache,
-                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
-                // a static construction-time snapshot, stale as soon as
-                // `POST /admin/rating-filter` (T-127) changed the live value):
-                // reads the *live* config, same as `personal_zone` below.
-                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
-                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
-                // above — no dedicated admin route exists to have gone stale
-                // against, so there was no reason to introduce that gap here.
-                personal_zone: *state.personal_zone_config_snapshot(),
-                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
-                cctld_block: CctldBlockConfig {
-                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
-                },
-                limits: state.persist.limits,
-                providers,
-                cache: cache_config,
-                geoip: GeoipConfig {
-                    blocked_countries: after.clone(),
-                },
-            };
-            match config.save(&paths.config) {
-                Ok(()) => true,
-                Err(err) => {
-                    tracing::warn!("failed to persist an admin geoip change to disk: {err}");
-                    false
-                }
-            }
-        }
-        None => false,
-    };
+    let persisted = state.persist_live_config(&persist_guard, "an admin geoip change");
     Ok(geoip_view(&after, persisted, &state.geoip.read()))
 }
 
@@ -2819,7 +2725,7 @@ fn apply_rating_filter_change<C: DohClient + Sync>(
     };
 
     let persisted = {
-        let _persist_guard = state.persist_lock.lock();
+        let persist_guard = state.persist_lock.lock();
         let old_config = state.rating_filter_config_snapshot();
         let changed =
             new_config.enabled != old_config.enabled || new_config.lists != old_config.lists;
@@ -2837,47 +2743,7 @@ fn apply_rating_filter_change<C: DohClient + Sync>(
                 config: cache_config,
             });
         }
-        let runtime = *state.runtime.read();
-        let cache_config = state.cache.read().config;
-        let providers = state.providers_snapshot();
-        let blocked_countries = state.geoip_countries.read().as_ref().clone();
-        match state.persist.paths.as_ref() {
-            Some(paths) => {
-                let config = ResolverConfig {
-                    port: state.persist.port,
-                    timeout_mode: runtime.timeout.mode,
-                    timeout_ms: timeout_ms(runtime.timeout.duration),
-                    serve_baseline_when_filters_unreachable: runtime
-                        .serve_baseline_when_filters_unreachable,
-                    // T-146/T-97/T-169 cross-field read: not touched here, but
-                    // this write rewrites the whole file.
-                    persist_query_log: state.persist.persist_query_log,
-                    persist_cache: state.persist.persist_cache,
-                    rating_filter: new_config,
-                    // T-138: live snapshot, same reasoning as the other
-                    // ResolverConfig-literal sites in this file.
-                    personal_zone: *state.personal_zone_config_snapshot(),
-                    blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
-                    cctld_block: CctldBlockConfig {
-                        blocked_codes: (*state.cctld_block_snapshot()).clone(),
-                    },
-                    limits: state.persist.limits,
-                    providers,
-                    cache: cache_config,
-                    geoip: GeoipConfig { blocked_countries },
-                };
-                match config.save(&paths.config) {
-                    Ok(()) => true,
-                    Err(err) => {
-                        tracing::warn!(
-                            "failed to persist an admin rating-filter change to disk: {err}"
-                        );
-                        false
-                    }
-                }
-            }
-            None => false,
-        }
+        state.persist_live_config(&persist_guard, "an admin rating-filter change")
     };
     Ok(admin_status(state, persisted))
 }
@@ -2945,48 +2811,10 @@ fn apply_blocklist_bundles_change<C: DohClient + Sync>(
     };
 
     let persisted = {
-        let _persist_guard = state.persist_lock.lock();
+        let persist_guard = state.persist_lock.lock();
         state.update_blocklist_bundles_config(new_config.clone());
         state.wake_blocklist_bundles_refresh();
-        let runtime = *state.runtime.read();
-        let cache_config = state.cache.read().config;
-        let providers = state.providers_snapshot();
-        let blocked_countries = state.geoip_countries.read().as_ref().clone();
-        match state.persist.paths.as_ref() {
-            Some(paths) => {
-                let config = ResolverConfig {
-                    port: state.persist.port,
-                    timeout_mode: runtime.timeout.mode,
-                    timeout_ms: timeout_ms(runtime.timeout.duration),
-                    serve_baseline_when_filters_unreachable: runtime
-                        .serve_baseline_when_filters_unreachable,
-                    persist_query_log: state.persist.persist_query_log,
-                    persist_cache: state.persist.persist_cache,
-                    // Live read (T-217 pattern) — this route never touches it.
-                    rating_filter: (*state.rating_filter_config_snapshot()).clone(),
-                    personal_zone: *state.personal_zone_config_snapshot(),
-                    blocklist_bundles: new_config,
-                    // Live read (T-217 pattern) — this route never touches it.
-                    cctld_block: CctldBlockConfig {
-                        blocked_codes: (*state.cctld_block_snapshot()).clone(),
-                    },
-                    limits: state.persist.limits,
-                    providers,
-                    cache: cache_config,
-                    geoip: GeoipConfig { blocked_countries },
-                };
-                match config.save(&paths.config) {
-                    Ok(()) => true,
-                    Err(err) => {
-                        tracing::warn!(
-                            "failed to persist an admin blocklist-bundles change to disk: {err}"
-                        );
-                        false
-                    }
-                }
-            }
-            None => false,
-        }
+        state.persist_live_config(&persist_guard, "an admin blocklist-bundles change")
     };
     Ok(admin_status(state, persisted))
 }
@@ -3027,8 +2855,8 @@ where
 
 /// Applies a full-replace `[cctld_block]` update (Фаза 5, T-118) — same
 /// skeleton as [`apply_blocklist_bundles_change`]/[`apply_geoip_change`]:
-/// holds `persist_lock` across validate→swap→persist, reads every other
-/// live field before writing `ResolverConfig{...}`. No wake call, unlike
+/// holds `persist_lock` across validate→swap→persist
+/// ([`AppState::persist_live_config`]). No wake call, unlike
 /// the blocklist-bundles/rating-filter siblings — this list has no
 /// background updater to notify.
 fn apply_cctld_block_change<C: DohClient + Sync>(
@@ -3038,44 +2866,9 @@ fn apply_cctld_block_change<C: DohClient + Sync>(
     let blocked_codes = validate_cctld_codes(&update.blocked_codes)?;
 
     let persisted = {
-        let _persist_guard = state.persist_lock.lock();
+        let persist_guard = state.persist_lock.lock();
         state.update_cctld_block(blocked_codes.clone());
-        let runtime = *state.runtime.read();
-        let cache_config = state.cache.read().config;
-        let providers = state.providers_snapshot();
-        let blocked_countries = state.geoip_countries.read().as_ref().clone();
-        match state.persist.paths.as_ref() {
-            Some(paths) => {
-                let config = ResolverConfig {
-                    port: state.persist.port,
-                    timeout_mode: runtime.timeout.mode,
-                    timeout_ms: timeout_ms(runtime.timeout.duration),
-                    serve_baseline_when_filters_unreachable: runtime
-                        .serve_baseline_when_filters_unreachable,
-                    persist_query_log: state.persist.persist_query_log,
-                    persist_cache: state.persist.persist_cache,
-                    // Live read (T-217 pattern) — this route never touches it.
-                    rating_filter: (*state.rating_filter_config_snapshot()).clone(),
-                    personal_zone: *state.personal_zone_config_snapshot(),
-                    blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
-                    cctld_block: CctldBlockConfig { blocked_codes },
-                    limits: state.persist.limits,
-                    providers,
-                    cache: cache_config,
-                    geoip: GeoipConfig { blocked_countries },
-                };
-                match config.save(&paths.config) {
-                    Ok(()) => true,
-                    Err(err) => {
-                        tracing::warn!(
-                            "failed to persist an admin cctld-block change to disk: {err}"
-                        );
-                        false
-                    }
-                }
-            }
-            None => false,
-        }
+        state.persist_live_config(&persist_guard, "an admin cctld-block change")
     };
     Ok(admin_status(state, persisted))
 }
@@ -3372,7 +3165,7 @@ where
     C: DohClient + Sync,
     F: FnOnce(Vec<ProviderEntry>) -> Result<Vec<ProviderEntry>, StatusCode>,
 {
-    let _persist_guard = state.persist_lock.lock();
+    let persist_guard = state.persist_lock.lock();
     let before = state.providers_snapshot();
     let after = compute(before.clone())?;
     if after != before {
@@ -3388,50 +3181,7 @@ where
         state.cache.read().cache.clear();
     }
     state.update_providers(after.clone());
-    let runtime = *state.runtime.read();
-    let cache_config = state.cache.read().config;
-    let blocked_countries = state.geoip_countries.read().as_ref().clone();
-    let persisted = match state.persist.paths.as_ref() {
-        Some(paths) => {
-            let config = ResolverConfig {
-                port: state.persist.port,
-                timeout_mode: runtime.timeout.mode,
-                timeout_ms: timeout_ms(runtime.timeout.duration),
-                serve_baseline_when_filters_unreachable: runtime
-                    .serve_baseline_when_filters_unreachable,
-                // T-146/T-97/T-169 cross-field read: not admin-mutable, but
-                // this write rewrites the whole file so it must carry the
-                // live values or an unrelated toggle would blank them.
-                persist_query_log: state.persist.persist_query_log,
-                persist_cache: state.persist.persist_cache,
-                // T-217 fix (was T-124/T-126's `state.persist.rating_filter.clone()` —
-                // a static construction-time snapshot, stale as soon as
-                // `POST /admin/rating-filter` (T-127) changed the live value):
-                // reads the *live* config, same as `personal_zone` below.
-                rating_filter: (*state.rating_filter_config_snapshot()).clone(),
-                // T-138 (Батч 4.5): live config, same reasoning as `rating_filter`
-                // above — no dedicated admin route exists to have gone stale
-                // against, so there was no reason to introduce that gap here.
-                personal_zone: *state.personal_zone_config_snapshot(),
-                blocklist_bundles: (*state.blocklist_bundles_config_snapshot()).clone(),
-                cctld_block: CctldBlockConfig {
-                    blocked_codes: (*state.cctld_block_snapshot()).clone(),
-                },
-                limits: state.persist.limits,
-                providers: after.clone(),
-                cache: cache_config,
-                geoip: GeoipConfig { blocked_countries },
-            };
-            match config.save(&paths.config) {
-                Ok(()) => true,
-                Err(err) => {
-                    tracing::warn!("failed to persist an admin provider change to disk: {err}");
-                    false
-                }
-            }
-        }
-        None => false,
-    };
+    let persisted = state.persist_live_config(&persist_guard, "an admin provider change");
     Ok(providers_view(&after, persisted))
 }
 
@@ -6208,6 +5958,83 @@ pub(crate) mod tests {
                 "{name} lost [personal_zone]"
             );
         }
+    }
+
+    // ARCH-09 (wave 16): `live_resolver_config` and `apply_admin_reset` agree
+    // on every field — a field reset seeds but the helper misses (or the
+    // reverse) fails here. Full literal, no `..`: a new field must be added.
+    #[test]
+    fn live_resolver_config_matches_a_fully_non_default_file_after_reset() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let Ok(cache) = non_default_cache_config_update().into_config() else {
+            panic!("fixture cache config must be valid");
+        };
+        let Some(familyshield) = crate::upstream::builtin_preset("opendns-familyshield") else {
+            panic!("fixture preset must exist");
+        };
+        let limits = LimitsConfig {
+            max_concurrent_connections: 100,
+            handshake_timeout: Duration::from_secs(5),
+            idle_timeout: Duration::from_secs(20),
+        };
+        let on_disk = ResolverConfig {
+            port: 9443,
+            timeout_mode: crate::timeout::TimeoutMode::Degraded,
+            timeout_ms: 3000,
+            providers: vec![ProviderEntry {
+                spec: familyshield,
+                enabled: false,
+            }],
+            cache,
+            geoip: crate::config::GeoipConfig {
+                blocked_countries: vec!["RU".to_string()],
+            },
+            limits,
+            serve_baseline_when_filters_unreachable: true,
+            persist_query_log: true,
+            persist_cache: true,
+            rating_filter: RatingFilterConfig {
+                enabled: true,
+                lists: vec!["ua".to_string()],
+            },
+            personal_zone: PersonalZoneConfig {
+                enabled: true,
+                frequency_window_days: 21,
+                frequency_top_n: 77,
+                regularity_window_days: 9,
+                regularity_min_days: 3,
+            },
+            blocklist_bundles: BlocklistBundlesConfig {
+                enabled: true,
+                sources: Some(vec!["hagezi-multi-pro".to_string()]),
+            },
+            cctld_block: crate::config::CctldBlockConfig {
+                blocked_codes: vec!["ru".to_string()],
+            },
+        };
+        if let Err(err) = on_disk.save(&path) {
+            panic!("must be able to save the fixture config: {err}");
+        }
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 9443,
+                persist_query_log: true,
+                persist_cache: true,
+                rating_filter: RatingFilterConfig::default(),
+                limits,
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+
+        assert!(super::apply_admin_reset(&state).is_ok());
+        assert_eq!(state.live_resolver_config(), on_disk);
     }
 
     // ARCH-09 (wave 16): every `resolver_config.toml` writer must carry every
