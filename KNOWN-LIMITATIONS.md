@@ -262,3 +262,6 @@ TASKS-DONE.md, never here.
   a Filtering tooltip with every warning on may show no counts. Failure tooltips
   (`tooltip.startupFailed.*`/`tooltip.gaveUp`, хвиля 13b) were written for the old 63-unit limit and
   name only the cause and the menu item; the full reason is in `service.log`.
+- **A refused request's reason stays in the language it failed in** (T-280). The card's own sentence
+  ("Could not apply: …") re-translates on a locale switch, the `error.reason.*` text inside it does not
+  until the next action; pinned by `smoke.js`.

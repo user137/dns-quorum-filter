@@ -584,6 +584,13 @@ for (const [fn, data] of xssCalls) {
   assigned.length = 0;
   await run("onConfigChanged()");
   guard("config POST 400 reason not shown in the card", shown(run(`t("timeoutConfig.applyFailedTemplate", { message: t("error.reason.INVALID_VALUE") })`)));
+  // Pinned limitation (KNOWN-LIMITATIONS.md): the reason is fixed in the
+  // locale it failed in; a switch re-translates only the card's template.
+  run(`DICT = __dict; CURRENT_LOCALE = "uk"`, Object.assign(ctx, { __dict: dicts.uk }));
+  assigned.length = 0;
+  run(`render(${JSON.stringify(serverStatus)})`);
+  guard("reason after a locale switch changed - update KNOWN-LIMITATIONS.md", shown(run(`t("timeoutConfig.applyFailedTemplate", { message: ${JSON.stringify(dicts.en["error.reason.INVALID_VALUE"])} })`)));
+  run(`DICT = __dict; CURRENT_LOCALE = "en"`, Object.assign(ctx, { __dict: dicts.en }));
   ctx.fetch = realFetch;
   run("configApplyError = null");
 
