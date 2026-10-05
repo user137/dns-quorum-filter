@@ -1,12 +1,12 @@
 SOURCES: SPEC.md §8, §8.1, §3.3, §3.7, §5.3, §7; "Відкриті питання" №10; CLAUDE.md
 (dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-111, T-127,
-T-128, T-152, T-176, T-188, T-191, T-193, T-196, T-204, T-211; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
+T-128, T-152, T-176, T-188, T-191, T-193, T-196, T-204, T-211, T-243, T-254; review/arch ARCH-04; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
 "Меню"; UI-SPEC.md §2.1, §3.1; `diagrams/onboarding.md`, `diagrams/process-lifecycle.md`;
 `crates/dnsqb-service/src/admin.rs` (`compute_hero_state`, `HeroStateView`);
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08, 2026-09-10 (T-191 — колір іконки; T-188 — онбординг +
 hero cert-гілка; T-193 — пауза = нефільтрований baseline + `AdminStatusResponse.paused`;
 T-204 — сходи hero обчислюються на сервері як `AdminStatusResponse.hero_state`); DECISIONS.md
-2026-10-04 «Хвиля 13b» і «трей: GaveUp вище паузи».
+2026-10-04 «Хвиля 13b» і «трей: GaveUp вище паузи»; DECISIONS.md 2026-10-05 «Хвиля 3».
 
 # Індикатор стану — умови, не автомат переходів
 
@@ -52,8 +52,8 @@ flowchart TD
     Check3a -->|Так| S3a["Стан: призупинено —<br/>DNS без фільтра (T-193)"]
     Check3a -->|Ні| Check4{"Активних voters > 0?"}
     Check4 -->|Ні| S4["Стан: фільтрацію вимкнено —<br/>0 активних провайдерів (§3.3, §8.1)"]
-    Check4 -->|Так| Check5{"Усі апстріми<br/>відповідають вчасно?"}
-    Check5 -->|Ні, degraded-режим| S5["Стан: деградовано,<br/>фільтрація неповна (§3.3)"]
+    Check4 -->|Так| Check5{"Хоч один з останніх quorum-запитів<br/>отримав відповідь усіх фільтрів?"}
+    Check5 -->|Ні, усі деградовані| S5["Стан: захист може бути неповним<br/>(hero FILTERS_DEGRADED, трей amber — T-196, T-254)"]
     Check5 -->|Так| S6["Стан: фільтрація активна"]
 ```
 
@@ -86,24 +86,32 @@ flowchart TD
   чи watchdog-канали (обрив мережі не повинен виглядати як мертвий сервіс).
 - **Умова 4 (0 voters)** — з T-149 (`NoActiveProvider`); T-72/T-73 змінило вхід на
   `active_providers: ProviderStatusView[]` (порожній масив = стан).
-- **Частина умови 5 (деградація)** — `AdminStats.degraded_window`/`degraded_events`, суфікс до
-  `Filtering` у tooltip (звужений T-56, 2026-08-29), не окрема конкуруюча умова верхнього рівня.
-  T-155 розширив `degraded_counts` — рядки `BASELINE_FALLBACK` (усі фільтри мовчать) теж
-  рахуються.
+- **Умова 5 (деградація)** — `AdminStats.degraded_window`/`degraded_events`. Частковий лічильник —
+  лише суфікс до `Filtering` у tooltip (звужений T-56, 2026-08-29). **Усі** останні quorum-запити
+  деградовані (`AdminStats::filters_degraded`, `degraded_events == degraded_window > 0`) — стан:
+  трей amber (T-196), hero `FILTERS_DEGRADED` (T-254, хвиля 3). T-155 розширив `degraded_counts` —
+  рядки `BASELINE_FALLBACK` (усі фільтри мовчать) теж рахуються.
 - **Умова 1 (браузер не використовує локальний DoH)** — не реалізовано, блоковано на T-134's ще
-  не спроєктованому domain→fixed-IP canary-механізмі.
+  не спроєктованому domain→fixed-IP canary-механізмі. **Проміжний сигнал (ARCH-04, хвиля 3):**
+  під hero — рядок «Останній запит від браузера: N хв тому» з `AdminStats.last_query_unix_ms`
+  (час найновішого запису журналу; пишуть лише DoH-запити, не `/health` і не проба доступності),
+  **без кольору й без зміни стану** — браузер може бути просто закритий (SPEC §8.1, «завжди
+  увімкнене попередження»). Порожнє вікно журналу → «ще немає запитів від браузера».
+- **Автозапуск (T-243, хвиля 3)** — не умова індикатора: окремий рядок під hero лише коли
+  `AdminStatusResponse.startup_task` = `DISABLED` (з посиланням `ms-settings:startupapps`) чи
+  `DISABLED_BY_POLICY` (без посилання). Джерело — `State` задачі `DnsqbWatcherStartup` у реєстрі.
 - **Hero-статус `/admin/ui` (T-176; T-204)** — базовий вигляд піднімає цей індикатор у єдиний
   великий блок угорі (UI-SPEC.md §3.1): «Захищено» (умова 6) / «Служба зупинилась» /
   «Відновлення…» (умова 2) / «Немає інтернету» (умова 3) / **«Фільтрацію призупинено» (умова 3a,
   T-193 — `is-warn`)** / «Не захищено» (умова 4, або сервіс не відповідає). Той самий набір
   умов і той самий порядок пріоритету, що тут — T-176/T-204 **не змінюють умови**. **T-204
   (знахідка 3-B):** сходи обчислює **сервер** — `AdminStatusResponse.hero_state: HeroStateView`
-  (8 варіантів) через чисту `admin::compute_hero_state(watchdog, network, paused,
-  has_active_provider, cert)`, викликану з обох білдерів статусу (як `rating_filter_is_active`).
+  (9 варіантів) через чисту `admin::compute_hero_state(watchdog, network, paused,
+  has_active_provider, stats, cert)`, викликану з обох білдерів статусу (як `rating_filter_is_active`).
   `main.js` лише мапить `hero_state` на презентацію (`HERO_PRESENTATION`) — сходи більше не
   живуть у JS. Rust-тести: `admin::hero_and_category_tests` (паузо-не-зелений, `GaveUp` вище
   всього, offline > paused, cert не маскує 0-voters, `None`→`PROTECTED`). Умови 1 і 5 у hero не
-  показуються (1 — не реалізована; 5 — суфікс-деградація). `SERVICE_UNREACHABLE` синтезує клієнт
+  показуються (1 — не реалізована; 5 — лише як `FILTERS_DEGRADED` за повної деградації, T-254). `SERVICE_UNREACHABLE` синтезує клієнт
   на невдалому fetch — єдиний стан, який сервер не бачить про себе.
 - **Пауза (умова 3a, T-193)** — реалізовано в конвеєрі й hero: `dnsqb-service` сам читає
   `stop.flag` (полер `pause_watch` → `AppState.filtering_paused`), `handle_query` віддає
@@ -114,7 +122,10 @@ flowchart TD
   мертва служба під час паузи — збій, і сірий «Призупинено» сховав би «Спробувати ще раз»);
   навмисна розбіжність порядку hero-vs-tray (DECISIONS.md 2026-09-08, 2026-10-04). `hero_state` **не** консумується треєм.
 - **Cert-гілка hero (T-188, Батч 3.13; T-204/T-211)** — `compute_hero_state` ставить дві гілки
-  **після** умови 4 (0 voters), **перед** `PROTECTED`: `cert == Some(NotTrusted)` →
+  **після** умови 4 (0 voters), **перед** `PROTECTED`, а між ними — `FILTERS_DEGRADED` (T-254:
+  неперевірений сертифікат зупиняє нові запити, тож лічильники деградації могли б бути лише
+  застарілими — `CERT_NOT_TRUSTED` вище; реальна деградація важить більше за «не вдалося
+  перевірити» — `CERT_UNKNOWN` нижче): `cert == Some(NotTrusted)` →
   `CERT_NOT_TRUSTED` (`is-bad` «Сертифікат не встановлено» + кнопка → `POST /admin/install-cert`);
   `cert == Some(Unknown)` → `CERT_UNKNOWN` (`is-warn` «Сертифікат не перевірено» — `certutil` не
   відповів, «unknown ≠ untrusted»); `cert == None` (фоновий poll ще не дав відповіді) → гілка

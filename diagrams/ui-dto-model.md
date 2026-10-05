@@ -18,7 +18,10 @@ T-127 — `validate_rating_filter_lists` звужено, `lists ⊆ available_li
 обидва вже реалізовані (T-218/T-155), додано в тому ж проході).
 TASKS.md T-188, T-193, T-111/T-127/T-128 (`AdminStatusResponse.rating_filter:
 RatingFilterStatusView`, `RatingFilterConfigUpdate` — тіло `POST /admin/rating-filter`), T-138,
-T-227, T-218, T-115/T-116/T-117/T-119 (Фаза 5 Батч 5.1).
+T-227, T-218, T-115/T-116/T-117/T-119 (Фаза 5 Батч 5.1). DECISIONS.md 2026-10-05 «Хвиля 3» —
+T-254/T-243/ARCH-04: `HeroStateView` (досі не було на діаграмі) з `FILTERS_DEGRADED`,
+`AdminStatusResponse.startup_task: StartupTaskView`, `AdminStats.last_query_unix_ms`,
+`ADMIN_DTO_SCHEMA_VERSION` 6→7 (`crates/dnsqb-service/src/admin.rs`, `startup_task.rs`).
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -196,6 +199,14 @@ classDiagram
         +RatingFilterStatusView rating_filter
         +BlocklistBundlesStatusView blocklist_bundles
         +CctldBlockStatusView cctld_block
+        +HeroStateView hero_state
+        +StartupTaskView startup_task
+    }
+    class HeroStateView {
+        <<T-204; FILTERS_DEGRADED — T-254. enum WATCHDOG_GAVE_UP | WATCHDOG_RESTARTING | OFFLINE | PAUSED | NO_PROVIDERS | CERT_NOT_TRUSTED | FILTERS_DEGRADED | CERT_UNKNOWN | PROTECTED>>
+    }
+    class StartupTaskView {
+        <<T-243, хвиля 3 — enum ENABLED | DISABLED | DISABLED_BY_POLICY | UNKNOWN>>
     }
     class EncryptedPersistenceView {
         <<T-146 / T-97, реалізовано — пасивні /admin/ui індикатори>>
@@ -223,6 +234,7 @@ classDiagram
         +u64 degraded_window
         +u64 degraded_events
         +u64 in_flight
+        +u64? last_query_unix_ms
     }
     class CacheConfigView {
         <<T-153, реалізовано>>
@@ -383,6 +395,8 @@ classDiagram
     AdminStatusResponse --> BlocklistBundlesStatusView
     BlocklistBundlesStatusView --> BlocklistSourceStatusView : loaded
     AdminStatusResponse --> CctldBlockStatusView
+    AdminStatusResponse --> HeroStateView
+    AdminStatusResponse --> StartupTaskView
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck

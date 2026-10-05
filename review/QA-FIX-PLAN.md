@@ -198,6 +198,10 @@ T-277 (push-оновлення `/admin/ui`, рішення 2026-10-04) погл�
   на «Фільтр працює» — служба знає про себе, а не про браузер.
 - Коміти: 1 код + 1 docs/діаграма. Артефакт: так. Re-test: `I-degraded`, `DIAG-status-S5`, `B-hero-*`.
 - Документи: `UI-SPEC.md`, діаграма + ритуал ground-truth, `DECISIONS.md`.
+- **Виконано 2026-10-05** (`eb4a8ac` код, наступний docs-коміт): `FILTERS_DEGRADED` між
+  `CERT_NOT_TRUSTED` і `CERT_UNKNOWN`; ARCH-04 як `last_query_unix_ms` (абсолютний час — див.
+  DECISIONS.md 2026-10-05); `startup_task` з реєстру. Перейменування `PROTECTED` — питання
+  користувачу. Re-test на артефакті ще попереду.
 
 ### Хвиля 4 — стійкість CLI (T-246 пункти 2 і 4)
 - `std::env::args()` → `args_os()` + `to_string_lossy()` у трьох `main.rs`; друк довідки через
