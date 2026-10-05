@@ -682,6 +682,11 @@ async function applyCurrentConfig() {
 // successful apply.
 let configPersistFailed = false;
 
+// T-250: the last failed apply, as a thunk so a locale switch re-translates it;
+// kept until the next successful apply, like configPersistFailed.
+let configApplyError = null;
+let lastStatus = null;
+
 // T-228: a read-only cache of status.network for the two cards that fetch
 // their own data off the 2s poll (#rating-filter-body, #geoip-maxmind-body)
 // and so never see it directly - updated by render() on every poll tick.
@@ -752,6 +757,7 @@ function renderTimeoutConfig(status) {
     configPersistFailed || status.persisted === false
       ? `<div class="notice warn">${t("warning.notPersisted")}</div>`
       : "";
+  const applyError = configApplyError ? configApplyError() : "";
   // T-249: rebuild only when what the inputs show changed - an unchanged 2s
   // poll must not replace (and re-focus, scrolling back to) the control the
   // user is on. A locale switch builds a fresh `fields`, so it still renders.
@@ -759,6 +765,7 @@ function renderTimeoutConfig(status) {
     status.timeout_mode,
     status.serve_baseline_when_filters_unreachable,
     configWarning !== "",
+    applyError,
     CURRENT_LOCALE,
   ].join("|");
   // ...and only while the DOM still shows the server's state: a radio clicked
@@ -798,6 +805,10 @@ function renderTimeoutConfig(status) {
       <span>${t("timeoutConfig.baselineFallbackLabel")}</span>
     </label>
   `;
+  const errorLine = document.createElement("div");
+  errorLine.className = "override-error";
+  errorLine.textContent = applyError;
+  fields.appendChild(errorLine);
   document
     .querySelectorAll('input[name="timeout-mode"]')
     .forEach((el) => el.addEventListener("change", onConfigChanged));
@@ -831,6 +842,7 @@ function renderAppTitle(version) {
 }
 
 function render(status) {
+  lastStatus = status;
   renderAppTitle(status.app_version);
   // `|| "ONLINE"` makes the fail-open default provable from this line alone
   // (not just true by the server's own NetworkStatusView::#[default] Online)
@@ -921,13 +933,21 @@ function renderError(err) {
   appBody.appendChild(panel);
 }
 
+// T-250: a failed POST is this card's own error, not the service being down -
+// renderError() would put SERVICE_UNREACHABLE in the hero (wrong on a 400) and
+// no status event follows a failed POST to put the radio back.
 async function onConfigChanged() {
   try {
     const status = await applyCurrentConfig();
     configPersistFailed = status.persisted === false;
+    configApplyError = null;
     render(status);
   } catch (err) {
-    renderError(err);
+    const message = (err && err.message) || String(err);
+    configApplyError = () => t("timeoutConfig.applyFailedTemplate", { message });
+    if (lastStatus) {
+      renderTimeoutConfig(lastStatus);
+    }
   }
 }
 
@@ -3162,14 +3182,9 @@ function providerRow(entry) {
   cb.name = `provider-${entry.id}`;
   cb.setAttribute("aria-label", entry.display_name);
   cb.checked = entry.enabled;
-  cb.addEventListener("change", async () => {
-    try {
-      renderProviders(await setProviderEnabled(entry.id, cb.checked));
-    } catch (err) {
-      cb.checked = entry.enabled;
-      renderProvidersError(err);
-    }
-  });
+  cb.addEventListener("change", () =>
+    providerAction(() => setProviderEnabled(entry.id, cb.checked), "providers.changeFailedTemplate"),
+  );
   const track = document.createElement("span");
   track.className = "track";
   const thumb = document.createElement("span");
@@ -3191,11 +3206,7 @@ function providerRow(entry) {
         removeBtn.textContent = t("providers.confirmRemoveButton");
         return;
       }
-      try {
-        renderProviders(await removeProvider(entry.id));
-      } catch (err) {
-        renderProvidersError(err);
-      }
+      await providerAction(() => removeProvider(entry.id), "providers.changeFailedTemplate");
     });
     li.appendChild(removeBtn);
   }
@@ -3366,9 +3377,15 @@ function retranslateCustomProviderForm() {
 }
 
 function renderProviders(data) {
+  lastProvidersData = data;
   providersBody.textContent = "";
 
   providersBody.appendChild(cardHeading(t("providers.heading"), "providers"));
+
+  const actionError = document.createElement("div");
+  actionError.className = "override-error";
+  actionError.textContent = providersActionError ? providersActionError() : "";
+  providersBody.appendChild(actionError);
 
   // T-176: this same ProvidersResponse also drives the basic-view master +
   // category toggles, the fan-out privacy line and the pass-through warning
@@ -3420,13 +3437,9 @@ function renderProviders(data) {
       addBtn.type = "button";
       addBtn.className = "override-remove";
       addBtn.textContent = t("overrides.addButton");
-      addBtn.addEventListener("click", async () => {
-        try {
-          renderProviders(await addProvider({ id: preset.id }));
-        } catch (err) {
-          renderProvidersError(err);
-        }
-      });
+      addBtn.addEventListener("click", () =>
+        providerAction(() => addProvider({ id: preset.id }), "providers.addFailedTemplate"),
+      );
       li.appendChild(addBtn);
       list.appendChild(li);
     });
@@ -3457,6 +3470,45 @@ function renderProvidersError(err) {
   basicPanel.className = "error-panel";
   basicPanel.textContent = message;
   filterControlsBody.appendChild(basicPanel);
+}
+
+// T-250: a failed provider/category POST must not swap both cards for the
+// panel above - that left the basic view without its toggles for the whole
+// ~30-40 s service respawn window. The cards go back to the last answer the
+// server gave (no event follows a failed POST to do it) and say what failed;
+// the message is a thunk so a locale switch re-translates it, and it outlives
+// the background re-render a 5xx triggers until the next successful action.
+// The panel stays for a card that has never had data.
+let lastProvidersData = null;
+let providersActionError = null;
+let filterControlsActionError = null;
+
+function renderProvidersKeepingControls(err) {
+  if (lastProvidersData) {
+    renderProviders(lastProvidersData);
+  } else {
+    renderProvidersError(err);
+  }
+}
+
+async function providerAction(post, failedKey) {
+  try {
+    const data = await post();
+    providersActionError = null;
+    renderProviders(data);
+  } catch (err) {
+    const message = (err && err.message) || String(err);
+    providersActionError = () => t(failedKey, { message });
+    renderProvidersKeepingControls(err);
+  }
+}
+
+async function refetchProvidersKeepingControls() {
+  try {
+    renderProviders(await getProviders());
+  } catch (err) {
+    renderProvidersKeepingControls(err);
+  }
 }
 
 async function refreshProviders(mode) {
@@ -3574,25 +3626,16 @@ function toggleRow(name, sub, control, isMaster) {
   return row;
 }
 
-function showFilterControlsError(message) {
-  const el = document.getElementById("filter-controls-error");
-  if (el) {
-    el.textContent = message;
-  }
-}
-
 async function flipCategory(category, enabled) {
   try {
-    renderProviders(await setCategoryEnabled(category, enabled));
+    const data = await setCategoryEnabled(category, enabled);
+    filterControlsActionError = null;
+    renderProviders(data);
   } catch (err) {
-    // refreshProviders() rebuilds #filter-controls-error empty, so the message
-    // must be shown after it, not before (same order as flipAllCategories).
-    await refreshProviders();
-    showFilterControlsError(
-      t("filterControls.categoryFlipFailedTemplate", {
-        message: (err && err.message) || String(err),
-      }),
-    );
+    const message = (err && err.message) || String(err);
+    filterControlsActionError = () =>
+      t("filterControls.categoryFlipFailedTemplate", { message });
+    await refetchProvidersKeepingControls();
   }
 }
 
@@ -3612,15 +3655,17 @@ async function flipAllCategories(enabled, targets) {
       await setCategoryEnabled(key, enabled);
     } catch (_err) {
       const meta = CATEGORY_META.find((cat) => cat.key === key);
-      failed.push(meta ? t(meta.nameKey) : key);
+      failed.push(meta ? () => t(meta.nameKey) : () => key);
     }
   }
-  await refreshProviders();
-  if (failed.length > 0) {
-    showFilterControlsError(
-      t("filterControls.categoriesFailedTemplate", { list: failed.join(", ") }),
-    );
-  }
+  filterControlsActionError =
+    failed.length > 0
+      ? () =>
+          t("filterControls.categoriesFailedTemplate", {
+            list: failed.map((name) => name()).join(", "),
+          })
+      : null;
+  await refetchProvidersKeepingControls();
 }
 
 function renderFilterControls(data) {
@@ -3707,6 +3752,7 @@ function renderFilterControls(data) {
   const errLine = document.createElement("div");
   errLine.className = "override-error";
   errLine.id = "filter-controls-error";
+  errLine.textContent = filterControlsActionError ? filterControlsActionError() : "";
   filterControlsBody.appendChild(errLine);
 }
 

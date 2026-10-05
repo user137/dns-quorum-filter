@@ -171,6 +171,7 @@ const calls = [
   ["renderGeoipNoDb", `renderGeoip(${JSON.stringify({ database_loaded: false, blocked_countries: [], persisted: true })})`],
   ["renderMaxmind", `renderMaxmind(${JSON.stringify({ configured: true, account_id: "1", persisted: false, refresh_health: "AUTH_REJECTED", check: "REJECTED" })})`],
   ["renderProviders", `renderProviders(${JSON.stringify(providersData)})`],
+  ["actionErrors", `configApplyError = () => t("timeoutConfig.applyFailedTemplate", { message: "x" }); providersActionError = () => t("providers.changeFailedTemplate", { message: "x" }); filterControlsActionError = () => t("filterControls.categoriesFailedTemplate", { list: t("filterControls.category.security.name") }); renderTimeoutConfig(${JSON.stringify(status({ timeout_mode: "degraded", serve_baseline_when_filters_unreachable: true }))}); renderProviders(${JSON.stringify(providersData)}); configApplyError = null; providersActionError = null; filterControlsActionError = null`],
   ["buildLogFilterRow+renderLog", `buildLogFilterRow(); renderLog(${JSON.stringify(logData)})`],
   ["logPagerAndLiveMarker", `pushLive = true; renderLogLiveMarker(); logPage = 1; renderLog(${JSON.stringify(bigLogData)}); pushLive = false; logPage = 0; renderLogLiveMarker()`],
   ["renderRatingFilterOff", `renderRatingFilter(${JSON.stringify(status({ rating_filter: { enabled: false, active: false, lists: ["ua", "gov-pl", "xx"], available_lists: ["ua", "us", "de", "pl", "gb", "global", "gov-ua", "gov-us", "gov-pl", "gov-gb", "edu"], loaded: [{ list: "ua", domains: 5 }, { list: "gov-pl", domains: 1 }], suggested_list: "gb", personal_zone_enabled: false } }))})`],
@@ -421,6 +422,95 @@ for (const [fn, data] of xssCalls) {
   run(`renderLog(${JSON.stringify(logData)})`);
   const detail = created.find((r) => r.parent && r.parent.tag === "li" && "pending" in r.dataset);
   guard("log voter detail is not marked [data-pending]", detail && detail.props.hidden === true);
+
+  // T-250: a failed POST is reported inside its own card, which keeps its
+  // controls and goes back to the server's last state. renderError()/the
+  // SERVICE_UNREACHABLE hero stay reserved for the status fetch itself.
+  doc.getElementById = (id) => elStub({ tag: `div#${id}`, props: {}, attrs: {}, parent: null });
+  const realFetch = ctx.fetch;
+  const routeFetch = (routes) => async (url, opts) => {
+    if (url in routes) return routes[url](opts);
+    return realFetch(url, opts);
+  };
+  const okJson = (body) => () => ({ ok: true, status: 200, json: async () => body });
+  const failWith = (status) => () => ({ ok: false, status, json: async () => ({}) });
+  const offline = () => { throw new TypeError("Failed to fetch"); };
+  const spyOn = (name) => { const real = ctx[name]; const hits = []; ctx[name] = (...a) => { hits.push(a); }; return { hits, restore: () => { ctx[name] = real; } }; };
+  const shown = (needle) => assigned.some(([, v]) => v.includes(needle));
+  const serverStatus = { timeout_mode: "fail_open", serve_baseline_when_filters_unreachable: false, persisted: true, stats: { total: 0, in_flight: 0, blocked: 0 }, encrypted_persistence: {}, rating_filter: {} };
+  run(`DICT = __dict; CURRENT_LOCALE = "en"`, Object.assign(ctx, { __dict: dicts.en }));
+  run(`render(${JSON.stringify(serverStatus)})`);
+
+  // Error path: /admin/config unreachable.
+  // Other code still unsettled from earlier steps may call renderError for its own
+  // stubbed fetch (HTTP 599); only this POST's own error counts.
+  const errSpy = spyOn("renderError");
+  const postErrorRendered = (msg) => errSpy.hits.some(([e]) => e && e.message === msg);
+  ctx.fetch = routeFetch({ "/admin/config": offline });
+  assigned.length = 0; created.length = 0;
+  await run("onConfigChanged()");
+  guard("failed config POST went to renderError (hero SERVICE_UNREACHABLE)", !postErrorRendered("Failed to fetch"));
+  guard("failed config POST: no localized message in the card", shown(run(`t("timeoutConfig.applyFailedTemplate", { message: "Failed to fetch" })`)));
+  guard("failed config POST: radio not put back to the server's mode", assigned.some(([w, v]) => w.endsWith(".innerHTML") && /value="fail_open" checked/.test(v)));
+  // Error path: a 400 answer is not "service unreachable" either.
+  ctx.fetch = routeFetch({ "/admin/config": failWith(400) });
+  assigned.length = 0;
+  await run("onConfigChanged()");
+  guard("config POST 400 went to renderError", !postErrorRendered("HTTP 400") && shown("HTTP 400"));
+  // Boundary: the next background status render keeps the message.
+  assigned.length = 0;
+  run(`render(${JSON.stringify(serverStatus)})`);
+  guard("background status render dropped the config error", shown("HTTP 400"));
+  // Happy: the next successful apply clears it.
+  ctx.fetch = routeFetch({ "/admin/config": okJson(serverStatus) });
+  assigned.length = 0;
+  await run("onConfigChanged()");
+  guard("successful config POST kept the old error", !shown("HTTP 400"));
+  errSpy.restore();
+
+  // Error path: a category flip and the follow-up GET both fail.
+  run(`renderProviders(${JSON.stringify(providersData)})`);
+  const panelSpy = spyOn("renderProvidersError");
+  ctx.fetch = routeFetch({ "/admin/providers/set-category-enabled": offline, "/admin/providers": offline });
+  assigned.length = 0; created.length = 0;
+  await run(`flipCategory("SECURITY", true)`);
+  guard("failed category flip replaced the cards with an error panel", panelSpy.hits.length === 0);
+  guard("failed category flip: toggles gone", created.some((r) => r.props.name === "category-ADS_TRACKERS"));
+  guard("failed category flip: no localized message", shown(run(`t("filterControls.categoryFlipFailedTemplate", { message: "Failed to fetch" })`)));
+  // Error path: provider toggle / preset add answered 500.
+  ctx.fetch = routeFetch({ "/admin/providers/set-enabled": failWith(500), "/admin/providers/add": failWith(500) });
+  assigned.length = 0; created.length = 0;
+  await run(`providerAction(() => setProviderEnabled("x", false), "providers.changeFailedTemplate")`);
+  guard("failed provider toggle replaced the card with an error panel", panelSpy.hits.length === 0);
+  guard("failed provider toggle: switch not put back", created.some((r) => r.props.name === "provider-x" && r.props.checked === true));
+  guard("failed provider toggle: no localized message", shown(run(`t("providers.changeFailedTemplate", { message: "HTTP 500" })`)));
+  await run(`providerAction(() => addProvider({ id: "y" }), "providers.addFailedTemplate")`);
+  guard("failed preset add: no localized message", shown(run(`t("providers.addFailedTemplate", { message: "HTTP 500" })`)));
+  // Boundary: a 5xx bumps the topic, so a background re-render follows - the messages survive it.
+  assigned.length = 0;
+  run(`renderProviders(${JSON.stringify(providersData)})`);
+  guard("background providers render dropped the action errors", shown("HTTP 500") && shown("Failed to fetch"));
+  // Misuse: a locale switch re-translates a message already on screen.
+  run(`DICT = __dict; CURRENT_LOCALE = "uk"`, Object.assign(ctx, { __dict: dicts.uk }));
+  assigned.length = 0;
+  run(`renderProviders(${JSON.stringify(providersData)})`);
+  guard("action error not re-translated on a locale switch", shown(run(`t("providers.addFailedTemplate", { message: "HTTP 500" })`)));
+  run(`DICT = __dict; CURRENT_LOCALE = "en"`, Object.assign(ctx, { __dict: dicts.en }));
+  // Happy: the next successful action clears both cards' messages.
+  ctx.fetch = routeFetch({ "/admin/providers/set-enabled": okJson(providersData), "/admin/providers/set-category-enabled": okJson(providersData) });
+  await run(`providerAction(() => setProviderEnabled("x", true), "providers.changeFailedTemplate")`);
+  await run(`flipCategory("SECURITY", true)`);
+  assigned.length = 0;
+  run(`renderProviders(${JSON.stringify(providersData)})`);
+  guard("successful actions kept the old errors", !shown("HTTP 500") && !shown("Failed to fetch"));
+  // No data at all yet (first load failed): the panel is still the honest answer.
+  run("lastProvidersData = null");
+  ctx.fetch = routeFetch({ "/admin/providers/set-enabled": offline });
+  await run(`providerAction(() => setProviderEnabled("x", true), "providers.changeFailedTemplate")`);
+  guard("no cached providers: error panel not shown", panelSpy.hits.length === 1);
+  panelSpy.restore();
+  ctx.fetch = realFetch;
+  run("providersActionError = null; filterControlsActionError = null; configApplyError = null");
 
   // T-277: the push-stream client.
   const timers = [];
