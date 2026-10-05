@@ -1,6 +1,6 @@
 SOURCES: SPEC.md §8, §8.1, §3.3, §3.7, §5.3, §7; "Відкриті питання" №10; CLAUDE.md
 (dns-quorum-filter) "Ключові нетривіальні рішення"; TASKS.md T-56, T-91, T-95, T-111, T-127,
-T-128, T-152, T-176, T-188, T-191, T-193, T-196, T-204, T-211, T-243, T-253, T-254; review/arch ARCH-04; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
+T-128, T-152, T-176, T-188, T-191, T-193, T-196, T-204, T-211, T-243, T-250, T-253, T-254; review/arch ARCH-04; SERVICES.md §dnsqb-tray "Іконка", "Онбординг першого запуску",
 "Меню"; UI-SPEC.md §2.1, §3.1; `diagrams/onboarding.md`, `diagrams/process-lifecycle.md`;
 `crates/dnsqb-service/src/admin.rs` (`compute_hero_state`, `HeroStateView`);
 DECISIONS.md 2026-09-02, 2026-09-03, 2026-09-08, 2026-09-10 (T-191 — колір іконки; T-188 — онбординг +
@@ -112,7 +112,8 @@ flowchart TD
   живуть у JS. Rust-тести: `admin::hero_and_category_tests` (паузо-не-зелений, `GaveUp` вище
   всього, offline > paused, cert не маскує 0-voters, `None`→`PROTECTED`). Умови 1 і 5 у hero не
   показуються (1 — не реалізована; 5 — лише як `FILTERS_DEGRADED` за повної деградації, T-254). `SERVICE_UNREACHABLE` синтезує клієнт
-  на невдалому fetch — єдиний стан, який сервер не бачить про себе.
+  на невдалому fetch статусу (не на невдалому POST картки — T-250) — єдиний стан, який сервер не
+  бачить про себе.
 - **Пауза (умова 3a, T-193)** — реалізовано в конвеєрі й hero: `dnsqb-service` сам читає
   `stop.flag` (полер `pause_watch` → `AppState.filtering_paused`), `handle_query` віддає
   нефільтрований baseline тією ж гілкою, що й «0 voters» (без кешу). `GET /admin/status.paused`
