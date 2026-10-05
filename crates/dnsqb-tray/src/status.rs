@@ -219,8 +219,9 @@ pub enum IconColour {
 /// T-196: `Filtering` goes amber only when **every** recent quorum query was
 /// degraded (`degraded_events == degraded_window`) — i.e. filtering is
 /// effectively not happening. A single recovered upstream timeout is a
-/// trailing-window blip, not an alarm: the icon stays green and
-/// [`TrayStatus::tooltip`]'s own "N/M останніх" suffix carries the nuance.
+/// trailing-window blip, not an alarm: the icon stays green and the
+/// tooltip's own "N/M" degraded segment ([`compose_tooltip`]) carries the
+/// nuance.
 #[must_use]
 pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
     match status {
@@ -313,9 +314,9 @@ fn local_status(paused: bool, watchdog: Option<TrayStatus>) -> Option<TrayStatus
 /// when the certificate the `DoH` listener serves isn't trusted **and** the
 /// service is otherwise reachable ([`TrayStatus::Filtering`] /
 /// [`TrayStatus::NoActiveProvider`]) — the states where the browser's own
-/// `DoH` to us then fails silently. Mirrors the `degraded_events` suffix
-/// already in [`TrayStatus::tooltip`]; appended by [`compose_tooltip`], never
-/// alone, so a red icon can't sit beside a green-sounding tooltip.
+/// `DoH` to us then fails silently. [`compose_tooltip`] puts it first among
+/// the segments, never alone, so a red icon can't sit beside a
+/// green-sounding tooltip.
 #[must_use]
 pub fn cert_warning(status: TrayStatus, cert_trusted: bool, locale: &str) -> Option<String> {
     if cert_trusted {
@@ -330,7 +331,7 @@ pub fn cert_warning(status: TrayStatus, cert_trusted: bool, locale: &str) -> Opt
 }
 
 /// The tray tooltip for `status`, plus the [`cert_warning`] suffix when it
-/// applies. `main.rs` calls this instead of [`TrayStatus::tooltip`] directly.
+/// applies — the one entry point for tray tooltip text.
 /// The warning goes first among the segments, so it is the last thing
 /// [`fit_tooltip`] would drop.
 #[must_use]
@@ -347,11 +348,11 @@ pub fn compose_tooltip(status: TrayStatus, cert_trusted: bool, locale: &str) -> 
 /// without adding one, so one unit stays free for it (T-253).
 pub(crate) const TOOLTIP_MAX_UTF16: usize = 127;
 
-/// `head` plus every segment (each carries its own leading separator) that
-/// still fits in [`TOOLTIP_MAX_UTF16`], in order. A segment that doesn't fit
-/// is dropped whole and a later, shorter one may still go in — a cut-off
-/// half-sentence would read as the whole message. A `head` that alone is too
-/// long is cut at a char boundary and ends in `…`.
+/// `head` plus the longest prefix of `segments` (each carries its own leading
+/// separator) that fits in [`TOOLTIP_MAX_UTF16`]. The first segment that
+/// doesn't fit ends the tooltip, so a less important segment never shows
+/// while a more important one is missing, and none is cut mid-sentence. A
+/// `head` that alone is too long is cut at a char boundary and ends in `…`.
 pub(crate) fn fit_tooltip(head: &str, segments: &[String]) -> String {
     let mut used = head.encode_utf16().count();
     if used > TOOLTIP_MAX_UTF16 {
@@ -370,11 +371,11 @@ pub(crate) fn fit_tooltip(head: &str, segments: &[String]) -> String {
     }
     let mut text = head.to_string();
     for segment in segments {
-        let len = segment.encode_utf16().count();
-        if used + len <= TOOLTIP_MAX_UTF16 {
-            text.push_str(segment);
-            used += len;
+        used += segment.encode_utf16().count();
+        if used > TOOLTIP_MAX_UTF16 {
+            break;
         }
+        text.push_str(segment);
     }
     text
 }
@@ -486,7 +487,7 @@ mod tests {
                 .iter()
                 .map(|r| startup_failure_tooltip(*r, code))
                 .collect();
-            texts.push(compose_tooltip(TrayStatus::ServiceGaveUp, true, code));
+            texts.push(crate::i18n::t(code, "tooltip.gaveUp"));
             for text in texts {
                 let units = text.encode_utf16().count();
                 assert!(
@@ -907,12 +908,13 @@ mod tests {
     }
 
     #[test]
-    fn fit_tooltip_skips_a_segment_that_does_not_fit_and_keeps_a_later_one() {
+    fn fit_tooltip_stops_at_the_first_segment_that_does_not_fit() {
+        // A shorter, less important segment never jumps over a dropped one.
         let head = "h".repeat(100);
         let too_long = " ".to_string() + &"x".repeat(30);
         let short = " y".to_string();
         let text = fit_tooltip(&head, &[too_long, short]);
-        assert_eq!(text, format!("{head} y"));
+        assert_eq!(text, head);
     }
 
     #[test]
@@ -966,11 +968,41 @@ mod tests {
                 for trusted in [true, false] {
                     let text = compose_tooltip(status, trusted, code);
                     assert!(units(&text) <= TOOLTIP_MAX_UTF16, "{code}: {text}");
+                    let (head, _) = status.tooltip_parts(code);
+                    assert!(text.starts_with(&head), "{code}: headline cut: {text}");
                     assert!(!text.contains('{'), "{code}: unfilled placeholder: {text}");
                     if let Some(warning) = cert_warning(status, trusted, code) {
                         assert!(text.contains(&warning), "{code}: lost cert warning: {text}");
                     }
                 }
+            }
+        }
+    }
+
+    // The degraded window is `DEGRADED_LOOKBACK` = 20 queries (admin.rs): the
+    // degraded warning must survive whole, cert warning or not.
+    #[test]
+    fn the_degraded_warning_fits_whole_in_every_locale() {
+        let status = TrayStatus::Filtering {
+            in_flight: 99,
+            blocked: 99_999,
+            total: 999_999,
+            degraded_events: 20,
+            degraded_window: 20,
+            rating_filter_active: true,
+        };
+        for &(code, _) in I18N_DICTS {
+            let segment = crate::i18n::t_args(
+                code,
+                "tooltip.degradedSegmentTemplate",
+                &[("degradedEvents", "20"), ("degradedWindow", "20")],
+            );
+            for trusted in [true, false] {
+                let text = compose_tooltip(status, trusted, code);
+                assert!(
+                    text.contains(&segment),
+                    "{code}: lost degraded warning: {text}"
+                );
             }
         }
     }

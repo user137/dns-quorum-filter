@@ -10,7 +10,7 @@
 //!
 //! **Locale is always an explicit parameter, never read from ambient global
 //! state** — [`t`]/[`t_args`] take `locale: &str`, and so does every caller
-//! (`TrayStatus::tooltip`, `compose_tooltip`, …). This is deliberate: reading
+//! (`TrayStatus::tooltip_parts`, `compose_tooltip`, …). This is deliberate: reading
 //! a process-global "current locale" here would make every existing
 //! Ukrainian-substring test in `status.rs` depend on the OS locale of
 //! whatever machine runs the test suite - green on a Ukrainian dev box, red

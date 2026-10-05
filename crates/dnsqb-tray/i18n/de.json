@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " – Anfragen gerade jetzt: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: schützt",
   "tooltip.filteringCountsTemplate": " – blockiert {blocked}/{total}, Anfragen gerade jetzt: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " – einige Prüfungen antworten nicht ({degradedEvents}/{degradedWindow} der letzten Anfragen haben eine Zeitüberschreitung erreicht)",
+  "tooltip.degradedSegmentTemplate": " – einige Prüfungen antworten nicht ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " – Bewertungsfilter „Blase“ aktiv",
   "tooltip.certWarningSuffix": " – Zertifikat nicht installiert",
   "menu.retry": "Erneut versuchen",

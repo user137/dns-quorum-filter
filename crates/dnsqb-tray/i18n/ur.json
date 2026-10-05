@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — ابھی درخواستیں: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: تحفظ فراہم کر رہا ہے",
   "tooltip.filteringCountsTemplate": " — مسدود {blocked}/{total}، ابھی درخواستیں: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — کچھ جانچیں جواب نہیں دے رہیں (حالیہ درخواستوں میں سے {degradedEvents}/{degradedWindow} کا وقت ختم ہو گیا)",
+  "tooltip.degradedSegmentTemplate": " — کچھ جانچیں جواب نہیں دے رہیں ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — ریٹنگ فلٹر «بلبلہ» فعال ہے",
   "tooltip.certWarningSuffix": " — سرٹیفکیٹ انسٹال نہیں ہے",
   "menu.retry": "دوبارہ کوشش کریں",

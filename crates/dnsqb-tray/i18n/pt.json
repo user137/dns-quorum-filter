@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Solicitações agora: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: protegendo",
   "tooltip.filteringCountsTemplate": " — bloqueados {blocked}/{total}, solicitações agora: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — algumas verificações não respondem ({degradedEvents}/{degradedWindow} das últimas solicitações expiraram)",
+  "tooltip.degradedSegmentTemplate": " — algumas verificações não respondem ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Filtro de classificação «bolha» ativo",
   "tooltip.certWarningSuffix": " — certificado não instalado",
   "menu.retry": "Tentar novamente",

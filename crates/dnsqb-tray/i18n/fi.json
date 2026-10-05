@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Pyyntöjä juuri nyt: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: suojaa",
   "tooltip.filteringCountsTemplate": " — estetty {blocked}/{total}, pyyntöjä juuri nyt: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — osa tarkistuksista ei vastaa ({degradedEvents}/{degradedWindow} viimeisimmistä pyynnöistä aikakatkaistiin)",
+  "tooltip.degradedSegmentTemplate": " — osa tarkistuksista ei vastaa ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Arviointisuodatin ”kupla” on aktiivinen",
   "tooltip.certWarningSuffix": " — varmennetta ei ole asennettu",
   "menu.retry": "Yritä uudelleen",

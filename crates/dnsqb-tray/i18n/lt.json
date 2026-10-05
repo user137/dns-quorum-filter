@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Užklausų dabar: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: apsaugo",
   "tooltip.filteringCountsTemplate": " — užblokuota {blocked}/{total}, užklausų dabar: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — kai kurios patikros neatsako (paskutinių užklausų {degradedEvents}/{degradedWindow} baigėsi laiko limitas)",
+  "tooltip.degradedSegmentTemplate": " — kai kurios patikros neatsako ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Reitingavimo filtras „burbulas“ aktyvus",
   "tooltip.certWarningSuffix": " — sertifikatas neįdiegtas",
   "menu.retry": "Bandyti dar kartą",

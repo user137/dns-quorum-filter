@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Yêu cầu hiện tại: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: đang bảo vệ",
   "tooltip.filteringCountsTemplate": " — đã chặn {blocked}/{total}, yêu cầu hiện tại: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — một số kiểm tra không phản hồi ({degradedEvents}/{degradedWindow} yêu cầu gần đây đã hết thời gian chờ)",
+  "tooltip.degradedSegmentTemplate": " — một số kiểm tra không phản hồi ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Bộ lọc xếp hạng «bong bóng» đang hoạt động",
   "tooltip.certWarningSuffix": " — chưa cài đặt chứng chỉ",
   "menu.retry": "Thử lại",

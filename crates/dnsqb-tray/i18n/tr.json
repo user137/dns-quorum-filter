@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Şu anki istekler: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: koruyor",
   "tooltip.filteringCountsTemplate": " — engellenen {blocked}/{total}, şu anki istekler: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — bazı denetimler yanıt vermiyor (son isteklerin {degradedEvents}/{degradedWindow} kadarı zaman aşımına uğradı)",
+  "tooltip.degradedSegmentTemplate": " — bazı denetimler yanıt vermiyor ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Derecelendirme filtresi «balon» etkin",
   "tooltip.certWarningSuffix": " — sertifika yüklü değil",
   "menu.retry": "Yeniden dene",

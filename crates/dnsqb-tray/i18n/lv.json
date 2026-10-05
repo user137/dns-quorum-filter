@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Pieprasījumu tagad: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: aizsargā",
   "tooltip.filteringCountsTemplate": " — bloķēts {blocked}/{total}, pieprasījumu tagad: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — dažas pārbaudes nereaģē (pēdējiem {degradedEvents}/{degradedWindow} pieprasījumiem beidzās gaidīšanas laiks)",
+  "tooltip.degradedSegmentTemplate": " — dažas pārbaudes nereaģē ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Vērtējuma filtrs „burbulis“ ir aktīvs",
   "tooltip.certWarningSuffix": " — sertifikāts nav instalēts",
   "menu.retry": "Mēģināt vēlreiz",

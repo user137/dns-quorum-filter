@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Cereri acum: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: protejează",
   "tooltip.filteringCountsTemplate": " — blocate {blocked}/{total}, cereri acum: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — unele verificări nu răspund ({degradedEvents}/{degradedWindow} dintre ultimele cereri au expirat)",
+  "tooltip.degradedSegmentTemplate": " — unele verificări nu răspund ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Filtrul de evaluare «bulă» este activ",
   "tooltip.certWarningSuffix": " — certificatul nu este instalat",
   "menu.retry": "Încearcă din nou",

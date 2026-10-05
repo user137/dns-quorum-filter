@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — 現在のリクエスト数: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: 保護中",
   "tooltip.filteringCountsTemplate": " — ブロック {blocked}/{total}、現在のリクエスト数: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — 一部のチェックが応答していません（直近のリクエストのうち {degradedEvents}/{degradedWindow} がタイムアウトしました）",
+  "tooltip.degradedSegmentTemplate": " — 一部のチェックが応答していません（{degradedEvents}/{degradedWindow}）",
   "tooltip.ratingFilterSuffix": " — レーティングフィルター「バブル」が有効です",
   "tooltip.certWarningSuffix": " — 証明書がインストールされていません",
   "menu.retry": "再試行",

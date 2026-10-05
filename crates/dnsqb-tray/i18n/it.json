@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Richieste ora: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: protegge",
   "tooltip.filteringCountsTemplate": " — bloccati {blocked}/{total}, richieste ora: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — alcuni controlli non rispondono ({degradedEvents}/{degradedWindow} delle ultime richieste sono andate in timeout)",
+  "tooltip.degradedSegmentTemplate": " — alcuni controlli non rispondono ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Filtro di valutazione «bolla» attivo",
   "tooltip.certWarningSuffix": " — certificato non installato",
   "menu.retry": "Riprova",

@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Zapytania teraz: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: chroni",
   "tooltip.filteringCountsTemplate": " — zablokowano {blocked}/{total}, zapytania teraz: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — niektóre sprawdzenia nie odpowiadają ({degradedEvents}/{degradedWindow} ostatnich zapytań przekroczyło limit czasu)",
+  "tooltip.degradedSegmentTemplate": " — niektóre sprawdzenia nie odpowiadają ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Filtr ocen „bańka” jest aktywny",
   "tooltip.certWarningSuffix": " — certyfikat nie jest zainstalowany",
   "menu.retry": "Spróbuj ponownie",

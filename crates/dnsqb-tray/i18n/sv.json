@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Förfrågningar just nu: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: skyddar",
   "tooltip.filteringCountsTemplate": " — blockerade {blocked}/{total}, förfrågningar just nu: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — vissa kontroller svarar inte ({degradedEvents}/{degradedWindow} av de senaste förfrågningarna fick timeout)",
+  "tooltip.degradedSegmentTemplate": " — vissa kontroller svarar inte ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Betygsfiltret ”bubbla” är aktivt",
   "tooltip.certWarningSuffix": " — certifikatet är inte installerat",
   "menu.retry": "Försök igen",

@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — คำขอในขณะนี้: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: กำลังป้องกัน",
   "tooltip.filteringCountsTemplate": " — บล็อกแล้ว {blocked}/{total} คำขอในขณะนี้: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — การตรวจสอบบางรายการไม่ตอบสนอง ({degradedEvents}/{degradedWindow} ของคำขอล่าสุดหมดเวลา)",
+  "tooltip.degradedSegmentTemplate": " — การตรวจสอบบางรายการไม่ตอบสนอง ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — ตัวกรองการให้คะแนน «ฟอง» ทำงานอยู่",
   "tooltip.certWarningSuffix": " — ยังไม่ได้ติดตั้งใบรับรอง",
   "menu.retry": "ลองอีกครั้ง",

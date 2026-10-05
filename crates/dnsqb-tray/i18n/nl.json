@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Verzoeken nu: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: beschermt",
   "tooltip.filteringCountsTemplate": " — geblokkeerd {blocked}/{total}, verzoeken nu: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — sommige controles reageren niet ({degradedEvents}/{degradedWindow} van de laatste verzoeken kregen een time-out)",
+  "tooltip.degradedSegmentTemplate": " — sommige controles reageren niet ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Beoordelingsfilter „bubbel“ actief",
   "tooltip.certWarningSuffix": " — certificaat niet geïnstalleerd",
   "menu.retry": "Opnieuw proberen",

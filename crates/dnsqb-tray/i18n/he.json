@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — בקשות כרגע: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: מגן",
   "tooltip.filteringCountsTemplate": " — נחסמו {blocked}/{total}, בקשות כרגע: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — חלק מהבדיקות אינן מגיבות ({degradedEvents}/{degradedWindow} מהבקשות האחרונות פגו)",
+  "tooltip.degradedSegmentTemplate": " — חלק מהבדיקות אינן מגיבות ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — מסנן הדירוג «בועה» פעיל",
   "tooltip.certWarningSuffix": " — האישור אינו מותקן",
   "menu.retry": "נסו שוב",

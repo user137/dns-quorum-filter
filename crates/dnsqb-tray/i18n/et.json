@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Päringuid praegu: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: kaitseb",
   "tooltip.filteringCountsTemplate": " — blokeeritud {blocked}/{total}, päringuid praegu: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — mõned kontrollid ei vasta ({degradedEvents}/{degradedWindow} viimastest päringutest aegus)",
+  "tooltip.degradedSegmentTemplate": " — mõned kontrollid ei vasta ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Hindamisfilter „mull“ on aktiivne",
   "tooltip.certWarningSuffix": " — sertifikaat pole installitud",
   "menu.retry": "Proovi uuesti",

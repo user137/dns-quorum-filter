@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Maombi sasa: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: inalinda",
   "tooltip.filteringCountsTemplate": " — imezuiliwa {blocked}/{total}, maombi sasa: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — baadhi ya ukaguzi hazijibu (maombi {degradedEvents}/{degradedWindow} ya hivi karibuni yamekwisha muda)",
+  "tooltip.degradedSegmentTemplate": " — baadhi ya ukaguzi hazijibu ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Kichujio cha ukadiriaji «kiputo» kinatumika",
   "tooltip.certWarningSuffix": " — cheti hakijasakinishwa",
   "menu.retry": "Jaribu tena",

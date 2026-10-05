@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — الطلبات الآن: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: يحمي",
   "tooltip.filteringCountsTemplate": " — محظور {blocked}/{total}، الطلبات الآن: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — بعض الفحوصات لا تستجيب ({degradedEvents}/{degradedWindow} من آخر الطلبات انتهت مهلتها)",
+  "tooltip.degradedSegmentTemplate": " — بعض الفحوصات لا تستجيب ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — مرشح التصنيف «الفقاعة» نشط",
   "tooltip.certWarningSuffix": " — الشهادة غير مثبتة",
   "menu.retry": "إعادة المحاولة",

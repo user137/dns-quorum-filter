@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Permintaan saat ini: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: melindungi",
   "tooltip.filteringCountsTemplate": " — diblokir {blocked}/{total}, permintaan saat ini: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — beberapa pemeriksaan tidak merespons ({degradedEvents}/{degradedWindow} permintaan terakhir kehabisan waktu)",
+  "tooltip.degradedSegmentTemplate": " — beberapa pemeriksaan tidak merespons ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Filter peringkat «gelembung» aktif",
   "tooltip.certWarningSuffix": " — sertifikat belum terpasang",
   "menu.retry": "Coba lagi",

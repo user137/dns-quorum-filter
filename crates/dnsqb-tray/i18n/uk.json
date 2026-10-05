@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Запитів зараз: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: захищає",
   "tooltip.filteringCountsTemplate": " — заблоковано {blocked}/{total}, запитів зараз: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — деякі перевірки не відповідають ({degradedEvents}/{degradedWindow} останніх запитів мали тайм-аут)",
+  "tooltip.degradedSegmentTemplate": " — деякі перевірки не відповідають ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — рейтинг-фільтр «бульбашка» активний",
   "tooltip.certWarningSuffix": " — сертифікат не встановлено",
   "menu.retry": "Спробувати ще раз",

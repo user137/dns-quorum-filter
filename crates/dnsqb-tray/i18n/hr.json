@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Zahtjevi trenutačno: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: štiti",
   "tooltip.filteringCountsTemplate": " — blokirano {blocked}/{total}, zahtjevi trenutačno: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — neke provjere ne odgovaraju ({degradedEvents}/{degradedWindow} posljednjih zahtjeva isteklo je)",
+  "tooltip.degradedSegmentTemplate": " — neke provjere ne odgovaraju ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Filtar ocjenjivanja „mjehur“ je aktivan",
   "tooltip.certWarningSuffix": " — certifikat nije instaliran",
   "menu.retry": "Pokušaj ponovno",

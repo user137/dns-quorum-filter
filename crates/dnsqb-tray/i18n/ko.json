@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — 현재 요청 수: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: 보호 중",
   "tooltip.filteringCountsTemplate": " — 차단됨 {blocked}/{total}, 현재 요청 수: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — 일부 확인이 응답하지 않습니다 (최근 요청 중 {degradedEvents}/{degradedWindow}건이 시간 초과됨)",
+  "tooltip.degradedSegmentTemplate": " — 일부 확인이 응답하지 않습니다 ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — 평가 필터 «버블»이 활성화되었습니다",
   "tooltip.certWarningSuffix": " — 인증서가 설치되지 않음",
   "menu.retry": "다시 시도",

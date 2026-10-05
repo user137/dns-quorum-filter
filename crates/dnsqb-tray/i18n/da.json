@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Anmodninger lige nu: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: beskytter",
   "tooltip.filteringCountsTemplate": " — blokeret {blocked}/{total}, anmodninger lige nu: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — nogle kontroller svarer ikke ({degradedEvents}/{degradedWindow} af de seneste anmodninger fik timeout)",
+  "tooltip.degradedSegmentTemplate": " — nogle kontroller svarer ikke ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Vurderingsfilter „boble“ er aktivt",
   "tooltip.certWarningSuffix": " — certifikatet er ikke installeret",
   "menu.retry": "Prøv igen",

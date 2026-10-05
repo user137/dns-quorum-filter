@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Aktuálne požiadavky: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: chráni",
   "tooltip.filteringCountsTemplate": " — blokované {blocked}/{total}, aktuálne požiadavky: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — niektoré kontroly neodpovedajú ({degradedEvents}/{degradedWindow} posledných požiadaviek vypršalo)",
+  "tooltip.degradedSegmentTemplate": " — niektoré kontroly neodpovedajú ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Hodnotiaci filter „bublina“ je aktívny",
   "tooltip.certWarningSuffix": " — certifikát nie je nainštalovaný",
   "menu.retry": "Skúsiť znova",

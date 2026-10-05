@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — अभी अनुरोध: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: सुरक्षा कर रहा है",
   "tooltip.filteringCountsTemplate": " — अवरुद्ध {blocked}/{total}, अभी अनुरोध: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — कुछ जांचें प्रतिक्रिया नहीं दे रहीं (हाल के {degradedEvents}/{degradedWindow} अनुरोधों का समय समाप्त हो गया)",
+  "tooltip.degradedSegmentTemplate": " — कुछ जांचें प्रतिक्रिया नहीं दे रहीं ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — रेटिंग फ़िल्टर «बबल» सक्रिय है",
   "tooltip.certWarningSuffix": " — प्रमाणपत्र इंस्टॉल नहीं है",
   "menu.retry": "फिर से कोशिश करें",

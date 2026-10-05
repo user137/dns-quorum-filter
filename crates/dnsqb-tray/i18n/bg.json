@@ -46,7 +46,7 @@
   "tooltip.noActiveProviderCountsTemplate": " — Заявки в момента: {inFlight}",
   "tooltip.filteringHead": "DNS Quorum Filter: защитава",
   "tooltip.filteringCountsTemplate": " — блокирани {blocked}/{total}, заявки в момента: {inFlight}",
-  "tooltip.degradedSegmentTemplate": " — някои проверки не отговарят ({degradedEvents}/{degradedWindow} от последните заявки са с изтекло време)",
+  "tooltip.degradedSegmentTemplate": " — някои проверки не отговарят ({degradedEvents}/{degradedWindow})",
   "tooltip.ratingFilterSuffix": " — Рейтинговият филтър «мехурче» е активен",
   "tooltip.certWarningSuffix": " — сертификатът не е инсталиран",
   "menu.retry": "Опитай отново",
