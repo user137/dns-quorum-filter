@@ -95,11 +95,69 @@ pub enum TrayStatus {
         /// `active` (Fork B) shows no suffix — that transient state is the
         /// web UI's Fork-B notice to explain, not the tray's.
         rating_filter_active: bool,
+        /// ARCH-04: how long ago the browser last asked — the one hint that
+        /// the browser still goes through the service. Tooltip only, never
+        /// the icon colour: a closed browser is not a fault (SPEC.md §8.1).
+        last_query: LastQuery,
     },
 }
 
+/// First `/admin/*` schema whose `AdminStats` carries `last_query_unix_ms`;
+/// an older service decodes the absent field as `None` (serde default).
+const LAST_QUERY_SINCE_SCHEMA: u32 = 7;
+
+/// The age of the newest query-log entry, bucketed to what the tooltip
+/// shows — so [`TrayStatus`] changes only when that text does, not on every
+/// 2 s poll. No day bucket: the log keeps at most 24 h.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LastQuery {
+    /// The service is older than the field — show nothing.
+    Unknown,
+    /// No entry in the current log window.
+    Empty,
+    JustNow,
+    Minutes(u64),
+    Hours(u64),
+}
+
+impl LastQuery {
+    fn from_stats(schema_version: u32, last_query_unix_ms: Option<u64>, now_unix_ms: u64) -> Self {
+        if schema_version < LAST_QUERY_SINCE_SCHEMA {
+            return Self::Unknown;
+        }
+        let Some(at) = last_query_unix_ms else {
+            return Self::Empty;
+        };
+        // A clock step back makes the entry look newer than now: just now.
+        let minutes = now_unix_ms.saturating_sub(at) / 60_000;
+        match minutes {
+            0 => Self::JustNow,
+            1..=59 => Self::Minutes(minutes),
+            _ => Self::Hours(minutes / 60),
+        }
+    }
+
+    fn segment(self, locale: &str) -> Option<String> {
+        match self {
+            Self::Unknown => None,
+            Self::Empty => Some(i18n::t(locale, "tooltip.lastQueryEmpty")),
+            Self::JustNow => Some(i18n::t(locale, "tooltip.lastQueryJustNow")),
+            Self::Minutes(minutes) => Some(i18n::t_args(
+                locale,
+                "tooltip.lastQueryMinutesTemplate",
+                &[("minutes", &minutes.to_string())],
+            )),
+            Self::Hours(hours) => Some(i18n::t_args(
+                locale,
+                "tooltip.lastQueryHoursTemplate",
+                &[("hours", &hours.to_string())],
+            )),
+        }
+    }
+}
+
 impl TrayStatus {
-    fn from_response(response: &AdminStatusResponse) -> Self {
+    fn from_response(response: &AdminStatusResponse, now_unix_ms: u64) -> Self {
         // T-152: no internet at all outranks the config-choice state below
         // (DECISIONS.md 2026-09-03) — showing "you disabled all providers"
         // when the real problem is a dead network would be misleading, and
@@ -125,6 +183,11 @@ impl TrayStatus {
                 // `active` is already `enabled && zone non-empty` server-side
                 // (the single `rating_filter_is_active` authority).
                 rating_filter_active: response.rating_filter.active,
+                last_query: LastQuery::from_stats(
+                    response.schema_version,
+                    response.stats.last_query_unix_ms,
+                    now_unix_ms,
+                ),
             }
         }
     }
@@ -162,6 +225,7 @@ impl TrayStatus {
                 degraded_events,
                 degraded_window,
                 rating_filter_active,
+                last_query,
             } => {
                 let mut segments = Vec::new();
                 // Raw counts, not a collapsed bool/percentage (admin.rs's
@@ -180,6 +244,9 @@ impl TrayStatus {
                         ],
                     ));
                 }
+                if let Some(segment) = last_query.segment(locale) {
+                    segments.push(segment);
+                }
                 if *rating_filter_active {
                     segments.push(i18n::t(locale, "tooltip.ratingFilterSuffix"));
                 }
@@ -196,6 +263,14 @@ impl TrayStatus {
             }
         }
     }
+}
+
+fn unix_ms_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// Which of the four generated tray-icon blobs to display (T-191). A
@@ -384,7 +459,7 @@ pub(crate) fn fit_tooltip(head: &str, segments: &[String]) -> String {
 mod tests {
     use super::{
         local_status, recovery_actions, startup_failure_tooltip, startup_failure_tooltip_key,
-        watchdog_override, TrayStatus,
+        watchdog_override, LastQuery, TrayStatus,
     };
     use crate::i18n::I18N_DICTS;
     use dnsqb_service::{StartupFailure, STARTUP_ERROR_FILE_NAME};
@@ -620,6 +695,85 @@ mod tests {
         }
     }
 
+    const NOW_MS: u64 = 1_800_000_000_000;
+
+    // ARCH-04: the bucket, not the raw age, lives in `TrayStatus`, so the
+    // status (and the tooltip) changes only when the shown text does.
+    #[test]
+    fn last_query_buckets_follow_the_age_of_the_newest_entry() {
+        let at = |age_ms: u64| LastQuery::from_stats(7, Some(NOW_MS - age_ms), NOW_MS);
+        assert_eq!(at(0), LastQuery::JustNow);
+        assert_eq!(at(59_999), LastQuery::JustNow);
+        assert_eq!(at(60_000), LastQuery::Minutes(1));
+        assert_eq!(at(3_599_999), LastQuery::Minutes(59));
+        assert_eq!(at(3_600_000), LastQuery::Hours(1));
+        assert_eq!(at(23 * 3_600_000 + 3_599_999), LastQuery::Hours(23));
+        // A clock step back: the entry is "in the future", read as just now.
+        assert_eq!(
+            LastQuery::from_stats(7, Some(NOW_MS + 5_000), NOW_MS),
+            LastQuery::JustNow
+        );
+        assert_eq!(LastQuery::from_stats(7, None, NOW_MS), LastQuery::Empty);
+    }
+
+    // A service older than the field decodes it as `None` (serde default) —
+    // that is "unknown", never "no queries".
+    #[test]
+    fn last_query_is_unknown_from_a_service_older_than_the_field() {
+        assert_eq!(LastQuery::from_stats(6, None, NOW_MS), LastQuery::Unknown);
+        assert_eq!(
+            LastQuery::from_stats(0, Some(NOW_MS), NOW_MS),
+            LastQuery::Unknown
+        );
+        let mut resp = response(
+            vec![ProviderStatusView {
+                id: "quad9".to_string(),
+                display_name: "Quad9 Filtered".to_string(),
+                category: dnsqb_service::Category::Security,
+            }],
+            stats(0, 0),
+        );
+        resp.schema_version = 6;
+        let tooltip = compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk");
+        assert!(!tooltip.contains("останній запит"), "{tooltip}");
+        assert!(!tooltip.contains("у журналі"), "{tooltip}");
+    }
+
+    fn filtering_with(last_query: LastQuery) -> TrayStatus {
+        TrayStatus::Filtering {
+            in_flight: 0,
+            blocked: 1,
+            total: 9,
+            degraded_events: 0,
+            degraded_window: 20,
+            rating_filter_active: false,
+            last_query,
+        }
+    }
+
+    #[test]
+    fn the_last_query_segment_names_the_age_or_an_empty_log() {
+        let with = |last_query| compose_tooltip(filtering_with(last_query), true, "uk");
+        assert!(with(LastQuery::Minutes(5)).contains("останній запит: 5 хв тому"));
+        assert!(with(LastQuery::Hours(3)).contains("останній запит: 3 год тому"));
+        assert!(with(LastQuery::JustNow).contains("останній запит: щойно"));
+        assert!(with(LastQuery::Empty).contains("у журналі немає запитів"));
+        let unknown = with(LastQuery::Unknown);
+        assert!(!unknown.contains("останній запит") && !unknown.contains("у журналі"));
+    }
+
+    // ARCH-04 (SPEC.md §8.1): a closed browser is not a fault — an old or
+    // empty last query never repaints the icon.
+    #[test]
+    fn last_query_age_never_changes_the_icon_colour() {
+        for last_query in [LastQuery::Empty, LastQuery::Hours(23), LastQuery::Unknown] {
+            assert_eq!(
+                icon_colour(filtering_with(last_query), true),
+                IconColour::Green
+            );
+        }
+    }
+
     fn stats(degraded_window: u64, degraded_events: u64) -> AdminStats {
         AdminStats {
             total: 10,
@@ -643,7 +797,7 @@ mod tests {
             }],
             stats(20, 3),
         );
-        let status = TrayStatus::from_response(&resp);
+        let status = TrayStatus::from_response(&resp, NOW_MS);
         assert_eq!(
             status,
             TrayStatus::Filtering {
@@ -653,6 +807,7 @@ mod tests {
                 degraded_events: 3,
                 degraded_window: 20,
                 rating_filter_active: false,
+                last_query: LastQuery::Empty,
             }
         );
     }
@@ -663,14 +818,17 @@ mod tests {
         // 2026-09-03: an environment failure above a config choice).
         let mut resp = response(vec![], stats(0, 0));
         resp.network = dnsqb_service::NetworkStatusView::Offline;
-        assert_eq!(TrayStatus::from_response(&resp), TrayStatus::Offline);
+        assert_eq!(
+            TrayStatus::from_response(&resp, NOW_MS),
+            TrayStatus::Offline
+        );
     }
 
     #[test]
     fn online_network_with_no_providers_is_still_no_active_provider() {
         let resp = response(vec![], stats(0, 0));
         assert_eq!(
-            TrayStatus::from_response(&resp),
+            TrayStatus::from_response(&resp, NOW_MS),
             TrayStatus::NoActiveProvider { in_flight: 0 }
         );
     }
@@ -686,7 +844,10 @@ mod tests {
             stats(20, 0),
         );
         resp.network = dnsqb_service::NetworkStatusView::Offline;
-        assert_eq!(TrayStatus::from_response(&resp), TrayStatus::Offline);
+        assert_eq!(
+            TrayStatus::from_response(&resp, NOW_MS),
+            TrayStatus::Offline
+        );
     }
 
     #[test]
@@ -699,7 +860,7 @@ mod tests {
             }],
             stats(20, 0),
         );
-        let tooltip = compose_tooltip(TrayStatus::from_response(&resp), true, "uk");
+        let tooltip = compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk");
         assert!(
             !tooltip.contains("тайм-аут"),
             "must not warn with zero recorded degraded events: {tooltip}"
@@ -716,7 +877,7 @@ mod tests {
             }],
             stats(20, 3),
         );
-        let tooltip = compose_tooltip(TrayStatus::from_response(&resp), true, "uk");
+        let tooltip = compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk");
         assert!(
             tooltip.contains("3/20"),
             "expected the raw counts in the tooltip, got: {tooltip}"
@@ -744,21 +905,21 @@ mod tests {
         resp.rating_filter.enabled = true;
         resp.rating_filter.active = true;
         assert!(
-            compose_tooltip(TrayStatus::from_response(&resp), true, "uk")
+            compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk")
                 .contains("рейтинг-фільтр «бульбашка» активний"),
             "an active bubble must add its suffix"
         );
 
         resp.rating_filter.active = false;
         assert!(
-            !compose_tooltip(TrayStatus::from_response(&resp), true, "uk")
+            !compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk")
                 .contains("рейтинг-фільтр"),
             "Fork B (enabled, no list) gets no tray suffix"
         );
 
         resp.rating_filter.enabled = false;
         assert!(
-            !compose_tooltip(TrayStatus::from_response(&resp), true, "uk")
+            !compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk")
                 .contains("рейтинг-фільтр"),
             "a disabled bubble gets no suffix"
         );
@@ -775,6 +936,7 @@ mod tests {
             degraded_events: 0,
             degraded_window: 20,
             rating_filter_active: true,
+            last_query: LastQuery::Unknown,
         };
         assert_eq!(icon_colour(active, true), IconColour::Green);
         assert_eq!(icon_colour(active, false), IconColour::Red); // cert still wins
@@ -797,7 +959,7 @@ mod tests {
         // there at all.
         let resp = response(Vec::new(), stats(20, 5));
         assert_eq!(
-            TrayStatus::from_response(&resp),
+            TrayStatus::from_response(&resp, NOW_MS),
             TrayStatus::NoActiveProvider { in_flight: 0 }
         );
     }
@@ -818,6 +980,7 @@ mod tests {
             degraded_events,
             degraded_window,
             rating_filter_active: false,
+            last_query: LastQuery::Unknown,
         }
     }
 
@@ -942,6 +1105,7 @@ mod tests {
             degraded_events: u64::MAX,
             degraded_window: u64::MAX,
             rating_filter_active: true,
+            last_query: LastQuery::Hours(u64::MAX),
         }
     }
 
@@ -990,6 +1154,7 @@ mod tests {
             degraded_events: 20,
             degraded_window: 20,
             rating_filter_active: true,
+            last_query: LastQuery::Hours(23),
         };
         for &(code, _) in I18N_DICTS {
             let segment = crate::i18n::t_args(
@@ -1007,6 +1172,32 @@ mod tests {
         }
     }
 
+    // ARCH-04: with a trusted cert the last-query line fits whole next to a
+    // full degraded warning. With an untrusted one it may drop (Greek is
+    // already near the limit) — the cert warning, kept first, already says
+    // why no query reaches the service.
+    #[test]
+    fn the_last_query_segment_fits_whole_beside_the_degraded_warning() {
+        let status = TrayStatus::Filtering {
+            in_flight: 99,
+            blocked: 99_999,
+            total: 999_999,
+            degraded_events: 20,
+            degraded_window: 20,
+            rating_filter_active: true,
+            last_query: LastQuery::Minutes(59),
+        };
+        for &(code, _) in I18N_DICTS {
+            let segment = crate::i18n::t_args(
+                code,
+                "tooltip.lastQueryMinutesTemplate",
+                &[("minutes", "59")],
+            );
+            let text = compose_tooltip(status, true, code);
+            assert!(text.contains(&segment), "{code}: lost last query: {text}");
+        }
+    }
+
     #[test]
     fn problems_come_before_the_counts() {
         let text = compose_tooltip(
@@ -1017,6 +1208,7 @@ mod tests {
                 degraded_events: 3,
                 degraded_window: 20,
                 rating_filter_active: false,
+                last_query: LastQuery::Unknown,
             },
             false,
             "uk",
@@ -1253,7 +1445,7 @@ pub fn spawn(app_data_dir: PathBuf, port: u16, trust: TrustState) -> StatusHandl
                             trust.request_recheck();
                         }
                         last_hero = Some(response.hero_state);
-                        TrayStatus::from_response(&response)
+                        TrayStatus::from_response(&response, unix_ms_now())
                     } else {
                         // Advisor-caught: a request failure is NOT always
                         // just "the service is temporarily down" - it's also
