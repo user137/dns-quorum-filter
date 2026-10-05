@@ -1564,7 +1564,9 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   хвиля 8 (`B-timeout-EP`, `B-filter-controls-EP`, `B-providers-EP` — підміна `fetch` у devtools), хвиля 14
   (`B-danger-HP`: кнопка → діалог трею поверх браузера → «Так» → повне видалення, і `TRAY_NOT_RUNNING` після
   «Сховати іконку»; `C-REMOVE_ALL_ID-HP`, `DIAG-life-removed`), хвиля 4 (`E-watcher-help-EP`, `E-locale-EP`,
-  `E-watcher-args-SB` — `--help | Select -First 1`, `--help > file`, аргумент із непарним сурогатом). Уже пройдено
+  `E-watcher-args-SB` — **не** `--help | Select -First 1`: на 0.8.903 з багом ця форма гонкою проходить без
+  паніки; лише детерміновано — stdout = `os.pipe()` із закритим кінцем читання до старту (Python), очікувано код 0
+  і порожній stderr; аргумент із непарним сурогатом — лише разом із `--help`). Уже пройдено
   на 0.8.903 — `review/QA-FIX-PLAN.md`, хвиля 6, «Re-test на артефакті 0.8.903».
 - [ ] T-245 — **Заведено 2026-10-03, QA-прохід (рядки `A-dto-doc-drift`, `KL-tls-key-uninstall`).**
   Документація розійшлась із кодом у чотирьох місцях (лише доки, код коректний): (1) `UI-SPEC.md:265`

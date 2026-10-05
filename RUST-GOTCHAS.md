@@ -659,3 +659,9 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   on the pinned MSVC toolchain before concluding there's a real bug — this project's own local/CI
   toolchain split (documented in the `Windows toolchain env` memory) is exactly the kind of gap
   that makes a dev-box-only artifact look like a shipped-binary bug if not cross-checked.
+- **`println!` panics on a stdout whose reader is gone, even under `windows_subsystem = "windows"`;
+  `std::env::args()` panics on a non-Unicode argument (a lone UTF-16 surrogate).** T-235's probe
+  covered "inherited console" and "no console" but not "closed pipe" (os error 232, exit 101). Use
+  `writeln!` with an ignored error and `args_os()` — `cli_help::print_help_if_requested`, T-246.
+  Racy to reproduce with `| Select -First 1`; deterministic with Python `os.pipe()` whose read end
+  is closed before the spawn.
