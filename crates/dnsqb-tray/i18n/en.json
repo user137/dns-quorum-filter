@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "This will completely remove dns-quorum-filter's local data: the trusted certificate, the TLS key, the log/cache encryption key, and the saved MaxMind credentials from Windows Credential Manager, as well as the whole app-data folder (log, cache, settings). The app will close, and Windows Settings will open - click \"Uninstall\" on dns-quorum-filter there. Continue?",
   "confirm.pause.description": "DNS will keep working, but filtering will be turned off: the quorum check and GeoIP won't apply, domains resolve directly through the baseline resolver. Your own allow/block lists keep working. Resume from this same menu item or by restarting the app. Continue?",
   "confirm.quit.title": "Quit",
-  "confirm.quit.description": "The app will fully stop: DNS filtering, the background watchdog, and this icon. DNS will go unfiltered until you start the app again from the Start menu. Continue?",
+  "confirm.quit.description": "The app will fully stop: DNS filtering, the background watchdog, and this icon. Until you start it again from the Start menu, a browser whose secure DNS is set to automatic silently switches to the system DNS (sites open, but unfiltered), and a browser set strictly to this app's address stops opening sites. Continue?",
   "onboarding.title": "Welcome",
   "onboarding.description": "Two steps left before the browser starts filtering DNS:\n\n1. Install the local certificate - without it the browser won't trust the settings page.\n2. Point the browser's settings at the local filter - the instructions page opens right after step 1.\n\nInstall the certificate now?",
   "certOutcome.installed": "certificate installed",

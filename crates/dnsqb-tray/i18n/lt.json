@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "Vietiniai dns-quorum-filter duomenys bus visiškai ištrinti: patikimas sertifikatas, TLS raktas, žurnalo / podėlio šifravimo raktas ir išsaugoti MaxMind prisijungimo duomenys iš „Windows“ kredencialų tvarkyklės, taip pat visas programos duomenų aplankas (žurnalas, podėlis, nustatymai). Programa užsidarys, ir atsivers „Windows“ nustatymai — ten spustelėkite „Pašalinti“ ties dns-quorum-filter. Tęsti?",
   "confirm.pause.description": "DNS toliau veiks, tačiau filtravimas bus išjungtas: kvorumo patikra ir GeoIP nebus taikomi, domenai bus sprendžiami tiesiogiai per pagrindinį sprendiklį. Jūsų pačių leidimo / blokavimo sąrašai toliau veiks. Tęsimas — tuo pačiu meniu punktu arba paleidus programą iš naujo. Tęsti?",
   "confirm.quit.title": "Išeiti",
-  "confirm.quit.description": "Programa visiškai sustos: DNS filtravimas, priežiūra fone ir ši piktograma. DNS liks nefiltruojamas, kol iš naujo nepaleisite programos iš meniu „Pradėti“. Tęsti?",
+  "confirm.quit.description": "Programa visiškai sustos: DNS filtravimas, priežiūra fone ir ši piktograma. Kol iš naujo nepaleisite programos iš meniu „Pradėti“, naršyklė, kurios saugusis DNS veikia automatiniu režimu, tyliai persijungs į sistemos DNS (svetainės atsidaro, bet nefiltruojamos), o naršyklė, griežtai nustatyta į šios programos adresą, nustos atidaryti svetaines. Tęsti?",
   "onboarding.title": "Sveiki",
   "onboarding.description": "Liko du žingsniai, kol naršyklė pradės filtruoti DNS:\n\n1. Įdiekite vietinį sertifikatą — be jo naršyklė nepasitikės nustatymų puslapiu.\n2. Nukreipkite naršyklės nustatymus į vietinį filtrą — instrukcijų puslapis atsivers iškart po 1 žingsnio.\n\nĮdiegti sertifikatą dabar?",
   "certOutcome.installed": "sertifikatas įdiegtas",

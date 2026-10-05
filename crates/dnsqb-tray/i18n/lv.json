@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "dns-quorum-filter lokālie dati tiks pilnībā dzēsti: uzticamais sertifikāts, TLS atslēga, žurnāla/kešatmiņas šifrēšanas atslēga un saglabātie MaxMind akreditācijas dati no Windows akreditācijas datu pārvaldnieka, kā arī visa lietotnes datu mape (žurnāls, kešatmiņa, iestatījumi). Lietotne aizvērsies, un atvērsies Windows iestatījumi — tur noklikšķiniet „Atinstalēt“ pie dns-quorum-filter. Turpināt?",
   "confirm.pause.description": "DNS turpinās darboties, taču filtrēšana tiks izslēgta: kvoruma pārbaude un GeoIP netiks piemēroti, domēni tiks atrisināti tieši caur bāzes risinātāju. Jūsu pašu atļaušanas/bloķēšanas saraksti turpina darboties. Atsākšana — no tā paša izvēlnes vienuma vai restartējot lietotni. Turpināt?",
   "confirm.quit.title": "Iziet",
-  "confirm.quit.description": "Lietotne pilnībā apstāsies: DNS filtrēšana, uzraudzība fonā un šī ikona. DNS paliks nefiltrēts, līdz atkal palaidīsiet lietotni no izvēlnes Sākt. Turpināt?",
+  "confirm.quit.description": "Lietotne pilnībā apstāsies: DNS filtrēšana, uzraudzība fonā un šī ikona. Līdz atkal palaidīsiet lietotni no izvēlnes Sākt, pārlūks ar drošo DNS automātiskajā režīmā klusi pārslēgsies uz sistēmas DNS (vietnes atveras, bet nefiltrētas), bet pārlūks, kas stingri iestatīts uz šīs lietotnes adresi, pārstās atvērt vietnes. Turpināt?",
   "onboarding.title": "Laipni lūdzam",
   "onboarding.description": "Atlikuši divi soļi, pirms pārlūkprogramma sāks filtrēt DNS:\n\n1. Instalējiet lokālo sertifikātu — bez tā pārlūkprogramma neuzticēsies iestatījumu lapai.\n2. Novirziet pārlūkprogrammas iestatījumus uz lokālo filtru — norādījumu lapa atveras uzreiz pēc 1. soļa.\n\nVai instalēt sertifikātu tagad?",
   "certOutcome.installed": "sertifikāts instalēts",

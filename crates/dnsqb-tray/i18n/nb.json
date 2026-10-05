@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "dns-quorum-filters lokale data slettes fullstendig: det klarerte sertifikatet, TLS-nøkkelen, krypteringsnøkkelen for logg/buffer og de lagrede MaxMind-legitimasjonene fra Windows Credential Manager, samt hele appens datamappe (logg, buffer, innstillinger). Appen lukkes, og Windows-innstillinger åpnes — klikk der på «Avinstaller» for dns-quorum-filter. Fortsette?",
   "confirm.pause.description": "DNS fortsetter å fungere, men filtrering slås av: kvorumkontrollen og GeoIP vil ikke lenger gjelde, domener løses direkte via grunnleggende resolver. Dine egne tillat-/blokkeringslister fortsetter å fungere. Gjenoppta — fra samme menyelement eller ved å starte appen på nytt. Fortsette?",
   "confirm.quit.title": "Avslutt",
-  "confirm.quit.description": "Appen stopper helt: DNS-filtrering, bakgrunnsovervåking og dette ikonet. DNS forblir ufiltrert til du starter appen på nytt fra Start-menyen. Fortsette?",
+  "confirm.quit.description": "Appen stopper helt: DNS-filtrering, bakgrunnsovervåking og dette ikonet. Til du starter appen på nytt fra Start-menyen, bytter en nettleser med sikker DNS i automatisk modus stille over til systemets DNS (nettsteder åpnes, men ufiltrert), og en nettleser som er låst til denne appens adresse, slutter å åpne nettsteder. Fortsette?",
   "onboarding.title": "Velkommen",
   "onboarding.description": "To trinn gjenstår før nettleseren begynner å filtrere DNS:\n\n1. Installer det lokale sertifikatet — uten det vil ikke nettleseren stole på innstillingssiden.\n2. Rett nettleserens innstillinger mot det lokale filteret — instruksjonssiden åpnes rett etter trinn 1.\n\nInstallere sertifikatet nå?",
   "certOutcome.installed": "sertifikatet er installert",

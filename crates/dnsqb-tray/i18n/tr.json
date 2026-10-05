@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "dns-quorum-filter'ın yerel verileri tamamen kaldırılacak: güvenilir sertifika, TLS anahtarı, günlük/önbellek şifreleme anahtarı ve Windows Kimlik Bilgisi Yöneticisi'nden kaydedilmiş MaxMind kimlik bilgileri, ayrıca uygulamanın tüm veri klasörü (günlük, önbellek, ayarlar). Uygulama kapanacak ve Windows Ayarları açılacak — orada dns-quorum-filter için „Kaldır“a tıklayın. Devam edilsin mi?",
   "confirm.pause.description": "DNS çalışmaya devam edecek, ancak filtreleme kapatılacak: kota kontrolü ve GeoIP uygulanmayacak, alan adları doğrudan temel çözümleyici üzerinden çözülecek. Kendi izin/engelleme listeleriniz çalışmaya devam eder. Devam ettirme — aynı menü öğesinden veya uygulamayı yeniden başlatarak. Devam edilsin mi?",
   "confirm.quit.title": "Çıkış",
-  "confirm.quit.description": "Uygulama tamamen duracak: DNS filtreleme, arka plan denetimi ve bu simge. Uygulamayı Başlat menüsünden yeniden başlatana kadar DNS filtrelenmemiş olacak. Devam edilsin mi?",
+  "confirm.quit.description": "Uygulama tamamen duracak: DNS filtreleme, arka plan denetimi ve bu simge. Uygulamayı Başlat menüsünden yeniden başlatana kadar, güvenli DNS'i otomatik modda olan bir tarayıcı sessizce sistem DNS'ine geçer (siteler açılır ama filtrelenmez), bu uygulamanın adresine sıkı biçimde ayarlanmış bir tarayıcı ise siteleri açamaz. Devam edilsin mi?",
   "onboarding.title": "Hoş geldiniz",
   "onboarding.description": "Tarayıcının DNS'i filtrelemeye başlaması için iki adım kaldı:\n\n1. Yerel sertifikayı yükleyin — bu olmadan tarayıcı ayarlar sayfasına güvenmez.\n2. Tarayıcı ayarlarını yerel filtreye yönlendirin — talimat sayfası 1. adımdan hemen sonra açılır.\n\nSertifika şimdi yüklensin mi?",
   "certOutcome.installed": "sertifika yüklendi",

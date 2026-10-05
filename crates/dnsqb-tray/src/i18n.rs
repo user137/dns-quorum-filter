@@ -208,4 +208,20 @@ mod tests {
         let locale = detect_locale();
         assert!(I18N_DICTS.iter().any(|(code, _)| *code == locale));
     }
+
+    // T-263: quitting does not always mean "unfiltered" — a browser locked to
+    // this app's address stops resolving instead. The dialog names both.
+    #[test]
+    fn quit_dialog_names_both_consequences() {
+        let en = t("en", "confirm.quit.description");
+        assert!(
+            en.contains("system DNS") && en.contains("stops opening sites"),
+            "{en}"
+        );
+        let uk = t("uk", "confirm.quit.description");
+        assert!(
+            uk.contains("системний DNS") && uk.contains("перестане відкривати сайти"),
+            "{uk}"
+        );
+    }
 }

@@ -1652,12 +1652,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   Cloudflare — 1. Не діагностовано: тип помилки за `kind="http"` (reset/GOAWAY HTTP/2, 5xx,
   тайм-аут з'єднання?) і чи вона коштує користувачу вердикту (fail-open = голос Quad9 втрачено).
   Спершу — детальніший (без доменів) підтип помилки в лозі, потім рішення.
-- [ ] T-263 — **Заведено 2026-10-04, QA-прохід (рядок `C-QUIT_APP_ID-HP`).** Діалог «Вийти» каже
-  «DNS will go unfiltered until you start the app again» — для браузера в режимі secure з власним
-  провайдером це неправда: сайти перестають відкриватися (Brave `ERR_NAME_NOT_RESOLVED`, рядок
-  `I-brave-dead-doh`), а не йдуть без фільтра. Тихий fallback є лише в автоматичному режимі
-  (Firefox mode 2, T-257). Переписати текст (усі 37 локалей трею) так, щоб він описував обидва
-  наслідки.
 - [ ] T-264 — **Заведено 2026-10-04, QA-прохід (рядки `D-tooltip-*`).** Видима підказка іконки трею
   правильна («protecting - blocked 2/5…»), але UIA-ім'я кнопки в області сповіщень — склейка
   «DNS Quorum Filter: service unreachable DNS Quorum Filter: protecting - …» (бачив двічі, після

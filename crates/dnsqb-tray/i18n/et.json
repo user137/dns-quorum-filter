@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "dns-quorum-filteri kohalikud andmed kustutatakse täielikult: usaldusväärne sertifikaat, TLS-võti, logi/vahemälu krüptimisvõti ja salvestatud MaxMindi mandaadid Windowsi mandaadihaldurist, samuti kogu rakenduse andmekaust (logi, vahemälu, seaded). Rakendus sulgub ja avaneb Windowsi seaded — klõpsake seal dns-quorum-filteri juures „Desinstalli“. Kas jätkata?",
   "confirm.pause.description": "DNS jätkab tööd, kuid filtreerimine lülitatakse välja: kvoorumikontroll ja GeoIP ei rakendu, domeenid lahendatakse otse baaslahendaja kaudu. Teie enda luba-/blokeerimisloendid jätkavad tööd. Jätkamine — samast menüükirjest või rakenduse taaskäivitamisega. Kas jätkata?",
   "confirm.quit.title": "Välju",
-  "confirm.quit.description": "Rakendus peatub täielikult: DNS-i filtreerimine, taustajärelevalve ja see ikoon. DNS jääb filtreerimata, kuni käivitate rakenduse uuesti Start-menüüst. Kas jätkata?",
+  "confirm.quit.description": "Rakendus peatub täielikult: DNS-i filtreerimine, taustajärelevalve ja see ikoon. Kuni käivitate rakenduse uuesti Start-menüüst, lülitub automaatrežiimis turvalise DNS-iga brauser vaikselt süsteemi DNS-ile (saidid avanevad, kuid filtreerimata) ning selle rakenduse aadressile rangelt seadistatud brauser lõpetab saitide avamise. Kas jätkata?",
   "onboarding.title": "Tere tulemast",
   "onboarding.description": "Enne kui brauser hakkab DNS-i filtreerima, on jäänud kaks sammu:\n\n1. Paigaldage kohalik sertifikaat — ilma selleta ei usalda brauser seadete lehte.\n2. Suunake brauseri seaded kohalikule filtrile — juhiste leht avaneb kohe pärast 1. sammu.\n\nKas paigaldada sertifikaat kohe?",
   "certOutcome.installed": "sertifikaat installitud",

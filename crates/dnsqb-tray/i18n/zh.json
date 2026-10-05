@@ -18,7 +18,7 @@
   "confirm.removeAll.description": "dns-quorum-filter 的本地数据将被完全移除：受信任证书、TLS 密钥、日志/缓存加密密钥，以及保存在 Windows 凭据管理器中的 MaxMind 凭据，还有整个应用数据文件夹（日志、缓存、设置）。应用将关闭，并打开 Windows 设置——请在那里点击 dns-quorum-filter 的“卸载”。是否继续？",
   "confirm.pause.description": "DNS 将继续工作，但过滤将被关闭：法定人数检查和 GeoIP 将不再生效，域名将直接通过基线解析器解析。您自己的允许/阻止列表仍将继续生效。恢复——通过同一菜单项或重启应用即可。是否继续？",
   "confirm.quit.title": "退出",
-  "confirm.quit.description": "应用将完全停止：DNS 过滤、后台监督以及此图标。在您从「开始」菜单再次启动应用之前，DNS 将处于未过滤状态。是否继续？",
+  "confirm.quit.description": "应用将完全停止：DNS 过滤、后台监督以及此图标。在您从「开始」菜单再次启动应用之前，安全 DNS 设为自动模式的浏览器会悄悄改用系统 DNS（网站可以打开，但不经过滤），而严格设为本应用地址的浏览器将无法打开网站。是否继续？",
   "onboarding.title": "欢迎",
   "onboarding.description": "距离浏览器开始过滤 DNS 还差两步：\n\n1. 安装本地证书——没有它，浏览器不会信任设置页面。\n2. 将浏览器的设置指向本地过滤器——说明页面会在第 1 步之后立即打开。\n\n现在安装证书吗？",
   "certOutcome.installed": "证书已安装",
