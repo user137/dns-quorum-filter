@@ -1613,19 +1613,6 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   пише жодного рядка в `tray.log`, тоді як відновлення пише `filtering resumed by the user` і невдалий
   запис `stop.flag` пише `warn`. Діагностична асиметрія: з логу не видно, коли й ким фільтрацію
   вимкнено. Помічено ще в смоуку v0.7.0 #11, не заводилось; підтверджено на 0.8.0. Низька тяжкість.
-- [ ] T-256 — **Заведено 2026-10-04, QA-прохід (рядок `A-admin-cache-config-apply-SB2`).** Поля
-  `[cache]` не мають верхньої межі, і значення біля `u64::MAX` панікують на гарячому шляху.
-  Відтворено одноразовим in-process тестом (не закомічено): `CacheConfig::from_secs`
-  (`cache.rs:170`, той самий шлях для `[cache]` у `config.rs` і `CacheConfigUpdate::into_config`,
-  `admin.rs:1036`) приймає `u64::MAX`; `CacheEntry::new` (`cache.rs:84`, `Instant::now() + ttl`)
-  панікує «overflow when adding duration to instant» при `block_verdict_ttl_secs = u64::MAX`;
-  `CacheExpiry::expire_after_create` (`cache.rs:303`, `value.ttl + self.stale_grace`) панікує
-  «overflow when adding durations» при `stale_grace_secs = u64::MAX` і будь-якому ttl > 0 — тобто
-  на кожній вставці в кеш. Поріг — лише біля `u64::MAX` (`u64::MAX/2` с через moka проходить).
-  Паніка — у задачі з'єднання (release без `panic = "abort"`), процес живий, `in_flight`
-  зменшує RAII `InFlightGuard` (`dispatch.rs:578`). Три Б: software safety (необмежений ввід із
-  `/admin/*` і файлу), user safety (кожен DoH-запит рве з'єднання → браузер у режимі automatic
-  secure DNS може тихо піти повз фільтр). Наживо не ганялось, щоб не класти сервіс користувача.
 - [ ] T-255 — **Заведено 2026-10-04, QA-прохід (рядок `A-admin-install-cert-HP`).** Після
   встановлення сертифіката через `POST /admin/install-cert` (кнопка hero `/admin/ui`, T-188) іконка
   трею лишається червоною ~3.5 хв: спостережено на 0.8.0 — `cert-status` `TRUSTED` і hero
@@ -1761,7 +1748,7 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
 ## Батч QA-FIX — виправлення за QA-проходом 0.8.0 (план і міркування — `review/QA-FIX-PLAN.md`)
 
 - [x] Хвиля 0 — аудит ін'єкцій у полях API (T-270, запит користувача 2026-10-04; + ARCH-15 обсяг, ARCH-16 `SECURITY.md`) — виконано 2026-10-04, T-270/T-271/T-272 у `TASKS-DONE.md`
-- [ ] Хвиля 1 — межі `[cache]` (T-256; після 13a)
+- [x] Хвиля 1 — межі `[cache]` (T-256; після 13a) — виконано 2026-10-05, `TASKS-DONE.md`
 - [ ] Хвиля 2 — апгрейд MSIX і шлях встановлення (T-244; крок 0 — підтвердити причину; + ARCH-07, ARCH-13 необов'язково)
 - [x] Хвиля 3 — hero при мертвих фільтрах + стан автозапуску + вік останнього запиту (T-254, T-243; рішення 2026-10-04; + ARCH-04) — виконано 2026-10-05, `TASKS-DONE.md`
 - [ ] Хвиля 4 — стійкість CLI (T-246 п. 2, 4)

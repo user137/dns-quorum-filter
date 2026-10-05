@@ -7747,3 +7747,28 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   (для `DISABLED_BY_POLICY` — без посилання). «Запустіть один раз» — README (крок 3) і текст чернетки
   релізу (`release.yml`). `ImmediateRegistration` — лише для Store (T-239). Наживо на `/admin/ui` не
   перевірено — чекає артефакту; питання «чи запускали застосунок до того ребуту» лишається відкритим.
+- [x] T-256 — **Заведено 2026-10-04, QA-прохід (рядок `A-admin-cache-config-apply-SB2`).** Поля
+  `[cache]` не мають верхньої межі, і значення біля `u64::MAX` панікують на гарячому шляху.
+  Відтворено одноразовим in-process тестом (не закомічено): `CacheConfig::from_secs`
+  (`cache.rs:170`, той самий шлях для `[cache]` у `config.rs` і `CacheConfigUpdate::into_config`,
+  `admin.rs:1036`) приймає `u64::MAX`; `CacheEntry::new` (`cache.rs:84`, `Instant::now() + ttl`)
+  панікує «overflow when adding duration to instant» при `block_verdict_ttl_secs = u64::MAX`;
+  `CacheExpiry::expire_after_create` (`cache.rs:303`, `value.ttl + self.stale_grace`) панікує
+  «overflow when adding durations» при `stale_grace_secs = u64::MAX` і будь-якому ttl > 0 — тобто
+  на кожній вставці в кеш. Поріг — лише біля `u64::MAX` (`u64::MAX/2` с через moka проходить).
+  Паніка — у задачі з'єднання (release без `panic = "abort"`), процес живий, `in_flight`
+  зменшує RAII `InFlightGuard` (`dispatch.rs:578`). Три Б: software safety (необмежений ввід із
+  `/admin/*` і файлу), user safety (кожен DoH-запит рве з'єднання → браузер у режимі automatic
+  secure DNS може тихо піти повз фільтр). Наживо не ганялось, щоб не класти сервіс користувача.
+  **Виконано 2026-10-05 (хвиля 1, коміт `dea16ef`, plan + advisor):** стелі в `CacheConfig::from_secs`
+  (TTL-поля ≤ 604 800 — RFC 8767 §4 для `clamp_*`, вибір проєкту для решти; `max_capacity` ≤
+  1 000 000), `CacheConfigError::ValueTooLarge` / `ConfigError::CacheValueTooLarge` (ключ і стеля, без
+  значення; `ConfigInvalid` у 13b). Другий рубіж: `CacheEntry::new` (стеля TTL + `checked_add`),
+  `expire_after_create` (насичення + стеля), відновлення `cache.enc` через `CacheEntry::new`. Тести
+  першими: `i64::MAX` для кожного Unsigned-поля TOML-таблиці (червоний на `clamp_max_secs`; решта полів
+  уже відхиляли), пари стеля/стеля+1 через TOML і маршрут (400 не змінює живий конфіг і файл), величезні
+  ttl/grace через справжній `moka` (написано разом із фіксом; червоний — «overflow when adding duration
+  to instant» — підтверджено тимчасовим відкатом фіксу). Інших `Instant + Duration` від значень
+  `[cache]` у крейті немає (`should_serve_stale` — чистий bool). Re-test на артефакті: `A-admin-cache-config-apply-SB2`,
+  `H-cfg-cache.*-SB`; картка кешу на 400 показує лише «HTTP 400» без назви поля (маршрут віддає голий
+  400 — UX-доробка в хвилі 8, не тут).
