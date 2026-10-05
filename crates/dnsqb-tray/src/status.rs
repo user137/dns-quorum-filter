@@ -866,6 +866,32 @@ mod tests {
         assert_eq!(compose_tooltip(status, true, "uk"), status.tooltip("uk"));
     }
 
+    // T-255: a cert change the service saw first (the `/admin/ui` install
+    // button, an outside `certutil`) re-polls the tray's own trust watch.
+    #[test]
+    fn service_cert_change_is_a_hero_transition_into_or_out_of_a_cert_state() {
+        use super::service_cert_changed;
+        use dnsqb_service::HeroStateView as H;
+
+        assert!(service_cert_changed(Some(H::CertNotTrusted), H::Protected));
+        assert!(service_cert_changed(Some(H::Protected), H::CertNotTrusted));
+        assert!(service_cert_changed(
+            Some(H::CertUnknown),
+            H::FiltersDegraded
+        ));
+        assert!(service_cert_changed(
+            Some(H::CertNotTrusted),
+            H::CertUnknown
+        ));
+        // Not cert-related, unchanged, or no earlier reading: no re-poll.
+        assert!(!service_cert_changed(Some(H::Offline), H::Protected));
+        assert!(!service_cert_changed(
+            Some(H::CertNotTrusted),
+            H::CertNotTrusted
+        ));
+        assert!(!service_cert_changed(None, H::CertNotTrusted));
+    }
+
     // ARCH-19 b: the event loop is woken only when what it shows changes.
     #[test]
     fn publish_reports_only_a_real_change() {
@@ -972,11 +998,27 @@ fn publish(current: &RwLock<TrayStatus>, status: TrayStatus) -> bool {
     changed
 }
 
+/// T-255: whether the service's `hero_state` moved into or out of a cert
+/// state since the previous answer — the service learns of a cert change
+/// first (`POST /admin/install-cert` pokes its cache at once), while the
+/// tray's own trust watch may be sleeping up to 300 s. Only a re-poll
+/// trigger: the tray's status ranking stays its own (see
+/// `HeroStateView`'s authority note), and `None` (no earlier answer) never
+/// fires — the trust watch makes its own first check at startup.
+fn service_cert_changed(
+    previous: Option<dnsqb_service::HeroStateView>,
+    current: dnsqb_service::HeroStateView,
+) -> bool {
+    use dnsqb_service::HeroStateView as H;
+    let is_cert = |h| matches!(h, H::CertNotTrusted | H::CertUnknown);
+    previous.is_some_and(|p| p != current && (is_cert(p) || is_cert(current)))
+}
+
 /// Spawns the background polling thread and returns a handle to read its
 /// latest result. `app_data_dir`/`port` are resolved once by the caller
 /// (`main.rs`, at startup) — this never re-resolves either.
 #[must_use]
-pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
+pub fn spawn(app_data_dir: PathBuf, port: u16, trust: TrustState) -> StatusHandle {
     let current = Arc::new(RwLock::new(TrayStatus::Unreachable));
     let handle = StatusHandle {
         current: Arc::clone(&current),
@@ -1003,6 +1045,7 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
             // any other build failure — both retried on the next tick
             // rather than cached as permanent.
             let mut client: Option<AdminClient> = None;
+            let mut last_hero = None;
             loop {
                 // T-185 (Батч 3.12) / T-193: filtering paused from the tray
                 // menu. `stop.flag`'s presence is the whole signal and outranks
@@ -1033,6 +1076,10 @@ pub fn spawn(app_data_dir: PathBuf, port: u16) -> StatusHandle {
                 }
                 let status = if let Some(c) = &client {
                     if let Ok(response) = c.status().await {
+                        if service_cert_changed(last_hero, response.hero_state) {
+                            trust.request_recheck();
+                        }
+                        last_hero = Some(response.hero_state);
                         TrayStatus::from_response(&response)
                     } else {
                         // Advisor-caught: a request failure is NOT always

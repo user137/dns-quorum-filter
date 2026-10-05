@@ -307,8 +307,8 @@ fn main() {
     let event_loop: EventLoop<()> = EventLoop::new();
     let menu_events = install_event_handlers(&event_loop);
 
-    let status_handle = status::spawn(app_data.clone(), port);
     let trust = status::spawn_trust_watch(app_data.join("cert.pem"));
+    let status_handle = status::spawn(app_data.clone(), port, trust.clone());
 
     let (tray_icon, icons, menu_items) = build_tray_icon(&app_data, locale);
     let mut last_recovery = (false, false);

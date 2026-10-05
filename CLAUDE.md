@@ -194,8 +194,8 @@ states as a `status::cert_warning` tooltip suffix (`compose_tooltip`), not a red
 (`status::spawn_trust_watch` — `certutil` is blocking, off the 2s poll loop; the displayed flag
 seeds `true` so "unknown" ≠ "untrusted", but the poll *cadence* (`next_delay`) keys on a
 **confirmed `Ok(true)`** — an `Err` first poll before `cert.pem` exists takes the 2→5→15→60→300s
-back-off ladder, not the 300s slow branch, or a fresh install shows green for 5 min; cert menu
-items call `request_recheck()`). `refresh_tray` commits `last_colour` only on `set_icon` success.
+back-off ladder, not the 300s slow branch, or a fresh install shows green for 5 min; `request_recheck()`
+triggers: SERVICES.md). `refresh_tray` commits `last_colour` only on `set_icon` success.
 
 **First-run onboarding:** `onboarding` module — pure `should_offer_onboarding(cert_confirmed,
 cert_trusted, seen)` (fires only on a **confirmed** untrusted reading — `TrustState.is_confirmed()`,
