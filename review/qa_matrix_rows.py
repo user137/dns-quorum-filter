@@ -270,10 +270,24 @@ get_route("admin-log", "/admin/log", "curl `?limit=5`, `?decision=BLOCKED`, `?do
           ["parse_log_query_clamps_a_limit_above_the_hard_cap", "parse_log_query_ignores_an_unrecognized_key"])
 post_route("admin-log-clear", "/admin/log/clear", "POST `{}`", "200, `/admin/log` порожній",
            ["serve_admin_log_clear_actually_empties_the_log"], "повтор на порожньому", "200")
-post_route("admin-uninstall-local-state", "/admin/uninstall-local-state",
-           "ДЕСТРУКТИВНО (правило 5), лише в кінці G: через кнопку danger-zone",
-           "200 з 5 полями `ArtifactOutcomeView`; cert зник із `CurrentUser\\Root`, секрети з Credential Manager",
-           [], "повтор після успіху", "200, усі `NOT_PRESENT`", [], who="USER")
+post_route("admin-request-remove-all", "/admin/request-remove-all",
+           "ДЕСТРУКТИВНО (правило 5): кнопка danger-zone при живому треї; у діалозі трею -- «Ні»",
+           "200 `REQUESTED`, свіжий `remove-all.flag`, трей показує своє підтвердження поверх браузера",
+           ["request_remove_all_with_a_live_tray_writes_a_fresh_flag"],
+           "без трею (після «Сховати іконку»); без app-data; запис прапорця падає",
+           "200 `TRAY_NOT_RUNNING` без прапорця; без app-data -- помилка; збій запису видимий",
+           ["request_remove_all_rejects_non_post_methods", "request_remove_all_without_a_tray_writes_nothing",
+            "request_remove_all_without_an_app_data_dir_is_unavailable",
+            "request_remove_all_surfaces_a_failed_flag_write"], who="PART")
+get_route("admin-events", "/admin/events",
+          "`curl -N` з пінованим cert; змінити налаштування в іншій вкладці; почекати 10 с",
+          "SSE: перший кадр `status`, кадр на змінену тему, `ping` кожні 10 с; потік закривається на /admin/shutdown",
+          ["a_stream_starts_with_status_then_pushes_a_changed_topic",
+           "an_unchanged_status_is_not_resent_and_an_idle_stream_pings", "shutdown_ends_an_open_stream"],
+          "5 одночасних потоків", "п'ятий -> 503; закритий потік звільняє слот",
+          ["the_fifth_stream_is_refused_and_a_closed_one_frees_its_slot"],
+          "POST, відхилений з 400, при відкритому потоці", "потік нічого не надсилає",
+          ["a_rejected_write_pushes_nothing"])
 get_route("admin-cert-status", "/admin/cert-status", "curl", "200 `{trusted:TRUSTED}`, без запуску certutil",
           ["serve_admin_cert_status_reads_the_cached_trust_state"], "`Origin` чужого сайту", "200 без CORS",
           ["serve_admin_cert_status_rejects_non_get_methods"])
@@ -284,7 +298,8 @@ post_route("admin-install-cert", "/admin/install-cert",
            ["serve_admin_install_cert_rejects_non_post_methods"], who="USER")
 for slug, path, test in (("admin-ui", "/admin/ui", "serve_html_returns_ok_with_a_strict_csp_header"),
                          ("admin-ui-js", "/admin/ui/main.js", "serve_js_has_no_csp_header_but_still_has_nosniff"),
-                         ("admin-ui-css", "/admin/ui/style.css", "serve_css_rejects_non_get")):
+                         ("admin-ui-css", "/admin/ui/style.css", "serve_css_rejects_non_get"),
+                         ("admin-ui-favicon", "/admin/ui/favicon.png", "serve_favicon_is_a_png_and_the_page_links_it")):
     get_route(slug, path, "curl -I + тіло", "200, правильний `Content-Type`, `nosniff`; для HTML -- строгий CSP без `unsafe-inline`",
               [test], "`/admin/ui/` (слеш), `/admin/ui/../admin/status`, `/ADMIN/UI`", "404 (точний збіг рядка)",
               ["serve_returns_404_for_every_path_outside_the_documented_allowlist"])
@@ -368,6 +383,12 @@ ui("hero", "#protection-hero (8 HeroStateView + SERVICE_UNREACHABLE)", "HP",
 ui("hero", "#protection-hero кнопка встановлення cert", "EP",
    "у CERT_NOT_TRUSTED натиснути дію hero", "POST /admin/install-cert, hero оновлюється без гонитви "
    "(смоук v0.5.0 2b: перший кадр після onboarding показував «не встановлено»)", [], "USER")
+ui("hero-last-query", "#hero-last-query", "HP", "спостерегти сегмент hero «останній запит: N хв тому» 2+ хв",
+   "відносний вік, оновлюється без перезавантаження (ARCH-04); без запитів -- сегмента немає",
+   ["smoke.js:renderLastQuery", "last_query_unix_ms_is_the_newest_entry_time"], "PART")
+ui("startup-task", "#startup-task-row", "HP", "спостерегти рядок автозапуску; вимкнути автозапуск у Параметрах Windows",
+   "стан MSIX StartupTask (T-243): увімкнено / вимкнено користувачем / політикою",
+   ["smoke.js:renderStartupTask", "startup_task_view_wire_strings"], "PART")
 ui("rating-badge", "#rating-filter-badge", "HP", "увімкнути бульбашку з `ua`", "бейдж з'являється на 2s-poll, зникає при вимкненні",
    ["main_js_renders_the_rating_filter_badge_from_the_status_poll"])
 ui("filter-controls", "#filter-controls-body (master + 3 категорії)", "HP",
@@ -378,8 +399,9 @@ ui("filter-controls", "#filter-controls-body", "MF", "подвійний шви�
    "фінальний стан = останній клік, без розсинхрону з сервером", [])
 ui("filter-controls", "#filter-controls-body", "EP", "сервіс зупинено -> клік", "видима помилка, toggle повертається", [])
 ui("browser-setup", "#browser-setup-body, #doh-url, #doh-url-copy, #browser-setup-toggle, #browser-setup-steps, "
-   "#browser-steps-chromium, #chromium-settings-url, #chromium-settings-copy, #browser-steps-firefox, "
-   "#firefox-settings-url, #firefox-settings-copy, #browser-steps-other, #browser-setup-result", "HP",
+   "#browser-detected, " + ", ".join(f"#browser-steps-{b}, #settings-url-{b}, #settings-copy-{b}"
+                                     for b in ("chrome", "edge", "brave", "opera", "vivaldi", "firefox"))
+   + ", #browser-steps-other, #browser-verify-chromium, #browser-verify-firefox, #browser-setup-result", "HP",
    "розгорнути, кожна кнопка копіювання -> буфер; Chrome і Firefox (UA)", "правильний блок кроків, DoH URL з реальним портом",
    ["browser_setup_card_has_a_static_step_block_per_browser",
     "browser_setup_card_carries_the_doh_url_field_and_the_verification_pointer"])
@@ -482,6 +504,15 @@ tray("PAUSE_RESUME_ID", "Призупинити фільтрацію", "SB", "в
      "смоук v0.7.0 #11: вдала пауза не лишає INFO-рядка (асиметрія з resume) -- перевірити, завести, якщо досі так", [], "AUTO")
 tray("RESTORE_SUPERVISION_ID", "Відновити нагляд", "HP", "вбити watcher за PID -> пункт",
      "новий watcher з новим PID", ["live_matching_sibling_is_already_running", "stale_or_recycled_pid_file_means_spawn"])
+tray("RETRY_SERVICE_ID", "Спробувати ще раз", "HP", "з GAVE_UP (служба не стартувала) -> пункт",
+     "`retry.flag`, watcher скидає бюджет і запускає службу; пункт видно лише коли служба лежить",
+     ["menu_action_for_maps_each_built_menu_id_to_its_action",
+      "recovery_actions_offer_retry_when_down_and_reset_only_for_a_bad_config"])
+tray("RESET_CONFIG_ID", "Скинути налаштування", "HP",
+     "лише на копії: старт з битим `resolver_config.toml` (ConfigInvalid) -> пункт -> «Так»",
+     "конфіг відсунуто `.orphaned-*`, служба стартує з типовим; пункт видно лише для поганого конфігу",
+     ["menu_action_for_maps_each_built_menu_id_to_its_action",
+      "recovery_actions_offer_retry_when_down_and_reset_only_for_a_bad_config"])
 tray("CLOSE_ID", "Сховати іконку", "HP", TRAY_RECIPE, "трей вийшов, сервіс і watcher живі; повернути -- плитка")
 tray("QUIT_APP_ID", "Вийти з DNS Quorum Filter", "HP", "«Так» -- руками, перед G-деінсталяцією",
      "`stop.flag`+`quit.flag`, watcher зупиняє сервіс і виходить, 0 процесів", [], "USER")
@@ -801,7 +832,7 @@ for _s in ("Healthy", "ChannelDegraded", "SuspectDead", "VerifyingPid", "Restart
     if _s != "Healthy":
         _na.update(MF=_F_MF, EP=_F_EP)
     NA[f"F-state-{_s}"] = _na
-NA["F-start-flags"] = {"SB": _F_SB, "EP": _F_EP}
+NA["F-start-flags"] = {"SB": _F_SB, "MF": _F_MF, "EP": _F_EP}
 NA["F-launcher-order"] = {"EP": _F_EP}
 NA["D-browser-nudge"] = {
     "SB": "N/A -- нудж не є індикатором стану (шаблон D про колір); false-safe -- рядки D-icon-*",
@@ -946,7 +977,6 @@ EXTRA_COV.update({
     "F-state-Healthy-MF": ["a_corrupt_file_is_invalid_data", "all_channels_signalling_stays_healthy_and_writes_every_tick",
                            "one_silent_channel_degrades_but_never_restarts"],
     "F-launcher-order-MF": ["pid_file_errors_are_returned_not_panicked", "pid_check_that_did_not_run_means_spawn"],
-    "F-start-flags-MF": ["clearing_an_absent_flag_is_not_an_error"],
     "F-state-Healthy-EP": ["write_errors_and_leaves_no_temp_file"],
     "H-file-cert-pem": ["cert_origin_is_replaced_when_files_existed_but_load_failed",
                         "server_config_rejects_a_mismatched_cert_and_key_pair",
