@@ -3241,3 +3241,19 @@ mod dto_versioning_tests {
         assert!(parsed.master_switch_targets.is_empty());
     }
 }
+
+// T-274 tripwire: the system-store fallback is not reproducible in CI (that
+// needs a cert in the user Root store), so this guards the one call that
+// brought it back.
+#[cfg(test)]
+mod pin_tripwire {
+    #[test]
+    fn admin_client_never_adds_a_root_on_top_of_the_system_store() {
+        let source = include_str!("admin.rs");
+        let needle = [".add_root", "_certificate("].concat();
+        assert!(
+            !source.contains(&needle),
+            "AdminClient must pin with tls_certs_only (T-274)"
+        );
+    }
+}

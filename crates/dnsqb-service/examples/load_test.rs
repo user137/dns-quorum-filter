@@ -388,7 +388,7 @@ fn write_overrides_blocklist(
 
 fn build_pinned_client_builder(cert_pem: &[u8]) -> Result<reqwest::ClientBuilder, Box<dyn Error>> {
     let cert = Certificate::from_pem(cert_pem)?;
-    Ok(reqwest::Client::builder().add_root_certificate(cert))
+    Ok(reqwest::Client::builder().tls_certs_only([cert]))
 }
 
 async fn reset_service(cert_pem: &[u8], admin_base: &str) -> Result<(), Box<dyn Error>> {

@@ -312,9 +312,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // precondition used the default app-data dir, not a scratch `LOCALAPPDATA`.
     let cert_pem = std::fs::read(app_data_dir()?.join("cert.pem"))?;
     let cert = reqwest::Certificate::from_pem(&cert_pem)?;
-    let local_client = reqwest::Client::builder()
-        .add_root_certificate(cert)
-        .build()?;
+    let local_client = reqwest::Client::builder().tls_certs_only([cert]).build()?;
     let local_base = format!("https://127.0.0.1:{port}/dns-query");
     let mut cache_miss = Vec::new();
     let mut cache_hit = Vec::new();

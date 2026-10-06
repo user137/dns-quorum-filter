@@ -360,13 +360,24 @@ async fn a_client_pinned_to_another_cert_is_refused() {
     );
 }
 
-// T-274 — live, not CI: the installed service's cert sits in
-// `CurrentUser\Root` (T-49). A client pinned to a fresh, unrelated cert must
-// still refuse it — before the fix the platform verifier accepted any
-// system-trusted `127.0.0.1` cert. Needs the installed service on 8443.
+// T-274 — live, not CI: the installed service's cert sits in the user Root
+// store (T-49). One test, two halves, so "service down" can never pass as
+// "pin works": the real pin (`DNSQB_LIVE_APP_DATA` = the installed app-data
+// dir) must reach 8443 first; then a client pinned to a fresh, unrelated cert
+// must be refused - before the fix the platform verifier accepted it.
 #[tokio::test]
-#[ignore = "live: needs the installed dnsqb-service on 127.0.0.1:8443 with its cert in the user Root store"]
-async fn live_a_foreign_pinned_client_refuses_the_system_trusted_installed_service() {
+#[ignore = "live: set DNSQB_LIVE_APP_DATA to the installed service's app-data dir"]
+async fn live_only_the_installed_cert_reaches_the_installed_service() {
+    let Some(app_data) = std::env::var_os("DNSQB_LIVE_APP_DATA") else {
+        panic!("DNSQB_LIVE_APP_DATA must name the installed service's app-data dir");
+    };
+    let real = match AdminClient::new(Path::new(&app_data), 8443) {
+        Ok(client) => client,
+        Err(err) => panic!("AdminClient::new against the installed cert.pem: {err}"),
+    };
+    if let Err(err) = real.status().await {
+        panic!("the installed service must be up and reachable with its own pin: {err:?}");
+    }
     let foreign = foreign_cert_dir();
     let client = match AdminClient::new(foreign.path(), 8443) {
         Ok(client) => client,
@@ -378,23 +389,4 @@ async fn live_a_foreign_pinned_client_refuses_the_system_trusted_installed_servi
         "the pin must not fall back to the system store, got {:?}",
         result.map(|status| status.port)
     );
-}
-
-// T-274's other half, live: the real pin still works — a client pinned to the
-// installed service's own `cert.pem` (its app-data dir in
-// `DNSQB_LIVE_APP_DATA`) reaches it. `tls_certs_only` swaps the verifier to
-// webpki with this one root; a cA=FALSE self-signed leaf must still validate.
-#[tokio::test]
-#[ignore = "live: set DNSQB_LIVE_APP_DATA to the installed service's app-data dir"]
-async fn live_a_client_pinned_to_the_installed_cert_reaches_it() {
-    let Some(app_data) = std::env::var_os("DNSQB_LIVE_APP_DATA") else {
-        panic!("DNSQB_LIVE_APP_DATA must name the installed service's app-data dir");
-    };
-    let client = match AdminClient::new(Path::new(&app_data), 8443) {
-        Ok(client) => client,
-        Err(err) => panic!("AdminClient::new against the installed cert.pem: {err}"),
-    };
-    if let Err(err) = client.status().await {
-        panic!("a client pinned to the installed cert must reach it: {err:?}");
-    }
 }
