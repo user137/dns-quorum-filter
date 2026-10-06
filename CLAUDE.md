@@ -233,8 +233,8 @@ launcher** — `ensure_sibling_running(Tray)` **first** (icon in ~0.2 s), then
 `ensure_sibling_running(Service)`, once each; a second watcher instance (re-clicked tile) hits
 `AlreadyRunning` → `ensure_sibling_running(Tray)` + `exit(0)` ("click the tile again = show the
 icon"), clearing only `quit.flag` — plus `retry.flag` from a fresh `GAVE_UP` (T-266). Then the `watcher→service` loop (5s tick: IPC ping/pong channel
-1, `service.hb`/`watcher.hb` channel 2, `GET /health` via `AdminClient` channel 3 — `cert.pem` is
-*added* to the OS roots, not exclusive (T-274);
+1, `service.hb`/`watcher.hb` channel 2, `GET /health` via `AdminClient` channel 3 — pinned to `cert.pem` only
+(`tls_certs_only`, T-274);
 `LoopDriver` 2-of-3 vote; `spawn_sibling(Service)` on a confirmed-dead service; **sole writer** of
 `watchdog-state.json`, rewritten every tick for `mtime` freshness). The loop checks `quit.flag`
 (→ stop service, `exit(0)`). **A pause keeps the service up** (it reads `stop.flag` itself via

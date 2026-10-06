@@ -10,7 +10,8 @@
 //!
 //! `AdminClient` pins TLS trust to the exact self-signed leaf `cert.rs`
 //! persists to `cert.pem` (T-48/T-50) via `reqwest::Certificate::from_pem` +
-//! `.add_root_certificate()` — confirmed empirically (a throwaway scratch
+//! `.tls_certs_only()` (T-274 — the only trusted root; the OS store is not
+//! consulted) — confirmed empirically (a throwaway scratch
 //! probe, not assumed) that this validates against a cert built with
 //! `IsCa::ExplicitNoCa`: a length-1 chain where the leaf is its own issuer
 //! still passes rustls/webpki's path building, despite `cA=FALSE`. Real TLS
@@ -1770,8 +1771,12 @@ impl AdminClient {
             fs::read(app_data_dir.join("cert.pem")).map_err(AdminClientError::CertRead)?;
         let cert =
             reqwest::Certificate::from_pem(&cert_pem).map_err(AdminClientError::ClientBuild)?;
+        // `tls_certs_only`, not `add_root_certificate`: the latter keeps the
+        // OS store trusted too (reqwest 0.13's platform verifier with extra
+        // roots), so any `127.0.0.1` cert in `CurrentUser\Root` passed the pin
+        // (T-274).
         let client = reqwest::Client::builder()
-            .add_root_certificate(cert)
+            .tls_certs_only([cert])
             .build()
             .map_err(AdminClientError::ClientBuild)?;
         Ok(Self {

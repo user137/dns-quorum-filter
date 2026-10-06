@@ -325,3 +325,76 @@ async fn a_non_2xx_response_maps_to_request_error() {
         "expected Request, got {err:?}"
     );
 }
+
+/// A fresh `cert.pem` that no server presents — the "someone else's cert"
+/// side of the pin tests.
+fn foreign_cert_dir() -> tempfile::TempDir {
+    let dir = match tempfile::tempdir() {
+        Ok(dir) => dir,
+        Err(err) => panic!("temp dir: {err}"),
+    };
+    let certified_key = match generate_self_signed_cert() {
+        Ok(certified_key) => certified_key,
+        Err(err) => panic!("cert generation: {err}"),
+    };
+    if let Err(err) = std::fs::write(dir.path().join("cert.pem"), certified_key.cert.pem()) {
+        panic!("write cert.pem: {err}");
+    }
+    dir
+}
+
+// T-274 — Security & Boundary: the pin is to *this* `cert.pem`; a server
+// presenting a different self-signed `127.0.0.1` leaf is refused.
+#[tokio::test]
+async fn a_client_pinned_to_another_cert_is_refused() {
+    let server = spawn_test_server();
+    let foreign = foreign_cert_dir();
+    let client = match AdminClient::new(foreign.path(), server.port) {
+        Ok(client) => client,
+        Err(err) => panic!("AdminClient::new with a valid foreign cert must build: {err}"),
+    };
+    let result = client.status().await;
+    assert!(
+        matches!(result, Err(AdminClientError::Request(_))),
+        "a foreign-pinned client must not complete the handshake, got {result:?}"
+    );
+}
+
+// T-274 — live, not CI: the installed service's cert sits in
+// `CurrentUser\Root` (T-49). A client pinned to a fresh, unrelated cert must
+// still refuse it — before the fix the platform verifier accepted any
+// system-trusted `127.0.0.1` cert. Needs the installed service on 8443.
+#[tokio::test]
+#[ignore = "live: needs the installed dnsqb-service on 127.0.0.1:8443 with its cert in the user Root store"]
+async fn live_a_foreign_pinned_client_refuses_the_system_trusted_installed_service() {
+    let foreign = foreign_cert_dir();
+    let client = match AdminClient::new(foreign.path(), 8443) {
+        Ok(client) => client,
+        Err(err) => panic!("AdminClient::new with a valid foreign cert must build: {err}"),
+    };
+    let result = client.status().await;
+    assert!(
+        matches!(result, Err(AdminClientError::Request(_))),
+        "the pin must not fall back to the system store, got {:?}",
+        result.map(|status| status.port)
+    );
+}
+
+// T-274's other half, live: the real pin still works — a client pinned to the
+// installed service's own `cert.pem` (its app-data dir in
+// `DNSQB_LIVE_APP_DATA`) reaches it. `tls_certs_only` swaps the verifier to
+// webpki with this one root; a cA=FALSE self-signed leaf must still validate.
+#[tokio::test]
+#[ignore = "live: set DNSQB_LIVE_APP_DATA to the installed service's app-data dir"]
+async fn live_a_client_pinned_to_the_installed_cert_reaches_it() {
+    let Some(app_data) = std::env::var_os("DNSQB_LIVE_APP_DATA") else {
+        panic!("DNSQB_LIVE_APP_DATA must name the installed service's app-data dir");
+    };
+    let client = match AdminClient::new(Path::new(&app_data), 8443) {
+        Ok(client) => client,
+        Err(err) => panic!("AdminClient::new against the installed cert.pem: {err}"),
+    };
+    if let Err(err) = client.status().await {
+        panic!("a client pinned to the installed cert must reach it: {err:?}");
+    }
+}

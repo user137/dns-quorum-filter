@@ -1683,7 +1683,7 @@ registry-запис: ціль — `dnsqb-watcher.exe` (той самий вхі�
     із самопідписаним листовим сертифікатом (§2, `cert.rs`). `dnsqb-watcher` опитує його **тим
     самим шляхом довіри, що `dnsqb-tray`** — через `admin::AdminClient::new(app_data_dir,
     port)`, який читає `cert.pem` з app-data теки й робить `reqwest::Certificate::from_pem` +
-    `.add_root_certificate` (T-48/T-52). **Ніколи `danger_accept_invalid_certs`.** Через T-69
+    `.tls_certs_only` (T-48/T-52; єдиний корінь довіри, системне сховище не враховується — T-274). **Ніколи `danger_accept_invalid_certs`.** Через T-69
     (ротація сертифіката) канал 3 **не пінить trust anchor на весь час життя процесу**: клієнт
     каналу 3 перебудовується з `cert.pem` на кожному циклі (пере)конекту / після виявленого
     рестарту сервісу, а не один раз на старті. (Пере-використання `AdminClient` — ще один
