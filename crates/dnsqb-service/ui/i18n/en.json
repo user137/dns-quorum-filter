@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Store on disk",
   "log.retention.eraseQuestion": "The log history is stored on disk. Erase it from disk, or keep storing the last 24 hours there?",
   "log.retention.eraseLeftoverQuestion": "Erase the stored log history from disk? This cannot be undone.",
+  "log.retention.shrinkQuestion": "A shorter window deletes the older log history from disk right away. This cannot be undone.",
+  "log.retention.shrinkButton": "Shorten and delete",
   "log.retention.keepButton": "Keep on disk",
   "log.retention.eraseButton": "Erase from disk",
   "providers.heading": "Providers",

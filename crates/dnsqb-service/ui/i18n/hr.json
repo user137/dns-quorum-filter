@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Spremaj na disk",
   "log.retention.eraseQuestion": "Povijest zapisnika spremljena je na disku. Izbrisati je s diska ili i dalje ondje čuvati posljednja 24 sata?",
   "log.retention.eraseLeftoverQuestion": "Izbrisati spremljenu povijest zapisnika s diska? Ova se radnja ne može poništiti.",
+  "log.retention.shrinkQuestion": "Kraće razdoblje odmah briše stariju povijest zapisnika s diska. Ova se radnja ne može poništiti.",
+  "log.retention.shrinkButton": "Skrati i izbriši",
   "log.retention.keepButton": "Zadrži na disku",
   "log.retention.eraseButton": "Izbriši s diska",
   "providers.heading": "Pružatelji usluga",

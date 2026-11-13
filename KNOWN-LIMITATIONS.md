@@ -61,7 +61,11 @@ TASKS-DONE.md, never here.
 - **Long query-log windows (T-291)** — the `/admin/ui` retention control and "Older" pager are
   covered by `smoke.js` and a scratch-instance route walk, **not yet clicked in a real browser**;
   resident memory at the 30-day cap (100 000 entries) is not measured yet (restore time is —
-  PERFORMANCE.md).
+  PERFORMANCE.md). A clock that starts days ahead (RTC/VM drift before NTP) makes the first flush
+  prune day files that are still inside the real window — permanent on disk, as the in-memory
+  age eviction already is in memory; no guard. `/admin/query-log-policy`, `/admin/log/clear` and
+  `/admin/reset` do their file I/O (and may wait out a running flush) inline on a tokio worker,
+  like the other synchronous `apply_*` routes.
 - **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-left-
   by-a-plain-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
   is persisted** — `Block` is dropped at snapshot (so `fail_closed` timeout-blocks never cross a

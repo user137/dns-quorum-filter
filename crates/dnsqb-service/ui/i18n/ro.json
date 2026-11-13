@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Stochează pe disc",
   "log.retention.eraseQuestion": "Istoricul jurnalului este stocat pe disc. Îl ștergeți de pe disc sau continuați să păstrați acolo ultimele 24 de ore?",
   "log.retention.eraseLeftoverQuestion": "Ștergeți de pe disc istoricul stocat al jurnalului? Acțiunea nu poate fi anulată.",
+  "log.retention.shrinkQuestion": "O perioadă mai scurtă șterge imediat de pe disc istoricul mai vechi al jurnalului. Acțiunea nu poate fi anulată.",
+  "log.retention.shrinkButton": "Scurtează și șterge",
   "log.retention.keepButton": "Păstrează pe disc",
   "log.retention.eraseButton": "Șterge de pe disc",
   "providers.heading": "Furnizori",

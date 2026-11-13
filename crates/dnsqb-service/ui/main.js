@@ -2909,7 +2909,10 @@ function renderLogRetention(status) {
     state.textContent = t("log.retention.memoryOnly");
   }
   logRetentionBox.appendChild(state);
-  if (policy.disk === "LEFTOVER") {
+  // At 24h with the disk on, the 24h radio is already checked, so this is
+  // the only way to stop storing (and erase) without a detour through 3d.
+  const stopAt24h = policy.persist && policy.retention === "24h";
+  if (policy.disk === "LEFTOVER" || stopAt24h) {
     const erase = document.createElement("button");
     erase.type = "button";
     erase.textContent = t("log.retention.eraseButton");
@@ -2936,10 +2939,14 @@ function chooseLogRetention(value) {
   }
   logRetentionError = null;
   const needsDisk = value !== "24h";
+  const shorter = LOG_RETENTIONS.indexOf(value) < LOG_RETENTIONS.indexOf(policy.retention);
   if (needsDisk && !policy.persist) {
     showLogRetentionPrompt("disk", value);
   } else if (!needsDisk && policy.persist) {
     showLogRetentionPrompt("erase", value);
+  } else if (shorter && policy.persist) {
+    // The next flush deletes the days past the new window from disk.
+    showLogRetentionPrompt("shrink", value);
   } else {
     applyLogPolicy(value, policy.persist);
   }
@@ -2950,13 +2957,13 @@ function showLogRetentionPrompt(kind, value) {
   logRetentionBox.textContent = "";
   const notice = document.createElement("div");
   notice.className = "notice warn";
-  notice.textContent = t(
-    kind === "disk"
-      ? "log.retention.confirmDisk"
-      : kind === "erase"
-        ? "log.retention.eraseQuestion"
-        : "log.retention.eraseLeftoverQuestion",
-  );
+  const question = {
+    disk: "log.retention.confirmDisk",
+    erase: "log.retention.eraseQuestion",
+    shrink: "log.retention.shrinkQuestion",
+    leftover: "log.retention.eraseLeftoverQuestion",
+  };
+  notice.textContent = t(question[kind]);
   logRetentionBox.appendChild(notice);
   const row = document.createElement("div");
   row.className = "rf-confirm-row";
@@ -2977,6 +2984,8 @@ function showLogRetentionPrompt(kind, value) {
   });
   if (kind === "disk") {
     button(t("log.retention.confirmDiskButton"), () => applyLogPolicy(value, true), true);
+  } else if (kind === "shrink") {
+    button(t("log.retention.shrinkButton"), () => applyLogPolicy(value, true), true);
   } else {
     if (kind === "erase") {
       button(t("log.retention.keepButton"), () => applyLogPolicy(value, true));

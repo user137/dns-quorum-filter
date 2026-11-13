@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "डिस्क पर संग्रहीत करें",
   "log.retention.eraseQuestion": "लॉग इतिहास डिस्क पर संग्रहीत है। इसे डिस्क से मिटाएँ, या पिछले 24 घंटे वहीं संग्रहीत करते रहें?",
   "log.retention.eraseLeftoverQuestion": "संग्रहीत लॉग इतिहास को डिस्क से मिटाएँ? यह क्रिया पूर्ववत नहीं की जा सकती।",
+  "log.retention.shrinkQuestion": "छोटी अवधि चुनने पर पुराना लॉग इतिहास तुरंत डिस्क से मिट जाता है। यह क्रिया पूर्ववत नहीं की जा सकती।",
+  "log.retention.shrinkButton": "छोटा करें और मिटाएँ",
   "log.retention.keepButton": "डिस्क पर रखें",
   "log.retention.eraseButton": "डिस्क से मिटाएँ",
   "providers.heading": "प्रदाता",

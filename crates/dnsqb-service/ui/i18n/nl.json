@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Op schijf opslaan",
   "log.retention.eraseQuestion": "De logboekgeschiedenis staat op schijf. Van schijf wissen, of daar de laatste 24 uur blijven bewaren?",
   "log.retention.eraseLeftoverQuestion": "De opgeslagen logboekgeschiedenis van schijf wissen? Dit kan niet ongedaan worden gemaakt.",
+  "log.retention.shrinkQuestion": "Een kortere periode wist de oudere logboekgeschiedenis meteen van schijf. Dit kan niet ongedaan worden gemaakt.",
+  "log.retention.shrinkButton": "Inkorten en wissen",
   "log.retention.keepButton": "Op schijf houden",
   "log.retention.eraseButton": "Van schijf wissen",
   "providers.heading": "Providers",

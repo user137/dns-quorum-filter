@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Shranjuj na disk",
   "log.retention.eraseQuestion": "Zgodovina dnevnika je shranjena na disku. Jo izbrišem z diska ali tam še naprej hranim zadnjih 24 ur?",
   "log.retention.eraseLeftoverQuestion": "Izbrišem shranjeno zgodovino dnevnika z diska? Tega dejanja ni mogoče razveljaviti.",
+  "log.retention.shrinkQuestion": "Krajše obdobje takoj izbriše starejšo zgodovino dnevnika z diska. Tega dejanja ni mogoče razveljaviti.",
+  "log.retention.shrinkButton": "Skrajšaj in izbriši",
   "log.retention.keepButton": "Obdrži na disku",
   "log.retention.eraseButton": "Izbriši z diska",
   "providers.heading": "Ponudniki",

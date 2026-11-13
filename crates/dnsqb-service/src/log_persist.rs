@@ -54,6 +54,11 @@ const SEGMENT_DIR: &str = "query-log";
 /// T-146's single-file format — migrated into segments once, then deleted.
 const LEGACY_FILE: &str = "query-log.enc";
 
+/// Present while an erase has not finished: the next flush (or start)
+/// finishes it before writing or restoring anything, so a failed clear can
+/// never be undone by a later flush or a reboot.
+const ERASE_MARKER: &str = "query-log.erase-pending";
+
 const SECS_PER_DAY: u64 = 86_400;
 
 /// Days since the Unix epoch (UTC) — a segment's name. A pre-epoch clock
@@ -98,11 +103,40 @@ fn list_segments(dir: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
     Ok(segments)
 }
 
-/// Whether any persisted query history (segments or the legacy file) exists
-/// under `app_data`.
+/// A query-history file loose in the app-data root besides the legacy file:
+/// one moved aside (`query-log*.orphaned-*`) or a legacy `write_atomic`
+/// temp file left by a crash. Both are encrypted browsing history.
+fn is_loose_history(name: &str) -> bool {
+    name.starts_with("query-log")
+        && (name.contains(".orphaned-") || name == concat!("query-log.enc", ".tmp"))
+}
+
+/// Whether any persisted query history exists under `app_data`: the legacy
+/// file, anything in the segment directory, or a loose history file.
 fn history_present(app_data: &Path) -> io::Result<bool> {
-    Ok(app_data.join(LEGACY_FILE).try_exists()?
-        || !list_segments(&app_data.join(SEGMENT_DIR))?.is_empty())
+    if app_data.join(LEGACY_FILE).try_exists()? {
+        return Ok(true);
+    }
+    match std::fs::read_dir(app_data.join(SEGMENT_DIR)) {
+        Ok(mut read_dir) => {
+            if read_dir.next().is_some() {
+                return Ok(true);
+            }
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    let read_dir = match std::fs::read_dir(app_data) {
+        Ok(read_dir) => read_dir,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    for entry in read_dir {
+        if entry?.file_name().to_str().is_some_and(is_loose_history) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// `remove_file`, treating "already gone" as success.
@@ -168,6 +202,23 @@ fn read_entries(path: &Path, key: &[u8; 32]) -> Result<Vec<LogEntry>, LoadError>
     let raw = std::fs::read(path).map_err(LoadError::Read)?;
     let plaintext = open(key, FileKind::QueryLog, &raw).map_err(LoadError::Decrypt)?;
     from_json(&plaintext).map_err(LoadError::Parse)
+}
+
+/// One file for [`QueryLogDisk::adopt`]: its entries; `None` when it does
+/// not decrypt or parse and was moved aside (the rest still load). A read
+/// error, or a move-aside that fails, aborts the adoption instead: the file
+/// may be fine, and adopting without it would let the next flush overwrite
+/// it.
+fn read_or_move_aside(path: &Path, key: &[u8; 32]) -> Result<Option<Vec<LogEntry>>, DiskError> {
+    match read_entries(path, key) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(LoadError::Read(err)) => Err(DiskError::Io(err)),
+        Err(err) => {
+            tracing::warn!("could not restore a query-log file ({err}); moving it aside");
+            move_aside(path).map_err(DiskError::Io)?;
+            Ok(None)
+        }
+    }
 }
 
 /// Why a flush or adoption failed — reported as `query_log_disk: FAILED`.
@@ -236,6 +287,9 @@ pub struct QueryLogDisk {
     /// The legacy `query-log.enc` was restored; delete it once its days are
     /// written as segments.
     legacy_pending: bool,
+    /// An erase failed part-way: retried before any flush writes or
+    /// restores anything (also recorded on disk as [`ERASE_MARKER`]).
+    erase_pending: bool,
     health: DiskHealth,
 }
 
@@ -263,6 +317,7 @@ impl QueryLogDisk {
             synced_seq: 0,
             pending_days: BTreeSet::new(),
             legacy_pending: false,
+            erase_pending: false,
             health: DiskHealth::default(),
         }
     }
@@ -292,15 +347,20 @@ impl QueryLogDisk {
             let dir = self.app_data.as_deref().ok_or(DiskError::NoAppData)?;
             let present = history_present(dir).map_err(DiskError::Io)?;
             let loaded = load_or_create_persistence_key(dir, present).map_err(DiskError::Key)?;
+            self.key = Some(loaded.key);
             if loaded.orphaned_ciphertext {
+                // Not adopted until every file is really out of the way: a
+                // file left under its name would be overwritten by the next
+                // flush. If a move fails, the next adoption meets the file
+                // under the new key, fails to decrypt it and retries.
                 for path in [dir.join(SEGMENT_DIR), dir.join(LEGACY_FILE)] {
                     if path.exists() {
-                        rename_orphan(&path);
+                        let orphan = move_aside(&path).map_err(DiskError::Io)?;
+                        tracing::warn!("moved query history without its key aside to {orphan:?}");
                     }
                 }
                 self.adopted = true;
             }
-            self.key = Some(loaded.key);
         }
         self.key.as_deref().ok_or(DiskError::NoAppData)
     }
@@ -308,8 +368,25 @@ impl QueryLogDisk {
     /// [`Self::ensure_key`] for the policy route, recording a failure in
     /// [`Self::health`].
     pub fn prepare(&mut self) {
+        if self.retry_erase().is_err() {
+            return;
+        }
         let failed = self.ensure_key().is_err();
         self.health.failed = failed;
+    }
+
+    /// Finishes an earlier erase that failed part-way, if any. While it
+    /// keeps failing nothing may be written or restored: the files it left
+    /// are history the user already cleared.
+    fn retry_erase(&mut self) -> io::Result<()> {
+        if !self.erase_pending {
+            return Ok(());
+        }
+        let outcome = self.erase();
+        if let Err(err) = &outcome {
+            tracing::warn!("query-log erase still incomplete: {err}");
+        }
+        outcome
     }
 
     /// Restores every readable file inside `retention`'s window into `log`
@@ -333,35 +410,29 @@ impl QueryLogDisk {
         let oldest = oldest_kept_day(retention, now);
         let mut restored = Vec::new();
         let segments = list_segments(&dir.join(SEGMENT_DIR)).map_err(DiskError::Io)?;
+        let segment_days: BTreeSet<u64> = segments.iter().map(|(day, _)| *day).collect();
         for (day, path) in segments {
             if day < oldest {
                 continue;
             }
-            match read_entries(&path, &key) {
-                Ok(entries) => restored.extend(entries),
-                Err(err) => {
-                    tracing::warn!(
-                        "could not restore a query-log day file ({err}); moving it aside"
-                    );
-                    rename_orphan(&path);
-                }
+            if let Some(entries) = read_or_move_aside(&path, &key)? {
+                restored.extend(entries);
             }
         }
         let legacy = dir.join(LEGACY_FILE);
         let mut legacy_days = BTreeSet::new();
         if legacy.exists() {
-            match read_entries(&legacy, &key) {
-                Ok(entries) => {
-                    legacy_days = entries.iter().map(|e| utc_day(e.timestamp)).collect();
-                    restored.extend(entries);
-                    self.legacy_pending = true;
+            if let Some(entries) = read_or_move_aside(&legacy, &key)? {
+                // A migration interrupted after writing some days: those
+                // days already hold these entries.
+                let unmigrated = entries
+                    .into_iter()
+                    .filter(|e| !segment_days.contains(&utc_day(e.timestamp)));
+                for entry in unmigrated {
+                    legacy_days.insert(utc_day(entry.timestamp));
+                    restored.push(entry);
                 }
-                Err(err) => {
-                    tracing::warn!(
-                        "could not restore the legacy query log ({err}); moving it aside"
-                    );
-                    rename_orphan(&legacy);
-                }
+                self.legacy_pending = true;
             }
         }
         let count = restored.len();
@@ -376,7 +447,7 @@ impl QueryLogDisk {
     /// One flush (see the module docs). A no-op while `policy.persist` is
     /// off. Records the outcome in [`Self::health`].
     pub fn flush(&mut self, log: &QueryLog, policy: QueryLogPolicy, now: SystemTime) {
-        if !policy.persist {
+        if self.retry_erase().is_err() || !policy.persist {
             return;
         }
         let outcome = self.try_flush(log, policy.retention, now);
@@ -442,12 +513,30 @@ impl QueryLogDisk {
     /// The first filesystem error; already-missing items are not errors.
     /// The failure is also recorded in [`Self::health`].
     pub fn erase(&mut self) -> io::Result<()> {
-        let outcome = self.try_erase();
+        let outcome = self.erase_with_marker();
+        self.erase_pending = outcome.is_err();
         self.health = DiskHealth {
             failed: outcome.is_err(),
             leftover: outcome.is_err() && self.health.leftover,
         };
         outcome
+    }
+
+    /// The marker goes down first and comes off last, so an erase cut short
+    /// by a failure or a crash is finished at the next start.
+    fn erase_with_marker(&mut self) -> io::Result<()> {
+        let Some(dir) = self.app_data.clone() else {
+            return Ok(());
+        };
+        let marker = dir.join(ERASE_MARKER);
+        if let Err(err) = std::fs::write(&marker, b"") {
+            // Without the marker the erase still runs; only the
+            // finish-at-next-start guarantee is lost, and an erase that
+            // also fails stays retried in memory.
+            tracing::warn!("could not record a pending query-log erase: {err}");
+        }
+        self.try_erase()?;
+        remove_file_if_present(&marker)
     }
 
     fn try_erase(&mut self) -> io::Result<()> {
@@ -466,11 +555,7 @@ impl QueryLogDisk {
         };
         for entry in read_dir {
             let entry = entry?;
-            let is_orphan = entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with("query-log") && name.contains(".orphaned-"));
-            if !is_orphan {
+            if !entry.file_name().to_str().is_some_and(is_loose_history) {
                 continue;
             }
             if entry.file_type()?.is_dir() {
@@ -519,6 +604,13 @@ pub fn load_persisted_query_log(app_data: Option<&Path>, policy: QueryLogPolicy)
         }
         return QueryLogInit { log, disk };
     };
+    if dir.join(ERASE_MARKER).exists() {
+        disk.erase_pending = true;
+        if let Err(err) = disk.retry_erase() {
+            tracing::warn!("a pending query-log erase could not be finished at start: {err}");
+            return QueryLogInit { log, disk };
+        }
+    }
     if !policy.persist {
         disk.health.leftover = match history_present(dir) {
             Ok(present) => present,
@@ -604,7 +696,7 @@ pub(crate) fn assert_moved_aside_intact(path: &Path, bytes: &[u8]) {
 mod tests {
     use super::{
         list_segments, load_persisted_query_log, parse_segment_name, persist_snapshot,
-        read_entries, segment_name, utc_day, QueryLogDisk, LEGACY_FILE, SEGMENT_DIR,
+        read_entries, segment_name, utc_day, QueryLogDisk, ERASE_MARKER, LEGACY_FILE, SEGMENT_DIR,
     };
     use crate::encrypted_file::{open, FileKind};
     use crate::persist_dto::from_json;
@@ -933,6 +1025,7 @@ mod tests {
             }
         };
         write(LEGACY_FILE);
+        write("query-log.enc.tmp");
         write("query-log.enc.orphaned-1");
         write("resolver_config.toml");
         write("cache.enc");
@@ -992,6 +1085,165 @@ mod tests {
             domains_in_day(dir.path(), utc_day(now)),
             vec!["kept.example"]
         );
+    }
+
+    /// Holds `path` open with no sharing, so Windows refuses to read,
+    /// rename or delete it until the handle drops (a scanner or indexer
+    /// doing the same is what makes an erase fail in the field).
+    #[cfg(windows)]
+    fn lock(path: &Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(path)
+        {
+            Ok(file) => file,
+            Err(err) => panic!("lock {path:?}: {err}"),
+        }
+    }
+
+    // ---- Error path (T-291 independent review) ----
+
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_erase_stays_failed_and_is_retried_before_any_write() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let old = ago(now, 48);
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.push(entry("before-clear.example", old));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+        let old_file = dir
+            .path()
+            .join(SEGMENT_DIR)
+            .join(segment_name(utc_day(old)));
+
+        let held = lock(&old_file);
+        log.clear();
+        assert!(disk.erase().is_err());
+        assert!(disk.health().failed);
+        assert!(dir.path().join(ERASE_MARKER).exists());
+
+        log.push(entry("after-clear.example", now));
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+        assert!(
+            disk.health().failed,
+            "a flush must not hide an unfinished erase"
+        );
+        assert_eq!(names(&log, now), vec!["after-clear.example"]);
+
+        drop(held);
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+        assert!(!disk.health().failed);
+        assert!(!old_file.exists());
+        assert!(!dir.path().join(ERASE_MARKER).exists());
+        assert_eq!(segment_days(dir.path()), vec![utc_day(now)]);
+        let (back, _) = restart(dir.path(), LogRetention::SevenDays, now);
+        assert_eq!(names(&back, now), vec!["after-clear.example"]);
+    }
+
+    #[test]
+    fn a_pending_erase_marker_is_honoured_at_startup() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("cleared-before-reboot.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::Day), now);
+        if let Err(err) = std::fs::write(dir.path().join(ERASE_MARKER), b"") {
+            panic!("seed marker: {err}");
+        }
+
+        let init = load_persisted_query_log(
+            Some(dir.path()),
+            QueryLogPolicy {
+                retention: LogRetention::Day,
+                persist: false,
+            },
+        );
+        assert!(!dir.path().join(SEGMENT_DIR).exists());
+        assert!(!dir.path().join(ERASE_MARKER).exists());
+        assert!(!init.disk.health().leftover);
+        assert!(!init.disk.health().failed);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_unreadable_day_file_aborts_adoption_without_moving_or_overwriting_it() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("kept.example", now));
+        QueryLogDisk::with_key(dir.path(), KEY).flush(&log, on(LogRetention::Day), now);
+        let file = dir
+            .path()
+            .join(SEGMENT_DIR)
+            .join(segment_name(utc_day(now)));
+
+        let held = lock(&file);
+        let fresh = QueryLog::default();
+        fresh.push(entry("new.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&fresh, on(LogRetention::Day), now);
+        assert!(disk.health().failed);
+        drop(held);
+
+        assert_eq!(
+            domains_in_day(dir.path(), utc_day(now)),
+            vec!["kept.example"]
+        );
+        let siblings = match std::fs::read_dir(dir.path().join(SEGMENT_DIR)) {
+            Ok(read) => read.count(),
+            Err(err) => panic!("list: {err}"),
+        };
+        assert_eq!(siblings, 1, "nothing moved aside");
+        disk.flush(&fresh, on(LogRetention::Day), now);
+        assert!(!disk.health().failed);
+        assert_eq!(
+            domains_in_day(dir.path(), utc_day(now)),
+            vec!["kept.example", "new.example"]
+        );
+    }
+
+    #[test]
+    fn legacy_entries_already_migrated_are_not_restored_twice() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let old = ago(now, 48);
+        let log = QueryLog::default();
+        log.push(entry("migrated.example", now));
+        QueryLogDisk::with_key(dir.path(), KEY).flush(&log, on(LogRetention::Day), now);
+        let legacy = [
+            entry("not-yet.example", old),
+            entry("migrated.example", now),
+        ];
+        if let Err(err) = persist_snapshot(&legacy, &KEY, &dir.path().join(LEGACY_FILE)) {
+            panic!("seed: {err}");
+        }
+
+        let (back, _) = restart(dir.path(), LogRetention::SevenDays, now);
+        assert_eq!(
+            names(&back, now),
+            vec!["not-yet.example", "migrated.example"]
+        );
+    }
+
+    #[test]
+    fn a_stray_legacy_temp_file_counts_as_leftover_history() {
+        let dir = tempdir();
+        if let Err(err) = std::fs::write(dir.path().join("query-log.enc.tmp"), b"x") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_query_log(
+            Some(dir.path()),
+            QueryLogPolicy {
+                retention: LogRetention::Day,
+                persist: false,
+            },
+        );
+        assert!(init.disk.health().leftover);
     }
 
     // ---- The real key-store path ----

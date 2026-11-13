@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Armazenar no disco",
   "log.retention.eraseQuestion": "O histórico do registro está armazenado no disco. Apagá-lo do disco ou continuar armazenando ali as últimas 24 horas?",
   "log.retention.eraseLeftoverQuestion": "Apagar do disco o histórico do registro armazenado? Esta ação não pode ser desfeita.",
+  "log.retention.shrinkQuestion": "Um período mais curto apaga imediatamente do disco o histórico mais antigo do registro. Esta ação não pode ser desfeita.",
+  "log.retention.shrinkButton": "Encurtar e apagar",
   "log.retention.keepButton": "Manter no disco",
   "log.retention.eraseButton": "Apagar do disco",
   "providers.heading": "Provedores",

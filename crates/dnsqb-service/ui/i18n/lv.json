@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Saglabāt diskā",
   "log.retention.eraseQuestion": "Žurnāla vēsture ir saglabāta diskā. Dzēst to no diska vai turpināt tur glabāt pēdējās 24 stundas?",
   "log.retention.eraseLeftoverQuestion": "Dzēst saglabāto žurnāla vēsturi no diska? Šo darbību nevar atsaukt.",
+  "log.retention.shrinkQuestion": "Īsāks periods uzreiz dzēš vecāko žurnāla vēsturi no diska. Šo darbību nevar atsaukt.",
+  "log.retention.shrinkButton": "Saīsināt un dzēst",
   "log.retention.keepButton": "Paturēt diskā",
   "log.retention.eraseButton": "Dzēst no diska",
   "providers.heading": "Nodrošinātāji",

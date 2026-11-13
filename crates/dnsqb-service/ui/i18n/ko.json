@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "디스크에 저장",
   "log.retention.eraseQuestion": "로그 기록이 디스크에 저장되어 있습니다. 디스크에서 지울까요, 아니면 최근 24시간을 계속 저장할까요?",
   "log.retention.eraseLeftoverQuestion": "저장된 로그 기록을 디스크에서 지울까요? 이 작업은 되돌릴 수 없습니다.",
+  "log.retention.shrinkQuestion": "기간을 줄이면 오래된 로그 기록이 디스크에서 즉시 지워집니다. 이 작업은 되돌릴 수 없습니다.",
+  "log.retention.shrinkButton": "줄이고 지우기",
   "log.retention.keepButton": "디스크에 유지",
   "log.retention.eraseButton": "디스크에서 지우기",
   "providers.heading": "제공자",

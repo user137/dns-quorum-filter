@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Tárolás lemezen",
   "log.retention.eraseQuestion": "A naplóelőzmények a lemezen vannak. Törli őket a lemezről, vagy továbbra is ott tárolja az utolsó 24 órát?",
   "log.retention.eraseLeftoverQuestion": "Törli a tárolt naplóelőzményeket a lemezről? A művelet nem vonható vissza.",
+  "log.retention.shrinkQuestion": "A rövidebb időszak azonnal törli a lemezről a régebbi naplóelőzményeket. A művelet nem vonható vissza.",
+  "log.retention.shrinkButton": "Rövidítés és törlés",
   "log.retention.keepButton": "Megtartás lemezen",
   "log.retention.eraseButton": "Törlés a lemezről",
   "providers.heading": "Szolgáltatók",

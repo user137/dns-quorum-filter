@@ -177,7 +177,7 @@ const calls = [
   ["renderProviders", `renderProviders(${JSON.stringify(providersData)})`],
   ["actionErrors", `configApplyError = () => t("timeoutConfig.applyFailedTemplate", { message: "x" }); providersActionError = () => t("providers.changeFailedTemplate", { message: "x" }); filterControlsActionError = () => t("filterControls.categoriesFailedTemplate", { list: t("filterControls.category.security.name") }); renderTimeoutConfig(${JSON.stringify(status({ timeout_mode: "degraded", serve_baseline_when_filters_unreachable: true }))}); renderProviders(${JSON.stringify(providersData)}); configApplyError = null; providersActionError = null; filterControlsActionError = null`],
   ["buildLogFilterRow+renderLog", `buildLogFilterRow(); renderLog(${JSON.stringify(logData)})`],
-  ["logRetention", `["OFF", "ACTIVE", "FAILED", "LEFTOVER"].forEach((disk) => { logRetentionPrompt = null; renderLogRetention(${JSON.stringify(status({ query_log_retention: "7d", encrypted_persistence: { query_log: true } }))}); lastLogPolicy.disk = disk; renderLogRetention(); }); lastLogPolicy = { retention: "3d", persist: false, disk: "OFF" }; renderLogRetention(); ["disk", "erase", "leftover"].forEach((k) => showLogRetentionPrompt(k, "24h")); logRetentionPrompt = null; logRetentionError = "x"; renderLogRetention(); logRetentionError = null`],
+  ["logRetention", `["OFF", "ACTIVE", "FAILED", "LEFTOVER"].forEach((disk) => { logRetentionPrompt = null; renderLogRetention(${JSON.stringify(status({ query_log_retention: "7d", encrypted_persistence: { query_log: true } }))}); lastLogPolicy.disk = disk; renderLogRetention(); }); lastLogPolicy = { retention: "3d", persist: false, disk: "OFF" }; renderLogRetention(); ["disk", "erase", "shrink", "leftover"].forEach((k) => showLogRetentionPrompt(k, "24h")); logRetentionPrompt = null; lastLogPolicy = { retention: "24h", persist: true, disk: "ACTIVE" }; renderLogRetention(); lastLogPolicy = { retention: "30d", persist: true, disk: "ACTIVE" }; chooseLogRetention("3d"); logRetentionPrompt = null; logRetentionError = "x"; renderLogRetention(); logRetentionError = null`],
   ["logOlderPager", `logPage = 0; renderLog(${JSON.stringify(Object.assign({}, bigLogData, { truncated: true }))}); logPage = 2; renderLogPage(document.createElement("div")); logPage = 0; logHasOlder = false`],
   ["logPagerAndLiveMarker", `pushLive = true; renderLogLiveMarker(); logPage = 1; renderLog(${JSON.stringify(bigLogData)}); pushLive = false; logPage = 0; renderLogLiveMarker()`],
   ["renderRatingFilterOff", `renderRatingFilter(${JSON.stringify(status({ rating_filter: { enabled: false, active: false, lists: ["ua", "gov-pl", "xx"], available_lists: ["ua", "us", "de", "pl", "gb", "global", "gov-ua", "gov-us", "gov-pl", "gov-gb", "edu"], loaded: [{ list: "ua", domains: 5 }, { list: "gov-pl", domains: 1 }], suggested_list: "gb", personal_zone_enabled: false } }))})`],
@@ -570,6 +570,21 @@ for (const [fn, data] of xssCalls) {
   guard("older page not shown", run("logPage") === 1);
   guard("a short last chunk still offers more", run("logHasOlder") === false);
   run("logPage = 0; logHasOlder = false");
+
+  // T-291 review: shortening a stored window asks first (it deletes days
+  // from disk); at 24h with the disk on there is a direct way to erase.
+  run(`logRetentionPrompt = null; logRetentionError = null; lastLogPolicy = { retention: "30d", persist: true, disk: "ACTIVE" }; chooseLogRetention("3d")`);
+  guard("30d -> 3d on disk applied without a confirm", run("logRetentionPrompt") === "shrink");
+  run(`logRetentionPrompt = null; lastLogPolicy = { retention: "3d", persist: true, disk: "ACTIVE" }`);
+  const posts = [];
+  ctx.fetch = async (url, opts) => { posts.push([url, opts && opts.body]); return okJson({ persisted: true, query_log_disk: "ACTIVE" })(); };
+  run(`chooseLogRetention("30d")`);
+  guard("3d -> 30d on disk asked for a confirm", run("logRetentionPrompt") === null && posts.length === 1);
+  created.length = 0;
+  run(`logRetentionPrompt = null; lastLogPolicy = { retention: "24h", persist: true, disk: "ACTIVE" }; renderLogRetention()`);
+  const eraseLabel = run(`t("log.retention.eraseButton")`);
+  guard("24h on disk offers no erase button", created.some((r) => r.tag === "button" && r.props.textContent === eraseLabel));
+  run("logRetentionPrompt = null; lastLogPolicy = null");
   ctx.fetch = realFetch;
   run("providersActionError = null; filterControlsActionError = null; configApplyError = null");
 

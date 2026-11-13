@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Auf Festplatte speichern",
   "log.retention.eraseQuestion": "Der Protokollverlauf ist auf der Festplatte gespeichert. Von der Festplatte löschen oder dort weiterhin die letzten 24 Stunden speichern?",
   "log.retention.eraseLeftoverQuestion": "Den gespeicherten Protokollverlauf von der Festplatte löschen? Dies kann nicht rückgängig gemacht werden.",
+  "log.retention.shrinkQuestion": "Ein kürzerer Zeitraum löscht den älteren Protokollverlauf sofort von der Festplatte. Dies kann nicht rückgängig gemacht werden.",
+  "log.retention.shrinkButton": "Verkürzen und löschen",
   "log.retention.keepButton": "Auf Festplatte behalten",
   "log.retention.eraseButton": "Von Festplatte löschen",
   "providers.heading": "Anbieter",

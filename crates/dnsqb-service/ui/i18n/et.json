@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Salvesta kettale",
   "log.retention.eraseQuestion": "Logiajalugu on kettale salvestatud. Kas kustutada see kettalt või jätkata seal viimase 24 tunni hoidmist?",
   "log.retention.eraseLeftoverQuestion": "Kas kustutada salvestatud logiajalugu kettalt? Seda ei saa tagasi võtta.",
+  "log.retention.shrinkQuestion": "Lühem periood kustutab vanema logiajaloo kohe kettalt. Seda ei saa tagasi võtta.",
+  "log.retention.shrinkButton": "Lühenda ja kustuta",
   "log.retention.keepButton": "Jäta kettale",
   "log.retention.eraseButton": "Kustuta kettalt",
   "providers.heading": "Pakkujad",

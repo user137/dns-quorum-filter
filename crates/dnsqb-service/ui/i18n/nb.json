@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Lagre på disken",
   "log.retention.eraseQuestion": "Logghistorikken er lagret på disken. Slette den fra disken, eller fortsette å lagre de siste 24 timene der?",
   "log.retention.eraseLeftoverQuestion": "Slette den lagrede logghistorikken fra disken? Dette kan ikke angres.",
+  "log.retention.shrinkQuestion": "En kortere periode sletter den eldre logghistorikken fra disken med en gang. Dette kan ikke angres.",
+  "log.retention.shrinkButton": "Forkort og slett",
   "log.retention.keepButton": "Behold på disken",
   "log.retention.eraseButton": "Slett fra disken",
   "providers.heading": "Leverandører",

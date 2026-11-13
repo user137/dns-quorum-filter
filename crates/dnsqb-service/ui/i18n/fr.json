@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Stocker sur le disque",
   "log.retention.eraseQuestion": "L'historique du journal est stocké sur le disque. L'effacer du disque, ou continuer à y conserver les dernières 24 heures ?",
   "log.retention.eraseLeftoverQuestion": "Effacer du disque l'historique du journal enregistré ? Cette action est irréversible.",
+  "log.retention.shrinkQuestion": "Une durée plus courte efface immédiatement du disque l'historique plus ancien du journal. Cette action est irréversible.",
+  "log.retention.shrinkButton": "Raccourcir et effacer",
   "log.retention.keepButton": "Garder sur le disque",
   "log.retention.eraseButton": "Effacer du disque",
   "providers.heading": "Fournisseurs",

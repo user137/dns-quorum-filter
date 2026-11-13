@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Guardar en el disco",
   "log.retention.eraseQuestion": "El historial del registro está guardado en el disco. ¿Borrarlo del disco o seguir guardando ahí las últimas 24 horas?",
   "log.retention.eraseLeftoverQuestion": "¿Borrar del disco el historial del registro guardado? Esta acción no se puede deshacer.",
+  "log.retention.shrinkQuestion": "Un periodo más corto borra del disco al instante el historial más antiguo del registro. Esta acción no se puede deshacer.",
+  "log.retention.shrinkButton": "Acortar y borrar",
   "log.retention.keepButton": "Mantener en el disco",
   "log.retention.eraseButton": "Borrar del disco",
   "providers.heading": "Proveedores",

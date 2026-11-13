@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Lagra på disken",
   "log.retention.eraseQuestion": "Logghistoriken lagras på disken. Radera den från disken, eller fortsätta lagra de senaste 24 timmarna där?",
   "log.retention.eraseLeftoverQuestion": "Radera den lagrade logghistoriken från disken? Det går inte att ångra.",
+  "log.retention.shrinkQuestion": "En kortare period raderar direkt den äldre logghistoriken från disken. Det går inte att ångra.",
+  "log.retention.shrinkButton": "Förkorta och radera",
   "log.retention.keepButton": "Behåll på disken",
   "log.retention.eraseButton": "Radera från disken",
   "providers.heading": "Leverantörer",

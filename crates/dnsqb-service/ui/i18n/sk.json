@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Ukladať na disk",
   "log.retention.eraseQuestion": "História denníka je uložená na disku. Vymazať ju z disku, alebo tam naďalej uchovávať posledných 24 hodín?",
   "log.retention.eraseLeftoverQuestion": "Vymazať uloženú históriu denníka z disku? Túto akciu nemožno vrátiť.",
+  "log.retention.shrinkQuestion": "Kratšia doba okamžite vymaže staršiu históriu denníka z disku. Túto akciu nemožno vrátiť.",
+  "log.retention.shrinkButton": "Skrátiť a vymazať",
   "log.retention.keepButton": "Ponechať na disku",
   "log.retention.eraseButton": "Vymazať z disku",
   "providers.heading": "Poskytovatelia",

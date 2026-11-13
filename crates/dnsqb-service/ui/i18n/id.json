@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Simpan di disk",
   "log.retention.eraseQuestion": "Riwayat log tersimpan di disk. Hapus dari disk, atau tetap simpan 24 jam terakhir di sana?",
   "log.retention.eraseLeftoverQuestion": "Hapus riwayat log yang tersimpan dari disk? Tindakan ini tidak dapat dibatalkan.",
+  "log.retention.shrinkQuestion": "Periode yang lebih singkat langsung menghapus riwayat log yang lebih lama dari disk. Tindakan ini tidak dapat dibatalkan.",
+  "log.retention.shrinkButton": "Persingkat dan hapus",
   "log.retention.keepButton": "Tetap di disk",
   "log.retention.eraseButton": "Hapus dari disk",
   "providers.heading": "Penyedia",

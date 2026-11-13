@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "ڈسک پر محفوظ کریں",
   "log.retention.eraseQuestion": "لاگ کی تاریخ ڈسک پر محفوظ ہے۔ اسے ڈسک سے مٹائیں، یا پچھلے 24 گھنٹے وہیں محفوظ رکھیں؟",
   "log.retention.eraseLeftoverQuestion": "محفوظ شدہ لاگ تاریخ ڈسک سے مٹائیں؟ یہ عمل واپس نہیں لیا جا سکتا۔",
+  "log.retention.shrinkQuestion": "کم مدت پرانی لاگ تاریخ کو فوراً ڈسک سے مٹا دیتی ہے۔ یہ عمل واپس نہیں لیا جا سکتا۔",
+  "log.retention.shrinkButton": "کم کریں اور مٹائیں",
   "log.retention.keepButton": "ڈسک پر رکھیں",
   "log.retention.eraseButton": "ڈسک سے مٹائیں",
   "providers.heading": "فراہم کنندگان",

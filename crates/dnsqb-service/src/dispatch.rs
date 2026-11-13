@@ -3704,7 +3704,7 @@ where
 const DEFAULT_LOG_LIMIT: usize = 200;
 /// The hard cap `?limit=` can't exceed. Once the ring buffer itself (T-291:
 /// up to 100 000 entries) — now an explicit page size: older entries are
-/// reached through `?before_ms=`, never one unbounded response.
+/// reached through `?before_seq=`, never one unbounded response.
 pub(crate) const MAX_LOG_LIMIT: usize = 1000;
 
 /// `GET /admin/log`'s parsed query-string facets (T-54) — mirrors

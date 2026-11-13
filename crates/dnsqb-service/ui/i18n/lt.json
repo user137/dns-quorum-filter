@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Saugoti diske",
   "log.retention.eraseQuestion": "Žurnalo istorija saugoma diske. Ištrinti ją iš disko ar ir toliau ten laikyti paskutines 24 valandas?",
   "log.retention.eraseLeftoverQuestion": "Ištrinti išsaugotą žurnalo istoriją iš disko? Šio veiksmo atšaukti negalima.",
+  "log.retention.shrinkQuestion": "Trumpesnis laikotarpis iš karto ištrina senesnę žurnalo istoriją iš disko. Šio veiksmo atšaukti negalima.",
+  "log.retention.shrinkButton": "Sutrumpinti ir ištrinti",
   "log.retention.keepButton": "Palikti diske",
   "log.retention.eraseButton": "Ištrinti iš disko",
   "providers.heading": "Teikėjai",

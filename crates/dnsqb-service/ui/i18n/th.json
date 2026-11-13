@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "จัดเก็บบนดิสก์",
   "log.retention.eraseQuestion": "ประวัติบันทึกจัดเก็บอยู่บนดิสก์ จะลบออกจากดิสก์ หรือเก็บ 24 ชั่วโมงล่าสุดไว้ที่นั่นต่อไป?",
   "log.retention.eraseLeftoverQuestion": "ลบประวัติบันทึกที่จัดเก็บไว้ออกจากดิสก์หรือไม่? การกระทำนี้ย้อนกลับไม่ได้",
+  "log.retention.shrinkQuestion": "ระยะเวลาที่สั้นลงจะลบประวัติบันทึกที่เก่ากว่าออกจากดิสก์ทันที การกระทำนี้ย้อนกลับไม่ได้",
+  "log.retention.shrinkButton": "ย่อและลบ",
   "log.retention.keepButton": "เก็บไว้บนดิสก์",
   "log.retention.eraseButton": "ลบออกจากดิสก์",
   "providers.heading": "ผู้ให้บริการ",

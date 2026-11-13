@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Zapisuj na dysku",
   "log.retention.eraseQuestion": "Historia dziennika jest zapisana na dysku. Wymazać ją z dysku czy nadal przechowywać tam ostatnie 24 godziny?",
   "log.retention.eraseLeftoverQuestion": "Wymazać zapisaną historię dziennika z dysku? Tej operacji nie można cofnąć.",
+  "log.retention.shrinkQuestion": "Krótszy okres od razu wymaże z dysku starszą historię dziennika. Tej operacji nie można cofnąć.",
+  "log.retention.shrinkButton": "Skróć i wymaż",
   "log.retention.keepButton": "Zostaw na dysku",
   "log.retention.eraseButton": "Wymaż z dysku",
   "providers.heading": "Dostawcy",

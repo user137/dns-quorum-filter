@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "التخزين على القرص",
   "log.retention.eraseQuestion": "سجل الاستعلامات مخزَّن على القرص. هل تريد مسحه من القرص، أم الاستمرار في الاحتفاظ بآخر 24 ساعة هناك؟",
   "log.retention.eraseLeftoverQuestion": "هل تريد مسح سجل الاستعلامات المخزَّن من القرص؟ لا يمكن التراجع عن هذا الإجراء.",
+  "log.retention.shrinkQuestion": "المدة الأقصر تمسح سجل الاستعلامات الأقدم من القرص فورًا. لا يمكن التراجع عن هذا الإجراء.",
+  "log.retention.shrinkButton": "التقصير والمسح",
   "log.retention.keepButton": "الإبقاء على القرص",
   "log.retention.eraseButton": "المسح من القرص",
   "providers.heading": "المزودون",

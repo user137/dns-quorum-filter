@@ -261,11 +261,6 @@ struct Ring {
     entries: VecDeque<LogEntry>,
     max_entries: usize,
     max_age: Duration,
-    /// Bumped on every push/clear/restore/bounds change — the persister
-    /// compares it to skip a flush when nothing changed. Age eviction does
-    /// not bump it: it only drops entries, which the disk copy loses on its
-    /// own bounded restore.
-    generation: u64,
     /// The sequence number the next pushed entry gets. Entry `i` (from the
     /// front) has `next_seq - len + i`: pushes append, every eviction pops
     /// the front, so the numbering needs no per-entry storage. `restore`
@@ -306,10 +301,6 @@ impl Ring {
     fn head_seq(&self) -> u64 {
         self.next_seq.saturating_sub(self.entries.len() as u64)
     }
-
-    fn bump(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-    }
 }
 
 /// SPEC.md §6/§6.1: in-memory ring buffer of [`LogEntry`] records, bounded
@@ -335,7 +326,6 @@ impl QueryLog {
                 entries: VecDeque::new(),
                 max_entries,
                 max_age,
-                generation: 0,
                 next_seq: 0,
             }),
         }
@@ -355,13 +345,6 @@ impl QueryLog {
         ring.max_age = retention.max_age();
         ring.evict_aged(now);
         ring.trim_to_capacity();
-        ring.bump();
-    }
-
-    /// The change counter (see [`Ring::generation`]).
-    #[must_use]
-    pub fn generation(&self) -> u64 {
-        self.ring.read().generation
     }
 
     /// The sequence number the next pushed entry will get — every entry
@@ -400,7 +383,6 @@ impl QueryLog {
         ring.entries.push_back(entry);
         ring.next_seq = ring.next_seq.saturating_add(1);
         ring.trim_to_capacity();
-        ring.bump();
     }
 
     /// Returns every entry still within `max_age` of `now`, oldest first.
@@ -491,7 +473,6 @@ impl QueryLog {
     pub fn clear(&self) {
         let mut ring = self.ring.write();
         ring.entries.clear();
-        ring.bump();
     }
 
     /// Seeds the buffer from a previous run's persisted entries (T-146 —
@@ -529,7 +510,6 @@ impl QueryLog {
             .sort_by_key(|entry| entry.timestamp);
         ring.trim_to_capacity();
         ring.next_seq = old_next.saturating_add(ring.entries.len() as u64);
-        ring.bump();
     }
 }
 
@@ -1183,11 +1163,9 @@ mod tests {
         let log = QueryLog::with_retention(LogRetention::SevenDays);
         log.push(named(two_days_ago, "old.example"));
         log.push(named(now, "new.example"));
-        let before = log.generation();
 
         log.set_retention(LogRetention::Day, now);
 
-        assert_ne!(log.generation(), before, "a bounds change is a change");
         assert_eq!(log.inspect(now, std::collections::VecDeque::len), 1);
         assert_eq!(domains(&log.snapshot(now)), vec!["new.example"]);
     }
@@ -1216,22 +1194,6 @@ mod tests {
             log.inspect(now, std::collections::VecDeque::len),
             MAX_LOG_ENTRIES
         );
-    }
-
-    #[test]
-    fn generation_moves_on_push_clear_and_restore() {
-        let now = SystemTime::now();
-        let log = QueryLog::default();
-        let g0 = log.generation();
-        log.push(entry_at(now));
-        let g1 = log.generation();
-        log.clear();
-        let g2 = log.generation();
-        log.restore(vec![entry_at(now)], now);
-        let g3 = log.generation();
-        assert!(g0 != g1 && g1 != g2 && g2 != g3);
-        let _ = log.snapshot(now);
-        assert_eq!(log.generation(), g3, "a read is not a change");
     }
 
     #[test]

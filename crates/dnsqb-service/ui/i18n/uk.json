@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Зберігати на диску",
   "log.retention.eraseQuestion": "Історія логу зберігається на диску. Стерти її з диска чи й далі зберігати там останні 24 години?",
   "log.retention.eraseLeftoverQuestion": "Стерти збережену історію логу з диска? Цю дію не можна скасувати.",
+  "log.retention.shrinkQuestion": "Коротший термін одразу стирає старішу історію логу з диска. Цю дію не можна скасувати.",
+  "log.retention.shrinkButton": "Скоротити й стерти",
   "log.retention.keepButton": "Лишити на диску",
   "log.retention.eraseButton": "Стерти з диска",
   "providers.heading": "Провайдери",

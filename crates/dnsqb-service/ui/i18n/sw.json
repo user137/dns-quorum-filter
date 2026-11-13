@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Hifadhi kwenye diski",
   "log.retention.eraseQuestion": "Historia ya kumbukumbu imehifadhiwa kwenye diski. Uifute kwenye diski, au uendelee kuhifadhi saa 24 za mwisho huko?",
   "log.retention.eraseLeftoverQuestion": "Ufute historia ya kumbukumbu iliyohifadhiwa kwenye diski? Kitendo hiki hakiwezi kutenduliwa.",
+  "log.retention.shrinkQuestion": "Kipindi kifupi zaidi hufuta mara moja historia ya zamani ya kumbukumbu kwenye diski. Kitendo hiki hakiwezi kutenduliwa.",
+  "log.retention.shrinkButton": "Fupisha na ufute",
   "log.retention.keepButton": "Acha kwenye diski",
   "log.retention.eraseButton": "Futa kwenye diski",
   "providers.heading": "Watoa huduma",

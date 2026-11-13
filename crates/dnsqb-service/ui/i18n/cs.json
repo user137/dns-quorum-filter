@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Ukládat na disk",
   "log.retention.eraseQuestion": "Historie protokolu je uložena na disku. Vymazat ji z disku, nebo tam dál uchovávat posledních 24 hodin?",
   "log.retention.eraseLeftoverQuestion": "Vymazat uloženou historii protokolu z disku? Tuto akci nelze vrátit.",
+  "log.retention.shrinkQuestion": "Kratší doba okamžitě vymaže starší historii protokolu z disku. Tuto akci nelze vrátit.",
+  "log.retention.shrinkButton": "Zkrátit a vymazat",
   "log.retention.keepButton": "Ponechat na disku",
   "log.retention.eraseButton": "Vymazat z disku",
   "providers.heading": "Poskytovatelé",

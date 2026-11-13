@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Lưu trên đĩa",
   "log.retention.eraseQuestion": "Lịch sử nhật ký đang được lưu trên đĩa. Xóa khỏi đĩa, hay tiếp tục lưu 24 giờ gần nhất ở đó?",
   "log.retention.eraseLeftoverQuestion": "Xóa lịch sử nhật ký đã lưu khỏi đĩa? Không thể hoàn tác thao tác này.",
+  "log.retention.shrinkQuestion": "Thời hạn ngắn hơn sẽ xóa ngay lịch sử nhật ký cũ hơn khỏi đĩa. Không thể hoàn tác thao tác này.",
+  "log.retention.shrinkButton": "Rút ngắn và xóa",
   "log.retention.keepButton": "Giữ trên đĩa",
   "log.retention.eraseButton": "Xóa khỏi đĩa",
   "providers.heading": "Nhà cung cấp",

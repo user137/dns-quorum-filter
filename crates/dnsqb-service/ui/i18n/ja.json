@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "ディスクに保存",
   "log.retention.eraseQuestion": "ログ履歴がディスクに保存されています。ディスクから消去しますか、それとも直近24時間を引き続きそこに保存しますか?",
   "log.retention.eraseLeftoverQuestion": "保存されたログ履歴をディスクから消去しますか? この操作は元に戻せません。",
+  "log.retention.shrinkQuestion": "期間を短くすると、古いログ履歴がすぐにディスクから消去されます。この操作は元に戻せません。",
+  "log.retention.shrinkButton": "短縮して消去",
   "log.retention.keepButton": "ディスクに残す",
   "log.retention.eraseButton": "ディスクから消去",
   "providers.heading": "プロバイダー",

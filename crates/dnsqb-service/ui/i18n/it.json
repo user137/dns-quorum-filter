@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Salva su disco",
   "log.retention.eraseQuestion": "La cronologia del registro è salvata su disco. Cancellarla dal disco o continuare a conservarvi le ultime 24 ore?",
   "log.retention.eraseLeftoverQuestion": "Cancellare dal disco la cronologia del registro salvata? L'operazione non può essere annullata.",
+  "log.retention.shrinkQuestion": "Un periodo più breve cancella subito dal disco la cronologia più vecchia del registro. L'operazione non può essere annullata.",
+  "log.retention.shrinkButton": "Accorcia e cancella",
   "log.retention.keepButton": "Mantieni su disco",
   "log.retention.eraseButton": "Cancella dal disco",
   "providers.heading": "Provider",

@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Tallenna levylle",
   "log.retention.eraseQuestion": "Lokihistoria on tallennettu levylle. Poistetaanko se levyltä, vai säilytetäänkö siellä edelleen viimeiset 24 tuntia?",
   "log.retention.eraseLeftoverQuestion": "Poistetaanko tallennettu lokihistoria levyltä? Toimintoa ei voi kumota.",
+  "log.retention.shrinkQuestion": "Lyhyempi aika poistaa vanhemman lokihistorian levyltä heti. Toimintoa ei voi kumota.",
+  "log.retention.shrinkButton": "Lyhennä ja poista",
   "log.retention.keepButton": "Säilytä levyllä",
   "log.retention.eraseButton": "Poista levyltä",
   "providers.heading": "Tarjoajat",

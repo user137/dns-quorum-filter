@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Съхранявай на диска",
   "log.retention.eraseQuestion": "Историята на журнала се съхранява на диска. Да се изтрие ли от диска, или да продължи да пази там последните 24 часа?",
   "log.retention.eraseLeftoverQuestion": "Да се изтрие ли съхранената история на журнала от диска? Действието не може да бъде отменено.",
+  "log.retention.shrinkQuestion": "По-краткият период веднага изтрива по-старата история на журнала от диска. Действието не може да бъде отменено.",
+  "log.retention.shrinkButton": "Съкрати и изтрий",
   "log.retention.keepButton": "Остави на диска",
   "log.retention.eraseButton": "Изтрий от диска",
   "providers.heading": "Доставчици",

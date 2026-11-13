@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "שמירה בדיסק",
   "log.retention.eraseQuestion": "היסטוריית היומן שמורה בדיסק. למחוק אותה מהדיסק, או להמשיך לשמור שם את 24 השעות האחרונות?",
   "log.retention.eraseLeftoverQuestion": "למחוק מהדיסק את היסטוריית היומן השמורה? לא ניתן לבטל פעולה זו.",
+  "log.retention.shrinkQuestion": "תקופה קצרה יותר מוחקת מיד מהדיסק את היסטוריית היומן הישנה יותר. לא ניתן לבטל פעולה זו.",
+  "log.retention.shrinkButton": "קיצור ומחיקה",
   "log.retention.keepButton": "השארה בדיסק",
   "log.retention.eraseButton": "מחיקה מהדיסק",
   "providers.heading": "ספקים",

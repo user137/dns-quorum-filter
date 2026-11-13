@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "Čuvaj na disku",
   "log.retention.eraseQuestion": "Istorija dnevnika je sačuvana na disku. Obrisati je sa diska ili i dalje tamo čuvati poslednja 24 sata?",
   "log.retention.eraseLeftoverQuestion": "Obrisati sačuvanu istoriju dnevnika sa diska? Ova radnja se ne može opozvati.",
+  "log.retention.shrinkQuestion": "Kraći period odmah briše stariju istoriju dnevnika sa diska. Ova radnja se ne može opozvati.",
+  "log.retention.shrinkButton": "Skrati i obriši",
   "log.retention.keepButton": "Zadrži na disku",
   "log.retention.eraseButton": "Obriši sa diska",
   "providers.heading": "Dobavljači",

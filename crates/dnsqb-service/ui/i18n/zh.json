@@ -186,6 +186,8 @@
   "log.retention.confirmDiskButton": "存储到磁盘",
   "log.retention.eraseQuestion": "日志历史存储在磁盘上。要从磁盘上清除,还是继续在那里保留最近 24 小时?",
   "log.retention.eraseLeftoverQuestion": "从磁盘上清除已存储的日志历史?此操作无法撤销。",
+  "log.retention.shrinkQuestion": "缩短保留时长会立即从磁盘上清除较早的日志历史。此操作无法撤销。",
+  "log.retention.shrinkButton": "缩短并清除",
   "log.retention.keepButton": "保留在磁盘上",
   "log.retention.eraseButton": "从磁盘清除",
   "providers.heading": "提供方",
