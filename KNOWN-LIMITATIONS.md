@@ -58,8 +58,9 @@ TASKS-DONE.md, never here.
   `rename_orphan` never deletes (a key *might* resurface), but for a re-creatable store that
   recovery value is ~nil while each incident leaves a permanent undecryptable blob of
   browsing-derived data; no cleanup path exists yet.
-- **Long query-log windows (T-291)** — the `/admin/ui` retention control and "Older" pager are
-  covered by `smoke.js` and a scratch-instance route walk, **not yet clicked in a real browser**;
+- **Long query-log windows (T-291)** — the `/admin/ui` retention control was clicked in Firefox on a
+  local debug scratch instance (2026-11-14), not yet on a GitHub-built artifact; the "Older" pager
+  (needs >1000 entries) is covered only by `smoke.js`;
   resident memory at the 30-day cap (100 000 entries) is not measured yet (restore time is —
   PERFORMANCE.md). A clock that starts days ahead (RTC/VM drift before NTP) makes the first flush
   prune day files that are still inside the real window — permanent on disk, as the in-memory
