@@ -9008,3 +9008,26 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   дублі незавершеної міграції `query-log.enc`; `.tmp` старого файлу стирається; кнопка стирання на 24 год і
   підтвердження скорочення вікна; мертвий лічильник `generation` прибрано. Стрибок годинника вперед і
   блокувальні маршрути — KNOWN-LIMITATIONS.md.
+- [x] Хвиля 29 — пробний WACK + встановлення пакета й `smoke-installed.ps1` x64 у CI (T-288 пробна, T-284 x64) —
+  **виконано 2026-11-14** (`9114e67`). У `release.yml` дві джоби після `msix`, що не тримають `release`:
+  `install-smoke` (імпорт тестового підписувача в `LocalMachine\TrustedPeople`, `Add-AppxPackage`, запуск через
+  `shell:AppsFolder\<PFN>!App`, очікування слухача до 90 с, `smoke-installed.ps1`) і `wack` (`appcert.exe`,
+  `continue-on-error`, провалені тести — у summary, XML — артефактом). WACK — лише в CI: локально він ставить і
+  знімає пакет тієї самої родини, що й робоча встановлена програма. Перевірено не артефакт `v0.9.0`, як у
+  рядку хвилі, а свіжу збірку `main` (`4fc2c00`, версія 0.9.0) — run 43527383367. Смоук на чистому раннері —
+  27/27 PASS (процеси, StartupTask State=2, усі JSON-маршрути, 37 словників, DoH, `--help` усіх трьох у пакеті).
+  WACK 10.0.26100.9457 на Windows Server 26100: загалом WARNING, 22 PASS; на сервері він іде «without application
+  deployment», тож тести із запуском застосунку тут не виконувались — фінальний WACK хвилі 27 варто ганяти на
+  клієнтській Windows (чиста VM). Знахідки → T-292, T-293. Перед стартом: `cargo audit` у CI впав на 18 нових
+  RustSec-повідомленнях — оновлено lock (`4fc2c00`: hickory-proto 0.26.3, rustls 0.23.46, quinn, webpki,
+  ctutils, tokio; webpki-пакети на патч назад, щоб кожна версія була старша за 7 днів), audit — 0.
+- [x] T-292 — **Знахідка WACK (хвиля 29), DPIAwarenessValidation, WARNING.** `dnsqb-watcher.exe` — точка входу
+  пакета, і WACK судить DPI застосунку за ним; маніфесту не було. Виконано 2026-11-14: `build/dnsqb-watcher.manifest`
+  (PerMonitorV2 + `supportedOS`, без Common-Controls — вікон немає), `crates/dnsqb-watcher/build.rs`. Локально
+  (windows-gnu) exe з маніфестом стартує (`--help` rc 0), рядок вбудовано; MSVC-збірку, запуск у пакеті й
+  повторний WACK перевіряє наступний прогін `release.yml`.
+- [x] T-293 — **Знахідка WACK (хвиля 29), Blocked executables, FAIL необов'язкового тесту.** Прийнято без коду
+  2026-11-14: `cmd.exe`/`\cmd.exe` — літерали стандартної бібліотеки Rust (запуск `.bat` через `cmd.exe /e:ON
+  /v:OFF /d /c`), «Reg» — текст «NFL Reg Ops LLC» у вбудованому Public Suffix List, `CreateProcessW` — `std::process`
+  (watchdog запускає сусідів абсолютним шляхом, трей — `powershell` для «Повністю видалити»). Тест необов'язковий;
+  у «Notes for certification» (T-287) — одним рядком.
