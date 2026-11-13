@@ -201,6 +201,114 @@ jobs:
           if-no-files-found: error
           path: dist/*
 
+  # Wave 29 (T-284 x64): install the freshly packed MSIX on a clean runner and
+  # run packaging/smoke-installed.ps1 against it. Not in `release.needs` — a
+  # red job here is a finding to triage, it does not hold back a draft release.
+  install-smoke:
+    needs: msix
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-msix-*
+          path: dist
+          merge-multiple: true
+      - name: Install the package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Test-signed artifacts ship their ephemeral signer; a real signature needs no import.
+          Get-ChildItem dist -Filter *.cer | ForEach-Object {
+            Import-Certificate -FilePath $_.FullName -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          }
+          Add-AppxPackage -Path dist\dns-quorum-filter.msix
+          $pkg = Get-AppxPackage -Name dns-quorum-filter
+          if (-not $pkg) { throw "the package did not install" }
+          Write-Host "installed $($pkg.PackageFullName)"
+      - name: Launch and wait for the service
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkg = Get-AppxPackage -Name dns-quorum-filter
+          # Nothing starts on install: the watcher (the tile's entry point) starts tray + service.
+          Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!App"
+          $appData = Join-Path $env:LOCALAPPDATA "Packages\$($pkg.PackageFamilyName)\LocalCache\Local\dns-quorum-filter"
+          $deadline = (Get-Date).AddSeconds(90)
+          $up = $false
+          while ((Get-Date) -lt $deadline) {
+            if (Test-Path (Join-Path $appData 'cert.pem')) {
+              # The pinned check is the smoke script's job; here only "is the listener up".
+              $tcp = [Net.Sockets.TcpClient]::new()
+              try { $tcp.Connect('127.0.0.1', 8443); $up = $true } catch { } finally { $tcp.Dispose() }
+              if ($up) { break }
+            }
+            Start-Sleep -Seconds 2
+          }
+          Get-Process dnsqb-* -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, Path -AutoSize
+          if (-not $up) {
+            Get-ChildItem (Join-Path $appData 'logs') -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Tail 40
+            }
+            throw "the service did not come up on 127.0.0.1:8443 within 90 s"
+          }
+      - name: smoke-installed.ps1
+        shell: pwsh
+        run: ./packaging/smoke-installed.ps1
+
+  # Wave 29 (T-288, trial): Windows App Certification Kit on the x64 MSIX. Its
+  # exit code is not the verdict — the report is; the summary lists the
+  # failed tests and the XML is uploaded either way. Trial only, so a WACK
+  # failure does not fail the workflow.
+  wack:
+    needs: msix
+    runs-on: windows-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-msix-*
+          path: dist
+          merge-multiple: true
+      - name: Run WACK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $appcert = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\App Certification Kit\appcert.exe'
+          if (-not (Test-Path $appcert)) {
+            "WACK: appcert.exe is not on this runner image ($appcert)" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            exit 1
+          }
+          Get-ChildItem dist -Filter *.cer | ForEach-Object {
+            Import-Certificate -FilePath $_.FullName -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          }
+          $report = Join-Path $env:RUNNER_TEMP 'wack\report.xml'
+          New-Item -ItemType Directory -Path (Split-Path $report) -Force | Out-Null
+          & $appcert reset
+          & $appcert test -appxpackagepath (Resolve-Path dist\dns-quorum-filter.msix).Path -reportoutputpath $report
+          Write-Host "appcert exit code: $LASTEXITCODE"
+          if (-not (Test-Path $report)) { throw "appcert wrote no report" }
+          [xml]$xml = Get-Content $report -Raw
+          $overall = $xml.REPORT.OVERALL_RESULT
+          $lines = @("## WACK: $overall", '')
+          foreach ($test in $xml.SelectNodes('//TEST')) {
+            $result = $test.RESULT.'#cdata-section'
+            if (-not $result) { $result = "$($test.RESULT)" }
+            if ($result -ne 'PASS') {
+              $lines += "- **$result** $($test.NAME) (index $($test.INDEX))"
+              foreach ($m in $test.SelectNodes('MESSAGES/MESSAGE')) { $lines += "  - $($m.TEXT)" }
+            }
+          }
+          $lines | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wack-report
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/wack/
+
   # T-103: only on a `v*` tag. Re-proves the cross-path bit-identical property
   # for this exact tag (ci.yml's `repro` runs on branch pushes, not here), then
   # publishes a DRAFT release — a maintainer reviews and clicks Publish.

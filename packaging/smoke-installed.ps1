@@ -4,7 +4,8 @@
 Post-install live smoke test of the installed dns-quorum-filter MSIX (QA pass, Phase 3b).
 
 .DESCRIPTION
-Run against the installed package before every release; CI never sees an installed MSIX.
+Run against the installed package before every release; release.yml's install-smoke job also
+runs it on a freshly installed CI package (wave 29).
 Read-only apart from one rolled-back mutation (POST /admin/config with the current values,
 then resolver_config.toml must be byte-identical). Never calls /admin/shutdown,
 /admin/install-cert or /admin/request-remove-all, and never prints a /admin/log body.
