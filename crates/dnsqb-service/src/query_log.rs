@@ -37,16 +37,9 @@
 
 use crate::quorum::{VoterRecord, VoterVerdict};
 use hickory_proto::rr::RecordType;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockWriteGuard};
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
-
-/// SPEC.md §6: "останні 1000 записів" default entry-count bound. Not
-/// re-exported at crate root — `QueryLog::default()` is the public way to
-/// get these defaults, same pattern as `cache::CacheConfig::default()`.
-pub(crate) const DEFAULT_MAX_ENTRIES: usize = 1000;
-/// SPEC.md §6: "24 години" default age bound.
-pub(crate) const DEFAULT_MAX_AGE: Duration = Duration::from_hours(24);
 
 /// SPEC.md §6 `decision` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +157,161 @@ pub struct LogEntry {
     pub latency_ms: u64,
 }
 
+/// How long the query log keeps entries (T-291, SPEC.md §6) — a closed set
+/// the user picks from in `/admin/ui`, never a free-form duration. Serialized
+/// by explicit stable name (`resolver_config.toml`'s `query_log_retention`
+/// and the admin DTO), never by declaration order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum LogRetention {
+    /// 24 hours — the default, in memory only unless `persist_query_log` is on.
+    #[default]
+    #[serde(rename = "24h")]
+    Day,
+    /// 3 days — needs `persist_query_log` (a reboot would drop it otherwise).
+    #[serde(rename = "3d")]
+    ThreeDays,
+    /// 7 days — needs `persist_query_log`.
+    #[serde(rename = "7d")]
+    SevenDays,
+    /// 30 days — needs `persist_query_log`.
+    #[serde(rename = "30d")]
+    ThirtyDays,
+}
+
+impl LogRetention {
+    /// The age bound.
+    #[must_use]
+    pub const fn max_age(self) -> Duration {
+        Duration::from_hours(24 * self.days())
+    }
+
+    /// The entry-count bound — sized so a typical day (~2 200 queries,
+    /// measured 2026-11-13) fits the age bound with room to spare, and capped
+    /// at [`MAX_LOG_ENTRIES`] however long the age bound is.
+    #[must_use]
+    pub const fn max_entries(self) -> usize {
+        match self {
+            Self::Day => 10_000,
+            Self::ThreeDays => 30_000,
+            Self::SevenDays => 70_000,
+            Self::ThirtyDays => MAX_LOG_ENTRIES,
+        }
+    }
+
+    /// Whole days covered — also the on-disk segment window.
+    #[must_use]
+    pub const fn days(self) -> u64 {
+        match self {
+            Self::Day => 1,
+            Self::ThreeDays => 3,
+            Self::SevenDays => 7,
+            Self::ThirtyDays => 30,
+        }
+    }
+
+    /// Whether this window outlives a service restart only with
+    /// `persist_query_log` on — every choice past the default.
+    #[must_use]
+    pub const fn needs_disk(self) -> bool {
+        !matches!(self, Self::Day)
+    }
+}
+
+/// The live query-log policy (T-291): how long entries are kept and whether
+/// they are sealed to disk. Changed only together, under the admin
+/// `persist_lock`, so the "past 24 h needs the disk" rule is checked against
+/// one consistent pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QueryLogPolicy {
+    /// The retention window.
+    pub retention: LogRetention,
+    /// Whether the log is persisted (`persist_query_log`).
+    pub persist: bool,
+}
+
+/// The hard ceiling on entries any [`LogRetention`] may keep (~35–40 MB at
+/// the measured ~350 B per entry).
+pub(crate) const MAX_LOG_ENTRIES: usize = 100_000;
+
+/// One log entry plus its position in arrival order — the pager's cursor
+/// (T-291). Not a timestamp: many queries share a millisecond, so a
+/// timestamp cursor would skip entries at a page boundary.
+#[derive(Debug, Clone)]
+pub struct PagedEntry {
+    /// Strictly increasing in arrival order for this process's lifetime;
+    /// never persisted.
+    pub seq: u64,
+    /// The entry itself.
+    pub entry: LogEntry,
+}
+
+/// One `GET /admin/log` page: the newest matches, oldest-first, and whether
+/// older matches exist past it.
+#[derive(Debug, Clone)]
+pub struct LogPage {
+    /// Up to `limit` matching entries, oldest first.
+    pub entries: Vec<PagedEntry>,
+    /// `true` when at least one more (older) matching entry was not returned.
+    pub truncated: bool,
+}
+
+/// The buffer plus its bounds, all behind one lock so a bounds change and
+/// the trim it implies are one atomic step.
+struct Ring {
+    entries: VecDeque<LogEntry>,
+    max_entries: usize,
+    max_age: Duration,
+    /// Bumped on every push/clear/restore/bounds change — the persister
+    /// compares it to skip a flush when nothing changed. Age eviction does
+    /// not bump it: it only drops entries, which the disk copy loses on its
+    /// own bounded restore.
+    generation: u64,
+    /// The sequence number the next pushed entry gets. Entry `i` (from the
+    /// front) has `next_seq - len + i`: pushes append, every eviction pops
+    /// the front, so the numbering needs no per-entry storage. `restore`
+    /// (the one non-front removal) renumbers strictly upward.
+    next_seq: u64,
+}
+
+impl Ring {
+    fn is_live(&self, entry: &LogEntry, now: SystemTime) -> bool {
+        // `Err` means `entry.timestamp` is after `now` (clock skew, not
+        // staleness) - keep it. Do not "simplify" this to
+        // `is_ok_and(...)`, which would silently flip that case to
+        // "evict" instead.
+        now.duration_since(entry.timestamp)
+            .map_or(true, |age| age <= self.max_age)
+    }
+
+    /// Drops aged-out entries from the head. The buffer is in arrival order,
+    /// so this is O(dropped), not a full scan; a future-dated head (clock
+    /// skew) stops it, and readers skip any stale entry left behind it.
+    fn evict_aged(&mut self, now: SystemTime) {
+        while self
+            .entries
+            .front()
+            .is_some_and(|entry| !self.is_live(entry, now))
+        {
+            self.entries.pop_front();
+        }
+    }
+
+    fn trim_to_capacity(&mut self) {
+        while self.entries.len() > self.max_entries {
+            self.entries.pop_front();
+        }
+    }
+
+    /// The sequence number of the front entry.
+    fn head_seq(&self) -> u64 {
+        self.next_seq.saturating_sub(self.entries.len() as u64)
+    }
+
+    fn bump(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
 /// SPEC.md §6/§6.1: in-memory ring buffer of [`LogEntry`] records, bounded
 /// independently by entry count and age.
 ///
@@ -175,9 +323,7 @@ pub struct LogEntry {
 /// the whole buffer at once; format individual [`LogEntry`] values (from
 /// [`QueryLog::snapshot`]) if a caller genuinely needs to.
 pub struct QueryLog {
-    entries: RwLock<VecDeque<LogEntry>>,
-    max_entries: usize,
-    max_age: Duration,
+    ring: RwLock<Ring>,
 }
 
 impl QueryLog {
@@ -185,112 +331,176 @@ impl QueryLog {
     #[must_use]
     pub fn new(max_entries: usize, max_age: Duration) -> Self {
         Self {
-            entries: RwLock::new(VecDeque::new()),
-            max_entries,
-            max_age,
+            ring: RwLock::new(Ring {
+                entries: VecDeque::new(),
+                max_entries,
+                max_age,
+                generation: 0,
+                next_seq: 0,
+            }),
         }
+    }
+
+    /// Constructs an empty log bounded by `retention` (T-291).
+    #[must_use]
+    pub fn with_retention(retention: LogRetention) -> Self {
+        Self::new(retention.max_entries(), retention.max_age())
+    }
+
+    /// Switches to `retention`'s bounds live (T-291); a smaller window trims
+    /// the buffer immediately.
+    pub fn set_retention(&self, retention: LogRetention, now: SystemTime) {
+        let mut ring = self.ring.write();
+        ring.max_entries = retention.max_entries();
+        ring.max_age = retention.max_age();
+        ring.evict_aged(now);
+        ring.trim_to_capacity();
+        ring.bump();
+    }
+
+    /// The change counter (see [`Ring::generation`]).
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.ring.read().generation
     }
 
     /// Appends `entry`, then evicts the oldest record(s) if the buffer is
     /// now over capacity.
     ///
-    /// The eviction loop's own negation is the post-condition — `guard.len()
-    /// <= self.max_entries` holds after this call regardless of how many
-    /// entries were present going in, not just because `push` happens to be
-    /// the only inserter today (global CLAUDE.md: bounds safety provable
-    /// from the line itself, not from an induction argument over callers).
+    /// The eviction loop's own negation is the post-condition — `len <=
+    /// max_entries` holds after this call regardless of how many entries
+    /// were present going in, not just because `push` happens to be the only
+    /// inserter today (global CLAUDE.md: bounds safety provable from the
+    /// line itself, not from an induction argument over callers).
     pub fn push(&self, entry: LogEntry) {
-        let mut guard = self.entries.write();
-        guard.push_back(entry);
-        while guard.len() > self.max_entries {
-            guard.pop_front();
-        }
+        let mut ring = self.ring.write();
+        ring.entries.push_back(entry);
+        ring.next_seq = ring.next_seq.saturating_add(1);
+        ring.trim_to_capacity();
+        ring.bump();
     }
 
     /// Returns every entry still within `max_age` of `now`, oldest first.
     ///
-    /// Applies the age bound by calling `VecDeque::retain` on the live
-    /// buffer under the write lock (SPEC.md §6.1: "фільтрація на читанні",
-    /// not a separate background sweep task) — an aged-out entry is actually
-    /// dropped here, not just excluded from this call's return value.
+    /// Drops aged-out entries from the live buffer first (SPEC.md §6.1:
+    /// "фільтрація на читанні", not a separate background sweep task). This
+    /// clones the whole window — `GET /admin/log` uses [`Self::search`] and
+    /// the status path [`Self::inspect`] instead.
     #[must_use]
     pub fn snapshot(&self, now: SystemTime) -> Vec<LogEntry> {
-        self.age_filtered_entries(now, |_| true)
+        self.entries_matching(now, |_| true)
     }
 
-    /// [`Self::snapshot`], narrowed to entries matching every facet `filter`
-    /// sets (T-45, SPEC.md §6: "простий підрядковий фільтр по domain плюс
-    /// фасети: тільки заблоковані / тільки дозволені / за конкретним
-    /// voter'ом"). Applies the same age bound as `snapshot` — an entry that
-    /// ages out is dropped from the buffer here too, filter or no filter.
+    /// Clones the live entries `predicate` accepts, oldest first — the
+    /// persister's per-day segment read (T-291) clones one day, not the
+    /// whole window.
     #[must_use]
-    pub fn search(&self, now: SystemTime, filter: &LogFilter<'_>) -> Vec<LogEntry> {
+    pub fn entries_matching<F>(&self, now: SystemTime, mut predicate: F) -> Vec<LogEntry>
+    where
+        F: FnMut(&LogEntry) -> bool,
+    {
+        let mut ring = self.ring.write();
+        ring.evict_aged(now);
+        let ring = RwLockWriteGuard::downgrade(ring);
+        ring.entries
+            .iter()
+            .filter(|entry| ring.is_live(entry, now) && predicate(entry))
+            .cloned()
+            .collect()
+    }
+
+    /// Runs `f` over the live buffer (oldest first) without cloning it —
+    /// the status path's whole-window counters (T-291: a 100 000-entry
+    /// window cloned once a second for the SSE sampler was the alternative).
+    /// `f` may see a stale entry left behind a future-dated head (see
+    /// [`Ring::evict_aged`]); every caller only counts, so that is harmless.
+    pub fn inspect<R>(&self, now: SystemTime, f: impl FnOnce(&VecDeque<LogEntry>) -> R) -> R {
+        let mut ring = self.ring.write();
+        ring.evict_aged(now);
+        let ring = RwLockWriteGuard::downgrade(ring);
+        f(&ring.entries)
+    }
+
+    /// The newest `limit` entries matching every facet `filter` sets and
+    /// arrived before sequence number `before_seq` (when set), oldest first
+    /// (T-45, SPEC.md §6: "простий підрядковий фільтр по domain плюс
+    /// фасети"). Walks from the tail and clones at most `limit` entries,
+    /// however many match (T-291).
+    #[must_use]
+    pub fn search(
+        &self,
+        now: SystemTime,
+        filter: &LogFilter<'_>,
+        limit: usize,
+        before_seq: Option<u64>,
+    ) -> LogPage {
         let needle = filter.domain_contains.map(str::to_ascii_lowercase);
-        self.age_filtered_entries(now, |entry| {
-            matches_filter(entry, filter, needle.as_deref())
-        })
+        let mut ring = self.ring.write();
+        ring.evict_aged(now);
+        let ring = RwLockWriteGuard::downgrade(ring);
+        let head_seq = ring.head_seq();
+        let mut matches = ring
+            .entries
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, entry)| (head_seq.saturating_add(index as u64), entry))
+            .filter(|(seq, entry)| {
+                before_seq.is_none_or(|cutoff| *seq < cutoff)
+                    && ring.is_live(entry, now)
+                    && matches_filter(entry, filter, needle.as_deref())
+            });
+        let mut entries: Vec<PagedEntry> = matches
+            .by_ref()
+            .take(limit)
+            .map(|(seq, entry)| PagedEntry {
+                seq,
+                entry: entry.clone(),
+            })
+            .collect();
+        let truncated = matches.next().is_some();
+        entries.reverse();
+        LogPage { entries, truncated }
     }
 
     /// Empties the log immediately (SPEC.md §6's manual clear action, T-44 —
     /// same pattern as `Cache::clear`, T-137).
     pub fn clear(&self) {
-        self.entries.write().clear();
+        let mut ring = self.ring.write();
+        ring.entries.clear();
+        ring.bump();
     }
 
     /// Seeds the buffer from a previous run's persisted entries (T-146 —
-    /// [`Self::snapshot`] output, decrypted from `query-log.enc`), oldest
-    /// first, then re-applies **both** bounds against `now`: entries past
-    /// `max_age` are dropped, and any excess over `max_entries` is evicted
-    /// oldest-first. SPEC.md §6's "1000 записів або 24 години" window is not
-    /// bypassed by restoring from disk. Called once at startup before the
-    /// listener accepts traffic; a no-op on empty input.
+    /// [`Self::snapshot`] output, decrypted from disk), oldest first, then
+    /// re-applies **both** bounds against `now`: entries past `max_age` are
+    /// dropped, and any excess over `max_entries` is evicted oldest-first.
+    /// The configured window is not bypassed by restoring from disk. Called
+    /// once at startup before the listener accepts traffic; a no-op on empty
+    /// input.
     ///
-    /// The two post-conditions (`guard.len() <= max_entries`, every kept
-    /// entry within `max_age` of `now`) hold from the loops themselves, the
-    /// same way `push`/`age_filtered_entries` establish them — not from an
-    /// assumption about what the caller passed in.
+    /// A full `retain` here, not [`Ring::evict_aged`]: restored input can
+    /// interleave segments, so arrival order is not guaranteed. The two
+    /// post-conditions (`len <= max_entries`, every kept entry within
+    /// `max_age` of `now`) hold from the loops themselves.
     pub fn restore(&self, entries: Vec<LogEntry>, now: SystemTime) {
         if entries.is_empty() {
             return;
         }
-        let mut guard = self.entries.write();
-        for entry in entries {
-            guard.push_back(entry);
-        }
-        guard.retain(|entry| {
-            // Same clock-skew handling as `age_filtered_entries`: a
-            // future-dated entry (`Err` from `duration_since`) is kept.
+        let mut ring = self.ring.write();
+        // Every surviving entry is renumbered at or above the old
+        // `next_seq`, so a cursor handed out before this never lands inside
+        // the new numbering.
+        let old_next = ring.next_seq;
+        ring.entries.extend(entries);
+        let max_age = ring.max_age;
+        ring.entries.retain(|entry| {
             now.duration_since(entry.timestamp)
-                .map_or(true, |age| age <= self.max_age)
+                .map_or(true, |age| age <= max_age)
         });
-        while guard.len() > self.max_entries {
-            guard.pop_front();
-        }
-    }
-
-    /// Shared implementation behind [`Self::snapshot`]/[`Self::search`]: one
-    /// age-eviction pass under one write-lock acquisition, then `predicate`
-    /// narrows what gets cloned into the returned `Vec` — the age bound is
-    /// enforced in exactly one place regardless of which public method a
-    /// caller uses.
-    fn age_filtered_entries<F>(&self, now: SystemTime, mut predicate: F) -> Vec<LogEntry>
-    where
-        F: FnMut(&LogEntry) -> bool,
-    {
-        let mut guard = self.entries.write();
-        guard.retain(|entry| {
-            // `Err` means `entry.timestamp` is after `now` (clock skew, not
-            // staleness) - keep it. Do not "simplify" this to
-            // `is_ok_and(...)`, which would silently flip that case to
-            // "evict" instead.
-            now.duration_since(entry.timestamp)
-                .map_or(true, |age| age <= self.max_age)
-        });
-        guard
-            .iter()
-            .filter(|entry| predicate(entry))
-            .cloned()
-            .collect()
+        ring.trim_to_capacity();
+        ring.next_seq = old_next.saturating_add(ring.entries.len() as u64);
+        ring.bump();
     }
 }
 
@@ -370,15 +580,17 @@ fn matches_filter(
 }
 
 impl Default for QueryLog {
-    /// SPEC.md §6's own stated defaults: 1000 entries or 24 hours.
+    /// [`LogRetention::default`]'s bounds (24 hours).
     fn default() -> Self {
-        Self::new(DEFAULT_MAX_ENTRIES, DEFAULT_MAX_AGE)
+        Self::with_retention(LogRetention::default())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, DecisionSource, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES};
+    use super::{
+        Decision, DecisionSource, LogEntry, LogFilter, LogRetention, QueryLog, MAX_LOG_ENTRIES,
+    };
     use crate::quorum::{VoterRecord, VoterVerdict};
     use hickory_proto::rr::RecordType;
     use std::time::{Duration, SystemTime};
@@ -395,6 +607,32 @@ mod tests {
             resolved_ip_country: None,
             latency_ms: 5,
         }
+    }
+
+    /// The pre-T-291 "every match" read, for the facet tests below.
+    fn search_all(log: &QueryLog, now: SystemTime, filter: &LogFilter<'_>) -> Vec<LogEntry> {
+        log.search(now, filter, usize::MAX, None)
+            .entries
+            .into_iter()
+            .map(|paged| paged.entry)
+            .collect()
+    }
+
+    fn page_domains(page: &super::LogPage) -> Vec<&str> {
+        page.entries
+            .iter()
+            .map(|p| p.entry.domain.as_str())
+            .collect()
+    }
+
+    fn named(timestamp: SystemTime, domain: &str) -> LogEntry {
+        let mut entry = entry_at(timestamp);
+        entry.domain = domain.to_string();
+        entry
+    }
+
+    fn domains(entries: &[LogEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.domain.as_str()).collect()
     }
 
     #[test]
@@ -436,7 +674,7 @@ mod tests {
 
     #[test]
     fn snapshot_excludes_entries_older_than_max_age() {
-        let log = QueryLog::new(super::DEFAULT_MAX_ENTRIES, Duration::from_hours(24));
+        let log = QueryLog::new(1000, Duration::from_hours(24));
         let now = SystemTime::now();
         let Some(stale_timestamp) = now.checked_sub(Duration::from_hours(25)) else {
             panic!("valid fixture timestamp");
@@ -496,8 +734,9 @@ mod tests {
     #[test]
     fn default_matches_spec_bounds() {
         let log = QueryLog::default();
-        assert_eq!(log.max_entries, DEFAULT_MAX_ENTRIES);
-        assert_eq!(log.max_age, Duration::from_hours(24));
+        let ring = log.ring.read();
+        assert_eq!(ring.max_entries, LogRetention::Day.max_entries());
+        assert_eq!(ring.max_age, Duration::from_hours(24));
     }
 
     #[test]
@@ -572,7 +811,8 @@ mod tests {
         other.domain = "unrelated.example".to_string();
         log.push(other);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 domain_contains: Some("exampledomain"),
@@ -595,7 +835,8 @@ mod tests {
         match_entry.domain = "sub.exampledomain.com".to_string();
         log.push(match_entry);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 domain_contains: Some("ExampleDomain"),
@@ -619,7 +860,8 @@ mod tests {
         match_entry.domain = "sub.ExampleDomain.com".to_string();
         log.push(match_entry);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 domain_contains: Some("exampledomain"),
@@ -643,7 +885,8 @@ mod tests {
         allowed.decision = Decision::Allowed;
         log.push(allowed);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 decision: Some(Decision::Blocked),
@@ -678,7 +921,8 @@ mod tests {
         }];
         log.push(adguard_entry);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 voter: Some("quad9"),
@@ -705,7 +949,8 @@ mod tests {
         cached.voters = Vec::new();
         log.push(cached);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 voter: Some("quad9"),
@@ -743,7 +988,8 @@ mod tests {
         ];
         log.push(disabled_entry);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 voter: Some("quad9"),
@@ -774,7 +1020,8 @@ mod tests {
         both.decision = Decision::Blocked;
         log.push(both);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 domain_contains: Some("target"),
@@ -796,7 +1043,7 @@ mod tests {
         log.push(entry_at(now));
 
         assert_eq!(
-            log.search(now, &LogFilter::default()).len(),
+            search_all(&log, now, &LogFilter::default()).len(),
             log.snapshot(now).len()
         );
     }
@@ -812,7 +1059,8 @@ mod tests {
         stale.domain = "stale.example".to_string();
         log.push(stale);
 
-        let results = log.search(
+        let results = search_all(
+            &log,
             now,
             &LogFilter {
                 domain_contains: Some("stale"),
@@ -821,5 +1069,245 @@ mod tests {
         );
 
         assert!(results.is_empty());
+    }
+
+    // T-291: retention choices.
+
+    #[test]
+    fn every_retention_has_its_age_and_a_capped_entry_bound() {
+        let cases = [
+            (LogRetention::Day, 1, false),
+            (LogRetention::ThreeDays, 3, true),
+            (LogRetention::SevenDays, 7, true),
+            (LogRetention::ThirtyDays, 30, true),
+        ];
+        for (retention, days, needs_disk) in cases {
+            assert_eq!(retention.max_age(), Duration::from_hours(24 * days));
+            assert_eq!(retention.days(), days);
+            assert_eq!(retention.needs_disk(), needs_disk);
+            assert!(retention.max_entries() <= MAX_LOG_ENTRIES);
+        }
+        assert!(
+            LogRetention::Day.max_entries() > 1000,
+            "1000 held only ~11 h of real traffic"
+        );
+        assert_eq!(LogRetention::default(), LogRetention::Day);
+    }
+
+    #[test]
+    fn retention_serializes_by_stable_name() {
+        for (retention, wire) in [
+            (LogRetention::Day, "\"24h\""),
+            (LogRetention::ThreeDays, "\"3d\""),
+            (LogRetention::SevenDays, "\"7d\""),
+            (LogRetention::ThirtyDays, "\"30d\""),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&retention).ok().as_deref(),
+                Some(wire)
+            );
+            assert_eq!(
+                serde_json::from_str::<LogRetention>(wire).ok(),
+                Some(retention)
+            );
+        }
+        assert!(serde_json::from_str::<LogRetention>("\"2d\"").is_err());
+        assert!(serde_json::from_str::<LogRetention>("\"Day\"").is_err());
+    }
+
+    #[test]
+    fn a_longer_retention_keeps_entries_the_default_would_drop() {
+        let now = SystemTime::now();
+        let Some(three_days_ago) = now.checked_sub(Duration::from_hours(72)) else {
+            panic!("valid fixture timestamp");
+        };
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.restore(
+            vec![
+                named(three_days_ago, "old.example"),
+                named(now, "new.example"),
+            ],
+            now,
+        );
+        assert_eq!(
+            domains(&log.snapshot(now)),
+            vec!["old.example", "new.example"]
+        );
+
+        let day = QueryLog::default();
+        day.restore(
+            vec![
+                named(three_days_ago, "old.example"),
+                named(now, "new.example"),
+            ],
+            now,
+        );
+        assert_eq!(domains(&day.snapshot(now)), vec!["new.example"]);
+    }
+
+    #[test]
+    fn shrinking_the_retention_trims_the_buffer_at_once() {
+        let now = SystemTime::now();
+        let Some(two_days_ago) = now.checked_sub(Duration::from_hours(48)) else {
+            panic!("valid fixture timestamp");
+        };
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.push(named(two_days_ago, "old.example"));
+        log.push(named(now, "new.example"));
+        let before = log.generation();
+
+        log.set_retention(LogRetention::Day, now);
+
+        assert_ne!(log.generation(), before, "a bounds change is a change");
+        assert_eq!(log.inspect(now, std::collections::VecDeque::len), 1);
+        assert_eq!(domains(&log.snapshot(now)), vec!["new.example"]);
+    }
+
+    #[test]
+    fn shrinking_the_entry_bound_keeps_the_newest() {
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::ThreeDays);
+        for i in 0..LogRetention::Day.max_entries() + 5 {
+            log.push(named(now, &format!("d{i}.example")));
+        }
+        log.set_retention(LogRetention::Day, now);
+        let kept = log.snapshot(now);
+        assert_eq!(kept.len(), LogRetention::Day.max_entries());
+        assert_eq!(kept.first().map(|e| e.domain.as_str()), Some("d5.example"));
+    }
+
+    #[test]
+    fn the_buffer_never_outgrows_the_hard_ceiling() {
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::ThirtyDays);
+        for _ in 0..MAX_LOG_ENTRIES + 10 {
+            log.push(entry_at(now));
+        }
+        assert_eq!(
+            log.inspect(now, std::collections::VecDeque::len),
+            MAX_LOG_ENTRIES
+        );
+    }
+
+    #[test]
+    fn generation_moves_on_push_clear_and_restore() {
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        let g0 = log.generation();
+        log.push(entry_at(now));
+        let g1 = log.generation();
+        log.clear();
+        let g2 = log.generation();
+        log.restore(vec![entry_at(now)], now);
+        let g3 = log.generation();
+        assert!(g0 != g1 && g1 != g2 && g2 != g3);
+        let _ = log.snapshot(now);
+        assert_eq!(log.generation(), g3, "a read is not a change");
+    }
+
+    #[test]
+    fn search_returns_the_newest_limit_matches_oldest_first() {
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        for name in ["a.example", "b.example", "c.example", "d.example"] {
+            log.push(named(now, name));
+        }
+        let page = log.search(now, &LogFilter::default(), 2, None);
+        assert_eq!(page_domains(&page), vec!["c.example", "d.example"]);
+        assert!(page.truncated);
+
+        let whole = log.search(now, &LogFilter::default(), 4, None);
+        assert!(!whole.truncated, "exactly `limit` matches is not truncated");
+    }
+
+    /// Walks every page with the `before_seq` cursor and returns what it saw.
+    fn walk_pages(log: &QueryLog, now: SystemTime, limit: usize) -> Vec<String> {
+        let mut seen = Vec::new();
+        let mut cursor = None;
+        loop {
+            let page = log.search(now, &LogFilter::default(), limit, cursor);
+            let mut names: Vec<String> = page
+                .entries
+                .iter()
+                .map(|p| p.entry.domain.clone())
+                .collect();
+            names.extend(seen);
+            seen = names;
+            if !page.truncated {
+                return seen;
+            }
+            cursor = page.entries.first().map(|p| p.seq);
+        }
+    }
+
+    #[test]
+    fn paging_with_the_cursor_neither_skips_nor_duplicates() {
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        // Same instant for all - a millisecond cursor would lose some at
+        // every page boundary - and one pushed out of timestamp order.
+        for i in 0..7 {
+            log.push(named(now, &format!("d{i}.example")));
+        }
+        let Some(earlier) = now.checked_sub(Duration::from_secs(5)) else {
+            panic!("valid fixture timestamp");
+        };
+        log.push(named(earlier, "late.example"));
+        let expected: Vec<String> = (0..7)
+            .map(|i| format!("d{i}.example"))
+            .chain(std::iter::once("late.example".to_string()))
+            .collect();
+        for limit in 1..=9 {
+            assert_eq!(walk_pages(&log, now, limit), expected, "limit {limit}");
+        }
+    }
+
+    #[test]
+    fn the_cursor_survives_evictions_from_the_front() {
+        let now = SystemTime::now();
+        let log = QueryLog::new(3, Duration::from_hours(24));
+        for name in ["a", "b", "c"] {
+            log.push(named(now, name));
+        }
+        let page = log.search(now, &LogFilter::default(), 1, None);
+        let Some(cursor) = page.entries.first().map(|p| p.seq) else {
+            panic!("page is not empty");
+        };
+        log.push(named(now, "d")); // evicts "a"
+        let older = log.search(now, &LogFilter::default(), 10, Some(cursor));
+        assert_eq!(
+            page_domains(&older),
+            vec!["b"],
+            "still older than the cursor's own entry"
+        );
+    }
+
+    #[test]
+    fn restore_renumbers_above_every_earlier_cursor() {
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(named(now, "live"));
+        let before = log.search(now, &LogFilter::default(), 1, None);
+        let Some(old_seq) = before.entries.first().map(|p| p.seq) else {
+            panic!("page is not empty");
+        };
+        log.restore(vec![named(now, "restored")], now);
+        let page = log.search(now, &LogFilter::default(), 10, None);
+        assert!(page.entries.iter().all(|p| p.seq > old_seq));
+        let seqs: Vec<u64> = page.entries.iter().map(|p| p.seq).collect();
+        assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+    }
+
+    #[test]
+    fn search_skips_a_stale_entry_left_behind_a_future_dated_head() {
+        let now = SystemTime::now();
+        let Some(stale) = now.checked_sub(Duration::from_hours(25)) else {
+            panic!("valid fixture timestamp");
+        };
+        let log = QueryLog::default();
+        log.push(named(now + Duration::from_secs(60), "future.example"));
+        log.push(named(stale, "stale.example"));
+        let page = log.search(now, &LogFilter::default(), 10, None);
+        assert_eq!(page_domains(&page), vec!["future.example"]);
     }
 }

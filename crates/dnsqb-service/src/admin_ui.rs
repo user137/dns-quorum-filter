@@ -1234,7 +1234,7 @@ mod tests {
     fn log_card_fetches_the_whole_log_ring_for_its_pager() {
         let expected = format!(
             "const LOG_FETCH_LIMIT = {};",
-            crate::query_log::DEFAULT_MAX_ENTRIES
+            crate::dispatch::MAX_LOG_LIMIT
         );
         assert!(
             MAIN_JS.contains(&expected),

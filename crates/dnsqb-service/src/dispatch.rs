@@ -57,7 +57,7 @@ use crate::pipeline::{
     PipelineOutcome, RatingFilterView, UpstreamContext,
 };
 use crate::query_log::{
-    Decision, DecisionSource, LogEntry, LogFilter, QueryLog, DEFAULT_MAX_ENTRIES,
+    Decision, DecisionSource, LogEntry, LogFilter, LogRetention, QueryLog, QueryLogPolicy,
 };
 use crate::rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
 use crate::reachability::NetworkReachability;
@@ -365,6 +365,11 @@ pub struct PersistTarget {
     /// (SPEC.md §6). Set once from `resolver_config.toml` at startup; carried
     /// through every config rewrite so an admin change doesn't wipe it.
     pub persist_query_log: bool,
+    /// T-291 — the configured query-log window. Like `persist_query_log`
+    /// above, only the startup seed of `AppState`'s live query-log policy:
+    /// `POST /admin/query-log-policy` changes both at runtime, so no config
+    /// writer reads either field from here.
+    pub query_log_retention: LogRetention,
     /// T-97 — whether the quorum-verdict cache is persisted to `cache.enc`
     /// (SPEC.md §4). Same hand-edit-only, carried-through-every-rewrite
     /// treatment as `persist_query_log`.
@@ -784,6 +789,10 @@ pub struct AppState<C: DohClient + Sync> {
     /// Same `RwLock<Arc<_>>` snapshot-read shape as every other per-query
     /// state here — a query must never hold this lock across an `.await`.
     cctld_block: RwLock<Arc<Vec<String>>>,
+    /// T-291 — the live query-log retention + persistence choice. Seeded
+    /// from [`PersistTarget`] at construction; written only under
+    /// `persist_lock` (`POST /admin/query-log-policy`, `/admin/reset`).
+    query_log_policy: RwLock<QueryLogPolicy>,
     /// T-163 — which upstream `geoip_updater::run_geoip_updater` pulls from
     /// (DB-IP Lite or `MaxMind`). Swapped by `apply_admin_reset` and the
     /// `/admin/geoip/maxmind[/clear]` routes; the updater reads a fresh
@@ -1086,6 +1095,10 @@ impl<C: DohClient + Sync> AppState<C> {
             geoip: RwLock::new(Arc::new(geoip.database)),
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
             cctld_block: RwLock::new(Arc::new(Vec::new())),
+            query_log_policy: RwLock::new(QueryLogPolicy {
+                retention: persist.query_log_retention,
+                persist: persist.persist_query_log,
+            }),
             geoip_source: RwLock::new(Arc::new(geoip.source)),
             geoip_refresh_wake: Arc::new(Notify::new()),
             rating_filter_config: RwLock::new(Arc::new(geoip.rating_filter_config)),
@@ -1166,6 +1179,21 @@ impl<C: DohClient + Sync> AppState<C> {
     /// One `Arc::clone` snapshot of the live `[cctld_block]` blocked-code
     /// list (Фаза 5, T-115) — read once per query by
     /// `pipeline::UpstreamContext::cctld_block`, never held across `.await`.
+    /// The live query-log policy (T-291).
+    #[must_use]
+    pub fn query_log_policy(&self) -> QueryLogPolicy {
+        *self.query_log_policy.read()
+    }
+
+    /// Applies `policy` live (T-291): the log takes the new window at once
+    /// (a shorter one trims it), and the persister reads the new `persist`
+    /// flag on its next cycle. Callers hold `persist_lock`.
+    fn set_query_log_policy(&self, policy: QueryLogPolicy) {
+        self.query_log
+            .set_retention(policy.retention, SystemTime::now());
+        *self.query_log_policy.write() = policy;
+    }
+
     pub(crate) fn cctld_block_snapshot(&self) -> Arc<Vec<String>> {
         Arc::clone(&self.cctld_block.read())
     }
@@ -1542,10 +1570,11 @@ impl<C: DohClient + Sync> AppState<C> {
     /// Every `resolver_config.toml` field as it is live right now (ARCH-09).
     /// A full struct literal on purpose: a new `ResolverConfig` field fails to
     /// compile here, in the one place every config writer reads from.
-    /// `port`/`limits`/`persist_*` come from [`PersistTarget`] — they change
-    /// only with a restart.
+    /// `port`/`limits`/`persist_cache` come from [`PersistTarget`] — they
+    /// change only with a restart.
     fn live_resolver_config(&self) -> ResolverConfig {
         let runtime = *self.runtime.read();
+        let log_policy = self.query_log_policy();
         ResolverConfig {
             port: self.persist.port,
             timeout_mode: runtime.timeout.mode,
@@ -1558,7 +1587,8 @@ impl<C: DohClient + Sync> AppState<C> {
             limits: self.persist.limits,
             serve_baseline_when_filters_unreachable: runtime
                 .serve_baseline_when_filters_unreachable,
-            persist_query_log: self.persist.persist_query_log,
+            persist_query_log: log_policy.persist,
+            query_log_retention: log_policy.retention,
             persist_cache: self.persist.persist_cache,
             rating_filter: (*self.rating_filter_config_snapshot()).clone(),
             personal_zone: *self.personal_zone_config_snapshot(),
@@ -1859,12 +1889,11 @@ fn cctld_block_status_view<C: DohClient + Sync>(state: &AppState<C>) -> CctldBlo
 /// (always `true` for a plain status read, since nothing changed).
 fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> AdminStatusResponse {
     let settings = *state.runtime.read();
-    let entries = state.query_log.snapshot(SystemTime::now());
     let active_providers = ProviderStatusView::active_from(&state.providers.read());
     let network = NetworkStatusView::from(state.reachability_snapshot());
     let paused = state.filtering_paused_snapshot();
     let watchdog = read_watchdog_view(state.persist.paths.as_ref(), SystemTime::now());
-    let log_stats = live_stats(state, &entries);
+    let log_stats = live_stats(state);
     AdminStatusResponse {
         schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
@@ -1889,7 +1918,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         watchdog,
         persisted,
         encrypted_persistence: EncryptedPersistenceView {
-            query_log: state.persist.persist_query_log,
+            query_log: state.query_log_policy().persist,
             cache: state.persist.persist_cache,
         },
         rating_filter: rating_filter_status_view(state),
@@ -1903,12 +1932,14 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
 /// [`compute_stats`] plus the live in-flight counter [`compute_stats`]
 /// itself has no access to (it only ever sees the log) — the one merge
 /// point every [`AdminStatusResponse`] builder below shares (T-149).
-fn live_stats<C: DohClient + Sync>(state: &AppState<C>, entries: &[LogEntry]) -> AdminStats {
+fn live_stats<C: DohClient + Sync>(state: &AppState<C>) -> AdminStats {
     AdminStats {
         in_flight: state.in_flight.load(Ordering::Relaxed),
         rejected_connections: state.gate.rejected_count(),
         active_connections: u64::from(state.gate.active()),
-        ..compute_stats(entries)
+        ..state
+            .query_log
+            .inspect(SystemTime::now(), |entries| compute_stats(entries))
     }
 }
 
@@ -1955,7 +1986,7 @@ fn apply_admin_config<C: DohClient + Sync>(
     let active_providers = ProviderStatusView::active_from(&state.providers.read());
     let network = NetworkStatusView::from(state.reachability_snapshot());
     let paused = state.filtering_paused_snapshot();
-    let log_stats = live_stats(state, &state.query_log.snapshot(SystemTime::now()));
+    let log_stats = live_stats(state);
     AdminStatusResponse {
         schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
@@ -1980,7 +2011,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         watchdog,
         persisted,
         encrypted_persistence: EncryptedPersistenceView {
-            query_log: state.persist.persist_query_log,
+            query_log: state.query_log_policy().persist,
             cache: state.persist.persist_cache,
         },
         rating_filter: rating_filter_status_view(state),
@@ -2318,6 +2349,12 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // updater, `pipeline::overrides_step` reads `cctld_block_snapshot()`
     // fresh on every query.
     state.update_cctld_block(config.cctld_block.blocked_codes);
+    // T-291: reload the query-log policy too (a hand-edited window or
+    // persistence flag takes effect on reset, like every table above).
+    state.set_query_log_policy(QueryLogPolicy {
+        retention: config.query_log_retention,
+        persist: config.persist_query_log,
+    });
     state.query_log.clear();
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
@@ -3499,10 +3536,10 @@ where
 /// (advisor-caught during planning). A client may ask for more via `?limit=`,
 /// up to [`MAX_LOG_LIMIT`].
 const DEFAULT_LOG_LIMIT: usize = 200;
-/// The hard cap `?limit=` can't exceed — [`DEFAULT_MAX_ENTRIES`], the ring
-/// buffer's own size bound. Asking for more than the buffer can ever hold is
-/// meaningless, not a legitimate "give me everything" request.
-const MAX_LOG_LIMIT: usize = DEFAULT_MAX_ENTRIES;
+/// The hard cap `?limit=` can't exceed. Once the ring buffer itself (T-291:
+/// up to 100 000 entries) — now an explicit page size: older entries are
+/// reached through `?before_ms=`, never one unbounded response.
+pub(crate) const MAX_LOG_LIMIT: usize = 1000;
 
 /// `GET /admin/log`'s parsed query-string facets (T-54) — mirrors
 /// [`LogFilter`]'s three fields plus the result-count cap above. Derives
@@ -3520,6 +3557,9 @@ struct LogQuery {
     /// payload-free (the raw text is never echoed back).
     voter: Option<String>,
     limit: usize,
+    /// T-291 `?before_seq=` — only entries that arrived before the one with
+    /// this `LogEntryView::seq`, so a pager can ask for the next older page.
+    before_seq: Option<u64>,
 }
 
 /// A malformed `GET /admin/log` query string — closed and coarse (no
@@ -3550,6 +3590,9 @@ enum LogQueryError {
     /// success (advisor-caught on the closing review of this route).
     #[error("limit is not a valid positive integer")]
     BadLimit,
+    /// `before_seq` was present but not a non-negative integer (T-291).
+    #[error("before_seq is not a valid sequence number")]
+    BadBefore,
 }
 
 /// Parses `GET /admin/log`'s raw query string (RFC 3986 `application/
@@ -3598,6 +3641,10 @@ fn parse_log_query(query_string: Option<&str>) -> Result<LogQuery, LogQueryError
                     return Err(LogQueryError::BadLimit);
                 }
                 parsed.limit = limit.min(MAX_LOG_LIMIT);
+            }
+            "before_seq" => {
+                parsed.before_seq =
+                    Some(value.parse::<u64>().map_err(|_| LogQueryError::BadBefore)?);
             }
             // An unrecognized key is ignored, not fatal - forward-compatible
             // with a future UI param this route doesn't know about yet,
@@ -3652,18 +3699,22 @@ fn serve_admin_log<C: DohClient + Sync>(
         decision: parsed.decision,
         voter: parsed.voter.as_deref(),
     };
-    let mut entries = state.query_log.search(SystemTime::now(), &filter);
-    let truncated = entries.len() > parsed.limit;
-    // Keeps the *newest* `limit` entries (search()/snapshot() return
-    // oldest-first) - split_off's tail, not a `.take(limit)` off the front,
-    // which would instead keep the oldest matches and silently hide
-    // everything recent the moment a filter matches more than `limit`
-    // entries.
-    let keep_from = entries.len().saturating_sub(parsed.limit);
-    entries = entries.split_off(keep_from);
+    // The *newest* `limit` matches older than `before` (oldest-first in the
+    // page) — `QueryLog::search` walks from the tail, so a filter matching
+    // most of a 100 000-entry window still clones only `limit` entries.
+    let page = state
+        .query_log
+        .search(SystemTime::now(), &filter, parsed.limit, parsed.before_seq);
     json_response(&LogQueryResponse {
-        entries: entries.iter().map(LogEntryView::from_entry).collect(),
-        truncated,
+        entries: page
+            .entries
+            .iter()
+            .map(|paged| LogEntryView {
+                seq: paged.seq,
+                ..LogEntryView::from_entry(&paged.entry)
+            })
+            .collect(),
+        truncated: page.truncated,
     })
 }
 
@@ -4131,8 +4182,8 @@ pub(crate) mod tests {
         content_type_is_dns_message, parse_log_query, rating_filter_is_active, read_watchdog_view,
         resolve_doh_request, serve, wire_bytes_from_get, AdminErrorReason, AdminErrorResponse,
         AppState, CacheState, DohRequestError, GeoipInit, GeoipSource, GeoipState, LogQueryError,
-        OverridesState, PersistPaths, PersistTarget, RuntimeInit, WatchdogState, ZoneLists,
-        ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH, ADMIN_REQUEST_REMOVE_ALL_PATH,
+        LogRetention, OverridesState, PersistPaths, PersistTarget, RuntimeInit, WatchdogState,
+        ZoneLists, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH, ADMIN_REQUEST_REMOVE_ALL_PATH,
         BLOCKLIST_SOURCES, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT,
         MAX_MESSAGE_SIZE, ROUTES,
     };
@@ -4757,6 +4808,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -4836,6 +4888,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -4874,6 +4927,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -5271,6 +5325,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig {
@@ -5326,6 +5381,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: true,
+                query_log_retention: LogRetention::Day,
                 persist_cache: true,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -5643,6 +5699,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -5692,6 +5749,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -5743,6 +5801,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: true,
+                query_log_retention: LogRetention::Day,
                 persist_cache: true,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -5799,6 +5858,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -5862,6 +5922,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6018,6 +6079,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 9443,
                 persist_query_log: true,
+                query_log_retention: LogRetention::Day,
                 persist_cache: true,
                 rating_filter: RatingFilterConfig::default(),
                 limits,
@@ -6091,6 +6153,7 @@ pub(crate) mod tests {
             limits,
             serve_baseline_when_filters_unreachable: true,
             persist_query_log: true,
+            query_log_retention: LogRetention::Day,
             persist_cache: true,
             rating_filter: RatingFilterConfig {
                 enabled: true,
@@ -6119,6 +6182,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 9443,
                 persist_query_log: true,
+                query_log_retention: LogRetention::Day,
                 persist_cache: true,
                 rating_filter: RatingFilterConfig::default(),
                 limits,
@@ -6161,6 +6225,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6221,6 +6286,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6383,6 +6449,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6443,6 +6510,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6500,6 +6568,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6614,6 +6683,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6701,6 +6771,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6805,6 +6876,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6913,6 +6985,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -6982,6 +7055,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7092,6 +7166,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7273,6 +7348,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7361,6 +7437,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7406,6 +7483,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7546,6 +7624,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7646,6 +7725,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -7877,6 +7957,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -8488,6 +8569,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -8681,6 +8763,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -8728,6 +8811,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -8833,6 +8917,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -9160,6 +9245,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -9205,6 +9291,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -9457,6 +9544,64 @@ pub(crate) mod tests {
         assert_eq!(body.entries[1].domain, "domain4.example");
     }
 
+    // T-291: `?before_seq=` pages to older entries.
+    #[tokio::test]
+    async fn serve_admin_log_before_seq_returns_the_next_older_page() {
+        let state = state_with(no_op_client());
+        for name in ["a", "b", "c", "d"] {
+            state.query_log.push(sample_log_entry(
+                &format!("{name}.example"),
+                crate::query_log::Decision::Allowed,
+            ));
+        }
+        let first = match serve(admin_log_request(Some("limit=2")), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        let Ok(first) = serde_json::from_slice::<LogQueryResponse>(&body_bytes(first).await) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        let Some(cursor) = first.entries.first().map(|e| e.seq) else {
+            panic!("first page is not empty");
+        };
+        let query = format!("limit=1&before_seq={cursor}");
+
+        let response = match serve(admin_log_request(Some(&query)), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        let Ok(body) = serde_json::from_slice::<LogQueryResponse>(&bytes) else {
+            panic!("body must decode as LogQueryResponse");
+        };
+        let domains: Vec<&str> = body.entries.iter().map(|e| e.domain.as_str()).collect();
+        assert_eq!(
+            domains,
+            vec!["b.example"],
+            "the newest entry older than the cursor"
+        );
+        assert!(body.truncated, "a.example is still older");
+    }
+
+    #[tokio::test]
+    async fn serve_admin_log_rejects_a_malformed_before_seq() {
+        for query in [
+            "before_seq=",
+            "before_seq=abc",
+            "before_seq=-1",
+            "before_seq=1.5",
+            "before_seq=99999999999999999999",
+        ] {
+            let response =
+                match serve(admin_log_request(Some(query)), state_with(no_op_client())).await {
+                    Ok(response) => response,
+                    Err(err) => match err {},
+                };
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+        }
+    }
+
     #[tokio::test]
     async fn serve_admin_log_clear_rejects_a_missing_content_type() {
         let Ok(req) = Request::builder()
@@ -9700,6 +9845,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),
@@ -10184,6 +10330,7 @@ pub(crate) mod tests {
             PersistTarget {
                 port: 8443,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 limits: LimitsConfig::default(),

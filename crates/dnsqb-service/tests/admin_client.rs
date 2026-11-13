@@ -80,6 +80,7 @@ fn test_state() -> Arc<AppState<UnusedClient>> {
         PersistTarget {
             port: 0,
             persist_query_log: false,
+            query_log_retention: dnsqb_service::LogRetention::Day,
             persist_cache: false,
             rating_filter: RatingFilterConfig::default(),
             limits: LimitsConfig::default(),

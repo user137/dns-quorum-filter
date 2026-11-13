@@ -205,7 +205,7 @@ pub use orchestrate::run;
 pub use overrides::OverrideLists;
 pub use paths::app_data_dir;
 pub use public_suffix::{Psl, PSL_DAT, PSL_PINNED_COMMIT};
-pub use query_log::QueryLog;
+pub use query_log::{LogRetention, QueryLog, QueryLogPolicy};
 pub use quorum::{is_blocked, requires_quorum};
 pub use rating_filter::{ZoneLists, ZoneSource, ZoneSourceKind};
 pub use startup_failure::{read as read_startup_failure, StartupFailure, STARTUP_ERROR_FILE_NAME};

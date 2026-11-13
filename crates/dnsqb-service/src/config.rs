@@ -50,6 +50,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::cache::CacheConfig;
+use crate::query_log::LogRetention;
 use crate::timeout::TimeoutMode;
 use crate::topn_download::AVAILABLE_TOPN_LISTS;
 use crate::upstream::{
@@ -653,15 +654,19 @@ pub struct ResolverConfig {
     /// regardless of mode. Independent of `timeout_mode`, which is about
     /// interpreting *one* unresponsive voter, not all of them.
     pub serve_baseline_when_filters_unreachable: bool,
-    /// T-146 — persist the in-memory query log to an encrypted file
-    /// (`query-log.enc`, sealed with `encrypted_file` under the
-    /// `key_store` persistence key) so it survives a restart (SPEC.md §6).
-    /// `false` (default) keeps the log memory-only. Deliberately has **no**
-    /// admin route: enabling it writes browsing history to disk, so it is a
-    /// hand-edit of this file only — the `/admin/ui` indicator (T-96) is
-    /// passive. The same bounded window (1000 entries / 24 h) is re-applied
-    /// to a restored log.
+    /// T-146 — persist the in-memory query log to encrypted files (T-291:
+    /// one per UTC day under `query-log/`, sealed with `encrypted_file` under
+    /// the `key_store` persistence key) so it survives a restart (SPEC.md
+    /// §6). `false` (default) keeps the log memory-only. Since T-291 the
+    /// `/admin/ui` log card sets it through `POST /admin/query-log-policy`,
+    /// behind a per-event confirm; a hand-edit still works. The configured
+    /// window ([`Self::query_log_retention`]) is re-applied to a restored log.
     pub persist_query_log: bool,
+    /// T-291 — how long the query log keeps entries (`"24h"` default,
+    /// `"3d"`/`"7d"`/`"30d"`). Past `"24h"` the route requires
+    /// `persist_query_log`; a hand-edited longer window without it is
+    /// accepted and simply ends at the next service restart.
+    pub query_log_retention: LogRetention,
     /// T-97 — persist the quorum-verdict cache to an encrypted file
     /// (`cache.enc`, same `encrypted_file` mechanism and `key_store`
     /// persistence key as `persist_query_log`) so a restart keeps a warm
@@ -709,6 +714,7 @@ impl Default for ResolverConfig {
             limits: LimitsConfig::default(),
             serve_baseline_when_filters_unreachable: false,
             persist_query_log: false,
+            query_log_retention: LogRetention::default(),
             persist_cache: false,
             rating_filter: RatingFilterConfig::default(),
             personal_zone: PersonalZoneConfig::default(),
@@ -839,6 +845,7 @@ impl ResolverConfig {
             },
             serve_baseline_when_filters_unreachable: file.serve_baseline_when_filters_unreachable,
             persist_query_log: file.persist_query_log,
+            query_log_retention: file.query_log_retention,
             persist_cache: file.persist_cache,
             rating_filter: RatingFilterConfig {
                 enabled: file.rating_filter.enabled,
@@ -885,6 +892,7 @@ impl ResolverConfig {
             timeout_ms: self.timeout_ms,
             serve_baseline_when_filters_unreachable: self.serve_baseline_when_filters_unreachable,
             persist_query_log: self.persist_query_log,
+            query_log_retention: self.query_log_retention,
             persist_cache: self.persist_cache,
             providers: self.providers.iter().map(ProviderFileEntry::from).collect(),
             cache: CacheConfigFile {
@@ -1079,6 +1087,8 @@ struct ResolverConfigFile {
     serve_baseline_when_filters_unreachable: bool,
     /// T-146 — see [`ResolverConfig::persist_query_log`].
     persist_query_log: bool,
+    /// T-291 — see [`ResolverConfig::query_log_retention`].
+    query_log_retention: LogRetention,
     /// T-97 — see [`ResolverConfig::persist_cache`].
     persist_cache: bool,
     providers: Vec<ProviderFileEntry>,
@@ -1157,6 +1167,7 @@ impl Default for ResolverConfigFile {
             serve_baseline_when_filters_unreachable: defaults
                 .serve_baseline_when_filters_unreachable,
             persist_query_log: defaults.persist_query_log,
+            query_log_retention: defaults.query_log_retention,
             persist_cache: defaults.persist_cache,
             providers: defaults
                 .providers
@@ -1330,6 +1341,7 @@ mod tests {
         BlocklistBundlesConfig, CacheConfig, CctldBlockConfig, ConfigError, GeoipConfig,
         LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
     };
+    use crate::query_log::LogRetention;
     use crate::timeout::TimeoutMode;
     use crate::upstream::{builtin_preset, BlockSignature, Category, ProviderEntry};
     use std::fs;
@@ -1389,6 +1401,7 @@ mod tests {
                 limits: LimitsConfig::default(),
                 serve_baseline_when_filters_unreachable: false,
                 persist_query_log: false,
+                query_log_retention: LogRetention::Day,
                 persist_cache: false,
                 rating_filter: RatingFilterConfig::default(),
                 personal_zone: PersonalZoneConfig::default(),
@@ -1671,6 +1684,7 @@ mod tests {
             },
             serve_baseline_when_filters_unreachable: true,
             persist_query_log: true,
+            query_log_retention: LogRetention::Day,
             persist_cache: true,
             rating_filter: RatingFilterConfig {
                 enabled: true,
@@ -1751,6 +1765,74 @@ mod tests {
         match ResolverConfig::load(&path) {
             Ok(config) => assert!(config.persist_query_log, "a saved `true` must round-trip"),
             Err(err) => panic!("must be able to load what was just saved: {err}"),
+        }
+    }
+
+    // T-291: `query_log_retention` - absent defaults to "24h"; every
+    // choice round-trips by its stable name; an unknown value is loud.
+    #[test]
+    fn query_log_retention_defaults_to_a_day_and_round_trips_every_choice() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "port = 9000\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => assert_eq!(config.query_log_retention, LogRetention::Day),
+            Err(err) => panic!("a partial file must still load: {err}"),
+        }
+        for retention in [
+            LogRetention::Day,
+            LogRetention::ThreeDays,
+            LogRetention::SevenDays,
+            LogRetention::ThirtyDays,
+        ] {
+            let config = ResolverConfig {
+                persist_query_log: retention.needs_disk(),
+                query_log_retention: retention,
+                ..ResolverConfig::default()
+            };
+            if let Err(err) = config.save(&path) {
+                panic!("must be able to save: {err}");
+            }
+            match ResolverConfig::load(&path) {
+                Ok(back) => assert_eq!(back.query_log_retention, retention),
+                Err(err) => panic!("must load what was just saved: {err}"),
+            }
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
+            panic!("must read the saved file");
+        };
+        assert!(text.contains("query_log_retention = \"30d\""), "{text}");
+    }
+
+    #[test]
+    fn load_rejects_an_unknown_query_log_retention() {
+        for bad in ["\"2d\"", "\"ThirtyDays\"", "30", "\"\""] {
+            let (_dir, path) = temp_config_path();
+            if let Err(err) = fs::write(&path, format!("query_log_retention = {bad}\n")) {
+                panic!("must be able to write the fixture file: {err}");
+            }
+            assert!(
+                matches!(ResolverConfig::load(&path), Err(ConfigError::Toml(_))),
+                "{bad} must not load"
+            );
+        }
+    }
+
+    // A hand-edited longer window without persistence is accepted (the
+    // operator's choice; it simply ends at the next restart).
+    #[test]
+    fn a_long_retention_without_persistence_still_loads() {
+        let (_dir, path) = temp_config_path();
+        if let Err(err) = fs::write(&path, "query_log_retention = \"7d\"\n") {
+            panic!("must be able to write the fixture file: {err}");
+        }
+        match ResolverConfig::load(&path) {
+            Ok(config) => {
+                assert_eq!(config.query_log_retention, LogRetention::SevenDays);
+                assert!(!config.persist_query_log);
+            }
+            Err(err) => panic!("must load: {err}"),
         }
     }
 

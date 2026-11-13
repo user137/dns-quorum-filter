@@ -355,6 +355,7 @@ fn build_persist_target(
     PersistTarget {
         port: resolver_config.port,
         persist_query_log: resolver_config.persist_query_log,
+        query_log_retention: resolver_config.query_log_retention,
         persist_cache: resolver_config.persist_cache,
         limits: resolver_config.limits,
         rating_filter: resolver_config.rating_filter.clone(),

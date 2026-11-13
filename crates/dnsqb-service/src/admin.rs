@@ -1592,6 +1592,11 @@ pub(crate) fn unix_millis(time: SystemTime) -> u64 {
 /// the voter set), so `SECURITY_ONLY` is unproducible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogEntryView {
+    /// T-291 — the pager cursor: pass the oldest shown entry's `seq` as
+    /// `?before_seq=` to get the next older page. Process-local, so a
+    /// service restart invalidates it (the next page is then empty).
+    #[serde(default)]
+    pub seq: u64,
     pub timestamp_ms: u64,
     pub domain: String,
     pub qtype: QTypeView,
@@ -1614,6 +1619,7 @@ impl LogEntryView {
     #[must_use]
     pub(crate) fn from_entry(entry: &LogEntry) -> Self {
         Self {
+            seq: 0,
             timestamp_ms: unix_millis(entry.timestamp),
             domain: entry.domain.clone(),
             qtype: QTypeView::from(entry.qtype),
@@ -1672,11 +1678,15 @@ const DEGRADED_LOOKBACK: usize = 20;
 /// one here would freeze an unverified guess into the wire format.
 /// `entries` is expected oldest-first (`QueryLog::snapshot`'s own contract).
 #[must_use]
-fn degraded_counts(entries: &[LogEntry]) -> (u64, u64) {
+fn degraded_counts<'a, I>(entries: I) -> (u64, u64)
+where
+    I: IntoIterator<Item = &'a LogEntry>,
+    I::IntoIter: DoubleEndedIterator,
+{
     let mut window: u64 = 0;
     let mut events: u64 = 0;
     for entry in entries
-        .iter()
+        .into_iter()
         .rev()
         .filter(|entry| {
             matches!(
@@ -1698,16 +1708,23 @@ fn degraded_counts(entries: &[LogEntry]) -> (u64, u64) {
     (window, events)
 }
 
-/// Reduces `entries` to [`AdminStats`]. `pub(crate)` — only `dispatch.rs`'s
-/// `GET /admin/status`/`POST /admin/config` handlers call this.
+/// Reduces `entries` (oldest first) to [`AdminStats`]. `pub(crate)` — only
+/// `dispatch.rs`'s `GET /admin/status`/`POST /admin/config` handlers call
+/// this. Takes an iterator, not a slice (T-291): the live buffer is walked in
+/// place under `QueryLog::inspect`, never cloned for a status read.
 #[must_use]
-pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
+pub(crate) fn compute_stats<'a, I>(entries: I) -> AdminStats
+where
+    I: IntoIterator<Item = &'a LogEntry>,
+    I::IntoIter: DoubleEndedIterator + ExactSizeIterator + Clone,
+{
+    let entries = entries.into_iter();
     let total = entries.len();
     let blocked = entries
-        .iter()
+        .clone()
         .filter(|entry| entry.decision == Decision::Blocked)
         .count();
-    let (degraded_window, degraded_events) = degraded_counts(entries);
+    let (degraded_window, degraded_events) = degraded_counts(entries.clone());
     AdminStats {
         total: u64::try_from(total).unwrap_or(u64::MAX),
         blocked: u64::try_from(blocked).unwrap_or(u64::MAX),
@@ -1718,11 +1735,7 @@ pub(crate) fn compute_stats(entries: &[LogEntry]) -> AdminStats {
         in_flight: 0,
         rejected_connections: 0,
         active_connections: 0,
-        last_query_unix_ms: entries
-            .iter()
-            .map(|entry| entry.timestamp)
-            .max()
-            .map(unix_millis),
+        last_query_unix_ms: entries.map(|entry| entry.timestamp).max().map(unix_millis),
     }
 }
 
