@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Wave 29/30 (WACK DPIAwarenessValidation): dnsqb-watcher.exe is the MSIX
+  entry point, so WACK judges the app's DPI awareness by this exe. It shows
+  no window, but declaring PerMonitorV2 is what the check asks for. The two
+  dpi elements carry their own xmlns for the reason given in
+  dnsqb-tray.manifest (a shared 2005 default breaks activation).
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="dnsqb-watcher" version="1.0.0.0" processorArchitecture="*"/>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 and Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+  <asmv3:application xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+    <asmv3:windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    </asmv3:windowsSettings>
+  </asmv3:application>
+</assembly>
