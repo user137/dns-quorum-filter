@@ -2913,7 +2913,10 @@ function renderLogRetention(status) {
     const erase = document.createElement("button");
     erase.type = "button";
     erase.textContent = t("log.retention.eraseButton");
-    erase.addEventListener("click", () => showLogRetentionPrompt("leftover", policy.retention));
+    // Erasing leftovers means persist=false, which the route refuses for a
+    // window over 24h (a hand-edited 7d memory-only log) - so this resets to
+    // 24h, the window such a log actually has after the next restart.
+    erase.addEventListener("click", () => showLogRetentionPrompt("leftover", "24h"));
     logRetentionBox.appendChild(erase);
   }
   if (logRetentionError) {

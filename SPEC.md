@@ -928,7 +928,7 @@ struct CacheEntry {
   `persist_query_log`) прапорець `persist_cache` у `resolver_config.toml` (дефолт
   `false`). Файл `%LOCALAPPDATA%\dns-quorum-filter\cache.enc` — той самий
   `encrypted_file` / `XChaCha20Poly1305` механізм і **той самий** запис
-  `persistence-key:<hash>` у OS secret store, що й `query-log.enc` (kind-байт у
+  `persistence-key:<hash>` у OS secret store, що й сегменти журналу (kind-байт у
   AAD-заголовку не дає відкрити один файл як інший). Флаш — повний перезапис кожні
   60 с + фінальний на graceful shutdown (не append-only). Два нетривіальні рішення:
   (1) `CacheEntry.expires_at` — монотонний `Instant`, який скидається при
@@ -940,7 +940,7 @@ struct CacheEntry {
   персистенція дала б йому пережити рестарт (у т.ч. автоматичний рестарт watchdog);
   свіжий quorum-`Block` — один round-trip, OR-logic одразу переблокує. Зниклий ключ
   + наявний файл / пошкоджений файл → `.orphaned-<ts>`, новий ключ, кеш порожній.
-- **Вмикання — лише правкою конфіг-файлу, без UI-тумблера** (T-97, як `persist_query_log`).
+- **Вмикання — лише правкою конфіг-файлу, без UI-тумблера** (T-97; `persist_query_log` з T-291 має UI-контрол, кеш — ні).
   `/admin/ui` показує окремий пасивний рядок-попередження, поки прапорець активний
   (`AdminStatusResponse.encrypted_persistence.cache`). Крос-лінк: §2 (secret
   storage), §6 (лог), Відкриті питання п.5.

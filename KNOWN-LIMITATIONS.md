@@ -60,7 +60,8 @@ TASKS-DONE.md, never here.
   browsing-derived data; no cleanup path exists yet.
 - **Long query-log windows (T-291)** — the `/admin/ui` retention control and "Older" pager are
   covered by `smoke.js` and a scratch-instance route walk, **not yet clicked in a real browser**;
-  memory and startup-restore time at the 30-day cap (100 000 entries) are not measured yet.
+  resident memory at the 30-day cap (100 000 entries) is not measured yet (restore time is —
+  PERFORMANCE.md).
 - **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-left-
   by-a-plain-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
   is persisted** — `Block` is dropped at snapshot (so `fail_closed` timeout-blocks never cross a

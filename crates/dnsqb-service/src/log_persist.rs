@@ -1053,4 +1053,56 @@ mod tests {
             "persistence was asked for and cannot work"
         );
     }
+
+    /// T-291 measurement, not a gate: restoring a full 30-day log (the
+    /// 100 000-entry cap, three voters per entry) on the boot path. Run with
+    /// `cargo test --release -p dnsqb-service --lib -- --ignored --nocapture
+    /// restore_time_at_the_30_day_cap`.
+    #[test]
+    #[ignore = "measurement; prints timings"]
+    fn restore_time_at_the_30_day_cap() {
+        use crate::quorum::{VoterRecord, VoterVerdict};
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::ThirtyDays);
+        let total: u64 = 100_000;
+        let span = Duration::from_hours(29 * 24).as_secs();
+        for i in 0..total {
+            let Some(at) = now.checked_sub(Duration::from_secs(span - span * i / total)) else {
+                panic!("valid fixture timestamp");
+            };
+            let mut e = entry(&format!("host-{i}.example-site.test"), at);
+            e.voters = ["quad9", "cloudflare-malware", "adguard"]
+                .iter()
+                .map(|id| VoterRecord {
+                    provider_id: (*id).to_string(),
+                    verdict: VoterVerdict::Allow,
+                    allow_ip_count: Some(2),
+                    error_message: None,
+                })
+                .collect();
+            log.push(e);
+        }
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        let started = std::time::Instant::now();
+        disk.flush(&log, on(LogRetention::ThirtyDays), now);
+        let flushed = started.elapsed();
+        let Ok(listing) = std::fs::read_dir(dir.path().join(SEGMENT_DIR)) else {
+            panic!("the flush must have written the segment directory");
+        };
+        let bytes: u64 = listing
+            .filter_map(Result::ok)
+            .filter_map(|e| e.metadata().ok())
+            .map(|m| m.len())
+            .sum();
+        let fresh = QueryLog::with_retention(LogRetention::ThirtyDays);
+        let mut reader = QueryLogDisk::with_key(dir.path(), KEY);
+        let started = std::time::Instant::now();
+        let restored = reader.adopt(&fresh, LogRetention::ThirtyDays, now);
+        let took = started.elapsed();
+        println!(
+            "full flush {flushed:?}; {bytes} bytes on disk; restore {took:?}, {restored:?} entries"
+        );
+        assert!(matches!(restored, Ok(n) if n as u64 == total));
+    }
 }

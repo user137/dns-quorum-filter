@@ -388,14 +388,14 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   confirm-діалогом, що називає це наперед.
 - **Повністю видалити** (T-70, Батч 3.8; розширено T-195, Батч 3.14) —
   `dnsqb_service::remove_all_local_state` (`trust_store::uninstall()` + `key_store::delete_secret`
-  для всіх чотирьох ключів: TLS T-67, persistence T-146 (спільний і для `query-log.enc`/
+  для всіх чотирьох ключів: TLS T-67, persistence T-146 (спільний і для сегментів `query-log/`/
   `cache.enc`, і для `zone-removals.enc`), MaxMind T-163, personal-zone T-138 (Батч 4.5); кожен
   артефакт звітується
   незалежно `Removed`/`NotPresent`/`Failed`), тоді **зупиняє весь застосунок і стирає всю теку
   app-data**: показує звіт → пише `stop.flag` + `quit.flag` (watcher зупиняє `dnsqb-service` і
   виходить) → спавнить від'єднаний прихований `powershell.exe` (`self_uninstall.rs`), що чекає на
   вихід `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray`, потім у retry-циклі видаляє всю
-  `%LOCALAPPDATA%\dns-quorum-filter` (`cert.pem`, `query-log.enc`/`cache.enc`/`zone-removals.enc`/
+  `%LOCALAPPDATA%\dns-quorum-filter` (`cert.pem`, `query-log/`/`cache.enc`/`zone-removals.enc`/
   `personal-zone.enc`, `resolver_config.toml`/`overrides.toml`, `logs\`, pid/lock) → відкриває
   `ms-settings:appsfeatures` через `explorer.exe` → трей виходить (`QUIT_REQUESTED`). Причина
   detached-прибиральника: трей/watcher/служба тримають свої `*.lock` відкритими, а `tao`

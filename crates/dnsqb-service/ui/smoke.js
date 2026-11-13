@@ -554,6 +554,22 @@ for (const [fn, data] of xssCalls) {
   await run(`providerAction(() => setProviderEnabled("x", true), "providers.changeFailedTemplate")`);
   guard("no cached providers: error panel not shown", panelSpy.hits.length === 1);
   panelSpy.restore();
+  // T-291: "Older" on the last fetched page asks for entries before the
+  // oldest seq shown and appends them as the next page.
+  const olderUrls = [];
+  const olderChunk = { entries: [Object.assign({}, logData.entries[0], { seq: 3, domain: "older.com" })], truncated: false };
+  ctx.fetch = async (url, opts) => {
+    if (typeof url === "string" && url.startsWith("/admin/log?")) { olderUrls.push(url); return okJson(olderChunk)(); }
+    return realFetch(url, opts);
+  };
+  const seqLog = { entries: Array.from({ length: 50 }, (_, i) => Object.assign({}, logData.entries[0], { seq: 10 + i, domain: `s${i}.com` })), truncated: true };
+  run(`logPage = 0; renderLog(${JSON.stringify(seqLog)})`);
+  await run(`loadOlderLog(document.createElement("div"))`);
+  guard(`older fetch did not ask before the oldest seq: ${olderUrls[0]}`, olderUrls.length === 1 && /[?&]before_seq=10(&|$)/.test(olderUrls[0]) && /[?&]limit=1000(&|$)/.test(olderUrls[0]));
+  guard("older entries not appended", run("logEntriesNewestFirst.length") === 51 && run("logEntriesNewestFirst[50].domain") === "older.com");
+  guard("older page not shown", run("logPage") === 1);
+  guard("a short last chunk still offers more", run("logHasOlder") === false);
+  run("logPage = 0; logHasOlder = false");
   ctx.fetch = realFetch;
   run("providersActionError = null; filterControlsActionError = null; configApplyError = null");
 

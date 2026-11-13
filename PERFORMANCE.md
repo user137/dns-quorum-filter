@@ -460,3 +460,11 @@ files, 5.5M entries, 128 MB: **6.0–7.2 s** of one CPU core (three runs). That 
 on the startup path: `run_blocklist_updater` calls it in `spawn_blocking` after the listener is
 accepting, so DNS answers flow from the first second and only the bundle check waits those few
 seconds (before ARCH-10 the bundle stayed empty for the whole ~111 MB re-download instead).
+
+## Query-log restore at the 30-day cap (T-291, 2026-11-13)
+
+`log_persist::tests::restore_time_at_the_30_day_cap` (`#[ignore]`, `--release`), 100 000 entries
+with three voters each spread over 29 UTC days, this dev box: a full flush of all 29 day segments
+0.65 s, **46 MB on disk** (~460 B per entry), and **restoring all of it on start 0.35 s** — on the
+boot path before the listener accepts traffic (SERVICES.md 2a), acceptable as is. A normal 60 s
+flush rewrites only the current day (≤ 1/29 of that). Resident memory at the cap is not measured.
