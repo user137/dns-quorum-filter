@@ -53,13 +53,14 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
 2. Завантажує `resolver_config.toml` і `overrides.toml` (обидва — див.
    [`CONFIGURATION.md`](CONFIGURATION.md); поведінка при відсутньому/зламаному файлі описана
    там).
-2a. **Якщо `persist_query_log = true`** (T-146, SPEC.md §6) — бере/мінтить 32-байтний
-   `XChaCha20Poly1305`-ключ у Credential Manager (`persistence-key:<hash теки>`, той самий
-   механізм, що TLS-ключ), розшифровує `%LOCALAPPDATA%\dns-quorum-filter\query-log.enc` і
-   засіває ним in-memory ring buffer (з тим самим bounded-window 1000 / 24 год) — **до** того,
-   як слухач почне приймати трафік. Ключа нема, а файл є / файл пошкоджений → `warn!`, файл
-   перейменовується в `query-log.enc.orphaned-<unix_ts>` (не відновлюється), новий ключ, лог
-   порожній. Нема app-data теки → `warn!`, персистенція вимкнена на цей запуск.
+2a. **Якщо `persist_query_log = true`** (T-146/T-291, SPEC.md §6) — будує журнал з обраною
+   `query_log_retention`, бере/мінтить 32-байтний `XChaCha20Poly1305`-ключ у Credential Manager
+   (`persistence-key:<hash теки>`, той самий механізм, що TLS-ключ), розшифровує посегментні
+   файли `%LOCALAPPDATA%\dns-quorum-filter\query-log\d<доба>.enc` у межах вікна (і старий
+   `query-log.enc`, якщо він ще є) і засіває ними in-memory ring buffer — **до** того, як слухач
+   почне приймати трафік. Ключа нема, а файли є / сегмент пошкоджений → `warn!`, файл
+   відсувається в `*.orphaned-<unix_ts>` (не відновлюється), решта відновлюється. Збереження
+   вимкнене, а файли є → нічого не читається, `/admin/status.query_log_disk = LEFTOVER`.
 2b. **Якщо `persist_cache = true`** (T-97, SPEC.md §4) — той самий `persistence-key:<hash>` (один
    ключ на обидва файли), розшифровує `%LOCALAPPDATA%\dns-quorum-filter\cache.enc` і засіває ним
    кеш вердиктів **після** побудови `AppState`, але **до** прийому трафіку. Зберігаються/
@@ -128,9 +129,11 @@ cargo build --release -p dnsqb-service  # release-бінарник у target/rel
    (T-154): при повній відмові активного baseline-URL — перемикання Cloudflare → Quad9 → Google,
    з пробою основного кожні 300 s і поверненням на нього щойно він одужав; активний ендпоінт видно
    в `GET /admin/status.baseline_endpoint`.
-7. **Якщо `persist_query_log = true`** — запускає фоновий query-log-персистер (T-146): повний
-   перезапис `query-log.enc` кожні 60 s (атомарно: temp + `sync_all` + `rename`) плюс фінальний
-   флаш на graceful shutdown. Не append-only — hard crash губить ≤60 s хвоста логу.
+7. **Завжди, коли є app-data тека** — запускає фоновий query-log-персистер (T-146/T-291): кожні
+   60 s (і одразу після зміни політики з картки) при `persist_query_log = true` атомарно
+   (temp + `sync_all` + `rename`) переписує лише доби, що змінилися, видаляє сегменти старші за
+   вікно, плюс фінальний флаш на graceful shutdown; при `false` нічого не пише. Hard crash
+   губить ≤60 s хвоста логу. Помилку ключа чи запису видно як `query_log_disk = FAILED`.
 7a. **Якщо `persist_cache = true`** — так само, окремий фоновий cache-персистер (T-97): повний
    перезапис `cache.enc` кожні 60 s + фінальний флаш на shutdown. Config-зміна кешу через
    `/admin/cache-config/apply` будує новий порожній `Cache` (T-153) — наступний флаш перезапише

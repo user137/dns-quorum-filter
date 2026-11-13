@@ -48,15 +48,19 @@ TASKS-DONE.md, never here.
   thresholds not reaching the live gate at startup at all — is fixed; see TASKS-DONE.md.)
 - **Encrypted query-log persistence (T-146)** — best-effort scrub only (no defence vs VSS shadow
   copies / SSD wear-levelling, same honesty as `key_store::overwrite_with_zeros`); a hard crash
-  loses ≤60s of the log tail (periodic full-snapshot rewrite, not append-only — deliberate); an
-  orphaned `query-log.enc` (key gone) is renamed `.orphaned-<ts>` and **never** decrypted/
+  loses ≤60s of the log tail (periodic rewrite of the changed per-day segments, not append-only —
+  deliberate); an orphaned segment or legacy `query-log.enc` (key gone) is moved to `.orphaned-<ts>` and **never** decrypted/
   recovered, a fresh key is minted (a query log is re-creatable — warn+proceed, unlike a TLS
   key); the `persistence-key` entry (like the TLS key) is deleted only by the in-app «Повністю
   видалити» (`local_state::remove_all`) — a plain Windows uninstall leaves it (SECURITY.md, T-70
-  MSIX residual risk). **Orphaned `.enc` files (`query-log.enc` / `cache.enc`) accumulate indefinitely** —
+  MSIX residual risk). T-291: query-log orphans (`query-log*.orphaned-*`) are now removed by every
+  log clear / switch-off; until then they stay. **Orphaned `cache.enc` files accumulate indefinitely** —
   `rename_orphan` never deletes (a key *might* resurface), but for a re-creatable store that
   recovery value is ~nil while each incident leaves a permanent undecryptable blob of
   browsing-derived data; no cleanup path exists yet.
+- **Long query-log windows (T-291)** — the `/admin/ui` retention control and "Older" pager are
+  covered by `smoke.js` and a scratch-instance route walk, **not yet clicked in a real browser**;
+  memory and startup-restore time at the 30-day cap (100 000 entries) are not measured yet.
 - **Encrypted cache persistence (T-97)** — same scrub / ≤60s-crash-loss / orphan-rename / key-left-
   by-a-plain-uninstall caveats as the query log (shared `persistence-key`). **Only `Verdict::Allow`
   is persisted** — `Block` is dropped at snapshot (so `fail_closed` timeout-blocks never cross a

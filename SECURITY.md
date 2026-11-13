@@ -34,7 +34,8 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
   being mapped to a coarse label, never logged via `Display`.
 - **Opt-in encrypted on-disk stores (T-146/T-97/Батч 4.5 T-108/T-138).** Four files, all off by
   default, all `XChaCha20Poly1305` via `encrypted_file.rs`, all `%LOCALAPPDATA%\dns-quorum-filter`:
-  `query-log.enc` (browsing history) / `cache.enc` (which domains resolved, `Allow` only) /
+  `query-log/d<day>.enc` per-UTC-day segments (browsing history, T-291; formerly one
+  `query-log.enc`, folded in and deleted on first start) / `cache.enc` (which domains resolved, `Allow` only) /
   `zone-removals.enc` (the T-108 lazy-hygiene overlay — which registrables quorum already
   blocked) share one `persistence-key` Credential Manager entry (`FileKind` in the AEAD header
   keeps them distinct); `personal-zone.enc` (which sites *this specific user* visits often/

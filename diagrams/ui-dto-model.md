@@ -25,6 +25,9 @@ T-254/T-243/ARCH-04: `HeroStateView` (досі не було на діаграм
 `ADMIN_DTO_SCHEMA_VERSION` 6→7 (`crates/dnsqb-service/src/admin.rs`, `startup_task.rs`).
 TASKS.md T-280 (хвиля 18): `AdminErrorResponse`/`AdminErrorReason` — тіло кожного `/admin/*` `400`,
 `ADMIN_DTO_SCHEMA_VERSION` 7→8.
+DECISIONS.md 2026-11-13 (T-291): `AdminStatusResponse.query_log_retention`/`query_log_disk`,
+`LogEntryView.seq`, `QueryLogPolicyUpdate` — тіло `POST /admin/query-log-policy`,
+`ADMIN_DTO_SCHEMA_VERSION` 8→9.
 
 # DTO-модель каналу UI ↔ Backend
 
@@ -36,6 +39,7 @@ internally tagged enum через serde, дзеркальний до TS discrimi
 classDiagram
     class LogEntry {
         <<T-54, реалізовано як admin::LogEntryView>>
+        +u64 seq
         +u64 timestamp_ms
         +String domain
         +QType qtype
@@ -206,6 +210,19 @@ classDiagram
         +HeroStateView hero_state
         +String app_version
         +StartupTaskView startup_task
+        +LogRetention query_log_retention
+        +QueryLogDiskView query_log_disk
+    }
+    class LogRetention {
+        <<T-291 — 24h | 3d | 7d | 30d>>
+    }
+    class QueryLogDiskView {
+        <<T-291 — enum OFF | ACTIVE | FAILED | LEFTOVER>>
+    }
+    class QueryLogPolicyUpdate {
+        <<T-291 — тіло POST /admin/query-log-policy>>
+        +LogRetention retention
+        +bool persist
     }
     class HeroStateView {
         <<T-204; FILTERS_DEGRADED — T-254. enum WATCHDOG_GAVE_UP | WATCHDOG_RESTARTING | OFFLINE | PAUSED | NO_PROVIDERS | CERT_NOT_TRUSTED | FILTERS_DEGRADED | CERT_UNKNOWN | PROTECTED>>
@@ -402,6 +419,9 @@ classDiagram
     AdminStatusResponse --> CctldBlockStatusView
     AdminStatusResponse --> HeroStateView
     AdminStatusResponse --> StartupTaskView
+    AdminStatusResponse --> LogRetention
+    AdminStatusResponse --> QueryLogDiskView
+    QueryLogPolicyUpdate --> LogRetention
     ProviderStatusView --> Category
     GeoipCountriesResponse --> DatabaseSource
     MaxmindCredentialsView --> MaxmindCredentialCheck

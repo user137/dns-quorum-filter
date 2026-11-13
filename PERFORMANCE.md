@@ -443,7 +443,8 @@ Definitive run (same two-unfiltered-`NoError` gate, malware corpus **n = 111**; 
 Not on the DNS hot path except for one `watch::Sender::send_modify` per logged query
 (`Topic::Log`, a counter increment, no allocation). Cost while at least one `/admin/ui` tab is
 open: one status sampler for the whole service builds `AdminStatusResponse` once a second (a
-query-log snapshot of ≤1000 entries plus one `watchdog-state.json` read — the same work the old
+tail-first pass over the query log via `QueryLog::inspect`, no clone — T-291, the log can now hold
+up to 100 000 entries — plus one `watchdog-state.json` read — the same work the old
 2 s per-tab poll did, now shared across tabs) and sends it only when its JSON changed; with no
 tab open the sampler parks on a `Notify` and does nothing. Each open stream (≤4) costs one task
 waiting on ten `watch` receivers and a 10 s ping timer. A burst of changes reaches a slow
