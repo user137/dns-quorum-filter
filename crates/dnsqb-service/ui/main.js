@@ -898,11 +898,11 @@ function render(status) {
   // no-op empty div whenever the bubble is off, which is the common case.
   renderRatingFilterBadge(status.rating_filter);
   renderTimeoutConfig(status);
+  renderLogRetention(status);
   syncDohUrl(status);
   // T-96: passive indicator that the query log (i.e. browsing history) is
-  // being written to disk. Enabling this is a hand-edit of resolver_config.toml
-  // by design (no toggle here), so this is a plain always-visible line, not a
-  // per-event confirm.
+  // being written to disk. T-291: it is switched on in the log card behind a
+  // per-event confirm; this line only keeps the standing fact visible.
   const persistWarning = status.encrypted_persistence.query_log
     ? `<div class="notice warn">${t("app.queryLogPersistWarning")}</div>`
     : "";
@@ -2773,14 +2773,17 @@ function logItem(entry) {
   return li;
 }
 
-// T-279: the whole matching window comes back in one request (the service's
-// MAX_LOG_LIMIT, = its 1000-entry ring capacity, checked by an admin_ui.rs
-// test) and is paged here, LOG_PAGE_SIZE rows at a time, so neither the
-// list nor the card grows with the log.
+// T-279: the newest LOG_FETCH_LIMIT matches (the service's MAX_LOG_LIMIT,
+// checked by an admin_ui.rs test) come back in one request and are paged
+// here, LOG_PAGE_SIZE rows at a time, so neither the list nor the card grows
+// with the log. T-291: a longer window holds more than one request's worth;
+// "Older" on the last fetched page asks for the next chunk with
+// ?before_seq= (the oldest shown entry's seq).
 const LOG_FETCH_LIMIT = 1000;
 const LOG_PAGE_SIZE = 50;
 let logPage = 0; // 0 = newest
 let logEntriesNewestFirst = [];
+let logHasOlder = false;
 // The rendered page's list (it scrolls on its own) and whether a pushed log
 // change was held back while the reader was away from the newest rows.
 let currentLogList = null;
@@ -2829,10 +2832,178 @@ const logResults = document.createElement("div");
 const logLiveLine = document.createElement("p");
 logLiveLine.className = "log-live";
 
+// T-291: how long the log is kept. Rebuilt from every status (render()),
+// except while one of its confirm rows is open - a pending choice must not
+// be wiped by the next status push.
+const logRetentionBox = document.createElement("div");
+logRetentionBox.className = "log-retention";
+const LOG_RETENTIONS = ["24h", "3d", "7d", "30d"];
+let lastLogPolicy = null;
+let logRetentionPrompt = null;
+let logRetentionError = null;
+
+async function setLogPolicy(retention, persist) {
+  const response = await fetch("/admin/query-log-policy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ retention, persist }),
+  });
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+  return response.json();
+}
+
+function logPolicyFrom(status) {
+  return {
+    retention: status.query_log_retention || "24h",
+    persist: Boolean(status.encrypted_persistence && status.encrypted_persistence.query_log),
+    disk: status.query_log_disk || "OFF",
+  };
+}
+
+function renderLogRetention(status) {
+  if (status) {
+    lastLogPolicy = logPolicyFrom(status);
+  }
+  if (!lastLogPolicy || logRetentionPrompt !== null) {
+    return;
+  }
+  const policy = lastLogPolicy;
+  logRetentionBox.textContent = "";
+  const choice = document.createElement("fieldset");
+  choice.className = "log-retention-choice";
+  const legend = document.createElement("legend");
+  legend.textContent = t("log.retention.legend");
+  choice.appendChild(legend);
+  LOG_RETENTIONS.forEach((value) => {
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "log-retention";
+    radio.id = `log-retention-${value}`;
+    radio.value = value;
+    radio.checked = value === policy.retention;
+    radio.addEventListener("change", () => chooseLogRetention(value));
+    const text = document.createElement("span");
+    text.textContent = ` ${t(`log.retention.option.${value}`)}`;
+    label.appendChild(radio);
+    label.appendChild(text);
+    choice.appendChild(label);
+  });
+  logRetentionBox.appendChild(choice);
+
+  const state = document.createElement("p");
+  state.className = policy.disk === "FAILED" ? "override-error" : "log-live";
+  if (policy.disk === "FAILED") {
+    state.textContent = t("log.retention.diskFailed");
+  } else if (policy.disk === "ACTIVE") {
+    state.textContent = t("log.retention.onDisk");
+  } else if (policy.disk === "LEFTOVER") {
+    state.textContent = t("log.retention.leftover");
+  } else if (policy.retention !== "24h") {
+    // Hand-edited: a long window with no disk ends at the next restart.
+    state.className = "override-error";
+    state.textContent = t("log.retention.memoryOnlyLong");
+  } else {
+    state.textContent = t("log.retention.memoryOnly");
+  }
+  logRetentionBox.appendChild(state);
+  if (policy.disk === "LEFTOVER") {
+    const erase = document.createElement("button");
+    erase.type = "button";
+    erase.textContent = t("log.retention.eraseButton");
+    erase.addEventListener("click", () => showLogRetentionPrompt("leftover", policy.retention));
+    logRetentionBox.appendChild(erase);
+  }
+  if (logRetentionError) {
+    const error = document.createElement("div");
+    error.className = "override-error";
+    error.textContent = logRetentionError;
+    logRetentionBox.appendChild(error);
+  }
+}
+
+// Three Б: storing browsing history on disk, or erasing it, is confirmed on
+// the event itself - never an always-on banner.
+function chooseLogRetention(value) {
+  const policy = lastLogPolicy;
+  if (!policy) {
+    return;
+  }
+  logRetentionError = null;
+  const needsDisk = value !== "24h";
+  if (needsDisk && !policy.persist) {
+    showLogRetentionPrompt("disk", value);
+  } else if (!needsDisk && policy.persist) {
+    showLogRetentionPrompt("erase", value);
+  } else {
+    applyLogPolicy(value, policy.persist);
+  }
+}
+
+function showLogRetentionPrompt(kind, value) {
+  logRetentionPrompt = kind;
+  logRetentionBox.textContent = "";
+  const notice = document.createElement("div");
+  notice.className = "notice warn";
+  notice.textContent = t(
+    kind === "disk"
+      ? "log.retention.confirmDisk"
+      : kind === "erase"
+        ? "log.retention.eraseQuestion"
+        : "log.retention.eraseLeftoverQuestion",
+  );
+  logRetentionBox.appendChild(notice);
+  const row = document.createElement("div");
+  row.className = "rf-confirm-row";
+  row.dataset.pending = "";
+  const button = (text, onClick, primary) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = text;
+    if (primary) {
+      b.className = "rf-confirm";
+    }
+    b.addEventListener("click", onClick);
+    row.appendChild(b);
+  };
+  button(t("common.cancel"), () => {
+    logRetentionPrompt = null;
+    renderLogRetention();
+  });
+  if (kind === "disk") {
+    button(t("log.retention.confirmDiskButton"), () => applyLogPolicy(value, true), true);
+  } else {
+    if (kind === "erase") {
+      button(t("log.retention.keepButton"), () => applyLogPolicy(value, true));
+    }
+    button(t("log.retention.eraseButton"), () => applyLogPolicy(value, false), true);
+  }
+  logRetentionBox.appendChild(row);
+}
+
+async function applyLogPolicy(retention, persist) {
+  logRetentionPrompt = null;
+  try {
+    const status = await setLogPolicy(retention, persist);
+    logRetentionError =
+      status.persisted === false && status.query_log_disk !== "FAILED"
+        ? t("warning.notPersisted")
+        : null;
+    render(status);
+  } catch (err) {
+    logRetentionError = t("error.generic", { message: (err && err.message) || String(err) });
+    renderLogRetention();
+  }
+}
+
 function buildLogFilterRow() {
   logBody.textContent = "";
 
   logBody.appendChild(cardHeading(t("log.heading"), "logFilters"));
+  logBody.appendChild(logRetentionBox);
+  renderLogRetention();
 
   const filterRow = document.createElement("div");
   filterRow.className = "log-filter-row";
@@ -2957,6 +3128,7 @@ function renderLog(data) {
   // Newest first for reading, even though the backend returns oldest-first
   // within the kept window (dispatch::serve_admin_log's own doc comment).
   logEntriesNewestFirst = [...data.entries].reverse();
+  logHasOlder = Boolean(data.truncated);
 
   if (data.entries.length === 0) {
     const empty = document.createElement("p");
@@ -2964,13 +3136,6 @@ function renderLog(data) {
     empty.textContent = t("log.emptyResults");
     logResults.appendChild(empty);
     return;
-  }
-
-  if (data.truncated) {
-    const truncatedNotice = document.createElement("div");
-    truncatedNotice.className = "notice warn";
-    truncatedNotice.textContent = t("log.truncatedNotice");
-    logResults.appendChild(truncatedNotice);
   }
 
   const pageSlot = document.createElement("div");
@@ -3001,7 +3166,7 @@ function renderLogPage(slot) {
     .forEach((entry) => list.appendChild(logItem(entry)));
   slot.appendChild(list);
   const pages = logPageCount();
-  if (pages > 1) {
+  if (pages > 1 || logHasOlder) {
     const pager = document.createElement("div");
     pager.className = "log-pager";
     const newer = document.createElement("button");
@@ -3013,9 +3178,12 @@ function renderLogPage(slot) {
     const older = document.createElement("button");
     older.type = "button";
     older.textContent = t("log.pageOlder");
-    older.disabled = logPage >= pages - 1;
+    const onLastPage = logPage >= pages - 1;
+    older.disabled = onLastPage && !logHasOlder;
     newer.addEventListener("click", () => showLogPage(logPage - 1, slot));
-    older.addEventListener("click", () => showLogPage(logPage + 1, slot));
+    older.addEventListener("click", () =>
+      onLastPage ? loadOlderLog(slot) : showLogPage(logPage + 1, slot),
+    );
     pager.appendChild(newer);
     pager.appendChild(status);
     pager.appendChild(older);
@@ -3032,6 +3200,28 @@ function showLogPage(page, slot) {
     return;
   }
   renderLogPage(slot);
+}
+
+// T-291: the next chunk older than everything fetched so far, appended to
+// the pager's window.
+async function loadOlderLog(slot) {
+  const oldest = logEntriesNewestFirst[logEntriesNewestFirst.length - 1];
+  if (!oldest || typeof oldest.seq !== "number") {
+    logHasOlder = false;
+    renderLogPage(slot);
+    return;
+  }
+  const params = currentLogQuery();
+  params.set("before_seq", String(oldest.seq));
+  try {
+    const data = await getLog(params);
+    logEntriesNewestFirst = logEntriesNewestFirst.concat([...data.entries].reverse());
+    logHasOlder = Boolean(data.truncated) && data.entries.length > 0;
+    logPage += 1;
+    renderLogPage(slot);
+  } catch (err) {
+    renderLogError(err);
+  }
 }
 
 function renderLogError(err) {

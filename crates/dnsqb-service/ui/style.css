@@ -229,6 +229,14 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .log-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
 .log-pager { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; font-size: 12.8px; }
 .log-live { color: var(--text-muted); font-size: 12.8px; margin: 0 0 0.4rem; }
+/* T-291: the retention choice above the filter row. */
+.log-retention { margin-bottom: 0.6rem; }
+.log-retention-choice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem;
+  border: none; padding: 0; margin: 0 0 0.3rem;
+}
+.log-retention-choice legend { float: left; margin-right: 0.3rem; padding: 0; font-size: 12.8px; }
+.log-retention-choice label { font-size: 12.8px; white-space: nowrap; }
 .log-item { padding: 0.5rem 0; border-bottom: 1px solid var(--line-soft); }
 .log-item:last-child { border-bottom: none; }
 .log-item-row {

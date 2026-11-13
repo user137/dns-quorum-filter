@@ -61,6 +61,7 @@ use crate::personal_zone_persist::{
     load_persisted_personal_zone, run_personal_zone_task, PersonalZoneInit,
 };
 use crate::personal_zone_stats::PersonalZoneStats;
+use crate::query_log::QueryLogPolicy;
 use crate::rating_filter::ZoneLists;
 use crate::reachability::run_reachability_prober;
 use crate::startup_failure::{self, StartupFailure};
@@ -197,12 +198,12 @@ pub async fn run() {
     // T-163 database source, T-124 the rating-filter zone from disk.
     let geoip = build_geoip_init(app_data.as_deref(), geoip_path.as_deref(), &resolver_config);
 
-    // T-146: seed the query log from encrypted `query-log.enc` when
-    // `persist_query_log` is set; `flusher` feeds the background persister.
+    // T-146/T-291: build the query log with the configured window and seed
+    // it from the encrypted day files when `persist_query_log` is set.
     let QueryLogInit {
         log: query_log,
-        flusher: query_log_flusher,
-    } = load_persisted_query_log(app_data.as_deref(), resolver_config.persist_query_log);
+        disk: query_log_disk,
+    } = load_persisted_query_log(app_data.as_deref(), query_log_policy(&resolver_config));
 
     // T-97: decrypt `cache.enc` for a warm-cache restart when `persist_cache`
     // is set. The cache itself is built inside `AppState::new`, so the restored
@@ -267,7 +268,8 @@ pub async fn run() {
     // field's own doc), so this call is what actually observes a
     // hand-edited `resolver_config.toml` value until an `/admin/reset`.
     state.update_cctld_block(resolver_config.cctld_block.blocked_codes.clone());
-    spawn_query_log_persister(&state, query_log_flusher);
+    state.install_query_log_disk(query_log_disk);
+    spawn_query_log_persister(&state, app_data.is_some());
     spawn_cache_persister(&state, cache_flusher);
     spawn_zone_removal_persister(&state, zone_removals_flusher);
     spawn_personal_zone_task(&state, personal_zone_flusher);
@@ -405,15 +407,21 @@ fn load_rating_filter_persistence(
     }
 }
 
-/// T-146: spawns the encrypted query-log persister (a 60 s flush loop plus a
-/// final flush on shutdown) when [`load_persisted_query_log`] resolved a
-/// key — a no-op otherwise.
-fn spawn_query_log_persister(
-    state: &Arc<AppState<ReqwestDohClient>>,
-    flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
-) {
-    if let Some((path, key)) = flusher {
-        tokio::spawn(run_query_log_persister(Arc::clone(state), path, key));
+/// The startup query-log policy from `resolver_config.toml` (T-291).
+fn query_log_policy(config: &ResolverConfig) -> QueryLogPolicy {
+    QueryLogPolicy {
+        retention: config.query_log_retention,
+        persist: config.persist_query_log,
+    }
+}
+
+/// T-146/T-291: spawns the encrypted query-log persister (a 60 s flush loop,
+/// woken early by a policy change, plus a final flush on shutdown) whenever
+/// an app-data directory exists — persistence can be switched on at runtime,
+/// and a flush is a no-op while it is off.
+fn spawn_query_log_persister(state: &Arc<AppState<ReqwestDohClient>>, has_app_data: bool) {
+    if has_app_data {
+        tokio::spawn(run_query_log_persister(Arc::clone(state)));
     }
 }
 

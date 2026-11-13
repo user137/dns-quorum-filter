@@ -673,6 +673,8 @@ mod tests {
                 query_log: false,
                 cache: false,
             },
+            query_log_retention: dnsqb_service::LogRetention::Day,
+            query_log_disk: dnsqb_service::QueryLogDiskView::Off,
             rating_filter: dnsqb_service::RatingFilterStatusView {
                 enabled: false,
                 active: false,

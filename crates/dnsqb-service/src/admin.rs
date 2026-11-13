@@ -34,7 +34,7 @@
 
 use crate::cache::{CacheConfig, CacheConfigError};
 use crate::overrides::ListKind;
-use crate::query_log::{Decision, DecisionSource, LogEntry};
+use crate::query_log::{Decision, DecisionSource, LogEntry, LogRetention};
 use crate::quorum::{VoterRecord, VoterVerdict};
 use crate::reachability::NetworkReachability;
 use crate::timeout::TimeoutMode;
@@ -54,7 +54,37 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 8;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 9;
+
+/// The query log's encrypted disk copy, as the `/admin/ui` log card shows
+/// it (T-291).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum QueryLogDiskView {
+    /// Persistence off, nothing from an earlier run on disk.
+    #[default]
+    Off,
+    /// Persistence on and the last disk operation succeeded.
+    Active,
+    /// The last flush, key fetch or erase failed — the window may not
+    /// survive a restart, or history the user asked to erase is still there.
+    Failed,
+    /// Persistence off, but an earlier run's history is still on disk.
+    Leftover,
+}
+
+/// `POST /admin/query-log-policy` (T-291) — full replace of the retention
+/// window and the persistence switch. A window past 24 h requires
+/// `persist: true` (`400 QUERY_LOG_RETENTION_NEEDS_DISK` otherwise);
+/// `persist: false` erases the disk copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryLogPolicyUpdate {
+    /// The retention window.
+    pub retention: LogRetention,
+    /// Whether the log is kept, encrypted, on disk.
+    pub persist: bool,
+}
 
 /// Why an `/admin/*` request was refused with `400` (T-280) — the whole body
 /// of that response is an [`AdminErrorResponse`]. A closed set of fixed
@@ -103,6 +133,8 @@ pub enum AdminErrorReason {
     MalformedCredentials,
     /// A `GET /admin/log` query parameter is malformed.
     InvalidLogQuery,
+    /// A query-log window past 24 h without keeping it on disk (T-291).
+    QueryLogRetentionNeedsDisk,
     /// Any other refused value.
     InvalidValue,
 }
@@ -110,7 +142,7 @@ pub enum AdminErrorReason {
 impl AdminErrorReason {
     /// Every variant, for the `error.reason.<NAME>` dictionary coverage test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 20] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::MalformedBody,
         Self::ValueTooLarge,
         Self::ClampMinExceedsMax,
@@ -130,6 +162,7 @@ impl AdminErrorReason {
         Self::UnknownProvider,
         Self::MalformedCredentials,
         Self::InvalidLogQuery,
+        Self::QueryLogRetentionNeedsDisk,
         Self::InvalidValue,
     ];
 }
@@ -277,6 +310,15 @@ pub struct AdminStatusResponse {
     /// stores off".
     #[serde(default)]
     pub encrypted_persistence: EncryptedPersistenceView,
+    /// T-291 — the query log's retention window. `#[serde(default)]`: an
+    /// older service reports nothing, read as the 24 h it always had.
+    #[serde(default)]
+    pub query_log_retention: LogRetention,
+    /// T-291 — the query log's disk copy as the log card shows it.
+    /// `#[serde(default)]`: `OFF`, an older service's only state with no
+    /// route to change it.
+    #[serde(default)]
+    pub query_log_disk: QueryLogDiskView,
     /// T-127/T-128 — the rating-filter «bubble» status, always present so the
     /// header badge / tray tooltip can render it without a second fetch.
     /// `#[serde(default)]` (T-205): safe zero is "bubble off, no lists".

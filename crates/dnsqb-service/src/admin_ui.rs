@@ -215,9 +215,10 @@ mod tests {
     }
 
     // T-96: the passive query-log-persistence warning is rendered only when
-    // the flag is true. Батч 5.4 moved the warning's own text (the filename
-    // and how to turn it off) into the i18n dictionary - `en.json` is the
-    // content check now, `MAIN_JS` only proves the gate and the t() call.
+    // the flag is true. Батч 5.4 moved the warning's own text into the i18n
+    // dictionary - `en.json` is the content check now, `MAIN_JS` only proves
+    // the gate and the t() call. T-291: persistence has a UI control, so the
+    // warning points at the log card instead of a config-file edit.
     #[test]
     fn main_js_shows_the_persistence_warning_gated_on_the_status_flag() {
         assert!(
@@ -228,10 +229,9 @@ mod tests {
         let Some(en) = i18n_dict("en") else {
             panic!("en.json must be registered");
         };
-        assert!(en.contains("query-log.enc"));
         assert!(
-            en.contains("persist_query_log = false"),
-            "the warning must tell the operator how to disable persistence"
+            en.contains("survives restarts") && en.contains("query log card"),
+            "the warning must say history is on disk and where to turn it off"
         );
     }
 

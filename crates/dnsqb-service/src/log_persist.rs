@@ -1,20 +1,35 @@
-//! T-146: the background task that keeps `query-log.enc` in step with the
-//! in-memory ring buffer while `persist_query_log` is on (SPEC.md §6).
+//! T-146 / T-291: the encrypted on-disk copy of the query log while
+//! `persist_query_log` is on (SPEC.md §6).
 //!
-//! The buffer is snapshotted, serialized ([`crate::persist_dto`]), sealed
-//! ([`crate::encrypted_file`]) and written atomically
-//! ([`crate::paths::write_atomic`]) on a fixed interval and once more on
-//! graceful shutdown. **Not** append-only: a full rewrite each time, so the
-//! file's size tracks the bounded window (1000 / 24 h), and a hard crash
-//! loses at most one interval's entries — an accepted trade for the
-//! simplicity of matching the ring buffer's own snapshot semantics.
+//! One file per UTC day, `query-log/d<days-since-epoch>.enc`, each a
+//! [`crate::persist_dto`] snapshot of that day's entries, sealed
+//! ([`crate::encrypted_file`]) under the `key_store` persistence key and
+//! written atomically ([`crate::paths::write_atomic`]). A flush rewrites only
+//! the days that received entries since the previous one — normally just
+//! today, so a 30-day window costs one day's file per flush, not the whole
+//! history (T-146's single `query-log.enc` was rewritten whole every 60 s,
+//! fine at 1000 entries, ~23 MB per flush at 30 days). Days that fell out of
+//! the window are deleted by filename. A hard crash loses at most one flush
+//! interval.
 //!
-//! [`persist_snapshot`] and [`load_persisted_query_log`] are the testable
-//! parts; [`run_query_log_persister`] is the thin impure shell wiring the
-//! flush to the timer, the live [`AppState`] and the shutdown signal —
-//! untested by design, the same split `run_geoip_updater` /
-//! `run_reachability_prober` already use.
+//! Safety rules this module is built around (T-291 advisor review):
+//! - **Never overwrite history this process has not taken in.** Until the
+//!   existing files were restored into memory (or moved aside as
+//!   undecryptable) nothing is written — else enabling persistence at
+//!   runtime, or a key that failed to load at startup and loaded later,
+//!   would replace a day file with only what memory holds.
+//! - **Clearing the log erases the disk copy in the same locked step** —
+//!   `AppState`'s io lock serialises every [`QueryLogDisk`] call, so a flush
+//!   that read the policy before a clear cannot write afterwards and bring
+//!   "cleared" history back at the next start.
+//! - **Erasure failures are returned, never swallowed** — the caller reports
+//!   them to the user on the action itself.
+//!
+//! [`QueryLogDisk`] and [`load_persisted_query_log`] are the testable parts;
+//! [`run_query_log_persister`] is the thin impure timer shell.
 
+use std::collections::BTreeSet;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -23,15 +38,85 @@ use zeroize::Zeroizing;
 
 use crate::dispatch::AppState;
 use crate::encrypted_file::{open, seal, EncryptedFileError, FileKind};
-use crate::key_store::load_or_create_persistence_key;
+use crate::key_store::{load_or_create_persistence_key, KeyStoreError};
 use crate::paths::write_atomic;
 use crate::persist_dto::{from_json, to_json};
-use crate::query_log::{LogEntry, QueryLog};
+use crate::query_log::{LogEntry, LogRetention, QueryLog, QueryLogPolicy};
 use crate::upstream::ReqwestDohClient;
 
-/// How often the running persister rewrites the file. A hard crash loses at
-/// most this much of the tail (see the module docs).
+/// How often the running persister flushes. A hard crash loses at most this
+/// much of the tail (see the module docs).
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60);
+
+/// The per-day segment directory, under the app-data directory.
+const SEGMENT_DIR: &str = "query-log";
+
+/// T-146's single-file format — migrated into segments once, then deleted.
+const LEGACY_FILE: &str = "query-log.enc";
+
+const SECS_PER_DAY: u64 = 86_400;
+
+/// Days since the Unix epoch (UTC) — a segment's name. A pre-epoch clock
+/// maps to day 0 rather than failing.
+#[must_use]
+pub(crate) fn utc_day(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() / SECS_PER_DAY)
+}
+
+fn segment_name(day: u64) -> String {
+    format!("d{day}.enc")
+}
+
+/// Strict `d<digits>.enc` — anything else in the directory (a
+/// `write_atomic` `.tmp` leftover, an `.orphaned-<ts>` file) is not a
+/// segment and is never read or pruned.
+fn parse_segment_name(name: &str) -> Option<u64> {
+    let digits = name.strip_prefix('d')?.strip_suffix(".enc")?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// Every well-formed segment in `dir`, oldest day first. A missing directory
+/// is an empty list.
+fn list_segments(dir: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(read_dir) => read_dir,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut segments = Vec::new();
+    for entry in read_dir {
+        let entry = entry?;
+        if let Some(day) = entry.file_name().to_str().and_then(parse_segment_name) {
+            segments.push((day, entry.path()));
+        }
+    }
+    segments.sort_unstable_by_key(|(day, _)| *day);
+    Ok(segments)
+}
+
+/// Whether any persisted query history (segments or the legacy file) exists
+/// under `app_data`.
+fn history_present(app_data: &Path) -> io::Result<bool> {
+    Ok(app_data.join(LEGACY_FILE).try_exists()?
+        || !list_segments(&app_data.join(SEGMENT_DIR))?.is_empty())
+}
+
+/// `remove_file`, treating "already gone" as success.
+fn remove_file_if_present(path: &Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+        _ => Ok(()),
+    }
+}
+
+/// The first day still inside `retention`'s window at `now`.
+fn oldest_kept_day(retention: LogRetention, now: SystemTime) -> u64 {
+    now.checked_sub(retention.max_age()).map_or(0, utc_day)
+}
 
 /// Failure modes of [`persist_snapshot`] — payload-free where it matters (no
 /// plaintext, no key, no domain names); the `Write` variant's `io::Error`
@@ -46,14 +131,12 @@ pub(crate) enum PersistError {
     /// implausibly huge log).
     #[error("failed to encrypt the query log: {0}")]
     Seal(#[source] EncryptedFileError),
-    /// The atomic write to `query-log.enc` failed.
+    /// The atomic write failed.
     #[error("failed to write the encrypted query log to disk: {0}")]
-    Write(#[source] std::io::Error),
+    Write(#[source] io::Error),
 }
 
-/// Serialize → seal → atomic-write one snapshot of the log. The whole file
-/// is rewritten; `entries` is expected to be a
-/// [`crate::query_log::QueryLog::snapshot`] result (already age-bounded).
+/// Serialize → seal → atomic-write `entries` to `path`, replacing it.
 ///
 /// # Errors
 ///
@@ -69,43 +152,52 @@ pub(crate) fn persist_snapshot(
     write_atomic(path, &sealed).map_err(PersistError::Write)
 }
 
-/// What [`load_persisted_query_log`] hands back to `main.rs`.
-pub struct QueryLogInit {
-    /// The query log — seeded from `query-log.enc` when persistence was on
-    /// and a decryptable file existed, empty otherwise. Hand this to
-    /// `AppState::new`.
-    pub log: QueryLog,
-    /// `Some((path, key))` to pass to [`run_query_log_persister`] once the
-    /// `AppState` exists; `None` when persistence is off or no key could be
-    /// obtained this run.
-    pub flusher: Option<(PathBuf, Zeroizing<[u8; 32]>)>,
-}
-
 /// Why a persisted-log file could not be restored.
 #[derive(Debug, thiserror::Error)]
 enum LoadError {
     #[error("could not read the file: {0}")]
-    Read(#[source] std::io::Error),
+    Read(#[source] io::Error),
     #[error("{0}")]
     Decrypt(#[source] EncryptedFileError),
     #[error("could not parse the decrypted contents: {0}")]
     Parse(#[source] serde_json::Error),
 }
 
-/// Renames an un-decryptable / malformed persisted file (`query-log.enc`, or
-/// `cache.enc` — T-97 reuses this) to `<path>.orphaned-<unix_ts>` so the next
-/// flush does not overwrite (and destroy) whatever it held — a key might
-/// resurface. Best-effort: a failed rename is logged, not fatal.
+/// Reads, decrypts and parses one persisted file.
+fn read_entries(path: &Path, key: &[u8; 32]) -> Result<Vec<LogEntry>, LoadError> {
+    let raw = std::fs::read(path).map_err(LoadError::Read)?;
+    let plaintext = open(key, FileKind::QueryLog, &raw).map_err(LoadError::Decrypt)?;
+    from_json(&plaintext).map_err(LoadError::Parse)
+}
+
+/// Why a flush or adoption failed — reported as `query_log_disk: FAILED`.
+#[derive(Debug, thiserror::Error)]
+enum DiskError {
+    #[error("no app-data directory is available")]
+    NoAppData,
+    #[error("could not obtain the persistence key: {0}")]
+    Key(#[source] KeyStoreError),
+    #[error("{0}")]
+    Io(#[source] io::Error),
+    #[error("{0}")]
+    Persist(#[source] PersistError),
+}
+
+/// Renames an un-decryptable / malformed persisted file (a query-log
+/// segment, `cache.enc` — T-97 reuses this) to `<path>.orphaned-<unix_ts>`
+/// so the next flush does not overwrite (and destroy) whatever it held — a
+/// key might resurface. Best-effort: a failed rename is logged, not fatal.
 pub(crate) fn rename_orphan(path: &Path) {
     match move_aside(path) {
-        Ok(orphan) => tracing::warn!("moved an un-decryptable query-log file aside to {orphan:?}"),
-        Err(err) => tracing::warn!("could not move the un-decryptable query-log file aside: {err}"),
+        Ok(orphan) => tracing::warn!("moved an un-decryptable persisted file aside to {orphan:?}"),
+        Err(err) => tracing::warn!("could not move the un-decryptable persisted file aside: {err}"),
     }
 }
 
-/// Renames `path` to `<path>.orphaned-<unix_ts>` and returns the new path.
-/// Shared by [`rename_orphan`] and the хвиля 13b config reset.
-pub(crate) fn move_aside(path: &Path) -> std::io::Result<PathBuf> {
+/// Renames `path` (a file or a directory) to `<path>.orphaned-<unix_ts>` and
+/// returns the new path. Shared by [`rename_orphan`] and the хвиля 13b
+/// config reset.
+pub(crate) fn move_aside(path: &Path) -> io::Result<PathBuf> {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -114,6 +206,368 @@ pub(crate) fn move_aside(path: &Path) -> std::io::Result<PathBuf> {
     let orphan = PathBuf::from(orphan);
     std::fs::rename(path, &orphan)?;
     Ok(orphan)
+}
+
+/// What the `/admin/ui` log card shows about the disk copy (T-291) — the
+/// `persisted: false` pattern for this store: a failure is visible, never a
+/// silent "7 days" that does not survive a reboot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DiskHealth {
+    /// The last flush, key fetch or erase failed.
+    pub failed: bool,
+    /// Persistence is off but history from an earlier run is still on disk.
+    pub leftover: bool,
+}
+
+/// The query log's disk copy and what this process knows about it. Lives
+/// behind `AppState`'s io lock; every method assumes that lock is held.
+pub struct QueryLogDisk {
+    app_data: Option<PathBuf>,
+    key: Option<Zeroizing<[u8; 32]>>,
+    /// The files on disk were restored into memory or moved aside — writing
+    /// is safe. See the module docs' first rule.
+    adopted: bool,
+    /// [`QueryLog::next_seq`] at the last successful flush: entries at or
+    /// above it are not on disk yet.
+    synced_seq: u64,
+    /// Days to rewrite on the next flush whatever arrived — set when
+    /// history was merged in at runtime or migrated from the legacy file.
+    pending_days: BTreeSet<u64>,
+    /// The legacy `query-log.enc` was restored; delete it once its days are
+    /// written as segments.
+    legacy_pending: bool,
+    health: DiskHealth,
+}
+
+impl std::fmt::Debug for QueryLogDisk {
+    /// Never prints the key.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueryLogDisk")
+            .field("app_data", &self.app_data)
+            .field("key", &self.key.as_ref().map(|_| "<redacted>"))
+            .field("adopted", &self.adopted)
+            .field("health", &self.health)
+            .finish_non_exhaustive()
+    }
+}
+
+impl QueryLogDisk {
+    /// A disk copy nothing has been read from yet (persistence off, or
+    /// before [`load_persisted_query_log`] ran).
+    #[must_use]
+    pub fn detached(app_data: Option<PathBuf>) -> Self {
+        Self {
+            app_data,
+            key: None,
+            adopted: false,
+            synced_seq: 0,
+            pending_days: BTreeSet::new(),
+            legacy_pending: false,
+            health: DiskHealth::default(),
+        }
+    }
+
+    /// Test constructor with a fixed key — no OS credential store involved.
+    #[cfg(test)]
+    fn with_key(app_data: &Path, key: [u8; 32]) -> Self {
+        Self {
+            key: Some(Zeroizing::new(key)),
+            ..Self::detached(Some(app_data.to_path_buf()))
+        }
+    }
+
+    /// The current health for the status view.
+    #[must_use]
+    pub fn health(&self) -> DiskHealth {
+        self.health
+    }
+
+    /// Obtains the persistence key once. When none was stored but history
+    /// files exist (the key store was cleared), those files can never be
+    /// decrypted: they are moved aside, not overwritten — the T-146
+    /// orphan rule, kept for a runtime switch-on too. Cheap (no history
+    /// read), so the policy route calls it to report a key failure at once.
+    fn ensure_key(&mut self) -> Result<&[u8; 32], DiskError> {
+        if self.key.is_none() {
+            let dir = self.app_data.as_deref().ok_or(DiskError::NoAppData)?;
+            let present = history_present(dir).map_err(DiskError::Io)?;
+            let loaded = load_or_create_persistence_key(dir, present).map_err(DiskError::Key)?;
+            if loaded.orphaned_ciphertext {
+                for path in [dir.join(SEGMENT_DIR), dir.join(LEGACY_FILE)] {
+                    if path.exists() {
+                        rename_orphan(&path);
+                    }
+                }
+                self.adopted = true;
+            }
+            self.key = Some(loaded.key);
+        }
+        self.key.as_deref().ok_or(DiskError::NoAppData)
+    }
+
+    /// [`Self::ensure_key`] for the policy route, recording a failure in
+    /// [`Self::health`].
+    pub fn prepare(&mut self) {
+        let failed = self.ensure_key().is_err();
+        self.health.failed = failed;
+    }
+
+    /// Restores every readable file inside `retention`'s window into `log`
+    /// (merging with whatever it already holds) and marks the disk adopted.
+    /// A file that does not decrypt or parse is moved aside, the rest still
+    /// load. Returns how many entries were restored.
+    fn adopt(
+        &mut self,
+        log: &QueryLog,
+        retention: LogRetention,
+        now: SystemTime,
+    ) -> Result<usize, DiskError> {
+        let key = Zeroizing::new(*self.ensure_key()?);
+        if self.adopted {
+            return Ok(0);
+        }
+        let dir = self.app_data.clone().ok_or(DiskError::NoAppData)?;
+        // Memory may already hold entries the disk does not (persistence was
+        // off until now): their days must be rewritten to include them.
+        let live_days = log.keys_since(0, |entry| utc_day(entry.timestamp));
+        let oldest = oldest_kept_day(retention, now);
+        let mut restored = Vec::new();
+        let segments = list_segments(&dir.join(SEGMENT_DIR)).map_err(DiskError::Io)?;
+        for (day, path) in segments {
+            if day < oldest {
+                continue;
+            }
+            match read_entries(&path, &key) {
+                Ok(entries) => restored.extend(entries),
+                Err(err) => {
+                    tracing::warn!(
+                        "could not restore a query-log day file ({err}); moving it aside"
+                    );
+                    rename_orphan(&path);
+                }
+            }
+        }
+        let legacy = dir.join(LEGACY_FILE);
+        let mut legacy_days = BTreeSet::new();
+        if legacy.exists() {
+            match read_entries(&legacy, &key) {
+                Ok(entries) => {
+                    legacy_days = entries.iter().map(|e| utc_day(e.timestamp)).collect();
+                    restored.extend(entries);
+                    self.legacy_pending = true;
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "could not restore the legacy query log ({err}); moving it aside"
+                    );
+                    rename_orphan(&legacy);
+                }
+            }
+        }
+        let count = restored.len();
+        log.restore(restored, now);
+        self.synced_seq = log.next_seq();
+        self.pending_days.extend(live_days);
+        self.pending_days.extend(legacy_days);
+        self.adopted = true;
+        Ok(count)
+    }
+
+    /// One flush (see the module docs). A no-op while `policy.persist` is
+    /// off. Records the outcome in [`Self::health`].
+    pub fn flush(&mut self, log: &QueryLog, policy: QueryLogPolicy, now: SystemTime) {
+        if !policy.persist {
+            return;
+        }
+        let outcome = self.try_flush(log, policy.retention, now);
+        if let Err(err) = &outcome {
+            tracing::warn!("query-log persistence flush failed: {err}");
+        }
+        self.health = DiskHealth {
+            failed: outcome.is_err(),
+            leftover: false,
+        };
+    }
+
+    fn try_flush(
+        &mut self,
+        log: &QueryLog,
+        retention: LogRetention,
+        now: SystemTime,
+    ) -> Result<(), DiskError> {
+        self.adopt(log, retention, now)?;
+        let key = Zeroizing::new(*self.ensure_key()?);
+        let dir = self.app_data.clone().ok_or(DiskError::NoAppData)?;
+        let segments = dir.join(SEGMENT_DIR);
+        // Read before scanning: an entry pushed during the writes below is
+        // at or above `mark`, so the next flush writes it again.
+        let mark = log.next_seq();
+        let mut days = log.keys_since(self.synced_seq, |entry| utc_day(entry.timestamp));
+        days.extend(self.pending_days.iter().copied());
+        let oldest = oldest_kept_day(retention, now);
+        if !days.is_empty() {
+            std::fs::create_dir_all(&segments).map_err(DiskError::Io)?;
+        }
+        for day in days.into_iter().filter(|day| *day >= oldest) {
+            let entries = log.entries_matching(now, |entry| utc_day(entry.timestamp) == day);
+            let path = segments.join(segment_name(day));
+            if entries.is_empty() {
+                remove_file_if_present(&path).map_err(DiskError::Io)?;
+            } else {
+                persist_snapshot(&entries, &key, &path).map_err(DiskError::Persist)?;
+            }
+        }
+        self.pending_days.clear();
+        self.synced_seq = mark;
+        if self.legacy_pending {
+            remove_file_if_present(&dir.join(LEGACY_FILE)).map_err(DiskError::Io)?;
+            self.legacy_pending = false;
+        }
+        for (day, path) in list_segments(&segments).map_err(DiskError::Io)? {
+            if day < oldest {
+                remove_file_if_present(&path).map_err(DiskError::Io)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Deletes every persisted copy of the query history: the segment
+    /// directory, the legacy file and any `query-log*.orphaned-*` file or
+    /// directory moved aside earlier. Memory is the caller's to clear (or
+    /// keep). Whatever memory still holds is written again by the next flush
+    /// if persistence is (re-)enabled.
+    ///
+    /// # Errors
+    ///
+    /// The first filesystem error; already-missing items are not errors.
+    /// The failure is also recorded in [`Self::health`].
+    pub fn erase(&mut self) -> io::Result<()> {
+        let outcome = self.try_erase();
+        self.health = DiskHealth {
+            failed: outcome.is_err(),
+            leftover: outcome.is_err() && self.health.leftover,
+        };
+        outcome
+    }
+
+    fn try_erase(&mut self) -> io::Result<()> {
+        let Some(dir) = self.app_data.clone() else {
+            return Ok(());
+        };
+        match std::fs::remove_dir_all(dir.join(SEGMENT_DIR)) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(err),
+            _ => {}
+        }
+        remove_file_if_present(&dir.join(LEGACY_FILE))?;
+        let read_dir = match std::fs::read_dir(&dir) {
+            Ok(read_dir) => read_dir,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err),
+        };
+        for entry in read_dir {
+            let entry = entry?;
+            let is_orphan = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("query-log") && name.contains(".orphaned-"));
+            if !is_orphan {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                std::fs::remove_dir_all(entry.path())?;
+            } else {
+                remove_file_if_present(&entry.path())?;
+            }
+        }
+        // Nothing left on disk to protect; memory's days are rewritten from
+        // scratch if persistence is on.
+        self.adopted = true;
+        self.synced_seq = 0;
+        self.pending_days.clear();
+        self.legacy_pending = false;
+        Ok(())
+    }
+}
+
+/// What [`load_persisted_query_log`] hands back to `orchestrate::run`.
+pub struct QueryLogInit {
+    /// The query log, bounded by the configured retention and seeded from
+    /// disk when persistence is on. Hand this to `AppState::new`.
+    pub log: QueryLog,
+    /// The disk copy's state — install it with
+    /// `AppState::install_query_log_disk` once the state exists.
+    pub disk: QueryLogDisk,
+}
+
+/// Startup: build the query log **with the configured retention first** (a
+/// 24 h default here would drop restored 3–30 day history on every boot),
+/// then restore every readable day file when persistence is on. A missing
+/// key with files present, or an undecryptable file, is moved aside and the
+/// rest still loads — a query log is re-creatable, so this warns and
+/// proceeds rather than aborting startup.
+#[must_use]
+pub fn load_persisted_query_log(app_data: Option<&Path>, policy: QueryLogPolicy) -> QueryLogInit {
+    let log = QueryLog::with_retention(policy.retention);
+    let mut disk = QueryLogDisk::detached(app_data.map(Path::to_path_buf));
+    let Some(dir) = app_data else {
+        if policy.persist {
+            tracing::warn!(
+                "persist_query_log is set but no app-data directory is available; \
+                 the query log will not be persisted"
+            );
+            disk.health.failed = true;
+        }
+        return QueryLogInit { log, disk };
+    };
+    if !policy.persist {
+        disk.health.leftover = match history_present(dir) {
+            Ok(present) => present,
+            Err(err) => {
+                tracing::warn!("could not check for a leftover query-log history: {err}");
+                false
+            }
+        };
+        return QueryLogInit { log, disk };
+    }
+    match disk.adopt(&log, policy.retention, SystemTime::now()) {
+        Ok(count) => tracing::info!("restored {count} query-log entries from disk"),
+        Err(err) => {
+            tracing::warn!("could not restore the persisted query log ({err}); starting empty");
+            disk.health.failed = true;
+        }
+    }
+    QueryLogInit { log, disk }
+}
+
+/// The running persister: flush every [`FLUSH_INTERVAL`] or when woken (a
+/// policy change), and once more on shutdown. Always spawned when an
+/// app-data directory exists — a flush is a no-op while persistence is off,
+/// so switching it on needs no restart. Each flush runs on a blocking
+/// thread (file I/O under the io lock).
+pub async fn run_query_log_persister(state: Arc<AppState<ReqwestDohClient>>) {
+    let mut shutdown = state.shutdown_handle();
+    let wake = state.query_log_flush_wake();
+    loop {
+        tokio::select! {
+            () = tokio::time::sleep(FLUSH_INTERVAL) => flush_blocking(&state).await,
+            () = wake.notified() => flush_blocking(&state).await,
+            changed = shutdown.changed() => {
+                // `changed()` errs only once the sender is dropped; either
+                // that or an observed `true` means we are shutting down.
+                if changed.is_err() || *shutdown.borrow() {
+                    flush_blocking(&state).await;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn flush_blocking(state: &Arc<AppState<ReqwestDohClient>>) {
+    let state = Arc::clone(state);
+    if let Err(err) = tokio::task::spawn_blocking(move || state.flush_query_log()).await {
+        tracing::warn!("query-log flush task failed: {err}");
+    }
 }
 
 /// ARCH-11 (б) check shared by the four persisters' loader tests: nothing is
@@ -146,116 +600,27 @@ pub(crate) fn assert_moved_aside_intact(path: &Path, bytes: &[u8]) {
     assert_eq!(kept, bytes, "the orphan must hold the original bytes");
 }
 
-/// Reads, decrypts and parses `path`, seeding `log` with what it held.
-/// Returns the entry count on success.
-fn seed_from_file(log: &QueryLog, path: &Path, key: &[u8; 32]) -> Result<usize, LoadError> {
-    let raw = std::fs::read(path).map_err(LoadError::Read)?;
-    let plaintext = open(key, FileKind::QueryLog, &raw).map_err(LoadError::Decrypt)?;
-    let entries = from_json(&plaintext).map_err(LoadError::Parse)?;
-    let count = entries.len();
-    log.restore(entries, SystemTime::now());
-    Ok(count)
-}
-
-/// Startup: build the query log, seeding it from `query-log.enc` when
-/// `persist_query_log` is on and a decryptable file exists. A missing key
-/// with a file present, or an undecryptable / malformed file, is renamed
-/// aside and the log starts empty — a query log is re-creatable, so this
-/// warns and proceeds rather than aborting startup (advisor kickoff #1).
-#[must_use]
-pub fn load_persisted_query_log(app_data: Option<&Path>, persist_query_log: bool) -> QueryLogInit {
-    let log = QueryLog::default();
-    if !persist_query_log {
-        return QueryLogInit { log, flusher: None };
-    }
-    let Some(dir) = app_data else {
-        tracing::warn!(
-            "persist_query_log is set but no app-data directory is available; \
-             the query log will not be persisted"
-        );
-        return QueryLogInit { log, flusher: None };
-    };
-    let path = dir.join("query-log.enc");
-    let ciphertext_present = path.exists();
-    let key = match load_or_create_persistence_key(dir, ciphertext_present) {
-        Ok(key) => key,
-        Err(err) => {
-            tracing::warn!(
-                "could not obtain the persistence key ({err}); \
-                 the query log will not be persisted this run"
-            );
-            return QueryLogInit { log, flusher: None };
-        }
-    };
-    if key.orphaned_ciphertext {
-        rename_orphan(&path);
-    } else if ciphertext_present {
-        match seed_from_file(&log, &path, &key.key) {
-            Ok(count) => tracing::info!("restored {count} query-log entries from disk"),
-            Err(err) => {
-                tracing::warn!(
-                    "could not restore the persisted query log ({err}); \
-                     starting empty and moving the file aside"
-                );
-                rename_orphan(&path);
-            }
-        }
-    }
-    QueryLogInit {
-        log,
-        flusher: Some((path, key.key)),
-    }
-}
-
-/// Rewrites `path` from the live log, logging (never propagating) any
-/// failure — a persistence hiccup must not take down the service.
-fn flush_now(state: &AppState<ReqwestDohClient>, key: &[u8; 32], path: &Path) {
-    let entries = state.query_log_snapshot(SystemTime::now());
-    if let Err(err) = persist_snapshot(&entries, key, path) {
-        tracing::warn!("query-log persistence flush failed: {err}");
-    }
-}
-
-/// The running persister: flush every [`FLUSH_INTERVAL`], and once more when
-/// the shutdown signal fires, then return. Spawned by `main.rs` only when
-/// `persist_query_log` is on and an app-data directory exists.
-pub async fn run_query_log_persister(
-    state: Arc<AppState<ReqwestDohClient>>,
-    path: PathBuf,
-    key: Zeroizing<[u8; 32]>,
-) {
-    let mut shutdown = state.shutdown_handle();
-    loop {
-        tokio::select! {
-            () = tokio::time::sleep(FLUSH_INTERVAL) => {
-                flush_now(&state, &key, &path);
-            }
-            changed = shutdown.changed() => {
-                // `changed()` errs only once the sender is dropped; either
-                // that or an observed `true` means we are shutting down.
-                if changed.is_err() || *shutdown.borrow() {
-                    flush_now(&state, &key, &path);
-                    return;
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{load_persisted_query_log, persist_snapshot, seed_from_file};
+    use super::{
+        list_segments, load_persisted_query_log, parse_segment_name, persist_snapshot,
+        read_entries, segment_name, utc_day, QueryLogDisk, LEGACY_FILE, SEGMENT_DIR,
+    };
     use crate::encrypted_file::{open, FileKind};
     use crate::persist_dto::from_json;
-    use crate::query_log::{Decision, DecisionSource, LogEntry, QueryLog};
+    use crate::query_log::{
+        Decision, DecisionSource, LogEntry, LogRetention, QueryLog, QueryLogPolicy,
+    };
     use hickory_proto::rr::RecordType;
-    use std::time::SystemTime;
+    use std::path::Path;
+    use std::time::{Duration, SystemTime};
 
-    fn sample() -> LogEntry {
+    const KEY: [u8; 32] = [3u8; 32];
+
+    fn entry(domain: &str, timestamp: SystemTime) -> LogEntry {
         LogEntry {
-            // Recent, so `QueryLog::restore`'s 24 h age bound keeps it.
-            timestamp: SystemTime::now(),
-            domain: "persisted-example.test".to_string(),
+            timestamp,
+            domain: domain.to_string(),
             qtype: RecordType::A,
             decision: Decision::Allowed,
             decision_source: DecisionSource::Quorum,
@@ -266,31 +631,79 @@ mod tests {
         }
     }
 
-    #[test]
-    fn persist_snapshot_writes_a_file_that_decrypts_back_to_the_same_entries() {
+    fn sample() -> LogEntry {
+        entry("persisted-example.test", SystemTime::now())
+    }
+
+    fn ago(now: SystemTime, hours: u64) -> SystemTime {
+        let Some(at) = now.checked_sub(Duration::from_hours(hours)) else {
+            panic!("valid fixture timestamp");
+        };
+        at
+    }
+
+    fn on(retention: LogRetention) -> QueryLogPolicy {
+        QueryLogPolicy {
+            retention,
+            persist: true,
+        }
+    }
+
+    fn tempdir() -> tempfile::TempDir {
         let Ok(dir) = tempfile::tempdir() else {
             panic!("must be able to create a temp dir");
         };
-        let path = dir.path().join("query-log.enc");
-        let key = [3u8; 32];
-        let entries = vec![sample()];
+        dir
+    }
 
-        if let Err(err) = persist_snapshot(&entries, &key, &path) {
+    fn segment_days(dir: &Path) -> Vec<u64> {
+        match list_segments(&dir.join(SEGMENT_DIR)) {
+            Ok(list) => list.into_iter().map(|(day, _)| day).collect(),
+            Err(err) => panic!("list: {err}"),
+        }
+    }
+
+    fn domains_in_day(dir: &Path, day: u64) -> Vec<String> {
+        let path = dir.join(SEGMENT_DIR).join(segment_name(day));
+        match read_entries(&path, &KEY) {
+            Ok(entries) => entries.into_iter().map(|e| e.domain).collect(),
+            Err(err) => panic!("read {path:?}: {err}"),
+        }
+    }
+
+    /// A fresh process: new log, new disk, files adopted from `dir`.
+    fn restart(dir: &Path, retention: LogRetention, now: SystemTime) -> (QueryLog, QueryLogDisk) {
+        let log = QueryLog::with_retention(retention);
+        let mut disk = QueryLogDisk::with_key(dir, KEY);
+        if let Err(err) = disk.adopt(&log, retention, now) {
+            panic!("adopt: {err}");
+        }
+        (log, disk)
+    }
+
+    fn names(log: &QueryLog, now: SystemTime) -> Vec<String> {
+        log.snapshot(now).into_iter().map(|e| e.domain).collect()
+    }
+
+    // ---- Happy path ----
+
+    #[test]
+    fn persist_snapshot_writes_a_file_that_decrypts_back_to_the_same_entries() {
+        let dir = tempdir();
+        let path = dir.path().join("x.enc");
+        if let Err(err) = persist_snapshot(&[sample()], &KEY, &path) {
             panic!("persist_snapshot must succeed: {err}");
         }
-
         let raw = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(err) => panic!("the file must exist: {err}"),
         };
-        // Not plaintext on disk.
         assert!(
             !raw.windows(b"persisted-example.test".len())
                 .any(|w| w == b"persisted-example.test"),
             "the domain must not be readable in the file"
         );
-
-        let plaintext = match open(&key, FileKind::QueryLog, &raw) {
+        let plaintext = match open(&KEY, FileKind::QueryLog, &raw) {
             Ok(bytes) => bytes,
             Err(err) => panic!("open must succeed with the same key: {err}"),
         };
@@ -304,130 +717,340 @@ mod tests {
     }
 
     #[test]
-    fn persist_snapshot_overwrites_a_previous_file() {
-        let Ok(dir) = tempfile::tempdir() else {
-            panic!("must be able to create a temp dir");
-        };
-        let path = dir.path().join("query-log.enc");
-        let key = [9u8; 32];
+    fn a_flush_writes_one_file_per_day_and_a_restart_reads_them_back() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.push(entry("three-days.example", ago(now, 72)));
+        log.push(entry("today.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+        assert!(!disk.health().failed);
+        assert_eq!(
+            segment_days(dir.path()),
+            vec![utc_day(ago(now, 72)), utc_day(now)]
+        );
 
-        if let Err(err) = persist_snapshot(&[sample(), sample()], &key, &path) {
-            panic!("first write: {err}");
-        }
-        if let Err(err) = persist_snapshot(&[sample()], &key, &path) {
-            panic!("second write: {err}");
-        }
-        let raw = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) => panic!("read back: {err}"),
-        };
-        let plaintext = match open(&key, FileKind::QueryLog, &raw) {
-            Ok(bytes) => bytes,
-            Err(err) => panic!("open: {err}"),
-        };
-        match from_json(&plaintext) {
-            Ok(v) => assert_eq!(v.len(), 1, "the file reflects only the latest snapshot"),
-            Err(err) => panic!("from_json: {err}"),
-        }
-    }
-
-    #[test]
-    fn seed_from_file_round_trips_a_persisted_snapshot_into_a_fresh_log() {
-        let Ok(dir) = tempfile::tempdir() else {
-            panic!("must be able to create a temp dir");
-        };
-        let path = dir.path().join("query-log.enc");
-        let key = [5u8; 32];
-        if let Err(err) = persist_snapshot(&[sample(), sample()], &key, &path) {
-            panic!("persist_snapshot: {err}");
-        }
-
-        let log = QueryLog::default();
-        match seed_from_file(&log, &path, &key) {
-            Ok(count) => assert_eq!(count, 2),
-            Err(err) => panic!("seed_from_file must succeed: {err}"),
-        }
-        assert_eq!(log.snapshot(SystemTime::now()).len(), 2);
-    }
-
-    #[test]
-    fn seed_from_file_errors_on_a_corrupt_file_without_touching_the_log() {
-        let Ok(dir) = tempfile::tempdir() else {
-            panic!("must be able to create a temp dir");
-        };
-        let path = dir.path().join("query-log.enc");
-        let key = [5u8; 32];
-        if let Err(err) = persist_snapshot(&[sample()], &key, &path) {
-            panic!("persist_snapshot: {err}");
-        }
-        // Flip a byte in the ciphertext body.
-        let mut raw = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) => panic!("read: {err}"),
-        };
-        let last = raw.len() - 1;
-        raw[last] ^= 0x01;
-        if let Err(err) = std::fs::write(&path, &raw) {
-            panic!("rewrite: {err}");
-        }
-
-        let log = QueryLog::default();
-        assert!(seed_from_file(&log, &path, &key).is_err());
-        assert!(
-            log.snapshot(SystemTime::now()).is_empty(),
-            "a failed restore must leave the log empty"
+        let (back, _) = restart(dir.path(), LogRetention::SevenDays, now);
+        assert_eq!(
+            names(&back, now),
+            vec!["three-days.example", "today.example"]
         );
     }
 
     #[test]
-    fn load_persisted_query_log_is_a_no_op_when_disabled() {
-        let init = load_persisted_query_log(None, false);
-        assert!(init.flusher.is_none());
-        assert!(init.log.snapshot(SystemTime::now()).is_empty());
-    }
+    fn a_flush_rewrites_only_days_that_got_new_entries() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.push(entry("old.example", ago(now, 72)));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+        let old_day = dir
+            .path()
+            .join(SEGMENT_DIR)
+            .join(segment_name(utc_day(ago(now, 72))));
+        if let Err(err) = std::fs::remove_file(&old_day) {
+            panic!("remove: {err}");
+        }
 
-    #[test]
-    fn load_persisted_query_log_disables_itself_with_no_app_data_dir() {
-        let init = load_persisted_query_log(None, true);
-        assert!(
-            init.flusher.is_none(),
-            "persistence needs an app-data directory"
+        log.push(entry("new.example", now));
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+
+        assert!(!old_day.exists(), "an untouched day is not rewritten");
+        assert_eq!(
+            domains_in_day(dir.path(), utc_day(now)),
+            vec!["new.example"]
         );
     }
 
-    // ---- Error path: ARCH-11 (б) — an un-loadable file is moved aside, never overwritten ----
+    #[test]
+    fn nothing_is_written_while_persistence_is_off() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("a.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(
+            &log,
+            QueryLogPolicy {
+                retention: LogRetention::Day,
+                persist: false,
+            },
+            now,
+        );
+        assert!(!dir.path().join(SEGMENT_DIR).exists());
+    }
 
     #[test]
-    fn a_file_without_its_key_is_moved_aside_and_never_overwritten() {
-        let dir = crate::key_store::StoreTestDir::new();
-        let path = dir.path().join("query-log.enc");
-        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
+    fn a_seven_day_window_survives_a_restart_and_a_day_window_drops_older_files() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.push(entry("three-days.example", ago(now, 72)));
+        log.push(entry("today.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+
+        let (back, mut disk) = restart(dir.path(), LogRetention::Day, now);
+        assert_eq!(names(&back, now), vec!["today.example"]);
+        disk.flush(&back, on(LogRetention::Day), now);
+        assert!(
+            !segment_days(dir.path()).contains(&utc_day(ago(now, 72))),
+            "a day outside the window is pruned"
+        );
+    }
+
+    #[test]
+    fn the_legacy_single_file_is_migrated_then_deleted() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let legacy = dir.path().join(LEGACY_FILE);
+        if let Err(err) = persist_snapshot(&[entry("legacy.example", now)], &KEY, &legacy) {
             panic!("seed: {err}");
         }
-        let init = load_persisted_query_log(Some(dir.path()), true);
+        let (log, mut disk) = restart(dir.path(), LogRetention::Day, now);
+        assert_eq!(names(&log, now), vec!["legacy.example"]);
+        assert!(legacy.exists(), "kept until its days are written");
+
+        disk.flush(&log, on(LogRetention::Day), now);
+        assert!(!legacy.exists());
+        assert_eq!(
+            domains_in_day(dir.path(), utc_day(now)),
+            vec!["legacy.example"]
+        );
+    }
+
+    // ---- Security & boundary ----
+
+    #[test]
+    fn segment_names_are_parsed_strictly() {
+        assert_eq!(parse_segment_name("d20000.enc"), Some(20000));
+        assert_eq!(parse_segment_name(&segment_name(7)), Some(7));
+        for bad in [
+            "d.enc",
+            "d1.enc.tmp",
+            "d1.enc.orphaned-5",
+            "x1.enc",
+            "d-1.enc",
+            "d1a.enc",
+            "d+1.enc",
+            "d1.ENC",
+            "d99999999999999999999999.enc",
+        ] {
+            assert_eq!(parse_segment_name(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn utc_day_counts_whole_days_and_clamps_before_the_epoch() {
+        assert_eq!(utc_day(SystemTime::UNIX_EPOCH), 0);
+        assert_eq!(
+            utc_day(SystemTime::UNIX_EPOCH + Duration::from_secs(86_399)),
+            0
+        );
+        assert_eq!(
+            utc_day(SystemTime::UNIX_EPOCH + Duration::from_hours(24)),
+            1
+        );
+        let before = SystemTime::UNIX_EPOCH.checked_sub(Duration::from_secs(5));
+        assert_eq!(before.map(utc_day), Some(0));
+    }
+
+    // ---- Misuse: history that is not ours yet is never overwritten ----
+
+    #[test]
+    fn switching_persistence_on_at_runtime_merges_existing_day_files() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        // An earlier run left today's file.
+        let earlier = QueryLog::default();
+        earlier.push(entry("from-disk.example", ago(now, 1)));
+        let mut first = QueryLogDisk::with_key(dir.path(), KEY);
+        first.flush(&earlier, on(LogRetention::Day), now);
+
+        // This run started with persistence off, then the user turned it on.
+        let log = QueryLog::default();
+        log.push(entry("live.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::Day), now);
+
+        assert_eq!(
+            domains_in_day(dir.path(), utc_day(now)),
+            vec!["from-disk.example", "live.example"]
+        );
+        assert_eq!(names(&log, now), vec!["from-disk.example", "live.example"]);
+    }
+
+    #[test]
+    fn a_failed_adoption_writes_nothing() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("live.example", now));
+        // No key available and no app-data dir: adoption cannot happen.
+        let mut disk = QueryLogDisk::detached(None);
+        disk.flush(&log, on(LogRetention::Day), now);
+        assert!(disk.health().failed);
+        assert!(!dir.path().join(SEGMENT_DIR).exists());
+    }
+
+    // ---- Error path ----
+
+    #[test]
+    fn a_corrupt_day_file_is_moved_aside_and_the_rest_still_load() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::with_retention(LogRetention::SevenDays);
+        log.push(entry("old.example", ago(now, 72)));
+        log.push(entry("today.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::SevenDays), now);
+        let bad = dir
+            .path()
+            .join(SEGMENT_DIR)
+            .join(segment_name(utc_day(ago(now, 72))));
+        if let Err(err) = std::fs::write(&bad, b"not a DQF1 file") {
+            panic!("corrupt: {err}");
+        }
+
+        let (back, _) = restart(dir.path(), LogRetention::SevenDays, now);
+        assert_eq!(names(&back, now), vec!["today.example"]);
+        crate::log_persist::assert_moved_aside_intact(&bad, b"not a DQF1 file");
+    }
+
+    #[test]
+    fn erase_removes_every_copy_and_nothing_else() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("a.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::Day), now);
+        let write = |name: &str| {
+            if let Err(err) = std::fs::write(dir.path().join(name), b"x") {
+                panic!("seed {name}: {err}");
+            }
+        };
+        write(LEGACY_FILE);
+        write("query-log.enc.orphaned-1");
+        write("resolver_config.toml");
+        write("cache.enc");
+        if let Err(err) = std::fs::create_dir(dir.path().join("query-log.orphaned-2")) {
+            panic!("seed dir: {err}");
+        }
+
+        if let Err(err) = disk.erase() {
+            panic!("erase: {err}");
+        }
+
+        let mut left: Vec<String> = match std::fs::read_dir(dir.path()) {
+            Ok(read) => read
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect(),
+            Err(err) => panic!("list: {err}"),
+        };
+        left.sort();
+        assert_eq!(left, vec!["cache.enc", "resolver_config.toml"]);
+        assert!(!disk.health().failed);
+    }
+
+    #[test]
+    fn a_cleared_log_does_not_come_back_after_a_restart() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("secret.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::Day), now);
+
+        log.clear();
+        if let Err(err) = disk.erase() {
+            panic!("erase: {err}");
+        }
+        disk.flush(&log, on(LogRetention::Day), now);
+
+        let (back, _) = restart(dir.path(), LogRetention::Day, now);
+        assert!(names(&back, now).is_empty());
+    }
+
+    #[test]
+    fn after_erase_with_memory_kept_a_re_enable_writes_memory_again() {
+        let dir = tempdir();
+        let now = SystemTime::now();
+        let log = QueryLog::default();
+        log.push(entry("kept.example", now));
+        let mut disk = QueryLogDisk::with_key(dir.path(), KEY);
+        disk.flush(&log, on(LogRetention::Day), now);
+        if let Err(err) = disk.erase() {
+            panic!("erase: {err}");
+        }
+        assert!(!dir.path().join(SEGMENT_DIR).exists());
+        disk.flush(&log, on(LogRetention::Day), now);
+        assert_eq!(
+            domains_in_day(dir.path(), utc_day(now)),
+            vec!["kept.example"]
+        );
+    }
+
+    // ---- The real key-store path ----
+
+    #[test]
+    fn load_with_persistence_off_flags_leftover_history() {
+        let dir = tempdir();
+        if let Err(err) = std::fs::write(dir.path().join(LEGACY_FILE), b"x") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_query_log(
+            Some(dir.path()),
+            QueryLogPolicy {
+                retention: LogRetention::Day,
+                persist: false,
+            },
+        );
+        assert!(init.disk.health().leftover);
+        assert!(!init.disk.health().failed);
+    }
+
+    #[test]
+    fn load_restores_with_the_configured_window_through_the_real_key_store() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let now = SystemTime::now();
+        let first = load_persisted_query_log(Some(dir.path()), on(LogRetention::SevenDays));
+        first.log.push(entry("three-days.example", ago(now, 72)));
+        let mut disk = first.disk;
+        disk.flush(&first.log, on(LogRetention::SevenDays), now);
+        assert!(!disk.health().failed);
+
+        let second = load_persisted_query_log(Some(dir.path()), on(LogRetention::SevenDays));
+        assert_eq!(names(&second.log, now), vec!["three-days.example"]);
+    }
+
+    #[test]
+    fn files_without_their_key_are_moved_aside_and_never_overwritten() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let legacy = dir.path().join(LEGACY_FILE);
+        if let Err(err) = std::fs::write(&legacy, b"not a DQF1 file") {
+            panic!("seed: {err}");
+        }
+        let init = load_persisted_query_log(Some(dir.path()), on(LogRetention::Day));
         assert!(init.log.snapshot(SystemTime::now()).is_empty());
         assert!(
-            init.flusher.is_some(),
+            !init.disk.health().failed,
             "a fresh key still enables persistence"
         );
-        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
+        crate::log_persist::assert_moved_aside_intact(&legacy, b"not a DQF1 file");
     }
 
     #[test]
-    fn an_undecryptable_file_is_moved_aside_and_never_overwritten() {
-        let dir = crate::key_store::StoreTestDir::new();
-        let path = dir.path().join("query-log.enc");
-        // First run mints the key; only then does the bad file appear.
-        let _ = load_persisted_query_log(Some(dir.path()), true);
-        if let Err(err) = std::fs::write(&path, b"not a DQF1 file") {
-            panic!("seed: {err}");
-        }
-        let init = load_persisted_query_log(Some(dir.path()), true);
-        assert!(init.log.snapshot(SystemTime::now()).is_empty());
+    fn load_is_inert_without_an_app_data_dir() {
+        let off = load_persisted_query_log(None, QueryLogPolicy::default());
+        assert!(!off.disk.health().failed);
+        let on_without_dir = load_persisted_query_log(None, on(LogRetention::Day));
         assert!(
-            init.flusher.is_some(),
-            "the stored key still enables persistence"
+            on_without_dir.disk.health().failed,
+            "persistence was asked for and cannot work"
         );
-        crate::log_persist::assert_moved_aside_intact(&path, b"not a DQF1 file");
     }
 }

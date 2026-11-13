@@ -364,6 +364,29 @@ impl QueryLog {
         self.ring.read().generation
     }
 
+    /// The sequence number the next pushed entry will get — every entry
+    /// already in the log has a smaller one. The persister records it after
+    /// a flush to know which entries arrived since.
+    #[must_use]
+    pub fn next_seq(&self) -> u64 {
+        self.ring.read().next_seq
+    }
+
+    /// `key(entry)` for every entry whose sequence number is `>= since`
+    /// (T-291: the UTC days the persister must rewrite). Walks from the tail
+    /// and stops at the first older entry — O(new entries), not O(log).
+    #[must_use]
+    pub fn keys_since<K: Ord>(
+        &self,
+        since: u64,
+        mut key: impl FnMut(&LogEntry) -> K,
+    ) -> std::collections::BTreeSet<K> {
+        let ring = self.ring.read();
+        let head_seq = ring.head_seq();
+        let first = usize::try_from(since.saturating_sub(head_seq)).unwrap_or(usize::MAX);
+        ring.entries.iter().skip(first).map(&mut key).collect()
+    }
+
     /// Appends `entry`, then evicts the oldest record(s) if the buffer is
     /// now over capacity.
     ///
@@ -480,7 +503,10 @@ impl QueryLog {
     /// input.
     ///
     /// A full `retain` here, not [`Ring::evict_aged`]: restored input can
-    /// interleave segments, so arrival order is not guaranteed. The two
+    /// interleave segments, so arrival order is not guaranteed. The merged
+    /// buffer is then sorted by timestamp (stable), so restored history sits
+    /// behind live entries, never after them — T-291 restores into a live
+    /// log when persistence is switched on at runtime. The two
     /// post-conditions (`len <= max_entries`, every kept entry within
     /// `max_age` of `now`) hold from the loops themselves.
     pub fn restore(&self, entries: Vec<LogEntry>, now: SystemTime) {
@@ -498,6 +524,9 @@ impl QueryLog {
             now.duration_since(entry.timestamp)
                 .map_or(true, |age| age <= max_age)
         });
+        ring.entries
+            .make_contiguous()
+            .sort_by_key(|entry| entry.timestamp);
         ring.trim_to_capacity();
         ring.next_seq = old_next.saturating_add(ring.entries.len() as u64);
         ring.bump();
@@ -1296,6 +1325,43 @@ mod tests {
         assert!(page.entries.iter().all(|p| p.seq > old_seq));
         let seqs: Vec<u64> = page.entries.iter().map(|p| p.seq).collect();
         assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+    }
+
+    #[test]
+    fn restore_into_a_live_log_keeps_timestamp_order() {
+        let now = SystemTime::now();
+        let Some(hour_ago) = now.checked_sub(Duration::from_hours(1)) else {
+            panic!("valid fixture timestamp");
+        };
+        let log = QueryLog::default();
+        log.push(named(now, "live"));
+        log.restore(vec![named(hour_ago, "old")], now);
+        assert_eq!(domains(&log.snapshot(now)), vec!["old", "live"]);
+        let page = log.search(now, &LogFilter::default(), 1, None);
+        assert_eq!(
+            page_domains(&page),
+            vec!["live"],
+            "the newest page is the live entry"
+        );
+    }
+
+    #[test]
+    fn keys_since_sees_only_entries_pushed_after_the_mark() {
+        let now = SystemTime::now();
+        let log = QueryLog::new(3, Duration::from_hours(24));
+        log.push(named(now, "a"));
+        let mark = log.next_seq();
+        log.push(named(now, "b"));
+        log.push(named(now, "c"));
+        let keys = log.keys_since(mark, |e| e.domain.clone());
+        assert_eq!(keys.into_iter().collect::<Vec<_>>(), vec!["b", "c"]);
+        log.push(named(now, "d")); // evicts "a"
+        log.push(named(now, "e")); // evicts "b"
+        let keys = log.keys_since(mark, |e| e.domain.clone());
+        assert_eq!(keys.into_iter().collect::<Vec<_>>(), vec!["c", "d", "e"]);
+        assert!(log
+            .keys_since(log.next_seq(), |e| e.domain.clone())
+            .is_empty());
     }
 
     #[test]

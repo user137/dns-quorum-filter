@@ -31,8 +31,9 @@ use crate::admin::{
     HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
     MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
     OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
-    RatingFilterConfigUpdate, RatingFilterStatusView, RemoveAllRequestOutcomeView,
-    RemoveAllRequestResponse, WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
+    QueryLogDiskView, QueryLogPolicyUpdate, RatingFilterConfigUpdate, RatingFilterStatusView,
+    RemoveAllRequestOutcomeView, RemoveAllRequestResponse, WatchdogStatusView, ZoneListStatusView,
+    ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -50,6 +51,7 @@ use crate::geoip_credentials::{self, CredentialsError};
 use crate::geoip_updater::{
     check_maxmind_credentials, GeoipSource, GeoipUpdateError, MaxmindHealth,
 };
+use crate::log_persist::{DiskHealth, QueryLogDisk};
 use crate::overrides::{InvalidEntry, InvalidReason, ListKind, OverrideError, OverrideLists};
 use crate::personal_zone_stats::{DayIndex, PersonalZoneStats};
 use crate::pipeline::{
@@ -124,6 +126,7 @@ const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
 const ADMIN_RATING_FILTER_PATH: &str = "/admin/rating-filter";
 const ADMIN_BLOCKLIST_BUNDLES_PATH: &str = "/admin/blocklist-bundles";
 const ADMIN_CCTLD_BLOCK_PATH: &str = "/admin/cctld-block";
+const ADMIN_QUERY_LOG_POLICY_PATH: &str = "/admin/query-log-policy";
 const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
 const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
 const ADMIN_PROVIDERS_REMOVE_PATH: &str = "/admin/providers/remove";
@@ -172,6 +175,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_RATING_FILTER_PATH, &[Method::POST]),
     (ADMIN_BLOCKLIST_BUNDLES_PATH, &[Method::POST]),
     (ADMIN_CCTLD_BLOCK_PATH, &[Method::POST]),
+    (ADMIN_QUERY_LOG_POLICY_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_PATH, &[Method::GET]),
     (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_REMOVE_PATH, &[Method::POST]),
@@ -791,8 +795,19 @@ pub struct AppState<C: DohClient + Sync> {
     cctld_block: RwLock<Arc<Vec<String>>>,
     /// T-291 — the live query-log retention + persistence choice. Seeded
     /// from [`PersistTarget`] at construction; written only under
-    /// `persist_lock` (`POST /admin/query-log-policy`, `/admin/reset`).
+    /// `persist_lock` and then `query_log_disk` (`POST
+    /// /admin/query-log-policy`, `/admin/reset`).
     query_log_policy: RwLock<QueryLogPolicy>,
+    /// T-291 — the query log's encrypted disk copy. This mutex is the io
+    /// lock: every flush, erase and clear runs under it, so a flush that
+    /// read `persist: true` can never write after a clear or a switch-off.
+    /// Lock order: `persist_lock` → `query_log_disk`, never the reverse.
+    query_log_disk: Mutex<QueryLogDisk>,
+    /// The disk copy's health as of its last operation — what the status
+    /// view reads, so a 1 Hz status build never waits on a running flush.
+    query_log_disk_health: RwLock<DiskHealth>,
+    /// Wakes `log_persist::run_query_log_persister` (a policy change).
+    query_log_flush_wake: Arc<Notify>,
     /// T-163 — which upstream `geoip_updater::run_geoip_updater` pulls from
     /// (DB-IP Lite or `MaxMind`). Swapped by `apply_admin_reset` and the
     /// `/admin/geoip/maxmind[/clear]` routes; the updater reads a fresh
@@ -1099,6 +1114,11 @@ impl<C: DohClient + Sync> AppState<C> {
                 retention: persist.query_log_retention,
                 persist: persist.persist_query_log,
             }),
+            query_log_disk: Mutex::new(QueryLogDisk::detached(
+                persist.paths.as_ref().map(PersistPaths::app_data_dir),
+            )),
+            query_log_disk_health: RwLock::new(DiskHealth::default()),
+            query_log_flush_wake: Arc::new(Notify::new()),
             geoip_source: RwLock::new(Arc::new(geoip.source)),
             geoip_refresh_wake: Arc::new(Notify::new()),
             rating_filter_config: RwLock::new(Arc::new(geoip.rating_filter_config)),
@@ -1186,12 +1206,89 @@ impl<C: DohClient + Sync> AppState<C> {
     }
 
     /// Applies `policy` live (T-291): the log takes the new window at once
-    /// (a shorter one trims it), and the persister reads the new `persist`
-    /// flag on its next cycle. Callers hold `persist_lock`.
-    fn set_query_log_policy(&self, policy: QueryLogPolicy) {
+    /// (a shorter one trims it). Switching persistence off erases the disk
+    /// copy; switching it on fetches the key now (a failure shows in this
+    /// very response) and wakes the persister for the first write. Callers
+    /// hold `persist_lock`; the io lock is taken here, after it.
+    ///
+    /// # Errors
+    ///
+    /// The erase failure when switching persistence off (also recorded in
+    /// the disk health the status shows).
+    fn set_query_log_policy(&self, policy: QueryLogPolicy) -> std::io::Result<()> {
+        let mut disk = self.query_log_disk.lock();
+        let was = *self.query_log_policy.read();
         self.query_log
             .set_retention(policy.retention, SystemTime::now());
         *self.query_log_policy.write() = policy;
+        // Off → erase: on a switch-off, and also while off when an earlier
+        // run's history is still on disk (the card's "erase" for LEFTOVER).
+        let outcome = if !policy.persist && (was.persist || disk.health().leftover) {
+            disk.erase()
+        } else {
+            if policy.persist {
+                disk.prepare();
+            }
+            Ok(())
+        };
+        *self.query_log_disk_health.write() = disk.health();
+        drop(disk);
+        if policy.persist {
+            self.query_log_flush_wake.notify_one();
+        }
+        outcome
+    }
+
+    /// Installs the disk state [`crate::log_persist::load_persisted_query_log`]
+    /// built at startup (T-291).
+    pub fn install_query_log_disk(&self, disk: QueryLogDisk) {
+        *self.query_log_disk_health.write() = disk.health();
+        *self.query_log_disk.lock() = disk;
+    }
+
+    /// One persister flush (T-291) — blocking file I/O under the io lock;
+    /// `log_persist::run_query_log_persister` runs it on a blocking thread.
+    pub fn flush_query_log(&self) {
+        let mut disk = self.query_log_disk.lock();
+        let policy = *self.query_log_policy.read();
+        disk.flush(&self.query_log, policy, SystemTime::now());
+        *self.query_log_disk_health.write() = disk.health();
+    }
+
+    /// The persister's wake handle (T-291).
+    #[must_use]
+    pub fn query_log_flush_wake(&self) -> Arc<Notify> {
+        Arc::clone(&self.query_log_flush_wake)
+    }
+
+    /// Empties the log **and** erases its disk copy in one io-locked step
+    /// (T-291) — `/admin/log/clear` and `/admin/reset`. Without the erase a
+    /// cleared log would come back at the next start.
+    ///
+    /// # Errors
+    ///
+    /// The erase failure; memory is cleared regardless.
+    fn clear_query_log(&self) -> std::io::Result<()> {
+        let mut disk = self.query_log_disk.lock();
+        self.query_log.clear();
+        let outcome = disk.erase();
+        *self.query_log_disk_health.write() = disk.health();
+        outcome
+    }
+
+    /// The `/admin/ui` log card's disk indicator (T-291).
+    fn query_log_disk_view(&self) -> QueryLogDiskView {
+        let health = *self.query_log_disk_health.read();
+        let persist = self.query_log_policy.read().persist;
+        if health.failed {
+            QueryLogDiskView::Failed
+        } else if persist {
+            QueryLogDiskView::Active
+        } else if health.leftover {
+            QueryLogDiskView::Leftover
+        } else {
+            QueryLogDiskView::Off
+        }
     }
 
     pub(crate) fn cctld_block_snapshot(&self) -> Arc<Vec<String>> {
@@ -1666,15 +1763,6 @@ impl<C: DohClient + Sync> AppState<C> {
         serde_json::to_string(&admin_status(self, true)).ok()
     }
 
-    /// The current query-log contents, age-bounded to `now` (T-146) — the
-    /// snapshot `log_persist::run_query_log_persister` seals to
-    /// `query-log.enc`. A thin pass-through to [`crate::query_log::QueryLog::snapshot`]
-    /// so the field itself stays private to this module.
-    #[must_use]
-    pub fn query_log_snapshot(&self, now: SystemTime) -> Vec<LogEntry> {
-        self.query_log.snapshot(now)
-    }
-
     /// A point-in-time copy of the live quorum-verdict cache (T-97) — the
     /// snapshot `cache_persist::run_cache_persister` seals to `cache.enc`.
     /// `Arc::clone`s the current [`CacheState`] and drops the lock before
@@ -1921,6 +2009,8 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
             query_log: state.query_log_policy().persist,
             cache: state.persist.persist_cache,
         },
+        query_log_retention: state.query_log_policy().retention,
+        query_log_disk: state.query_log_disk_view(),
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
@@ -2014,6 +2104,8 @@ fn apply_admin_config<C: DohClient + Sync>(
             query_log: state.query_log_policy().persist,
             cache: state.persist.persist_cache,
         },
+        query_log_retention: state.query_log_policy().retention,
+        query_log_disk: state.query_log_disk_view(),
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
@@ -2350,12 +2442,17 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // fresh on every query.
     state.update_cctld_block(config.cctld_block.blocked_codes);
     // T-291: reload the query-log policy too (a hand-edited window or
-    // persistence flag takes effect on reset, like every table above).
-    state.set_query_log_policy(QueryLogPolicy {
+    // persistence flag takes effect on reset, like every table above), then
+    // clear the log and its disk copy. An erase failure is already in the
+    // disk health this response carries (`query_log_disk: FAILED`).
+    let policy_outcome = state.set_query_log_policy(QueryLogPolicy {
         retention: config.query_log_retention,
         persist: config.persist_query_log,
     });
-    state.query_log.clear();
+    let clear_outcome = state.clear_query_log();
+    if let Err(err) = policy_outcome.and(clear_outcome) {
+        tracing::warn!("reset could not erase the persisted query log: {err}");
+    }
     // `persisted: true` is correct here in its documented, admin-mutable-
     // subset sense (providers/timeout) even when `config.port` differed
     // above - `port` was never part of that promise (see
@@ -3001,6 +3098,75 @@ where
     }
 }
 
+/// Why `POST /admin/query-log-policy` refused an update (T-291).
+#[derive(Debug, PartialEq, Eq)]
+enum QueryLogPolicyRejection {
+    /// A window past 24 h with `persist: false` — it would silently end at
+    /// the next restart (every boot, for this app), so the route refuses it;
+    /// a hand-edited file may still choose it.
+    RetentionNeedsDisk,
+}
+
+/// Validates and applies a query-log policy change (T-291) under
+/// `persist_lock`: live-apply (trim, erase or key fetch), then persist the
+/// live config. A failed erase or config write both read as `persisted:
+/// false`; the disk health in the response says which.
+fn apply_query_log_policy_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: QueryLogPolicyUpdate,
+) -> Result<AdminStatusResponse, QueryLogPolicyRejection> {
+    if update.retention.needs_disk() && !update.persist {
+        return Err(QueryLogPolicyRejection::RetentionNeedsDisk);
+    }
+    let persisted = {
+        let persist_guard = state.persist_lock.lock();
+        let applied = state.set_query_log_policy(QueryLogPolicy {
+            retention: update.retention,
+            persist: update.persist,
+        });
+        let saved = state.persist_live_config(&persist_guard, "an admin query-log policy change");
+        if let Err(err) = &applied {
+            tracing::warn!("could not erase the persisted query log: {err}");
+        }
+        applied.is_ok() && saved
+    };
+    Ok(admin_status(state, persisted))
+}
+
+/// `POST /admin/query-log-policy` (T-291) — method allowlisting happens
+/// centrally in [`serve`]'s `ROUTES` check. Same CSRF gate and body-size cap
+/// as [`serve_admin_cctld_block`].
+async fn serve_admin_query_log_policy<C, B>(
+    req: Request<B>,
+    state: &AppState<C>,
+) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return bad_request(AdminErrorReason::MalformedBody);
+    };
+    let Ok(update) = serde_json::from_slice::<QueryLogPolicyUpdate>(&collected.to_bytes()) else {
+        return bad_request(AdminErrorReason::MalformedBody);
+    };
+    match apply_query_log_policy_change(state, update) {
+        Ok(response) => json_response(&response),
+        Err(QueryLogPolicyRejection::RetentionNeedsDisk) => {
+            bad_request(AdminErrorReason::QueryLogRetentionNeedsDisk)
+        }
+    }
+}
+
 /// Builds the current [`MaxmindCredentialsView`] from the stored credentials
 /// (T-162) — shared by the GET route and the two mutating routes' echo-back.
 /// A missing app-data dir or no stored credentials read as `configured:
@@ -3530,7 +3696,7 @@ where
 }
 
 /// `GET /admin/log`'s default result cap (T-54) — a value a user actually
-/// reads in one screen, not [`DEFAULT_MAX_ENTRIES`] (1000): every other
+/// reads in one screen, not the whole ring (up to [`crate::query_log::MAX_LOG_ENTRIES`]): every other
 /// input/output boundary in this crate is explicitly bounded, and a JSON
 /// response whose size scales with live user traffic is no exception
 /// (advisor-caught during planning). A client may ask for more via `?limit=`,
@@ -3741,8 +3907,15 @@ where
     if limited.collect().await.is_err() {
         return bad_request(AdminErrorReason::MalformedBody);
     }
-    state.query_log.clear();
-    status_response(StatusCode::OK)
+    // T-291: a cleared log is erased from disk too; a failed erase is a 500
+    // so the card says so instead of showing "cleared".
+    match state.clear_query_log() {
+        Ok(()) => status_response(StatusCode::OK),
+        Err(err) => {
+            tracing::warn!("could not erase the persisted query log: {err}");
+            status_response(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// `POST /admin/request-remove-all` (хвиля 14, T-268) — the `/admin/ui`
@@ -4073,6 +4246,7 @@ where
         ADMIN_RATING_FILTER_PATH => serve_admin_rating_filter(req, &state).await,
         ADMIN_BLOCKLIST_BUNDLES_PATH => serve_admin_blocklist_bundles(req, &state).await,
         ADMIN_CCTLD_BLOCK_PATH => serve_admin_cctld_block(req, &state).await,
+        ADMIN_QUERY_LOG_POLICY_PATH => serve_admin_query_log_policy(req, &state).await,
         ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
         ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
         ADMIN_PROVIDERS_REMOVE_PATH => serve_admin_providers_remove(req, &state).await,
@@ -4170,7 +4344,7 @@ fn route_topics(path: &str) -> Option<&'static [Topic]> {
         | ADMIN_PROVIDERS_REMOVE_PATH
         | ADMIN_PROVIDERS_SET_ENABLED_PATH
         | ADMIN_PROVIDERS_SET_CATEGORY_ENABLED_PATH => Some(&[Topic::Providers]),
-        ADMIN_LOG_CLEAR_PATH => Some(&[Topic::Log]),
+        ADMIN_LOG_CLEAR_PATH | ADMIN_QUERY_LOG_POLICY_PATH => Some(&[Topic::Log]),
         _ => None,
     }
 }
@@ -4182,10 +4356,10 @@ pub(crate) mod tests {
         content_type_is_dns_message, parse_log_query, rating_filter_is_active, read_watchdog_view,
         resolve_doh_request, serve, wire_bytes_from_get, AdminErrorReason, AdminErrorResponse,
         AppState, CacheState, DohRequestError, GeoipInit, GeoipSource, GeoipState, LogQueryError,
-        LogRetention, OverridesState, PersistPaths, PersistTarget, RuntimeInit, WatchdogState,
-        ZoneLists, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH, ADMIN_REQUEST_REMOVE_ALL_PATH,
-        BLOCKLIST_SOURCES, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH, I18N_ROUTES, MAX_LOG_LIMIT,
-        MAX_MESSAGE_SIZE, ROUTES,
+        LogRetention, OverridesState, PersistPaths, PersistTarget, QueryLogPolicy, RuntimeInit,
+        WatchdogState, ZoneLists, ADMIN_CERT_STATUS_PATH, ADMIN_INSTALL_CERT_PATH,
+        ADMIN_REQUEST_REMOVE_ALL_PATH, BLOCKLIST_SOURCES, DEFAULT_LOG_LIMIT, DNS_QUERY_PATH,
+        I18N_ROUTES, MAX_LOG_LIMIT, MAX_MESSAGE_SIZE, ROUTES,
     };
     use super::{request_remove_all, route_topics, ADMIN_SHUTDOWN_PATH};
     use crate::admin::{
@@ -8943,6 +9117,210 @@ pub(crate) mod tests {
         );
     }
 
+    // ---- T-291: POST /admin/query-log-policy ----
+
+    fn query_log_state(app_data: Option<&std::path::Path>) -> Arc<AppState<MockClient>> {
+        state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                query_log_retention: LogRetention::Day,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: app_data.map(|dir| PersistPaths {
+                    config: dir.join("resolver_config.toml"),
+                    overrides: dir.join("overrides.toml"),
+                }),
+            },
+        )
+    }
+
+    async fn query_log_policy_post(
+        state: Arc<AppState<MockClient>>,
+        body: &serde_json::Value,
+    ) -> http::Response<Full<Bytes>> {
+        match serve(admin_post_json("/admin/query-log-policy", body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        }
+    }
+
+    async fn status_body(response: http::Response<Full<Bytes>>) -> AdminStatusResponse {
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+            Ok(status) => status,
+            Err(err) => panic!("response must decode as AdminStatusResponse: {err}"),
+        }
+    }
+
+    fn segments_dir(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("query-log")
+    }
+
+    // Happy path: 7 days + disk applies live, persists, and the next flush
+    // writes the encrypted day file.
+    #[tokio::test]
+    async fn query_log_policy_switches_to_seven_days_on_disk() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let state = query_log_state(Some(dir.path()));
+        let body = serde_json::json!({ "retention": "7d", "persist": true });
+        let status = status_body(query_log_policy_post(Arc::clone(&state), &body).await).await;
+        assert_eq!(status.query_log_retention, LogRetention::SevenDays);
+        assert_eq!(
+            status.query_log_disk,
+            crate::admin::QueryLogDiskView::Active
+        );
+        assert!(status.encrypted_persistence.query_log);
+        assert!(status.persisted);
+
+        state.query_log.push(sample_log_entry(
+            "kept.example",
+            crate::query_log::Decision::Allowed,
+        ));
+        state.flush_query_log();
+        assert!(
+            segments_dir(dir.path()).is_dir(),
+            "the day file was written"
+        );
+
+        let loaded = match ResolverConfig::load(&dir.path().join("resolver_config.toml")) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("the saved file must load back: {err}"),
+        };
+        assert_eq!(loaded.query_log_retention, LogRetention::SevenDays);
+        assert!(loaded.persist_query_log);
+    }
+
+    // Security & boundary: a window past 24 h without the disk is refused
+    // with its own reason and changes nothing.
+    #[tokio::test]
+    async fn query_log_policy_refuses_a_long_window_kept_only_in_memory() {
+        let state = query_log_state(None);
+        let body = serde_json::json!({ "retention": "30d", "persist": false });
+        let (_, rejection) =
+            rejection_of(query_log_policy_post(Arc::clone(&state), &body).await).await;
+        assert_eq!(
+            rejection.reason,
+            AdminErrorReason::QueryLogRetentionNeedsDisk
+        );
+        assert_eq!(state.query_log_policy(), QueryLogPolicy::default());
+    }
+
+    // Misuse & fool: an unknown window, an extra field, or no JSON
+    // content type never reach the policy.
+    #[tokio::test]
+    async fn query_log_policy_rejects_malformed_requests() {
+        let state = query_log_state(None);
+        for body in [
+            serde_json::json!({ "retention": "2d", "persist": true }),
+            serde_json::json!({ "retention": "7d", "persist": true, "extra": 1 }),
+            serde_json::json!({ "retention": "7d" }),
+            serde_json::json!({ "persist": true }),
+        ] {
+            let (_, rejection) =
+                rejection_of(query_log_policy_post(Arc::clone(&state), &body).await).await;
+            assert_eq!(rejection.reason, AdminErrorReason::MalformedBody, "{body}");
+        }
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/query-log-policy")
+            .body(Full::new(Bytes::from_static(
+                br#"{"retention":"7d","persist":true}"#,
+            )))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(state.query_log_policy(), QueryLogPolicy::default());
+    }
+
+    // Error path: persistence asked for with nowhere to keep it reads as a
+    // failure on the response itself, never a silent "7 days".
+    #[tokio::test]
+    async fn query_log_policy_without_an_app_data_dir_reports_the_failure() {
+        let state = query_log_state(None);
+        let body = serde_json::json!({ "retention": "7d", "persist": true });
+        let status = status_body(query_log_policy_post(state, &body).await).await;
+        assert_eq!(
+            status.query_log_disk,
+            crate::admin::QueryLogDiskView::Failed
+        );
+        assert!(!status.persisted);
+    }
+
+    // Interaction: switching persistence off erases the disk copy but keeps
+    // what memory holds; the shorter window trims memory at once.
+    #[tokio::test]
+    async fn switching_query_log_persistence_off_erases_the_disk_copy() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let state = query_log_state(Some(dir.path()));
+        let on = serde_json::json!({ "retention": "7d", "persist": true });
+        let _ = status_body(query_log_policy_post(Arc::clone(&state), &on).await).await;
+        state.query_log.push(sample_log_entry(
+            "erase-me.example",
+            crate::query_log::Decision::Allowed,
+        ));
+        state.flush_query_log();
+        assert!(segments_dir(dir.path()).is_dir());
+
+        let off = serde_json::json!({ "retention": "24h", "persist": false });
+        let status = status_body(query_log_policy_post(Arc::clone(&state), &off).await).await;
+
+        assert!(!segments_dir(dir.path()).exists(), "the day files are gone");
+        assert_eq!(status.query_log_disk, crate::admin::QueryLogDiskView::Off);
+        assert!(status.persisted);
+        assert_eq!(
+            state.query_log.snapshot(std::time::SystemTime::now()).len(),
+            1
+        );
+        state.flush_query_log();
+        assert!(
+            !segments_dir(dir.path()).exists(),
+            "a later flush writes nothing"
+        );
+    }
+
+    // Interaction: /admin/log/clear erases the disk copy too, so the cleared
+    // history does not come back at the next start.
+    #[tokio::test]
+    async fn clearing_the_log_erases_its_disk_copy_for_good() {
+        let dir = crate::key_store::StoreTestDir::new();
+        let state = query_log_state(Some(dir.path()));
+        let on = serde_json::json!({ "retention": "24h", "persist": true });
+        let _ = status_body(query_log_policy_post(Arc::clone(&state), &on).await).await;
+        state.query_log.push(sample_log_entry(
+            "secret.example",
+            crate::query_log::Decision::Allowed,
+        ));
+        state.flush_query_log();
+
+        let response = match serve(admin_log_clear_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        state.flush_query_log();
+
+        let restarted = crate::log_persist::load_persisted_query_log(
+            Some(dir.path()),
+            QueryLogPolicy {
+                retention: LogRetention::Day,
+                persist: true,
+            },
+        );
+        assert!(restarted
+            .log
+            .snapshot(std::time::SystemTime::now())
+            .is_empty());
+    }
+
     #[test]
     fn blocklist_bundles_is_active_matches_the_enabled_and_non_empty_rule() {
         let on = BlocklistBundlesConfig {
@@ -10076,6 +10454,7 @@ pub(crate) mod tests {
         ("/admin/rating-filter", &[Method::POST]),
         ("/admin/blocklist-bundles", &[Method::POST]),
         ("/admin/cctld-block", &[Method::POST]),
+        ("/admin/query-log-policy", &[Method::POST]),
         ("/admin/providers", &[Method::GET]),
         ("/admin/providers/add", &[Method::POST]),
         ("/admin/providers/remove", &[Method::POST]),
@@ -10628,6 +11007,7 @@ pub(crate) mod tests {
                 | AdminErrorReason::UnknownProvider
                 | AdminErrorReason::MalformedCredentials
                 | AdminErrorReason::InvalidLogQuery
+                | AdminErrorReason::QueryLogRetentionNeedsDisk
                 | AdminErrorReason::InvalidValue => {}
             }
         }
