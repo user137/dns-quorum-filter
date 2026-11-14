@@ -253,6 +253,9 @@ TASKS-DONE.md, never here.
   See T-233 in `TASKS-DONE.md` (closed 2026-09-18, all three planned parts shipped) for the full
   threat-model writeup; the one remaining structural gap (small-domain injection) is tracked as
   T-234 in `TASKS.md`'s backlog.
+- **The browser-nudge popup text (Batch 5.7)** is pre-rendered per locale and was checked on a
+  preview sheet of all 37 decoded masks, not yet shown live on screen (T-238 deferred list); its 35
+  non-uk/en translations share the caveat below.
 - **i18n locale dictionaries (T-236, Батч 5.4) — 35 of 37 are machine-translated, not natively reviewed; the whole `/admin/ui` key set (~330 keys after Батч 5.4), not just the T-236 pilot.**
   `uk`/`en` predate T-236 (Батч 5.2) and were reviewed then; the other 35 `ui/i18n/*.json` files
   were translated by Claude with a self-review pass covering structural correctness only (glossary

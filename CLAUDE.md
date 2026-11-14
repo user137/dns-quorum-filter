@@ -15,12 +15,11 @@ browser** (`KNOWN-LIMITATIONS.md`); Батч 5.5 (`dnsqb-tray` i18n, T-151, 37 l
 `crates/dnsqb-tray/i18n/*.json` file tree — see TASKS.md for why not shared with `ui/i18n/`)
 shipped 2026-09-22; Батч 5.6 (CLI `--help` for all three binaries, T-235 — closed; no `AttachConsole`/`unsafe`;
 closed-stdout/non-Unicode-arg panics fixed by wave 4, T-246) shipped
-2026-09-23; next per `TASKS.md`: Батч 5.7 (`nudge_popup`). Фаза 7
+2026-09-23; Батч 5.7 (`nudge_popup`, 37 pre-rendered text masks) shipped 2026-11-14. Фаза 7
 (T-218, public blocklist bundles) fully closed 2026-09-17 (Батчі 7.1-7.4,
 full stack). Фаза 4
 (rating filter «bubble», per-country top-N zone infra, personal learned zone) fully closed
-2026-09-11 — tag `v0.4.0` published as GitHub `latest` 2026-09-12 (retagged once pre-publish for a
-smoke-test fix, TASKS-DONE.md T-219). Фаза 3 (production
+2026-09-11 — tag `v0.4.0` published 2026-09-12. Фаза 3 (production
 hardening — watchdog, MSIX packaging) closed 2026-09-06 (`v0.3.0`, no longer `latest`); Фаза 2
 (cert automation) closed 2026-08-31; Фаза 1 (PoC) closed 2026-08-29.
 
