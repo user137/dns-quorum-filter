@@ -380,12 +380,9 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   exes, NOT the runnable `target/debug/<name>.exe`** — before a manual end-to-end smoke after a
   `main.rs` edit, run `cargo build --workspace` or you'll run a stale binary. And a *running* smoke process holds `target/debug/<name>.exe` open → the next
   `cargo build` fails with a link error; kill lingering `dnsqb-*` processes first.
-- `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests; green (un-`#[ignore]`d
-  ones must pass; the count of each changes as Фаза 1/2 tasks land — check `TASKS.md` or run
-  `-- --ignored`, don't trust a hardcoded number).
-- `cargo test --test conformance -p dnsqb-service -- --ignored` — the same tests without the ignore
-  filter; intentionally red until each cited task lands (informational red-board step in CI, not a
-  merge gate).
+- `cargo test --test conformance -p dnsqb-service` — RFC-conformance tests, blocking. The only
+  `#[ignore]`d ones left are two assertion-free RFC 7871 placeholders (ECS rejected, T-164), so the
+  former `-- --ignored` red-board CI step was removed 2026-11-14.
 - `cargo clippy --workspace --all-targets -- -D warnings` — lint gate, required (`lib.rs`/`main.rs`
   also carry `#![warn(clippy::pedantic)]` + `#![deny(clippy::unwrap_used, clippy::expect_used)]`).
 - `cargo fmt --all -- --check` — format gate.
@@ -422,8 +419,9 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   (`workflow_dispatch`) → artifact → human PR. Example `#[cfg(test)]` modules run in CI via
   `cargo test --workspace --examples`.
 
-All of the above run in `.github/workflows/ci.yml` on every push/PR, except the `--ignored`
-conformance step and `coverage` (both `continue-on-error: true`). Since Батч 3.7: `ci.yml` also
+All of the above run in `.github/workflows/ci.yml` on every push/PR, except `coverage`
+(`continue-on-error: true`). Every `uses:` is pinned to a commit SHA (tag in a trailing comment) and
+`taiki-e/install-action` installs an explicit tool version — bump both deliberately, ≥7 days old. Since Батч 3.7: `ci.yml` also
 has a blocking `repro` job (T-100, cross-path bit-identical release build), `Swatinem/rust-cache`
 on the cargo jobs (not `repro`), `concurrency: cancel-in-progress`, and `paths-ignore` for
 `**/*.md` / `diagrams/**` / `mockups/**` — **a docs-only commit runs no CI at all** (`ci.yml` and

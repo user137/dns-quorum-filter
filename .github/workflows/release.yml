@@ -35,7 +35,7 @@ jobs:
     outputs:
       mode: ${{ steps.sign.outputs.mode }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Same reproducibility flags the `repro` job in ci.yml proved bit-identical
       # (single checkout here, so only the workspace root + CARGO_HOME to remap).
@@ -138,7 +138,7 @@ jobs:
           exit 0
 
       - name: Upload signed binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Artifact name carries the signing mode — a run is never silently
           # "just binaries" with the signing state left ambiguous.
@@ -161,8 +161,8 @@ jobs:
     needs: build-sign
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-binaries-*
           path: bin
@@ -190,7 +190,7 @@ jobs:
             .\packaging\pack-msix.ps1 @versionArgs -BinDir bin -OutFile dist\dns-quorum-filter.msix
           }
           if ($LASTEXITCODE -ne 0) { exit 1 }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # A .cer only exists for the ephemeral (test-signed) path — a real
           # cert needs no companion trust file. dist/* covers both shapes
@@ -209,8 +209,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-msix-*
           path: dist
@@ -267,7 +267,7 @@ jobs:
     timeout-minutes: 45
     continue-on-error: true
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-msix-*
           path: dist
@@ -302,7 +302,7 @@ jobs:
             }
           }
           $lines | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: wack-report
@@ -319,10 +319,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: build-a
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: build-b
       - name: Compute path-independence RUSTFLAGS
@@ -355,12 +355,12 @@ jobs:
           }
           if ($mismatch) { Write-Host "::error::unsigned build is not reproducible for this tag — not publishing"; exit 1 }
       - name: Download signed binaries and MSIX
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-binaries-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-msix-*
           path: dist
