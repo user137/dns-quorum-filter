@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Chagua hali \"Custom\" na ubandike anwani ya juu.",
   "browserSetup.verify": "Ukaguzi: fungua tovuti yoyote - mstari wa <code>ALLOWED</code> unapaswa kuonekana kwenye kumbukumbu hapa chini. Kwamba kivinjari kweli hutatua kupitia huduma hii hukaguliwa kando: zuia kikoa na ukifungue, unapaswa kupata <code>ERR_ADDRESS_INVALID</code> (si <code>ERR_NAME_NOT_RESOLVED</code>); utaratibu kamili uko kwenye README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Ukaguzi: fungua tovuti yoyote - mstari wa ALLOWED unapaswa kuonekana kwenye kumbukumbu hapa chini. Kwamba Firefox kweli hutatua kupitia huduma hii hukaguliwa kando: zuia kikoa kisha ukifungue - Firefox huonyesha \"Hmm. We're having trouble finding that site.\" na mstari wa BLOCKED wa kikoa hicho huonekana kwenye kumbukumbu; utaratibu kamili uko kwenye README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Tovuti ikiomba ruhusa ya kufikia programu na huduma nyingine kwenye kifaa hiki (mtandao wa ndani), chagua \"Zuia\": kwa ruhusa hiyo tovuti inaweza kutuma maswali kwa huduma hii - kujua ni tovuti zipi ulizofungua hivi karibuni na kuongeza maingizo kwenye kumbukumbu yako ya maswali.",
   "browserSetup.copied": "Imenakiliwa.",
   "browserSetup.copyManuallyTemplate": "Nakili kwa mkono: {text}",
   "advanced.summaryLabel": "Mipangilio ya kina",

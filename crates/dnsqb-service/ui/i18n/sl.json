@@ -258,6 +258,7 @@
   "browserSetup.other.step2": "Izberite način \"Custom\" in prilepite naslov od zgoraj.",
   "browserSetup.verify": "Preverjanje: odprite poljubno stran - v spodnjem dnevniku se mora pojaviti vrstica <code>ALLOWED</code>. Da brskalnik res razrešuje prek te storitve, se preveri ločeno: blokirajte domeno in jo odprite, moralo bi se pokazati <code>ERR_ADDRESS_INVALID</code> (ne <code>ERR_NAME_NOT_RESOLVED</code>); celoten postopek je v README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Preverjanje: odprite poljubno spletno mesto - v dnevniku spodaj se mora pojaviti vrstica ALLOWED. Da Firefox res razrešuje prek te storitve, se preveri posebej: blokirajte domeno in jo odprite - Firefox prikaže \"Hmm. We're having trouble finding that site.\", v dnevniku pa se pojavi vrstica BLOCKED za to domeno; celoten postopek je v README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Če spletno mesto zaprosi za dovoljenje za dostop do drugih aplikacij in storitev v tej napravi (lokalno omrežje), izberite »Blokiraj«: s tem dovoljenjem lahko mesto pošilja poizvedbe tej storitvi – izve, katera mesta ste nedavno odprli, in dodaja vnose v dnevnik poizvedb.",
   "browserSetup.copied": "Kopirano.",
   "browserSetup.copyManuallyTemplate": "Kopirajte ročno: {text}",
   "advanced.summaryLabel": "Napredne nastavitve",

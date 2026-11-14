@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Válassza a \"Custom\" módot, és illessze be a fenti címet.",
   "browserSetup.verify": "Ellenőrzés: nyisson meg bármely webhelyet - az alábbi naplóban meg kell jelennie egy <code>ALLOWED</code> sornak. Azt, hogy a böngésző valóban ezen a szolgáltatáson keresztül old fel, külön ellenőrzik: tiltson le egy domaint és nyissa meg, <code>ERR_ADDRESS_INVALID</code> hibát kell kapnia (nem <code>ERR_NAME_NOT_RESOLVED</code>-ot); a teljes eljárás itt van: README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Ellenőrzés: nyisson meg bármilyen oldalt - az alábbi naplóban meg kell jelennie egy ALLOWED sornak. Azt, hogy a Firefox valóban ezen a szolgáltatáson keresztül old fel, külön kell ellenőrizni: blokkoljon egy domaint, és nyissa meg - a Firefox ezt mutatja: \"Hmm. We're having trouble finding that site.\", a naplóban pedig megjelenik egy BLOCKED sor ehhez a domainhez; a teljes eljárás itt van: README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Ha egy webhely engedélyt kér az eszköz más alkalmazásainak és szolgáltatásainak elérésére (helyi hálózat), válassza a „Letiltás” lehetőséget: ezzel az engedéllyel a webhely lekérdezéseket küldhet ennek a szolgáltatásnak – kiderítheti, mely webhelyeket nyitotta meg nemrég, és bejegyzéseket írhat a lekérdezési naplóba.",
   "browserSetup.copied": "Másolva.",
   "browserSetup.copyManuallyTemplate": "Másolja kézzel: {text}",
   "advanced.summaryLabel": "Speciális beállítások",

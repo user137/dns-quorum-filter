@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Kies de modus \"Custom\" en plak het adres van hierboven.",
   "browserSetup.verify": "Controle: open een willekeurige site - in het logboek hieronder moet een regel <code>ALLOWED</code> verschijnen. Dat de browser echt via deze service oplost, wordt apart gecontroleerd: blokkeer een domein en open het, u zou <code>ERR_ADDRESS_INVALID</code> moeten krijgen (niet <code>ERR_NAME_NOT_RESOLVED</code>); de volledige procedure staat in README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Controle: open een willekeurige site - in het log hieronder moet een regel met ALLOWED verschijnen. Dat Firefox echt via deze service resolvet, wordt apart gecontroleerd: blokkeer een domein en open het - Firefox toont \"Hmm. We're having trouble finding that site.\" en in het log verschijnt een BLOCKED-regel voor dat domein; de volledige procedure staat in README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Als een website toestemming vraagt voor toegang tot andere apps en services op dit apparaat (lokaal netwerk), kies dan 'Blokkeren': met die toestemming kan de site query's naar deze service sturen - achterhalen welke sites je onlangs hebt geopend en items aan je querylogboek toevoegen.",
   "browserSetup.copied": "Gekopieerd.",
   "browserSetup.copyManuallyTemplate": "Kopieer handmatig: {text}",
   "advanced.summaryLabel": "Geavanceerde instellingen",

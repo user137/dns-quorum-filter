@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Valige režiim \"Custom\" ja kleepige ülaltoodud aadress.",
   "browserSetup.verify": "Kontroll: avage suvaline sait - allolevasse logisse peab ilmuma rida <code>ALLOWED</code>. Seda, et brauser tõesti lahendab selle teenuse kaudu, kontrollitakse eraldi: blokeerige domeen ja avage see, peaksite nägema <code>ERR_ADDRESS_INVALID</code> (mitte <code>ERR_NAME_NOT_RESOLVED</code>); täielik protseduur on README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Kontroll: avage suvaline sait - allolevasse logisse peaks ilmuma rida ALLOWED. Et Firefox lahendab nimesid tõesti selle teenuse kaudu, kontrollitakse eraldi: blokeerige domeen ja avage see - Firefox näitab \"Hmm. We're having trouble finding that site.\" ning logisse ilmub selle domeeni BLOCKED-rida; täielik protseduur on README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Kui veebisait küsib luba juurdepääsuks selle seadme teistele rakendustele ja teenustele (kohtvõrk), valige „Blokeeri”: selle loaga saab sait saata sellele teenusele päringuid – teada saada, milliseid saite olete hiljuti avanud, ja lisada kirjeid teie päringulogisse.",
   "browserSetup.copied": "Kopeeritud.",
   "browserSetup.copyManuallyTemplate": "Kopeerige käsitsi: {text}",
   "advanced.summaryLabel": "Täpsemad seaded",

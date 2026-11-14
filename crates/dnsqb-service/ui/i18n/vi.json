@@ -252,6 +252,7 @@
   "browserSetup.other.step2": "Chọn chế độ \"Custom\" và dán địa chỉ ở trên.",
   "browserSetup.verify": "Kiểm tra: mở bất kỳ trang web nào - một dòng <code>ALLOWED</code> phải xuất hiện trong nhật ký bên dưới. Việc trình duyệt thực sự phân giải qua dịch vụ này được kiểm tra riêng: chặn một miền rồi mở nó, bạn sẽ nhận được <code>ERR_ADDRESS_INVALID</code> (không phải <code>ERR_NAME_NOT_RESOLVED</code>); quy trình đầy đủ nằm trong README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Kiểm tra: mở một trang bất kỳ - trong nhật ký bên dưới phải xuất hiện dòng ALLOWED. Việc Firefox thật sự phân giải qua dịch vụ này được kiểm tra riêng: chặn một tên miền rồi mở nó - Firefox hiển thị \"Hmm. We're having trouble finding that site.\" và trong nhật ký xuất hiện dòng BLOCKED cho tên miền đó; quy trình đầy đủ nằm trong README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Nếu một trang web xin quyền truy cập các ứng dụng và dịch vụ khác trên thiết bị này (mạng cục bộ), hãy chọn \"Chặn\": với quyền đó, trang web có thể gửi truy vấn đến dịch vụ này - biết được bạn vừa mở những trang nào và thêm mục vào nhật ký truy vấn của bạn.",
   "browserSetup.copied": "Đã sao chép.",
   "browserSetup.copyManuallyTemplate": "Sao chép thủ công: {text}",
   "advanced.summaryLabel": "Cài đặt nâng cao",

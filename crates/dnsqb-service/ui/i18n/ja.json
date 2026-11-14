@@ -252,6 +252,7 @@
   "browserSetup.other.step2": "\"Custom\" モードを選び、上のアドレスを貼り付けます。",
   "browserSetup.verify": "確認: 任意のサイトを開くと、下のログに <code>ALLOWED</code> の行が表示されるはずです。ブラウザーが実際にこのサービス経由で名前解決していることは別途確認します: ドメインをブロックして開くと <code>ERR_ADDRESS_INVALID</code>(<code>ERR_NAME_NOT_RESOLVED</code> ではなく)になるはずです。詳しい手順は README \"Перевірка: браузер → локальний DoH\" にあります。",
   "browserSetup.verifyFirefox": "確認: 任意のサイトを開くと、下のログに ALLOWED の行が表示されるはずです。Firefox が本当にこのサービス経由で名前解決しているかは別途確認します: ドメインをブロックして開くと、Firefox は \"Hmm. We're having trouble finding that site.\" と表示し、ログにそのドメインの BLOCKED の行が表示されます。詳しい手順は README \"Перевірка: браузер → локальний DoH\" にあります。",
+  "browserSetup.localNetworkNote": "サイトがこのデバイス上の他のアプリやサービス（ローカル ネットワーク）へのアクセス許可を求めてきたら、「ブロック」を選んでください。許可すると、そのサイトはこのサービスにクエリを送信でき、最近開いたサイトを知ったり、クエリログに記録を追加したりできます。",
   "browserSetup.copied": "コピーしました。",
   "browserSetup.copyManuallyTemplate": "手動でコピーしてください: {text}",
   "advanced.summaryLabel": "詳細設定",

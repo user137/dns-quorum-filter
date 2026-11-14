@@ -258,6 +258,7 @@
   "browserSetup.other.step2": "Wybierz tryb \"Custom\" i wklej adres z góry.",
   "browserSetup.verify": "Sprawdzenie: otwórz dowolną stronę - w dzienniku poniżej powinien pojawić się wiersz <code>ALLOWED</code>. To, że przeglądarka faktycznie rozwiązuje nazwy przez tę usługę, sprawdza się osobno: zablokuj domenę i otwórz ją, powinieneś zobaczyć <code>ERR_ADDRESS_INVALID</code> (nie <code>ERR_NAME_NOT_RESOLVED</code>); pełna procedura jest w README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Sprawdzenie: otwórz dowolną stronę - w logu poniżej powinien pojawić się wiersz ALLOWED. To, że Firefox naprawdę rozwiązuje nazwy przez tę usługę, sprawdza się osobno: zablokuj domenę i otwórz ją - Firefox pokaże \"Hmm. We're having trouble finding that site.\", a w logu pojawi się wiersz BLOCKED dla tej domeny; pełna procedura jest w README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Jeśli strona prosi o zgodę na dostęp do innych aplikacji i usług na tym urządzeniu (sieć lokalna), wybierz „Blokuj”: z taką zgodą strona może wysyłać zapytania do tej usługi – sprawdzić, jakie strony niedawno otwierałeś, i dopisywać wpisy do dziennika zapytań.",
   "browserSetup.copied": "Skopiowano.",
   "browserSetup.copyManuallyTemplate": "Skopiuj ręcznie: {text}",
   "advanced.summaryLabel": "Ustawienia zaawansowane",

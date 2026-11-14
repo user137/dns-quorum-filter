@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Välj läget \"Custom\" och klistra in adressen ovanifrån.",
   "browserSetup.verify": "Kontroll: öppna en valfri webbplats - en rad med <code>ALLOWED</code> ska dyka upp i loggen nedan. Att webbläsaren verkligen slår upp via den här tjänsten verifieras separat: blockera en domän och öppna den, du bör få <code>ERR_ADDRESS_INVALID</code> (inte <code>ERR_NAME_NOT_RESOLVED</code>); hela proceduren finns i README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Kontroll: öppna valfri webbplats - en rad med ALLOWED ska visas i loggen nedan. Att Firefox verkligen slår upp via den här tjänsten kontrolleras separat: blockera en domän och öppna den - Firefox visar \"Hmm. We're having trouble finding that site.\" och en BLOCKED-rad för domänen visas i loggen; hela proceduren finns i README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Om en webbplats ber om behörighet att komma åt andra appar och tjänster på den här enheten (lokalt nätverk), välj ”Blockera”: med den behörigheten kan webbplatsen skicka frågor till den här tjänsten – ta reda på vilka webbplatser du nyligen öppnat och lägga till poster i din frågelogg.",
   "browserSetup.copied": "Kopierat.",
   "browserSetup.copyManuallyTemplate": "Kopiera manuellt: {text}",
   "advanced.summaryLabel": "Avancerade inställningar",

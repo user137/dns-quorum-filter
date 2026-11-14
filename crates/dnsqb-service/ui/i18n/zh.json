@@ -252,6 +252,7 @@
   "browserSetup.other.step2": "选择 \"Custom\" 模式并粘贴上面的地址。",
   "browserSetup.verify": "验证：打开任意网站 - 下方日志中应出现一行 <code>ALLOWED</code>。浏览器是否确实通过此服务解析需要单独验证：阻止一个域名并打开它，应得到 <code>ERR_ADDRESS_INVALID</code>(而不是 <code>ERR_NAME_NOT_RESOLVED</code>)；完整流程见 README \"Перевірка: браузер → локальний DoH\"。",
   "browserSetup.verifyFirefox": "验证:打开任意网站 - 下方日志中应出现 ALLOWED 行。Firefox 是否真的通过本服务解析需单独验证:拦截一个域名并打开它 - Firefox 会显示 \"Hmm. We're having trouble finding that site.\",日志中出现该域名的 BLOCKED 行;完整流程见 README \"Перевірка: браузер → локальний DoH\"。",
+  "browserSetup.localNetworkNote": "如果某个网站请求访问此设备上其他应用和服务（本地网络）的权限，请选择“阻止”：获得该权限后，网站可以向此服务发送查询——得知你最近打开过哪些网站，并向查询日志中添加记录。",
   "browserSetup.copied": "已复制。",
   "browserSetup.copyManuallyTemplate": "请手动复制：{text}",
   "advanced.summaryLabel": "高级设置",

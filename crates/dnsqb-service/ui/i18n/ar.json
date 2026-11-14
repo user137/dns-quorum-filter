@@ -262,6 +262,7 @@
   "browserSetup.other.step2": "اختر وضع \"Custom\" والصق العنوان من الأعلى.",
   "browserSetup.verify": "التحقق: افتح أي موقع - يجب أن يظهر سطر <code>ALLOWED</code> في السجل أدناه. يُتحقق بشكل منفصل من أن المتصفح يحل الأسماء فعلًا عبر هذه الخدمة: احظر نطاقًا وافتحه، يجب أن ترى <code>ERR_ADDRESS_INVALID</code> (وليس <code>ERR_NAME_NOT_RESOLVED</code>)؛ الإجراء الكامل في README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "التحقق: افتح أي موقع - يجب أن يظهر سطر ALLOWED في السجل أدناه. أما أن Firefox يحلّ الأسماء فعلًا عبر هذه الخدمة فيُتحقق منه بشكل منفصل: احظر نطاقًا وافتحه - يعرض Firefox ‏\"Hmm. We're having trouble finding that site.\" ويظهر في السجل سطر BLOCKED لهذا النطاق؛ الإجراء الكامل في README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "إذا طلب موقع إذنًا بالوصول إلى تطبيقات وخدمات أخرى على هذا الجهاز (الشبكة المحلية)، فاختر «حظر»: بهذا الإذن يستطيع الموقع إرسال استعلامات إلى هذه الخدمة - ومعرفة المواقع التي فتحتها مؤخرًا وإضافة إدخالات إلى سجل الاستعلامات.",
   "browserSetup.copied": "تم النسخ.",
   "browserSetup.copyManuallyTemplate": "انسخ يدويًا: {text}",
   "advanced.summaryLabel": "إعدادات متقدمة",

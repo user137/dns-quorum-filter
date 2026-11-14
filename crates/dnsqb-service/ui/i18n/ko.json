@@ -252,6 +252,7 @@
   "browserSetup.other.step2": "\"Custom\" 모드를 선택하고 위의 주소를 붙여넣으세요.",
   "browserSetup.verify": "확인: 아무 사이트나 열면 아래 로그에 <code>ALLOWED</code> 행이 나타나야 합니다. 브라우저가 실제로 이 서비스를 통해 확인하는지는 별도로 검증합니다: 도메인을 차단한 뒤 열면 <code>ERR_ADDRESS_INVALID</code>(<code>ERR_NAME_NOT_RESOLVED</code>가 아님)가 나와야 합니다. 전체 절차는 README \"Перевірка: браузер → локальний DoH\"에 있습니다.",
   "browserSetup.verifyFirefox": "확인: 아무 사이트나 열면 아래 로그에 ALLOWED 행이 나타나야 합니다. Firefox가 실제로 이 서비스를 통해 이름을 확인하는지는 따로 확인합니다: 도메인을 차단하고 열면 Firefox가 \"Hmm. We're having trouble finding that site.\"을(를) 표시하고 로그에 해당 도메인의 BLOCKED 행이 나타납니다. 전체 절차는 README \"Перевірка: браузер → локальний DoH\"에 있습니다.",
+  "browserSetup.localNetworkNote": "웹사이트가 이 기기의 다른 앱 및 서비스(로컬 네트워크)에 대한 액세스 권한을 요청하면 '차단'을 선택하세요. 권한을 주면 해당 사이트가 이 서비스에 쿼리를 보내 최근에 연 사이트를 알아내고 쿼리 로그에 항목을 추가할 수 있습니다.",
   "browserSetup.copied": "복사되었습니다.",
   "browserSetup.copyManuallyTemplate": "수동으로 복사하세요: {text}",
   "advanced.summaryLabel": "고급 설정",

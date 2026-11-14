@@ -256,6 +256,7 @@
   "browserSetup.other.step2": "בחרו במצב \"Custom\" והדביקו את הכתובת מלמעלה.",
   "browserSetup.verify": "בדיקה: פתחו אתר כלשהו - שורת <code>ALLOWED</code> אמורה להופיע ביומן למטה. העובדה שהדפדפן אכן מבצע פתרון דרך שירות זה נבדקת בנפרד: חסמו דומיין ופתחו אותו, אמורה להופיע <code>ERR_ADDRESS_INVALID</code> (ולא <code>ERR_NAME_NOT_RESOLVED</code>); ההליך המלא נמצא ב-README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "בדיקה: פתחו אתר כלשהו - ביומן למטה אמורה להופיע שורה עם ALLOWED. שהדפדפן Firefox באמת מפענח דרך השירות הזה נבדק בנפרד: חסמו דומיין ופתחו אותו - Firefox יציג \"Hmm. We're having trouble finding that site.\" וביומן תופיע שורת BLOCKED לדומיין הזה; ההליך המלא נמצא ב-README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "אם אתר מבקש הרשאת גישה לאפליקציות ושירותים אחרים במכשיר הזה (רשת מקומית), בחרו \"חסימה\": עם ההרשאה הזו האתר יכול לשלוח שאילתות לשירות הזה - לגלות אילו אתרים פתחתם לאחרונה ולהוסיף רשומות ליומן השאילתות.",
   "browserSetup.copied": "הועתק.",
   "browserSetup.copyManuallyTemplate": "העתיקו ידנית: {text}",
   "advanced.summaryLabel": "הגדרות מתקדמות",

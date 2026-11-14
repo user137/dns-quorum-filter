@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Valitse tila \"Custom\" ja liitä yllä oleva osoite.",
   "browserSetup.verify": "Tarkistus: avaa mikä tahansa sivusto - alla olevaan lokiin pitäisi ilmestyä rivi <code>ALLOWED</code>. Se, että selain todella ratkaisee tämän palvelun kautta, varmistetaan erikseen: estä verkkotunnus ja avaa se, sinun pitäisi saada <code>ERR_ADDRESS_INVALID</code> (ei <code>ERR_NAME_NOT_RESOLVED</code>); täydellinen menettely on kohdassa README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Tarkistus: avaa mikä tahansa sivusto - alla olevaan lokiin pitäisi tulla rivi ALLOWED. Se, että Firefox todella selvittää nimet tämän palvelun kautta, tarkistetaan erikseen: estä verkkotunnus ja avaa se - Firefox näyttää \"Hmm. We're having trouble finding that site.\", ja lokiin tulee BLOCKED-rivi tälle verkkotunnukselle; täydellinen menettely on kohdassa README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Jos sivusto pyytää lupaa käyttää muita tämän laitteen sovelluksia ja palveluja (lähiverkko), valitse ”Estä”: luvan saanut sivusto voi lähettää kyselyitä tälle palvelulle – selvittää, mitä sivustoja olet äskettäin avannut, ja lisätä merkintöjä kyselylokiisi.",
   "browserSetup.copied": "Kopioitu.",
   "browserSetup.copyManuallyTemplate": "Kopioi käsin: {text}",
   "advanced.summaryLabel": "Lisäasetukset",

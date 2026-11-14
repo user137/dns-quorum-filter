@@ -258,6 +258,7 @@
   "browserSetup.other.step2": "Pasirinkite režimą \"Custom\" ir įklijuokite adresą iš viršaus.",
   "browserSetup.verify": "Patikra: atidarykite bet kurią svetainę - žemiau esančiame žurnale turi atsirasti eilutė <code>ALLOWED</code>. Ar naršyklė tikrai sprendžia per šią paslaugą, tikrinama atskirai: užblokuokite domeną ir atidarykite, turėtumėte gauti <code>ERR_ADDRESS_INVALID</code> (ne <code>ERR_NAME_NOT_RESOLVED</code>); visa procedūra aprašyta README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Patikrinimas: atidarykite bet kurią svetainę - žurnale žemiau turi atsirasti eilutė ALLOWED. Tai, kad Firefox tikrai išsprendžia vardus per šią tarnybą, tikrinama atskirai: užblokuokite domeną ir atidarykite jį - Firefox parodys \"Hmm. We're having trouble finding that site.\", o žurnale atsiras šio domeno BLOCKED eilutė; visa procedūra aprašyta README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Jei svetainė prašo leidimo pasiekti kitas šio įrenginio programas ir paslaugas (vietinis tinklas), pasirinkite „Blokuoti“: su tokiu leidimu svetainė gali siųsti užklausas šiai paslaugai – sužinoti, kurias svetaines neseniai atidarėte, ir pridėti įrašų į užklausų žurnalą.",
   "browserSetup.copied": "Nukopijuota.",
   "browserSetup.copyManuallyTemplate": "Nukopijuokite rankiniu būdu: {text}",
   "advanced.summaryLabel": "Išplėstiniai nustatymai",

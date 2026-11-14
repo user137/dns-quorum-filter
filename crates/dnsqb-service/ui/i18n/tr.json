@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "\"Custom\" modunu seçin ve yukarıdaki adresi yapıştırın.",
   "browserSetup.verify": "Kontrol: herhangi bir siteyi açın - aşağıdaki günlükte bir <code>ALLOWED</code> satırı görünmelidir. Tarayıcının gerçekten bu hizmet üzerinden çözümlediği ayrıca doğrulanır: bir alan adını engelleyip açın, <code>ERR_ADDRESS_INVALID</code> almalısınız (<code>ERR_NAME_NOT_RESOLVED</code> değil); tam prosedür README \"Перевірка: браузер → локальний DoH\" içindedir.",
   "browserSetup.verifyFirefox": "Kontrol: herhangi bir siteyi açın - aşağıdaki günlükte ALLOWED satırı görünmelidir. Firefox'un gerçekten bu hizmet üzerinden çözümlediği ayrıca kontrol edilir: bir alan adını engelleyip açın - Firefox \"Hmm. We're having trouble finding that site.\" gösterir ve günlükte bu alan adı için bir BLOCKED satırı görünür; tam prosedür README \"Перевірка: браузер → локальний DoH\" içindedir.",
+  "browserSetup.localNetworkNote": "Bir web sitesi bu cihazdaki diğer uygulamalara ve hizmetlere (yerel ağ) erişim izni isterse \"Engelle\"yi seçin: bu izinle site bu hizmete sorgu gönderebilir - son zamanlarda hangi siteleri açtığınızı öğrenebilir ve sorgu günlüğünüze kayıt ekleyebilir.",
   "browserSetup.copied": "Kopyalandı.",
   "browserSetup.copyManuallyTemplate": "Elle kopyalayın: {text}",
   "advanced.summaryLabel": "Gelişmiş ayarlar",

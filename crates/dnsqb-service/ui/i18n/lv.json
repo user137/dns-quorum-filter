@@ -256,6 +256,7 @@
   "browserSetup.other.step2": "Izvēlieties režīmu \"Custom\" un ielīmējiet adresi no augšas.",
   "browserSetup.verify": "Pārbaude: atveriet jebkuru vietni - zemāk esošajā žurnālā jāparādās rindai <code>ALLOWED</code>. To, ka pārlūks tiešām atrisina caur šo pakalpojumu, pārbauda atsevišķi: bloķējiet domēnu un atveriet to, jums jāsaņem <code>ERR_ADDRESS_INVALID</code> (nevis <code>ERR_NAME_NOT_RESOLVED</code>); pilna procedūra ir README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Pārbaude: atveriet jebkuru vietni - žurnālā zemāk jāparādās rindai ALLOWED. To, ka Firefox tiešām atrisina nosaukumus caur šo pakalpojumu, pārbauda atsevišķi: bloķējiet domēnu un atveriet to - Firefox parāda \"Hmm. We're having trouble finding that site.\", un žurnālā parādās šī domēna BLOCKED rinda; pilna procedūra ir README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Ja vietne lūdz atļauju piekļūt citām šīs ierīces lietotnēm un pakalpojumiem (lokālais tīkls), izvēlieties “Bloķēt”: ar šo atļauju vietne var sūtīt vaicājumus šim pakalpojumam – uzzināt, kuras vietnes nesen atvērāt, un pievienot ierakstus jūsu vaicājumu žurnālam.",
   "browserSetup.copied": "Nokopēts.",
   "browserSetup.copyManuallyTemplate": "Nokopējiet manuāli: {text}",
   "advanced.summaryLabel": "Papildu iestatījumi",

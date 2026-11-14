@@ -254,6 +254,7 @@
   "browserSetup.other.step2": "Choose the \"Custom\" mode and paste the address from above.",
   "browserSetup.verify": "Check: open any site - a row with <code>ALLOWED</code> should appear in the log below. That the browser really resolves through this service is verified separately: block a domain and open it, you should get <code>ERR_ADDRESS_INVALID</code> (not <code>ERR_NAME_NOT_RESOLVED</code>); the full procedure is in the README, section \"Перевірка: браузер → локальний DoH\" (Ukrainian).",
   "browserSetup.verifyFirefox": "Check: open any site - a row with ALLOWED should appear in the log below. That Firefox really resolves through this service is verified separately: block a domain and open it - Firefox shows \"Hmm. We're having trouble finding that site.\" and a BLOCKED row for that domain appears in the log; the full procedure is in the README, section \"Перевірка: браузер → локальний DoH\" (Ukrainian).",
+  "browserSetup.localNetworkNote": "If a website asks for permission to access other apps and services on this device (local network), choose Block: with that permission the site can send queries to this service - find out which sites you opened recently and add entries to your query log.",
   "browserSetup.copied": "Copied.",
   "browserSetup.copyManuallyTemplate": "Copy manually: {text}",
   "advanced.summaryLabel": "Advanced settings",

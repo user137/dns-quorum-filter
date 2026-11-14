@@ -258,6 +258,7 @@
   "browserSetup.other.step2": "Zvolte režim \"Custom\" a vložte adresu shora.",
   "browserSetup.verify": "Kontrola: otevřete libovolný web - v protokolu níže se musí objevit řádek <code>ALLOWED</code>. To, že prohlížeč skutečně překládá přes tuto službu, se ověřuje zvlášť: zablokujte doménu a otevřete ji, měli byste dostat <code>ERR_ADDRESS_INVALID</code> (ne <code>ERR_NAME_NOT_RESOLVED</code>); celý postup je v README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Kontrola: otevřete libovolný web - v logu níže by se měl objevit řádek ALLOWED. Že Firefox opravdu překládá přes tuto službu, se ověřuje zvlášť: zablokujte doménu a otevřete ji - Firefox ukáže \"Hmm. We're having trouble finding that site.\" a v logu se objeví řádek BLOCKED pro tuto doménu; celý postup je v README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Pokud web žádá o povolení přístupu k jiným aplikacím a službám v tomto zařízení (místní síť), zvolte „Blokovat“: s tímto povolením může web posílat dotazy této službě – zjistit, které weby jste nedávno otevřeli, a přidávat záznamy do protokolu dotazů.",
   "browserSetup.copied": "Zkopírováno.",
   "browserSetup.copyManuallyTemplate": "Zkopírujte ručně: {text}",
   "advanced.summaryLabel": "Pokročilá nastavení",

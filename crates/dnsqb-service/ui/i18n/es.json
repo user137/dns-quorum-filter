@@ -256,6 +256,7 @@
   "browserSetup.other.step2": "Elija el modo \"Custom\" y pegue la dirección de arriba.",
   "browserSetup.verify": "Comprobación: abra cualquier sitio - debe aparecer una línea <code>ALLOWED</code> en el registro de abajo. Que el navegador realmente resuelve a través de este servicio se verifica por separado: bloquee un dominio y ábralo, debería aparecer <code>ERR_ADDRESS_INVALID</code> (no <code>ERR_NAME_NOT_RESOLVED</code>); el procedimiento completo está en README \"Перевірка: браузер → локальний DoH\".",
   "browserSetup.verifyFirefox": "Comprobación: abra cualquier sitio - en el registro de abajo debe aparecer una fila con ALLOWED. Que Firefox realmente resuelve a través de este servicio se comprueba aparte: bloquee un dominio y ábralo - Firefox muestra \"Hmm. We're having trouble finding that site.\" y en el registro aparece una fila BLOCKED para ese dominio; el procedimiento completo está en README \"Перевірка: браузер → локальний DoH\".",
+  "browserSetup.localNetworkNote": "Si un sitio web pide permiso para acceder a otras aplicaciones y servicios de este dispositivo (red local), elige «Bloquear»: con ese permiso el sitio puede enviar consultas a este servicio, averiguar qué sitios abriste hace poco y añadir entradas a tu registro de consultas.",
   "browserSetup.copied": "Copiado.",
   "browserSetup.copyManuallyTemplate": "Copie manualmente: {text}",
   "advanced.summaryLabel": "Configuración avanzada",

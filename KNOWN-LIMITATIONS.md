@@ -58,6 +58,17 @@ TASKS-DONE.md, never here.
   `rename_orphan` never deletes (a key *might* resurface), but for a re-creatable store that
   recovery value is ~nil while each incident leaves a permanent undecryptable blob of
   browsing-derived data; no cleanup path exists yet.
+- **A web page the user allows "access to other apps and services on this device" can use the
+  service (ARCH-14, decided 2026-11-14: document, no code)** — `GET /dns-query?dns=` has no
+  `Origin`/`Sec-Fetch-Site` check, so such a page can time the verdict cache (which domains were
+  resolved recently) and write the query log, the cache and personal-zone counters. Chrome, Edge,
+  Brave, Opera and Firefox all ask first (Local Network Access) and send nothing on Block or with no
+  answer; Vivaldi not measured. README and the browser card tell the user to choose Block.
+- **Firefox "Increased Protection" (TRR mode 2) opens blocked sites (T-257, closed 2026-11-14 as a
+  platform limit)** — Firefox falls back to the system DNS for every block response form tried
+  (`0.0.0.0`, NXDOMAIN, NODATA, `127.0.0.1`, `192.0.2.1`), silently. Only "Max Protection" (mode 3)
+  is supported; README and the browser card say so. SPEC.md §3.2's "a client does not retry
+  `0.0.0.0` on another resolver" does not hold for this mode.
 - **Long query-log windows (T-291)** — the `/admin/ui` retention control was clicked in Firefox on a
   local debug scratch instance (2026-11-14), not yet on a GitHub-built artifact; the "Older" pager
   (needs >1000 entries) is covered only by `smoke.js`;
