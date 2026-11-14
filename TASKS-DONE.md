@@ -9024,8 +9024,8 @@ TASKS.md); переклади 35 локалей — машинні, без на�
 - [x] T-292 — **Знахідка WACK (хвиля 29), DPIAwarenessValidation, WARNING.** `dnsqb-watcher.exe` — точка входу
   пакета, і WACK судить DPI застосунку за ним; маніфесту не було. Виконано 2026-11-14: `build/dnsqb-watcher.manifest`
   (PerMonitorV2 + `supportedOS`, без Common-Controls — вікон немає), `crates/dnsqb-watcher/build.rs`. Локально
-  (windows-gnu) exe з маніфестом стартує (`--help` rc 0), рядок вбудовано; MSVC-збірку, запуск у пакеті й
-  повторний WACK перевіряє наступний прогін `release.yml`.
+  (windows-gnu) exe з маніфестом стартує (`--help` rc 0), рядок вбудовано. Повторний прогін `release.yml` на
+  `ed02bc0` (run 43529790105, MSVC): `install-smoke` — усі перевірки PASS, WACK — **PASS** (лишився тільки T-293).
 - [x] T-293 — **Знахідка WACK (хвиля 29), Blocked executables, FAIL необов'язкового тесту.** Прийнято без коду
   2026-11-14: `cmd.exe`/`\cmd.exe` — літерали стандартної бібліотеки Rust (запуск `.bat` через `cmd.exe /e:ON
   /v:OFF /d /c`), «Reg» — текст «NFL Reg Ops LLC» у вбудованому Public Suffix List, `CreateProcessW` — `std::process`
