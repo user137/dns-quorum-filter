@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Niciun browser nu folosește încă DNS Quorum Filter.\nDeschideți setările pentru a remedia asta.",
   "menu.openSettings": "Deschide setările",
   "menu.resetCacheLog": "Resetează memoria cache și jurnalul",
   "menu.about": "Despre",

@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "DNS Quorum Filter を使っているブラウザーはまだありません。\n設定を開いて修正してください。",
   "menu.openSettings": "設定を開く",
   "menu.resetCacheLog": "キャッシュとログをリセット",
   "menu.about": "バージョン情報",

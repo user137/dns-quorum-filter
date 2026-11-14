@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Žádný prohlížeč zatím DNS Quorum Filter nepoužívá.\nOtevřete nastavení a napravte to.",
   "menu.openSettings": "Otevřít nastavení",
   "menu.resetCacheLog": "Obnovit mezipaměť a protokol",
   "menu.about": "O aplikaci",

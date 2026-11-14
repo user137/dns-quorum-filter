@@ -23,7 +23,11 @@ comes first: a real logo, or a Microsoft Store submission's own asset
 requirements.
 """
 
+import json
 import math
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
@@ -165,45 +169,95 @@ def make_tray_glyph(size: int, colour) -> Image.Image:
 
 # T-229 (2026-09-13): a small, borderless, auto-dismissing popup near the
 # tray icon, nudging the user once that no browser appears to be using the
-# local DoH endpoint yet. Pre-rendered as a static RGBA image — the copy is
-# fixed and one language today (T-151 i18n is unstarted) — rather than
-# rendered at runtime, so `dnsqb-tray` needs no font/text-layout dependency
-# of its own, only a pixel blit (`softbuffer`): the same "everything in, no
-# runtime asset I/O" choice as the tray glyphs above.
+# local DoH endpoint yet. Pre-rendered rather than laid out at runtime, so
+# `dnsqb-tray` needs no font/text-layout dependency of its own, only a pixel
+# blit (`softbuffer`). Batch 5.7 (T-151): the base (background + shield) is
+# one RGBA image; the text is one 8-bit coverage mask per tray locale,
+# rendered by gen-nudge-text.ps1 (GDI+ shapes Arabic/Devanagari/Thai/CJK,
+# which Pillow cannot without libraqm) from the `nudge.popupText` key of
+# crates/dnsqb-tray/i18n/<locale>.json, and blended in white at runtime.
 POPUP_WIDTH = 540
 POPUP_HEIGHT = 108
-POPUP_TEXT = (
-    "Жоден браузер ще не використовує DNS Quorum Filter.\n"
-    "Відкрийте налаштування, щоб це виправити."
-)
+# The text box, in popup pixels, for a left-to-right locale (an RTL one is
+# mirrored at runtime). Must match nudge_popup.rs's TEXT_* constants.
+POPUP_TEXT_LEFT = 106
+POPUP_TEXT_TOP = 10
+POPUP_TEXT_WIDTH = 418
+POPUP_TEXT_HEIGHT = 88
+NUDGE_TEXT_KEY = "nudge.popupText"
+TRAY_I18N_DIR = Path(__file__).parent.parent / "crates" / "dnsqb-tray" / "i18n"
+NUDGE_TEXT_DIR = Path(__file__).parent.parent / "crates" / "dnsqb-tray" / "icons" / "nudge-text"
 # A dark neutral slate, not the accent colour — this is a passive notice, not
 # a brand moment, and it must read clearly against any desktop wallpaper.
 POPUP_BG = (0x20, 0x2A, 0x33)
 
 
-def make_browser_nudge_popup(
-    width: int = POPUP_WIDTH, height: int = POPUP_HEIGHT, text: str = POPUP_TEXT
-) -> Image.Image:
-    """A small, fully-opaque notice card — no transparency: this is its own
-    borderless top-level window, not composited over anything else."""
+def make_browser_nudge_popup(width: int = POPUP_WIDTH, height: int = POPUP_HEIGHT) -> Image.Image:
+    """The popup's base: a fully-opaque card (its own borderless top-level
+    window, not composited over anything) with the shield on the left. The
+    text is per-locale, see make_nudge_text_masks."""
     img = Image.new("RGBA", (width, height), (*POPUP_BG, 255))
     draw = ImageDraw.Draw(img)
     padding = round(width * 0.05)
     glyph_radius = height * 0.24
     draw_hex_shield(draw, padding + glyph_radius, height / 2, glyph_radius, ACCENT)
-
-    font = load_bold_font(round(height * 0.14))
-    text_x = padding * 2 + glyph_radius * 2
-    text_bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=round(height * 0.10))
-    text_h = text_bbox[3] - text_bbox[1]
-    draw.multiline_text(
-        (text_x, (height - text_h) / 2 - text_bbox[1]),
-        text,
-        font=font,
-        fill=WHITE,
-        spacing=round(height * 0.10),
-    )
     return img
+
+
+def fnv1a32(data: bytes) -> int:
+    """32-bit FNV-1a — the drift check between a mask and the dictionary text
+    it was rendered from (nudge_popup.rs computes the same over the live
+    dictionary value). Not a security hash; it only has to notice an edit."""
+    value = 0x811C9DC5
+    for byte in data:
+        value = ((value ^ byte) * 0x01000193) & 0xFFFFFFFF
+    return value
+
+
+def rle_zero_runs(mask: bytes) -> bytes:
+    """`0, n` = n zero pixels (1..=255); any other byte is one literal pixel.
+    A text mask is mostly background, so this alone shrinks it ~10x."""
+    out = bytearray()
+    i = 0
+    while i < len(mask):
+        if mask[i] == 0:
+            run = 1
+            while i + run < len(mask) and mask[i + run] == 0 and run < 255:
+                run += 1
+            out += bytes((0, run))
+            i += run
+        else:
+            out.append(mask[i])
+            i += 1
+    return bytes(out)
+
+
+def make_nudge_text_masks() -> None:
+    """Renders every locale's popup text via gen-nudge-text.ps1 and writes
+    `<locale>.bin` = FNV-1a of the source text (u32 LE) + the RLE'd mask."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        raise SystemExit("pwsh (PowerShell 7) is required to render the nudge text")
+    script = Path(__file__).parent / "gen-nudge-text.ps1"
+    NUDGE_TEXT_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as raw_dir:
+        subprocess.run(
+            [pwsh, "-NoProfile", "-File", str(script),
+             "-I18nDir", str(TRAY_I18N_DIR), "-OutDir", raw_dir,
+             "-Width", str(POPUP_TEXT_WIDTH), "-Height", str(POPUP_TEXT_HEIGHT),
+             "-Key", NUDGE_TEXT_KEY],
+            check=True,
+        )
+        for dictionary in sorted(TRAY_I18N_DIR.glob("*.json")):
+            locale = dictionary.stem
+            text = json.loads(dictionary.read_text(encoding="utf-8"))[NUDGE_TEXT_KEY]
+            mask = (Path(raw_dir) / f"{locale}.alpha").read_bytes()
+            if len(mask) != POPUP_TEXT_WIDTH * POPUP_TEXT_HEIGHT:
+                raise SystemExit(f"{locale}: mask has {len(mask)} bytes")
+            blob = fnv1a32(text.encode("utf-8")).to_bytes(4, "little") + rle_zero_runs(mask)
+            path = NUDGE_TEXT_DIR / f"{locale}.bin"
+            path.write_bytes(blob)
+            print(f"wrote {path} ({len(blob)} bytes)")
 
 
 def make_ico(path: Path) -> None:
@@ -257,6 +311,8 @@ def main() -> None:
         f"wrote {popup_path} ({len(popup_blob)} bytes, "
         f"{POPUP_WIDTH}x{POPUP_HEIGHT} RGBA, opaque bg)"
     )
+
+    make_nudge_text_masks()
 
 
 if __name__ == "__main__":

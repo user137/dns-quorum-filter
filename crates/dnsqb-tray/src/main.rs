@@ -327,6 +327,7 @@ fn main() {
     let mut browser_nudge = NudgeLatch {
         settled: false,
         first_seen: browser_nudge::first_seen(&app_data),
+        locale,
     };
     let mut browser_nudge_popup: Option<nudge_popup::NudgePopup> = None;
     let mut remove_all_owner: Option<tao::window::Window> = None;
@@ -1100,10 +1101,12 @@ fn topmost_owner(
 
 /// Per-process state of the browser nudge's automatic offer (ARCH-19 a):
 /// `settled` closes once the decision is final, `first_seen` is the stamp
-/// read once at startup instead of on every tick.
+/// read once at startup instead of on every tick; `locale` picks the
+/// popup's text.
 struct NudgeLatch {
     settled: bool,
     first_seen: Option<SystemTime>,
+    locale: &'static str,
 }
 
 /// T-229: offers the nudge popup if due, then closes it (click or expiry).
@@ -1161,7 +1164,7 @@ fn maybe_offer_browser_nudge(
         latch.settled = true;
     }
     if check == OfferCheck::Offer {
-        if let Some(window) = nudge_popup::spawn(target, tray_icon.rect()) {
+        if let Some(window) = nudge_popup::spawn(target, tray_icon.rect(), latch.locale) {
             *popup = Some(window);
             browser_nudge::mark_browser_nudge_seen(app_data);
         } else {

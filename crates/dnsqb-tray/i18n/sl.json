@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Noben brskalnik še ne uporablja DNS Quorum Filter.\nOdprite nastavitve, da to popravite.",
   "menu.openSettings": "Odpri nastavitve",
   "menu.resetCacheLog": "Ponastavi predpomnilnik in dnevnik",
   "menu.about": "O programu",

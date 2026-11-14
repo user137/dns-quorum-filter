@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Chưa có trình duyệt nào dùng DNS Quorum Filter.\nMở phần cài đặt để khắc phục.",
   "menu.openSettings": "Mở cài đặt",
   "menu.resetCacheLog": "Đặt lại bộ nhớ đệm và nhật ký",
   "menu.about": "Giới thiệu",

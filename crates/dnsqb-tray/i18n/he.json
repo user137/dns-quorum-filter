@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "אף דפדפן עדיין לא משתמש ב-DNS Quorum Filter.\nפתחו את ההגדרות כדי לתקן זאת.",
   "menu.openSettings": "פתיחת הגדרות",
   "menu.resetCacheLog": "איפוס המטמון והיומן",
   "menu.about": "אודות",

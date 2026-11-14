@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Belum ada browser yang menggunakan DNS Quorum Filter.\nBuka pengaturan untuk memperbaikinya.",
   "menu.openSettings": "Buka pengaturan",
   "menu.resetCacheLog": "Atur ulang cache dan log",
   "menu.about": "Tentang",

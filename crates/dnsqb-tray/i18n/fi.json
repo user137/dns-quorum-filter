@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Mikään selain ei vielä käytä DNS Quorum Filteriä.\nAvaa asetukset korjataksesi tämän.",
   "menu.openSettings": "Avaa asetukset",
   "menu.resetCacheLog": "Nollaa välimuisti ja loki",
   "menu.about": "Tietoja",

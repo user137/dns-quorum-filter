@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Henüz hiçbir tarayıcı DNS Quorum Filter kullanmıyor.\nDüzeltmek için ayarları açın.",
   "menu.openSettings": "Ayarları aç",
   "menu.resetCacheLog": "Önbelleği ve günlüğü sıfırla",
   "menu.about": "Hakkında",

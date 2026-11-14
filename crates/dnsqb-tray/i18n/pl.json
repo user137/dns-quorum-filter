@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Żadna przeglądarka nie używa jeszcze DNS Quorum Filter.\nOtwórz ustawienia, aby to naprawić.",
   "menu.openSettings": "Otwórz ustawienia",
   "menu.resetCacheLog": "Zresetuj pamięć podręczną i dziennik",
   "menu.about": "O programie",

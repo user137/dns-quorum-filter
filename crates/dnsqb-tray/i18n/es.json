@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Ningún navegador usa todavía DNS Quorum Filter.\nAbre la configuración para solucionarlo.",
   "menu.openSettings": "Abrir configuración",
   "menu.resetCacheLog": "Restablecer caché y registro",
   "menu.about": "Acerca de",

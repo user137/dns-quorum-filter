@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Még egyetlen böngésző sem használja a DNS Quorum Filtert.\nNyissa meg a beállításokat a javításhoz.",
   "menu.openSettings": "Beállítások megnyitása",
   "menu.resetCacheLog": "Gyorsítótár és napló visszaállítása",
   "menu.about": "Névjegy",

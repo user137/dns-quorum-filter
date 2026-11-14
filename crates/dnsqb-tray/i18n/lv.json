@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Neviena pārlūkprogramma vēl neizmanto DNS Quorum Filter.\nAtveriet iestatījumus, lai to labotu.",
   "menu.openSettings": "Atvērt iestatījumus",
   "menu.resetCacheLog": "Atiestatīt kešatmiņu un žurnālu",
   "menu.about": "Par programmu",

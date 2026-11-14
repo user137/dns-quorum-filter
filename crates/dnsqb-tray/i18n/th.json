@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "ยังไม่มีเบราว์เซอร์ใดใช้ DNS Quorum Filter\nเปิดการตั้งค่าเพื่อแก้ไข",
   "menu.openSettings": "เปิดการตั้งค่า",
   "menu.resetCacheLog": "รีเซ็ตแคชและบันทึก",
   "menu.about": "เกี่ยวกับ",

@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "아직 DNS Quorum Filter를 사용하는 브라우저가 없습니다.\n설정을 열어 해결하세요.",
   "menu.openSettings": "설정 열기",
   "menu.resetCacheLog": "캐시 및 로그 재설정",
   "menu.about": "정보",

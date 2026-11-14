@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Nė viena naršyklė dar nenaudoja DNS Quorum Filter.\nAtidarykite nustatymus, kad tai ištaisytumėte.",
   "menu.openSettings": "Atidaryti nustatymus",
   "menu.resetCacheLog": "Atkurti podėlį ir žurnalą",
   "menu.about": "Apie",

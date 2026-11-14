@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "还没有浏览器在使用 DNS Quorum Filter。\n请打开设置进行修复。",
   "menu.openSettings": "打开设置",
   "menu.resetCacheLog": "重置缓存和日志",
   "menu.about": "关于",

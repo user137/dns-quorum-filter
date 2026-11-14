@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Nog geen enkele browser gebruikt DNS Quorum Filter.\nOpen de instellingen om dit op te lossen.",
   "menu.openSettings": "Instellingen openen",
   "menu.resetCacheLog": "Cache en logboek resetten",
   "menu.about": "Over",

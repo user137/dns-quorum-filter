@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "Ükski brauser ei kasuta veel DNS Quorum Filterit.\nAvage seaded, et see parandada.",
   "menu.openSettings": "Ava seaded",
   "menu.resetCacheLog": "Lähtesta vahemälu ja logi",
   "menu.about": "Teave",

@@ -1,4 +1,5 @@
 {
+  "nudge.popupText": "अभी कोई भी ब्राउज़र DNS Quorum Filter का उपयोग नहीं कर रहा है।\nइसे ठीक करने के लिए सेटिंग्स खोलें।",
   "menu.openSettings": "सेटिंग्स खोलें",
   "menu.resetCacheLog": "कैश और लॉग रीसेट करें",
   "menu.about": "ऐप के बारे में",
