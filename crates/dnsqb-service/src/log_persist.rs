@@ -705,7 +705,7 @@ mod tests {
     };
     use hickory_proto::rr::RecordType;
     use std::path::Path;
-    use std::time::{Duration, SystemTime};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     const KEY: [u8; 32] = [3u8; 32];
 
@@ -954,10 +954,15 @@ mod tests {
     #[test]
     fn switching_persistence_on_at_runtime_merges_existing_day_files() {
         let dir = tempdir();
-        let now = SystemTime::now();
+        // Both entries must share a UTC day even when the test runs just after
+        // midnight UTC, so the earlier one is a minute back from a `now` held at
+        // least two minutes into the day.
+        let real = SystemTime::now();
+        let day_start = UNIX_EPOCH + Duration::from_hours(24 * utc_day(real));
+        let now = real.max(day_start + Duration::from_mins(2));
         // An earlier run left today's file.
         let earlier = QueryLog::default();
-        earlier.push(entry("from-disk.example", ago(now, 1)));
+        earlier.push(entry("from-disk.example", now - Duration::from_mins(1)));
         let mut first = QueryLogDisk::with_key(dir.path(), KEY);
         first.flush(&earlier, on(LogRetention::Day), now);
 
