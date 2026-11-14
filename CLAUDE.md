@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-**Current phase:** Фаза 5 (ccTLD block §5.2 + i18n T-151 + CLI `--help` T-235) **in progress** —
+**Current phase:** Фаза 5 (ccTLD block §5.2 + i18n T-151 + CLI `--help` T-235) **closed 2026-11-14** (Батч 5.7 last, not yet tagged) —
 Батч 5.1 (ccTLD-block backend: pure core, `[cctld_block]` config, `POST /admin/cctld-block`,
 pipeline step 3, `DecisionSource::CctldBlock`) shipped 2026-09-19. Батч 5.2 (i18n infra: flat
 per-locale JSON dictionaries, `t()`/`tPlural()`, `/admin/ui/i18n/{uk,en}.json`, pilot-migrated
@@ -440,11 +440,12 @@ exercise it without a real tag: `gh workflow run release.yml` (must be on `main`
 target\release -OutFile dist\dns-quorum-filter.msix`), needs the Windows SDK's `makeappx.exe`/
 `signtool.exe` (`Windows Kits\10\bin\10.*\x64\`) — present on this dev machine as well as CI, so
 it can be (and was, T-156) verified locally before ever pushing. `assets/gen-icon.py` (Pillow) —
-regenerate `assets/icon/*.png` + `app.ico` + `assets/icon/wordmark.png` **and** the four
-`crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` blobs (T-191 — the tray's
-runtime `Icon::from_rgba` per-status glyphs, `make_tray_glyph(size, colour)`; replaced T-183's
-single `tray-32-rgba.bin`) after editing it, never hand-edit a PNG/`.bin`; needs Segoe UI Bold
-(`C:\Windows\Fonts\segoeuib.ttf`, present on any current Windows install) for `wordmark.png`.
+regenerate `assets/icon/*.png` + `app.ico` + `wordmark.png`, the four tray glyph blobs
+`crates/dnsqb-tray/icons/tray-32-{green,amber,grey,red}-rgba.bin` (`make_tray_glyph`) **and** the
+nudge popup's base + 37 `icons/nudge-text/<locale>.bin` text masks (Батч 5.7 — re-run after any
+`nudge.popupText` edit, a drift test fails otherwise) — never hand-edit a PNG/`.bin`. Needs Segoe
+UI Bold and `pwsh` 7 (`gen-nudge-text.ps1`, GDI+, also the Yu Gothic UI / Microsoft YaHei UI /
+Malgun Gothic / Leelawadee UI / Nirmala UI bold faces of a stock Windows 11).
 
 `.github/workflows/codeql.yml` (T-101) is a separate workflow — CodeQL SAST, language `rust`,
 `build-mode: none` (no cargo build), `runs-on: windows-latest` (cfg visibility for

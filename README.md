@@ -5,7 +5,7 @@
 
 [![CI](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/user137/dns-quorum-filter/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: Phase 5 in progress](https://img.shields.io/badge/status-Phase%205%20in%20progress-yellow)
+![Status: Phase 5 closed](https://img.shields.io/badge/status-Phase%205%20closed-green)
 
 [`SPEC.md`](SPEC.md) · [`SERVICES.md`](SERVICES.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`SECURITY.md`](SECURITY.md)
 
@@ -114,7 +114,8 @@ CLI `--help` і `nudge_popup` (Батчі 5.5–5.7) поки лише укра�
 зі смоук-тесту `v0.7.0`; тег для повного QA-проходу (T-238), `nudge_popup` (Батч 5.7) ще
 лише українською. **Проміжний тег `v0.9.0` (2026-10-08)** — фікси повного QA-проходу (хвилі
 1–20): живе оновлення `/admin/ui` (SSE), закриті причини помилок `400` без луни введення,
-`AdminClient` закріплений лише на `cert.pem`, оновлення MSIX без `0x80070020`. Поставлено з Фази 3: watchdog-процес зі взаємним heartbeat (`dnsqb-watcher`), опційне
+`AdminClient` закріплений лише на `cert.pem`, оновлення MSIX без `0x80070020`. **Фаза 5 закрита
+2026-11-14** (ще без тегу): `nudge_popup` (Батч 5.7) теж 37 мовами. Поставлено з Фази 3: watchdog-процес зі взаємним heartbeat (`dnsqb-watcher`), опційне
 шифроване збереження логу й кешу, `.msix`-пакет для одноклікового встановлення
 ("[Встановлення (MSIX)](#встановлення-msix)" нижче) з in-app «Повністю видалити», майстер першого
 запуску (T-188) + per-браузер картка налаштування (T-189). З Фази 4: опційний (default-off)
