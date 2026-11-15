@@ -62,6 +62,32 @@ used in the tray's tooltip strings are pulled directly from this file's own alre
   `fail_open`/`DNS`/`ccTLD` above: `Quad9`, `AdGuard`, `DB-IP Lite`, `MaxMind GeoLite2`, blocklist
   source names (HaGeZi, 1Hosts, …), and `chrome://`/`edge://`/`brave://`/`opera://` URL schemes.
 
+## UX-4 revisions (2026-11-15, T-294) — supersede the rules below where they conflict
+
+From the UX/UI review (`review/ux/UX-REVIEW.md`, UX writer findings C1–C16). The English source
+was wrong in places and every machine-translated locale inherited it; these are now the rules:
+
+- **Rating filter → "Popular sites only" («bubble»).** "Rating" read as content/age rating in
+  translation (pl "Filtr ocen", de "Bewertungsfilter"). The feature only lets popular sites open.
+  Its "zones" are "lists" in user-facing text. Same name in the tray tooltip
+  (`crates/dnsqb-tray/i18n`, `tooltip.ratingFilterSuffix`).
+- **One name per override list: "Allowed domains" / "Blocked domains"** (card headings, log source,
+  help, empty states). The log row buttons are verbs: "Always allow" / "Always block". The
+  "allowlist/blocklist" rendering note below is kept only for the help text's idiom.
+- **"baseline resolver" → "unfiltered reference DNS"**; uk «нефільтрований довідковий DNS»
+  (never «резервний» — it is not a backup, it sees every query).
+- **Log sources are translated**: "Quorum" → "Filters", plus `log.source.allowlist/blocklist/
+  geoip/baselineFallback`. The «quorum» per-locale note below now applies only to help text.
+- **ccTLD → "country domain ending(s)"** in user-facing text (uk «доменна зона країни»). `ccTLD`
+  stays only where it is a technical identifier, not in headings or labels.
+- **Timeout-mode radios carry no config identifier any more** ("Let the site open" / "Block the
+  site" / "Let it open, mark as incomplete in the log"); this reverses the 2026-09-22
+  "word (fail_open)" convention below. `fail_open` etc. remain untranslated wherever they still
+  appear as literals (`resolver_config.toml` docs).
+- **Two-click confirm buttons say "Click again to …"** (one pattern for all of them).
+- **uk terminology**: «журнал» (never «лог»), «облікові дані» (not «креденшели»), «типово» (not
+  «дефолт»), «вміст» (not «контент»), «публічні списки блокування», no «резолвінг»/«апстрім».
+
 ## Terms that stay untranslated
 
 Config-mode identifiers are code literals quoted inside the sentence, not prose — translate the

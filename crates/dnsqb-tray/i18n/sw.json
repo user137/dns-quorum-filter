@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: inalinda",
   "tooltip.filteringCountsTemplate": " — imezuiliwa {blocked}/{total}, maombi sasa: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — baadhi ya ukaguzi hazijibu ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Kichujio cha ukadiriaji «kiputo» kinatumika",
+  "tooltip.ratingFilterSuffix": " — Kipengele «Tovuti maarufu pekee» («kiputo») kimewashwa",
   "tooltip.lastQueryMinutesTemplate": " — hoja ya mwisho: dak {minutes} zilizopita",
   "tooltip.lastQueryHoursTemplate": " — hoja ya mwisho: saa {hours} zilizopita",
   "tooltip.lastQueryJustNow": " — hoja ya mwisho: sasa hivi",

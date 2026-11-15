@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter：正在保护",
   "tooltip.filteringCountsTemplate": " — 已阻止 {blocked}/{total}，当前请求数：{inFlight}",
   "tooltip.degradedSegmentTemplate": " — 部分检查未响应（{degradedEvents}/{degradedWindow}）",
-  "tooltip.ratingFilterSuffix": " — 评级过滤器“气泡”已启用",
+  "tooltip.ratingFilterSuffix": " — “仅限热门网站”（“气泡”）已开启",
   "tooltip.lastQueryMinutesTemplate": " — 最近查询：{minutes} 分钟前",
   "tooltip.lastQueryHoursTemplate": " — 最近查询：{hours} 小时前",
   "tooltip.lastQueryJustNow": " — 最近查询：刚刚",

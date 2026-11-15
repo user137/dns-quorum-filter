@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: protegge",
   "tooltip.filteringCountsTemplate": " — bloccati {blocked}/{total}, richieste ora: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — alcuni controlli non rispondono ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Filtro di valutazione «bolla» attivo",
+  "tooltip.ratingFilterSuffix": " — «Solo siti popolari» («bolla») è attivo",
   "tooltip.lastQueryMinutesTemplate": " — ultima query: {minutes} min fa",
   "tooltip.lastQueryHoursTemplate": " — ultima query: {hours} h fa",
   "tooltip.lastQueryJustNow": " — ultima query: proprio ora",

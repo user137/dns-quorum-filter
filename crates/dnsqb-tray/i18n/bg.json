@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: защитава",
   "tooltip.filteringCountsTemplate": " — блокирани {blocked}/{total}, заявки в момента: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — някои проверки не отговарят ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Рейтинговият филтър «мехурче» е активен",
+  "tooltip.ratingFilterSuffix": " — Само популярни сайтове («мехурче») е включено",
   "tooltip.lastQueryMinutesTemplate": " — последна заявка: преди {minutes} мин",
   "tooltip.lastQueryHoursTemplate": " — последна заявка: преди {hours} ч",
   "tooltip.lastQueryJustNow": " — последна заявка: току-що",

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: protejează",
   "tooltip.filteringCountsTemplate": " — blocate {blocked}/{total}, cereri acum: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — unele verificări nu răspund ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Filtrul de evaluare «bulă» este activ",
+  "tooltip.ratingFilterSuffix": " — Funcția «Doar site-uri populare» («bulă») este activată",
   "tooltip.lastQueryMinutesTemplate": " — ultima interogare: acum {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — ultima interogare: acum {hours} h",
   "tooltip.lastQueryJustNow": " — ultima interogare: chiar acum",

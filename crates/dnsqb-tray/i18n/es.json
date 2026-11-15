@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: protegiendo",
   "tooltip.filteringCountsTemplate": " : bloqueadas {blocked}/{total}, solicitudes ahora: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — algunas comprobaciones no responden ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " : Filtro de valoración «burbuja» activo",
+  "tooltip.ratingFilterSuffix": " : Solo sitios populares («burbuja») activado",
   "tooltip.lastQueryMinutesTemplate": " — última consulta: hace {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — última consulta: hace {hours} h",
   "tooltip.lastQueryJustNow": " — última consulta: ahora mismo",

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: protegendo",
   "tooltip.filteringCountsTemplate": " — bloqueados {blocked}/{total}, solicitações agora: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — algumas verificações não respondem ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Filtro de classificação «bolha» ativo",
+  "tooltip.ratingFilterSuffix": " — «Apenas sites populares» («bolha») está ativado",
   "tooltip.lastQueryMinutesTemplate": " — última consulta: há {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — última consulta: há {hours} h",
   "tooltip.lastQueryJustNow": " — última consulta: agora mesmo",

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: apsaugo",
   "tooltip.filteringCountsTemplate": " — užblokuota {blocked}/{total}, užklausų dabar: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — kai kurios patikros neatsako ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Reitingavimo filtras „burbulas“ aktyvus",
+  "tooltip.ratingFilterSuffix": " — Režimas „Tik populiarios svetainės“ („burbulas“) įjungtas",
   "tooltip.lastQueryMinutesTemplate": " — paskutinė užklausa: prieš {minutes} min.",
   "tooltip.lastQueryHoursTemplate": " — paskutinė užklausa: prieš {hours} val.",
   "tooltip.lastQueryJustNow": " — paskutinė užklausa: ką tik",

@@ -178,20 +178,13 @@
         </ol>
       </div>
       <p id="browser-verify-chromium" class="setup-verify" data-i18n-html="browserSetup.verify">
-        Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок
-        <code>ALLOWED</code>. Що браузер справді резолвить саме через цю службу —
-        перевіряється окремо: заблокуйте домен і відкрийте його, має бути
-        <code>ERR_ADDRESS_INVALID</code> (не <code>ERR_NAME_NOT_RESOLVED</code>);
-        повна процедура — у README, секція «Перевірка: браузер → локальний DoH».
+        Перевірка: відкрийте будь-який сайт — він має з'явитися в <a href="#log-body">журналі нижче</a> як «Дозволено». Щоб переконатися, що фільтрація справді працює, додайте тестовий домен до заблокованих і відкрийте його: браузер має показати <code>ERR_ADDRESS_INVALID</code> (не <code>ERR_NAME_NOT_RESOLVED</code>).
       </p>
       <p id="browser-verify-firefox" class="setup-verify" data-i18n="browserSetup.verifyFirefox" hidden>
-        Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок ALLOWED. Що Firefox справді
-        резолвить саме через цю службу — перевіряється окремо: заблокуйте домен і відкрийте його — Firefox
-        покаже «Не вдається знайти сайт», а в логу з'явиться рядок BLOCKED для цього домену; повна процедура —
-        у README, секція «Перевірка: браузер → локальний DoH».
+        Перевірка: відкрийте будь-який сайт — він має з'явитися в журналі нижче як «Дозволено». Щоб переконатися, що фільтрація справді працює, додайте тестовий домен до заблокованих і відкрийте його: Firefox покаже сторінку «не вдається знайти сайт», а журнал — «Заблоковано».
       </p>
       <p id="browser-local-network-note" class="setup-verify" data-i18n="browserSetup.localNetworkNote">
-        Якщо сайт просить дозволу на доступ до інших застосунків і служб на цьому пристрої (локальна мережа), оберіть «Блокувати»: з таким дозволом сайт зможе надсилати запити цій службі — дізнаватися, які сайти ви нещодавно відкривали, і додавати записи в лог запитів.
+        Якщо сайт просить доступу до застосунків і служб на цьому пристрої (локальна мережа), оберіть «Блокувати». Інакше він зможе дізнаватися з цього фільтра, які сайти ви нещодавно відкривали, і додавати фальшиві записи в журнал.
       </p>
     </div>
     </div>
@@ -222,7 +215,7 @@
        on its own timer (see main.js) - a log table re-rendering under a
        reader every few seconds would be disruptive, not helpful. -->
   <div id="log-body" class="card">
-    <h2>Лог запитів</h2>
+    <h2>Журнал запитів</h2>
     <p>Завантаження…</p>
   </div>
 
@@ -247,7 +240,7 @@
        own placement rationale: this extends Blocklist (SPEC.md §5 step 2)
        itself, not a niche add-on. -->
   <div id="blocklist-bundles-body" class="card">
-    <h2>Блок-лист-бандли</h2>
+    <h2>Публічні списки блокування</h2>
     <p>Завантаження…</p>
   </div>
 
@@ -269,7 +262,7 @@
            inputs (id / URL / display name) that must not be wiped mid-typing,
            same reasoning as #overrides-body. -->
       <div id="providers-body" class="card">
-        <h2>Провайдери-voter'и</h2>
+        <h2>Провайдери</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -280,7 +273,7 @@
            #geoip-body - both block by a country-derived code, ccTLD is the
            blunter of the two signals. -->
       <div id="cctld-block-body" class="card">
-        <h2>Блокування за ccTLD</h2>
+        <h2>Блокування доменних зон країн</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -311,7 +304,7 @@
            mini-row switch (T-127). Kept before #danger-zone-body so the
            danger zone stays visually last. -->
       <div id="rating-filter-body" class="card">
-        <h2>Рейтинговий фільтр «бульбашка»</h2>
+        <h2>Лише популярні сайти («бульбашка»)</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -342,7 +335,7 @@
       <div id="danger-zone-body" class="card danger-zone">
         <h2 data-i18n="danger.heading">Повне видалення</h2>
         <p class="notice warn" data-i18n-html="danger.warning">
-          Зупиняє DNS Quorum Filter і видаляє все, що він залишив на цьому комп'ютері: довірений сертифікат, збережені ключі й креденшели (TLS-ключ, ключ шифрування журналу й кешу, ключ особистої зони, креденшели MaxMind, якщо є) і всю теку даних, а потім відкриває Параметри Windows, щоб ви видалили сам застосунок. Це та сама дія, що пункт «Повністю видалити» у меню іконки в треї; підтвердити її треба у вікні DNS Quorum Filter.
+          Зупиняє DNS Quorum Filter і видаляє все, що він залишив на цьому комп'ютері: довірений сертифікат, збережені ключі й облікові дані (TLS-ключ, ключ шифрування журналу й кешу, ключ особистої зони, облікові дані MaxMind, якщо є) і всю теку даних, а потім відкриває Параметри Windows, щоб ви видалили сам застосунок. Це та сама дія, що пункт «Повністю видалити» у меню іконки в треї; підтвердити її треба у вікні DNS Quorum Filter.
         </p>
         <button type="button" id="uninstall-local-state-btn">Повністю видалити</button>
         <div id="uninstall-local-state-result" role="status"></div>
@@ -400,7 +393,7 @@
       доступні з <a href="https://www.maxmind.com" target="_blank" rel="noopener noreferrer">maxmind.com</a>.
     </p>
     <p data-i18n-html="footer.cruxAttribution">
-      Дані популярності сайтів (рейтинговий фільтр «бульбашка»):
+      Дані популярності сайтів («Лише популярні сайти»):
       <a href="https://developer.chrome.com/docs/crux/" target="_blank" rel="noopener noreferrer">Chrome UX Report</a>,
       © Google, ліцензія
       <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: đang bảo vệ",
   "tooltip.filteringCountsTemplate": " — đã chặn {blocked}/{total}, yêu cầu hiện tại: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — một số kiểm tra không phản hồi ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Bộ lọc xếp hạng «bong bóng» đang hoạt động",
+  "tooltip.ratingFilterSuffix": " — «Chỉ trang web phổ biến» («bong bóng») đang bật",
   "tooltip.lastQueryMinutesTemplate": " — truy vấn gần nhất: {minutes} phút trước",
   "tooltip.lastQueryHoursTemplate": " — truy vấn gần nhất: {hours} giờ trước",
   "tooltip.lastQueryJustNow": " — truy vấn gần nhất: vừa xong",

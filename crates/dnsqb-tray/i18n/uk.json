@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: захищає",
   "tooltip.filteringCountsTemplate": " — заблоковано {blocked}/{total}, запитів зараз: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — деякі перевірки не відповідають ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — рейтинг-фільтр «бульбашка» активний",
+  "tooltip.ratingFilterSuffix": " — «Лише популярні сайти» («бульбашка») увімкнено",
   "tooltip.lastQueryMinutesTemplate": " — останній запит: {minutes} хв тому",
   "tooltip.lastQueryHoursTemplate": " — останній запит: {hours} год тому",
   "tooltip.lastQueryJustNow": " — останній запит: щойно",

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: koruyor",
   "tooltip.filteringCountsTemplate": " — engellenen {blocked}/{total}, şu anki istekler: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — bazı denetimler yanıt vermiyor ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Derecelendirme filtresi «balon» etkin",
+  "tooltip.ratingFilterSuffix": " — «Yalnızca popüler siteler» («balon») açık",
   "tooltip.lastQueryMinutesTemplate": " — son sorgu: {minutes} dk önce",
   "tooltip.lastQueryHoursTemplate": " — son sorgu: {hours} sa önce",
   "tooltip.lastQueryJustNow": " — son sorgu: az önce",

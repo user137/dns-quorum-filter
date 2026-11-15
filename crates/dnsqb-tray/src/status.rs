@@ -908,21 +908,21 @@ mod tests {
         resp.rating_filter.active = true;
         assert!(
             compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk")
-                .contains("рейтинг-фільтр «бульбашка» активний"),
+                .contains("«Лише популярні сайти» («бульбашка») увімкнено"),
             "an active bubble must add its suffix"
         );
 
         resp.rating_filter.active = false;
         assert!(
             !compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk")
-                .contains("рейтинг-фільтр"),
+                .contains("«Лише популярні сайти»"),
             "Fork B (enabled, no list) gets no tray suffix"
         );
 
         resp.rating_filter.enabled = false;
         assert!(
             !compose_tooltip(TrayStatus::from_response(&resp, NOW_MS), true, "uk")
-                .contains("рейтинг-фільтр"),
+                .contains("«Лише популярні сайти»"),
             "a disabled bubble gets no suffix"
         );
     }

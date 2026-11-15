@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: सुरक्षा कर रहा है",
   "tooltip.filteringCountsTemplate": " — अवरुद्ध {blocked}/{total}, अभी अनुरोध: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — कुछ जांचें प्रतिक्रिया नहीं दे रहीं ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — रेटिंग फ़िल्टर «बबल» सक्रिय है",
+  "tooltip.ratingFilterSuffix": " — केवल लोकप्रिय साइटें («बबल») चालू है",
   "tooltip.lastQueryMinutesTemplate": " — आख़िरी क्वेरी: {minutes} मिनट पहले",
   "tooltip.lastQueryHoursTemplate": " — आख़िरी क्वेरी: {hours} घंटे पहले",
   "tooltip.lastQueryJustNow": " — आख़िरी क्वेरी: अभी-अभी",

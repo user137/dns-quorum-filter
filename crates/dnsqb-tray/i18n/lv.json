@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: aizsargā",
   "tooltip.filteringCountsTemplate": " — bloķēts {blocked}/{total}, pieprasījumu tagad: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — dažas pārbaudes nereaģē ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Vērtējuma filtrs „burbulis“ ir aktīvs",
+  "tooltip.ratingFilterSuffix": " — Režīms „Tikai populāras vietnes“ („burbulis“) ir ieslēgts",
   "tooltip.lastQueryMinutesTemplate": " — pēdējais vaicājums: pirms {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — pēdējais vaicājums: pirms {hours} h",
   "tooltip.lastQueryJustNow": " — pēdējais vaicājums: tikko",

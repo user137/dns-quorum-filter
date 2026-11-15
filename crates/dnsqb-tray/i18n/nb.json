@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: beskytter",
   "tooltip.filteringCountsTemplate": " — blokkert {blocked}/{total}, forespørsler nå: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — enkelte kontroller svarer ikke ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Vurderingsfilteret «boble» er aktivt",
+  "tooltip.ratingFilterSuffix": " — «Bare populære nettsteder» («boble») er på",
   "tooltip.lastQueryMinutesTemplate": " — siste forespørsel: for {minutes} min siden",
   "tooltip.lastQueryHoursTemplate": " — siste forespørsel: for {hours} t siden",
   "tooltip.lastQueryJustNow": " — siste forespørsel: akkurat nå",

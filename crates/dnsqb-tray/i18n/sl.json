@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: ščiti",
   "tooltip.filteringCountsTemplate": " — blokirano {blocked}/{total}, zahtev trenutno: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — nekatera preverjanja se ne odzivajo ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Filter ocenjevanja »mehurček« je aktiven",
+  "tooltip.ratingFilterSuffix": " — Funkcija »Samo priljubljena spletna mesta« (»mehurček«) je vklopljena",
   "tooltip.lastQueryMinutesTemplate": " — zadnja poizvedba: pred {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — zadnja poizvedba: pred {hours} h",
   "tooltip.lastQueryJustNow": " — zadnja poizvedba: pravkar",

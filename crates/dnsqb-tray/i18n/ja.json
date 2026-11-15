@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: 保護中",
   "tooltip.filteringCountsTemplate": " — ブロック {blocked}/{total}、現在のリクエスト数: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — 一部のチェックが応答していません（{degradedEvents}/{degradedWindow}）",
-  "tooltip.ratingFilterSuffix": " — レーティングフィルター「バブル」が有効です",
+  "tooltip.ratingFilterSuffix": " — 人気サイトのみ(「バブル」)がオンです",
   "tooltip.lastQueryMinutesTemplate": " — 最後のクエリ: {minutes} 分前",
   "tooltip.lastQueryHoursTemplate": " — 最後のクエリ: {hours} 時間前",
   "tooltip.lastQueryJustNow": " — 最後のクエリ: たった今",

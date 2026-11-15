@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: štiti",
   "tooltip.filteringCountsTemplate": " — blokirano {blocked}/{total}, zahtevi trenutno: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — neke provere ne odgovaraju ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Filter ocenjivanja „mehur“ je aktivan",
+  "tooltip.ratingFilterSuffix": " — Funkcija „Samo popularni sajtovi“ („mehur“) je uključena",
   "tooltip.lastQueryMinutesTemplate": " — poslednji upit: pre {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — poslednji upit: pre {hours} h",
   "tooltip.lastQueryJustNow": " — poslednji upit: upravo sada",

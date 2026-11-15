@@ -563,7 +563,7 @@ for (const [fn, data] of xssCalls) {
   assigned.length = 0; created.length = 0;
   await run("onConfigChanged()");
   guard("failed config POST went to renderError (hero SERVICE_UNREACHABLE)", !postErrorRendered("Failed to fetch"));
-  guard("failed config POST: no localized message in the card", shown(run(`t("timeoutConfig.applyFailedTemplate", { message: "Failed to fetch" })`)));
+  guard("failed config POST: no localized message in the card", shown(run(`t("timeoutConfig.applyFailedTemplate", { message: t("error.serviceUnreachable") })`)));
   guard("failed config POST: radio not put back to the server's mode", assigned.some(([w, v]) => w.endsWith(".innerHTML") && /value="fail_open" checked/.test(v)));
   // Error path: a 400 answer is not "service unreachable" either.
   ctx.fetch = routeFetch({ "/admin/config": failWith(400) });
@@ -589,25 +589,29 @@ for (const [fn, data] of xssCalls) {
   await run(`flipCategory("SECURITY", true)`);
   guard("failed category flip replaced the cards with an error panel", panelSpy.hits.length === 0);
   guard("failed category flip: toggles gone", created.some((r) => r.props.name === "category-ADS_TRACKERS"));
-  guard("failed category flip: no localized message", shown(run(`t("filterControls.categoryFlipFailedTemplate", { message: "Failed to fetch" })`)));
-  // Error path: provider toggle / preset add answered 500.
+  guard("failed category flip: no localized message", shown(run(`t("filterControls.categoryFlipFailedTemplate", { message: t("error.serviceUnreachable") })`)));
+  guard("failed category flip: raw browser network text shown", !shown("Failed to fetch"));
+  // Error path: provider toggle / preset add answered 500 (UX-4: shown as
+  // "the service didn't respond", not "HTTP 500").
+  const svc = run(`t("error.serviceUnreachable")`);
+  ctx.svc = svc;
   ctx.fetch = routeFetch({ "/admin/providers/set-enabled": failWith(500), "/admin/providers/add": failWith(500) });
   assigned.length = 0; created.length = 0;
   await run(`providerAction(() => setProviderEnabled("x", false), "providers.changeFailedTemplate")`);
   guard("failed provider toggle replaced the card with an error panel", panelSpy.hits.length === 0);
   guard("failed provider toggle: switch not put back", created.some((r) => r.props.name === "provider-x" && r.props.checked === true));
-  guard("failed provider toggle: no localized message", shown(run(`t("providers.changeFailedTemplate", { message: "HTTP 500" })`)));
+  guard("failed provider toggle: no localized message", shown(run(`t("providers.changeFailedTemplate", { message: svc })`)));
   await run(`providerAction(() => addProvider({ id: "y" }), "providers.addFailedTemplate")`);
-  guard("failed preset add: no localized message", shown(run(`t("providers.addFailedTemplate", { message: "HTTP 500" })`)));
+  guard("failed preset add: no localized message", shown(run(`t("providers.addFailedTemplate", { message: svc })`)));
   // Boundary: a 5xx bumps the topic, so a background re-render follows - the messages survive it.
   assigned.length = 0;
   run(`renderProviders(${JSON.stringify(providersData)})`);
-  guard("background providers render dropped the action errors", shown("HTTP 500") && shown("Failed to fetch"));
+  guard("background providers render dropped the action errors", shown(run(`t("providers.addFailedTemplate", { message: svc })`)) && shown(run(`t("filterControls.categoryFlipFailedTemplate", { message: svc })`)));
   // Misuse: a locale switch re-translates a message already on screen.
   run(`DICT = __dict; CURRENT_LOCALE = "uk"`, Object.assign(ctx, { __dict: dicts.uk }));
   assigned.length = 0;
   run(`renderProviders(${JSON.stringify(providersData)})`);
-  guard("action error not re-translated on a locale switch", shown(run(`t("providers.addFailedTemplate", { message: "HTTP 500" })`)));
+  guard("action error not re-translated on a locale switch", shown(run(`t("providers.addFailedTemplate", { message: svc })`)));
   run(`DICT = __dict; CURRENT_LOCALE = "en"`, Object.assign(ctx, { __dict: dicts.en }));
   // Happy: the next successful action clears both cards' messages.
   ctx.fetch = routeFetch({ "/admin/providers/set-enabled": okJson(providersData), "/admin/providers/set-category-enabled": okJson(providersData) });
@@ -615,7 +619,7 @@ for (const [fn, data] of xssCalls) {
   await run(`flipCategory("SECURITY", true)`);
   assigned.length = 0;
   run(`renderProviders(${JSON.stringify(providersData)})`);
-  guard("successful actions kept the old errors", !shown("HTTP 500") && !shown("Failed to fetch"));
+  guard("successful actions kept the old errors", !shown(svc));
   // Happy: a custom provider added through the form is a successful action too.
   ctx.fetch = routeFetch({ "/admin/providers/set-enabled": failWith(500), "/admin/providers/add": okJson(providersData) });
   await run(`providerAction(() => setProviderEnabled("x", false), "providers.changeFailedTemplate")`);
@@ -630,7 +634,7 @@ for (const [fn, data] of xssCalls) {
   await formAdd.listeners.click[0]();
   assigned.length = 0;
   run(`renderProviders(${JSON.stringify(providersData)})`);
-  guard("custom provider added, old action error kept", !shown("HTTP 500"));
+  guard("custom provider added, old action error kept", !shown(svc));
   run("customFormNode = null; customFormRefs = null");
   // No data at all yet (first load failed): the panel is still the honest answer.
   run("lastProvidersData = null");

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: véd",
   "tooltip.filteringCountsTemplate": " — blokkolva {blocked}/{total}, kérések most: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — néhány ellenőrzés nem válaszol ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Az értékelési szűrő „buborék“ aktív",
+  "tooltip.ratingFilterSuffix": " — A „Csak népszerű oldalak” („buborék”) be van kapcsolva",
   "tooltip.lastQueryMinutesTemplate": " — utolsó lekérdezés: {minutes} perce",
   "tooltip.lastQueryHoursTemplate": " — utolsó lekérdezés: {hours} órája",
   "tooltip.lastQueryJustNow": " — utolsó lekérdezés: épp most",

@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter : protège",
   "tooltip.filteringCountsTemplate": " — bloqué {blocked}/{total}, requêtes en cours : {inFlight}",
   "tooltip.degradedSegmentTemplate": " — certaines vérifications ne répondent pas ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Filtre de notation « bulle » actif",
+  "tooltip.ratingFilterSuffix": " — Sites populaires uniquement (« bulle ») activé",
   "tooltip.lastQueryMinutesTemplate": " — dernière requête : il y a {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — dernière requête : il y a {hours} h",
   "tooltip.lastQueryJustNow": " — dernière requête : à l’instant",

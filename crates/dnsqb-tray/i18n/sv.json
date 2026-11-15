@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: skyddar",
   "tooltip.filteringCountsTemplate": " — blockerade {blocked}/{total}, förfrågningar just nu: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — vissa kontroller svarar inte ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Betygsfiltret ”bubbla” är aktivt",
+  "tooltip.ratingFilterSuffix": " — ”Endast populära webbplatser” (”bubbla”) är på",
   "tooltip.lastQueryMinutesTemplate": " — senaste förfrågan: {minutes} min sedan",
   "tooltip.lastQueryHoursTemplate": " — senaste förfrågan: {hours} tim sedan",
   "tooltip.lastQueryJustNow": " — senaste förfrågan: just nu",

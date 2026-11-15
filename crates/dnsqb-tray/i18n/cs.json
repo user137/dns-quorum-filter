@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: chrání",
   "tooltip.filteringCountsTemplate": " — blokováno {blocked}/{total}, aktuální požadavky: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — některé kontroly neodpovídají ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — Hodnoticí filtr „bublina“ je aktivní",
+  "tooltip.ratingFilterSuffix": " — Jen oblíbené weby („bublina“) je zapnuto",
   "tooltip.lastQueryMinutesTemplate": " — poslední dotaz: před {minutes} min",
   "tooltip.lastQueryHoursTemplate": " — poslední dotaz: před {hours} h",
   "tooltip.lastQueryJustNow": " — poslední dotaz: právě teď",

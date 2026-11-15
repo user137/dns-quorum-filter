@@ -127,11 +127,27 @@ const CACHE_FIELD_LABEL_KEYS = {
   max_capacity: "cacheConfig.field.maxCapacity",
 };
 
+// UX-4: the text shown for a failed action. fetch() rejects with a TypeError
+// carrying the browser's own (untranslated) wording when the service can't be
+// reached at all; that becomes the same "service didn't respond" line. Only
+// that one shape - any other TypeError is a page bug and keeps its message.
+// ("Failed to fetch" Chromium, "NetworkError when attempting to fetch
+// resource." Firefox, "Load failed" Safari.)
+function errorMessage(err) {
+  if (err && err.name === "TypeError" && /fetch|load failed/i.test(err.message)) {
+    return t("error.serviceUnreachable");
+  }
+  return (err && err.message) || String(err);
+}
+
 // T-280: a refused /admin/* request names a closed reason in its 400 body.
 // No body (an older service), a non-JSON one, an unknown reason or an unloaded
 // dictionary all keep the bare status this page showed before. Never throws.
 async function responseError(response) {
-  const fallback = new Error(`HTTP ${response.status}`);
+  // UX-4: a 5xx says what to do, not "HTTP 500".
+  const fallback = new Error(
+    response.status >= 500 ? t("error.serviceUnreachable") : `HTTP ${response.status}`,
+  );
   let body;
   try {
     const type = response.headers && response.headers.get("Content-Type");
@@ -1083,7 +1099,7 @@ function renderError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   appBody.appendChild(panel);
 }
@@ -1098,7 +1114,7 @@ async function onConfigChanged() {
     configApplyError = null;
     render(status);
   } catch (err) {
-    const message = (err && err.message) || String(err);
+    const message = errorMessage(err);
     configApplyError = () => t("timeoutConfig.applyFailedTemplate", { message });
     if (lastStatus) {
       renderTimeoutConfig(lastStatus);
@@ -1441,7 +1457,7 @@ function renderOverrides(data) {
     } catch (err) {
       errorLine.textContent = t("overrides.addFailedTemplate", {
         pattern,
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   }
@@ -1496,7 +1512,7 @@ function renderOverridesError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   overridesBody.appendChild(panel);
 }
@@ -1619,7 +1635,7 @@ function renderCacheConfig(data) {
       renderCacheConfig(await applyCacheConfig(update));
     } catch (err) {
       errorLine.textContent = t("cacheConfig.applyFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -1636,7 +1652,7 @@ function renderCacheConfigError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   cacheConfigBody.appendChild(panel);
 }
@@ -2093,7 +2109,7 @@ function renderCctldBlock(status) {
       renderCctldBlock(await setCctldBlock([...picked]));
     } catch (err) {
       errorLine.textContent = t("cctldBlock.saveFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -2106,7 +2122,7 @@ function renderCctldBlock(status) {
       renderCctldBlock(await setCctldBlock([...picked]));
     } catch (err) {
       errorLine.textContent = t("cctldBlock.saveFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -2125,7 +2141,7 @@ function renderCctldBlockError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   cctldBlockBody.appendChild(panel);
 }
@@ -2398,7 +2414,7 @@ function renderGeoip(data) {
     } catch (err) {
       errorLine.textContent = t("geoip.addFailedTemplate", {
         code,
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   }
@@ -2432,7 +2448,7 @@ function renderGeoipError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   geoipBody.appendChild(panel);
 }
@@ -2597,7 +2613,7 @@ function renderMaxmind(data) {
       renderMaxmind(await setMaxmind(accountId, licenseKey));
     } catch (err) {
       errorLine.textContent = t("maxmind.saveFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -2629,7 +2645,7 @@ function renderMaxmind(data) {
         renderMaxmind(await clearMaxmind());
       } catch (err) {
         errorLine.textContent = t("maxmind.clearFailedTemplate", {
-          message: (err && err.message) || String(err),
+          message: errorMessage(err),
         });
       }
     });
@@ -2649,7 +2665,7 @@ function renderMaxmindError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   geoipMaxmindBody.appendChild(panel);
 }
@@ -2734,21 +2750,23 @@ function logSourceText(entry) {
 function decisionSourceLabel(source) {
   switch (source) {
     case "ALLOWLIST":
-      return "Allowlist";
+      return t("log.source.allowlist");
     case "BLOCKLIST":
-      return "Blocklist";
+      return t("log.source.blocklist");
     case "BLOCKLIST_BUNDLE":
       return t("log.source.blocklistBundle");
     case "CACHE":
       return t("log.source.cache");
     case "QUORUM":
-      return "Quorum";
+      return t("log.source.quorum");
+    case "BASELINE_FALLBACK":
+      return t("log.source.baselineFallback");
     case "CCTLD_BLOCK":
       return t("log.source.cctldBlock");
     case "RATING_FILTER":
       return t("log.source.ratingFilter");
     case "GEOIP":
-      return "GeoIP";
+      return t("log.source.geoip");
     default:
       return source;
   }
@@ -2910,7 +2928,7 @@ function logItem(entry) {
       } catch (err) {
         btn.disabled = false;
         btn.textContent = t("error.generic", {
-          message: (err && err.message) || String(err),
+          message: errorMessage(err),
         });
       }
     });
@@ -3217,7 +3235,7 @@ async function applyLogPolicy(retention, persist) {
         : null;
     render(status);
   } catch (err) {
-    logRetentionError = t("error.generic", { message: (err && err.message) || String(err) });
+    logRetentionError = t("error.generic", { message: errorMessage(err) });
     renderLogRetention();
   }
 }
@@ -3517,7 +3535,7 @@ function renderLogError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   logResults.appendChild(panel);
 }
@@ -3848,7 +3866,7 @@ function customProviderForm() {
       renderProviders(data);
     } catch (err) {
       errorLine.textContent = t("providers.addFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -3979,7 +3997,7 @@ function buildProviders(data) {
 
 function renderProvidersError(err) {
   const message = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   providersBody.textContent = "";
   const heading = document.createElement("h2");
@@ -4025,7 +4043,7 @@ async function providerAction(post, failedKey) {
     providersActionError = null;
     renderProviders(data);
   } catch (err) {
-    const message = (err && err.message) || String(err);
+    const message = errorMessage(err);
     providersActionError = () => t(failedKey, { message });
     renderProvidersKeepingControls(err);
   }
@@ -4160,7 +4178,7 @@ async function flipCategory(category, enabled) {
     filterControlsActionError = null;
     renderProviders(data);
   } catch (err) {
-    const message = (err && err.message) || String(err);
+    const message = errorMessage(err);
     filterControlsActionError = () =>
       t("filterControls.categoryFlipFailedTemplate", { message });
     await refetchProvidersKeepingControls();
@@ -4595,7 +4613,7 @@ function renderRemoveAllError(err) {
     panel.className = "error-panel";
     panel.setAttribute("role", "alert");
     panel.textContent = t("error.generic", {
-      message: (err && err.message) || String(err),
+      message: errorMessage(err),
     });
     box.appendChild(panel);
   };
@@ -5153,7 +5171,7 @@ function renderRatingFilter(status) {
       } catch (err) {
         switchInput.checked = true;
         errorLine.textContent = t("rating.disableFailedTemplate", {
-          message: (err && err.message) || String(err),
+          message: errorMessage(err),
         });
       }
     }
@@ -5171,7 +5189,7 @@ function renderRatingFilter(status) {
       renderRatingFilter(await setRatingFilter(true, [...picked]));
     } catch (err) {
       errorLine.textContent = t("rating.enableFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -5184,7 +5202,7 @@ function renderRatingFilter(status) {
       renderRatingFilter(await setRatingFilter(rf.enabled, [...picked]));
     } catch (err) {
       errorLine.textContent = t("rating.saveFailedTemplate", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -5204,7 +5222,7 @@ function renderRatingFilterError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   ratingFilterBody.appendChild(panel);
 }
@@ -5558,7 +5576,7 @@ function renderBlocklistBundles(status) {
         checkbox.checked = !checkbox.checked;
         checkbox.disabled = false;
         errorLine.textContent = t("error.generic", {
-          message: (err && err.message) || String(err),
+          message: errorMessage(err),
         });
       }
     });
@@ -5645,7 +5663,7 @@ function renderBlocklistBundles(status) {
     } catch (err) {
       switchInput.checked = !switchInput.checked;
       errorLine.textContent = t("error.generic", {
-        message: (err && err.message) || String(err),
+        message: errorMessage(err),
       });
     }
   });
@@ -5662,7 +5680,7 @@ function renderBlocklistBundlesError(err) {
   panel.className = "error-panel";
   panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
-    message: (err && err.message) || String(err),
+    message: errorMessage(err),
   });
   blocklistBundlesBody.appendChild(panel);
 }

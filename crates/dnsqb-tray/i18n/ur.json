@@ -48,7 +48,7 @@
   "tooltip.filteringHead": "DNS Quorum Filter: تحفظ فراہم کر رہا ہے",
   "tooltip.filteringCountsTemplate": " — مسدود {blocked}/{total}، ابھی درخواستیں: {inFlight}",
   "tooltip.degradedSegmentTemplate": " — کچھ جانچیں جواب نہیں دے رہیں ({degradedEvents}/{degradedWindow})",
-  "tooltip.ratingFilterSuffix": " — ریٹنگ فلٹر «بلبلہ» فعال ہے",
+  "tooltip.ratingFilterSuffix": " — «صرف مقبول سائٹس» («بلبلہ») آن ہے",
   "tooltip.lastQueryMinutesTemplate": " — آخری کوئری: {minutes} منٹ پہلے",
   "tooltip.lastQueryHoursTemplate": " — آخری کوئری: {hours} گھنٹے پہلے",
   "tooltip.lastQueryJustNow": " — آخری کوئری: ابھی ابھی",
