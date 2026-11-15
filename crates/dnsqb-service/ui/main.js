@@ -347,13 +347,14 @@ async function setLocale(requested) {
 // hover-only tooltip wouldn't (T-159's own two options, this is #1).
 // Help text is authored in UI-SPEC.md §3.8 and shipped as ui/i18n/{uk,en}.json's
 // `fieldHelp.*` keys - this function is a lookup, not a second source of truth.
-function helpDetails(key) {
+function helpDetails(key, topic) {
   const details = document.createElement("details");
   details.className = "field-help";
   details.dataset.stateKey = `help:${key}`;
   const summary = document.createElement("summary");
   summary.textContent = "?";
-  summary.setAttribute("aria-label", t("common.helpAriaLabel"));
+  // UX-2 (WCAG 2.4.6): "Help: <card>" - a bare "Help" ×11 is ambiguous.
+  summary.setAttribute("aria-label", topic ? `${t("common.helpAriaLabel")}: ${topic}` : t("common.helpAriaLabel"));
   const text = document.createElement("p");
   text.textContent = t(`fieldHelp.${key}`);
   details.appendChild(summary);
@@ -361,7 +362,7 @@ function helpDetails(key) {
   return details;
 }
 
-// `<h3>` only permits phrasing content - nesting a `<details>` (flow
+// `<h2>` only permits phrasing content - nesting a `<details>` (flow
 // content) inside one is invalid HTML; browsers silently recover (verified
 // in Chrome) but that's "true by observed behavior," not provable from the
 // markup, and Firefox is a first-class target here (scenario 12). Returns
@@ -369,11 +370,70 @@ function helpDetails(key) {
 function cardHeading(text, helpKey) {
   const row = document.createElement("div");
   row.className = "card-heading-row";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = text;
   row.appendChild(heading);
-  row.appendChild(helpDetails(helpKey));
+  row.appendChild(helpDetails(helpKey, text));
   return row;
+}
+
+// UX-2: every armed two-click confirm disarms the same way - Escape, or focus
+// leaving the armed button - never on a timer (the old 4 s window was too
+// short for screen-reader and switch users, WCAG 2.2.1).
+function disarmOnLeave(button, disarm) {
+  button.addEventListener("blur", disarm);
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      disarm();
+    }
+  });
+}
+
+// UX-2 (WCAG 2.4.3 / 3.3.4): a confirm row that replaces or follows the
+// control the user just used takes focus on its question, so a screen-reader
+// user hears what is being asked instead of a silent "not checked"; its
+// Cancel hands focus back to the control it came from (focusIfPresent).
+function announceConfirm(notice) {
+  notice.tabIndex = -1;
+  notice.focus({ preventScroll: false });
+}
+function focusIfPresent(el) {
+  if (el && typeof el.focus === "function") {
+    el.focus({ preventScroll: true });
+  }
+}
+
+// UX-2 (WCAG 2.4.3): a re-render replaces the DOM under the focused control,
+// which drops focus to <body>. keepFocus() notes which control had focus by
+// a structural key (rebuilt nodes are new objects) and refocuses its
+// successor - the nth control with the same key, as before the render.
+const FOCUSABLE = "button, input, select, textarea, a[href], summary";
+function focusKey(el) {
+  if (el.id) {
+    return `#${el.id}`;
+  }
+  const choice = el.type === "checkbox" || el.type === "radio" ? el.value : "";
+  const text = el.matches("button, summary, a") ? el.textContent.trim().slice(0, 60) : "";
+  return [el.tagName, el.name || "", choice, el.getAttribute("aria-label") || "", text].join("|");
+}
+function keepFocus(render) {
+  const active = document.activeElement;
+  if (!active || active === document.body || typeof active.matches !== "function" || !active.matches(FOCUSABLE)) {
+    render();
+    return;
+  }
+  const key = focusKey(active);
+  const before = Array.from(document.querySelectorAll(FOCUSABLE)).filter((el) => focusKey(el) === key);
+  const index = Math.max(0, before.indexOf(active));
+  render();
+  if (document.body.contains(active)) {
+    return;
+  }
+  const after = Array.from(document.querySelectorAll(FOCUSABLE)).filter((el) => focusKey(el) === key);
+  const target = after[Math.min(index, after.length - 1)];
+  if (target) {
+    target.focus({ preventScroll: true });
+  }
 }
 
 // T-277 / T-248: a re-render nobody asked for (a locale switch; the server
@@ -469,9 +529,9 @@ function renderInBackground(container, render, refetch) {
 
 function paint(container, mode, render, refetch) {
   if (mode === BACKGROUND) {
-    renderInBackground(container, render, refetch);
+    keepFocus(() => renderInBackground(container, render, refetch));
   } else {
-    render();
+    keepFocus(render);
   }
 }
 
@@ -614,6 +674,20 @@ function renderStartupTask(view) {
   startupTaskRow.appendChild(box);
 }
 
+// UX-2 (WCAG 4.1.3): speak a change of protection state through the hidden
+// #hero-announce status node - only when the state itself changes (not its
+// detail, which carries a count), and never for the first render (the page
+// is being read from the top then anyway).
+const heroAnnounce = document.getElementById("hero-announce");
+let lastHeroAnnounceKey = null;
+function announceHeroChange(state) {
+  const key = `${state.cls}|${state.state}`;
+  if (heroAnnounce && lastHeroAnnounceKey !== null && key !== lastHeroAnnounceKey) {
+    heroAnnounce.textContent = `${state.state}. ${state.detail}`;
+  }
+  lastHeroAnnounceKey = key;
+}
+
 function renderProtectionHero(state) {
   // T-277: status frames arrive about once a second; an unchanged hero is
   // left alone so focus on its button (or a click mid-install) survives.
@@ -622,6 +696,7 @@ function renderProtectionHero(state) {
     return;
   }
   protectionHero.dataset.rendered = signature;
+  announceHeroChange(state);
   protectionHero.textContent = "";
   const box = document.createElement("div");
   box.className = `hero ${state.cls}`;
@@ -662,7 +737,6 @@ function renderProtectionHero(state) {
 // shows the flipped hero - no separate cert fetch needed.
 async function installCertFromHero(button) {
   button.disabled = true;
-  const original = button.textContent;
   button.textContent = t("hero.installingLabel");
   try {
     const response = await fetch("/admin/install-cert", {
@@ -676,10 +750,9 @@ async function installCertFromHero(button) {
     await refresh();
   } catch (_err) {
     button.disabled = false;
+    // Kept until the next attempt (UX-2): a 4 s flash was gone before a
+    // screen reader or a slow reader got to it; a click retries.
     button.textContent = t("hero.installFailedLabel");
-    setTimeout(() => {
-      button.textContent = original;
-    }, 4000);
   }
 }
 
@@ -848,6 +921,7 @@ function renderTimeoutConfig(status) {
   `;
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
   errorLine.textContent = applyError;
   fields.appendChild(errorLine);
   document
@@ -924,7 +998,7 @@ function render(status) {
     ${cachePersistWarning}
     ${personalZoneWarning}
     <div class="card">
-      <h3>${t("app.statsHeading")}</h3>
+      <h2>${t("app.statsHeading")}</h2>
       <div class="stat-row">
         <div>
           <div class="stat">${status.stats.blocked}</div>
@@ -968,6 +1042,7 @@ function renderError(err) {
   delete appBody.dataset.rendered;
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -1313,6 +1388,7 @@ function renderOverrides(data) {
   addBtn.textContent = t("overrides.addButton");
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
 
   async function submitAdd() {
     const pattern = input.value.trim();
@@ -1343,7 +1419,7 @@ function renderOverrides(data) {
   overridesBody.appendChild(addRow);
   overridesBody.appendChild(errorLine);
 
-  const allowHeading = document.createElement("h4");
+  const allowHeading = document.createElement("h3");
   allowHeading.textContent = t("overrides.allowlistHeading");
   overridesBody.appendChild(allowHeading);
   const allowList = document.createElement("ul");
@@ -1353,7 +1429,7 @@ function renderOverrides(data) {
   );
   overridesBody.appendChild(allowList);
 
-  const blockHeading = document.createElement("h4");
+  const blockHeading = document.createElement("h3");
   blockHeading.textContent = t("overrides.blocklistHeading");
   overridesBody.appendChild(blockHeading);
   const blockList = document.createElement("ul");
@@ -1366,11 +1442,12 @@ function renderOverrides(data) {
 
 function renderOverridesError(err) {
   overridesBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("overrides.heading");
   overridesBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -1472,6 +1549,7 @@ function renderCacheConfig(data) {
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
 
   const applyBtn = document.createElement("button");
   applyBtn.type = "button";
@@ -1504,11 +1582,12 @@ function renderCacheConfig(data) {
 
 function renderCacheConfigError(err) {
   cacheConfigBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("cacheConfig.heading");
   cacheConfigBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -1664,7 +1743,7 @@ function renderCctldBlock(status) {
   const cc = status.cctld_block;
   cctldBlockBody.textContent = "";
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("cctldBlock.heading");
   cctldBlockBody.appendChild(heading);
 
@@ -1715,6 +1794,7 @@ function renderCctldBlock(status) {
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
   card.appendChild(errorLine);
 
   // Same "no local optimistic state" rule as #rating-filter-body - picked
@@ -1737,6 +1817,7 @@ function renderCctldBlock(status) {
   menu.className = "rf-menu cc-menu";
   menu.id = "cc-code-menu";
   menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-multiselectable", "true");
   menu.hidden = true;
   combo.appendChild(input);
   combo.appendChild(menu);
@@ -1958,6 +2039,7 @@ function renderCctldBlock(status) {
       confirmNotice.hidden = false;
       confirmRow.hidden = false;
       saveBtn.hidden = true;
+      announceConfirm(confirmNotice);
       return;
     }
     try {
@@ -1968,7 +2050,10 @@ function renderCctldBlock(status) {
       });
     }
   });
-  cancelBtn.addEventListener("click", resetArming);
+  cancelBtn.addEventListener("click", () => {
+    resetArming();
+    focusIfPresent(saveBtn);
+  });
   confirmBtn.addEventListener("click", async () => {
     try {
       renderCctldBlock(await setCctldBlock([...picked]));
@@ -1986,11 +2071,12 @@ function renderCctldBlock(status) {
 
 function renderCctldBlockError(err) {
   cctldBlockBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("cctldBlock.heading");
   cctldBlockBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -2127,7 +2213,7 @@ function renderGeoip(data) {
   geoipBody.textContent = "";
   populateGeoipCountryDatalist();
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("geoip.heading");
   geoipBody.appendChild(heading);
 
@@ -2207,6 +2293,7 @@ function renderGeoip(data) {
   cancelBtn.dataset.pending = "";
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
   const warningLine = document.createElement("div");
   warningLine.className = "notice warn";
   warningLine.hidden = true;
@@ -2225,7 +2312,10 @@ function renderGeoip(data) {
     cancelBtn.hidden = true;
     addBtn.textContent = t("overrides.addButton");
   }
-  cancelBtn.addEventListener("click", resetArming);
+  cancelBtn.addEventListener("click", () => {
+    resetArming();
+    focusIfPresent(input);
+  });
   input.addEventListener("input", resetArming);
 
   async function submitAdd() {
@@ -2283,11 +2373,12 @@ function renderGeoip(data) {
 
 function renderGeoipError(err) {
   geoipBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("geoip.heading");
   geoipBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -2366,7 +2457,7 @@ async function clearMaxmind() {
 function renderMaxmind(data) {
   geoipMaxmindBody.textContent = "";
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("maxmind.heading");
   geoipMaxmindBody.appendChild(heading);
 
@@ -2405,6 +2496,7 @@ function renderMaxmind(data) {
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
 
   const accountInput = document.createElement("input");
   accountInput.type = "text";
@@ -2498,11 +2590,12 @@ function renderMaxmind(data) {
 
 function renderMaxmindError(err) {
   geoipMaxmindBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("maxmind.heading");
   geoipMaxmindBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -2676,6 +2769,9 @@ function logItem(entry) {
   const domain = document.createElement("span");
   domain.className = "log-item-domain";
   domain.textContent = entry.domain;
+  // UX-2 (WCAG 2.4.6): every row has the same button labels; the domain is
+  // what tells them apart to a screen reader.
+  domain.id = `log-domain-${entry.seq}`;
   row.appendChild(domain);
 
   const qtype = document.createElement("span");
@@ -2728,6 +2824,7 @@ function logItem(entry) {
       list === "allowlist"
         ? t("log.addToAllowlistButton")
         : t("log.addToBlocklistButton");
+    btn.setAttribute("aria-describedby", domain.id);
     btn.addEventListener("click", async () => {
       btn.disabled = true;
       try {
@@ -2757,8 +2854,13 @@ function logItem(entry) {
     const detail = voterDetailList(entry.voters);
     detail.hidden = true;
     detail.dataset.pending = "";
+    detail.id = `log-detail-${entry.seq}`;
+    detailBtn.setAttribute("aria-describedby", domain.id);
+    detailBtn.setAttribute("aria-controls", detail.id);
+    detailBtn.setAttribute("aria-expanded", "false");
     detailBtn.addEventListener("click", () => {
       detail.hidden = !detail.hidden;
+      detailBtn.setAttribute("aria-expanded", String(!detail.hidden));
       detailBtn.textContent = detail.hidden
         ? t("log.detailsButton")
         : t("log.hideDetailsButton");
@@ -2784,17 +2886,36 @@ const LOG_PAGE_SIZE = 50;
 let logPage = 0; // 0 = newest
 let logEntriesNewestFirst = [];
 let logHasOlder = false;
-// The rendered page's list (it scrolls on its own) and whether a pushed log
-// change was held back while the reader was away from the newest rows.
+// The rendered page's list and whether a pushed log change was held back
+// while the reader was away from the newest rows.
 let currentLogList = null;
 let logUpdateMissed = false;
 
 // Rows pushed in at the top would shift what the reader is looking at, and a
-// re-render would throw their scroll position away: an older page or a list
-// scrolled down both hold new entries back until the reader is at the top.
+// re-render would throw their place (and keyboard focus) away: an older page,
+// the page scrolled past the list's top (UX-1 dropped the list's own scroll),
+// or focus on a row control all hold new entries back.
 function logReaderAway() {
-  return logPage > 0 || (currentLogList !== null && currentLogList.scrollTop > 0);
+  if (logPage > 0) {
+    return true;
+  }
+  if (currentLogList === null) {
+    return false;
+  }
+  const active = document.activeElement;
+  if (active && currentLogList.contains(active)) {
+    return true;
+  }
+  return currentLogList.getBoundingClientRect().top < 0;
 }
+// Coming back to the newest rows releases a held-back update.
+function releaseHeldLogUpdate() {
+  renderLogLiveMarker();
+  if (logUpdateMissed && !logReaderAway()) {
+    refreshLog(BACKGROUND);
+  }
+}
+document.addEventListener("scroll", releaseHeldLogUpdate, { passive: true });
 
 function currentLogQuery() {
   const params = new URLSearchParams();
@@ -2869,7 +2990,17 @@ function renderLogRetention(status) {
   if (!lastLogPolicy || logRetentionPrompt !== null) {
     return;
   }
-  const policy = lastLogPolicy;
+  // UX-2 (WCAG 2.4.3): status frames arrive about once a second; rebuilding
+  // unchanged radios each time threw keyboard focus out of the group.
+  const signature = [JSON.stringify(lastLogPolicy), logRetentionError || "", CURRENT_LOCALE].join("|");
+  if (logRetentionBox.dataset.rendered === signature) {
+    return;
+  }
+  keepFocus(() => buildLogRetention(lastLogPolicy));
+  logRetentionBox.dataset.rendered = signature;
+}
+
+function buildLogRetention(policy) {
   logRetentionBox.textContent = "";
   const choice = document.createElement("fieldset");
   choice.className = "log-retention-choice";
@@ -2904,6 +3035,7 @@ function renderLogRetention(status) {
   } else if (policy.retention !== "24h") {
     // Hand-edited: a long window with no disk ends at the next restart.
     state.className = "override-error";
+    state.setAttribute("role", "status");
     state.textContent = t("log.retention.memoryOnlyLong");
   } else {
     state.textContent = t("log.retention.memoryOnly");
@@ -2925,6 +3057,7 @@ function renderLogRetention(status) {
   if (logRetentionError) {
     const error = document.createElement("div");
     error.className = "override-error";
+    error.setAttribute("role", "status");
     error.textContent = logRetentionError;
     logRetentionBox.appendChild(error);
   }
@@ -2954,6 +3087,7 @@ function chooseLogRetention(value) {
 
 function showLogRetentionPrompt(kind, value) {
   logRetentionPrompt = kind;
+  logRetentionBox.dataset.rendered = "";
   logRetentionBox.textContent = "";
   const notice = document.createElement("div");
   notice.className = "notice warn";
@@ -2978,9 +3112,16 @@ function showLogRetentionPrompt(kind, value) {
     b.addEventListener("click", onClick);
     row.appendChild(b);
   };
-  button(t("common.cancel"), () => {
+  const cancel = () => {
     logRetentionPrompt = null;
     renderLogRetention();
+    focusIfPresent(document.getElementById(`log-retention-${lastLogPolicy.retention}`));
+  };
+  button(t("common.cancel"), cancel);
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      cancel();
+    }
   });
   if (kind === "disk") {
     button(t("log.retention.confirmDiskButton"), () => applyLogPolicy(value, true), true);
@@ -2993,6 +3134,7 @@ function showLogRetentionPrompt(kind, value) {
     button(t("log.retention.eraseButton"), () => applyLogPolicy(value, false), true);
   }
   logRetentionBox.appendChild(row);
+  announceConfirm(notice);
 }
 
 async function applyLogPolicy(retention, persist) {
@@ -3091,12 +3233,6 @@ function buildLogFilterRow() {
     if (!confirming) {
       confirming = true;
       clearBtn.textContent = t("log.confirmClearLogButton");
-      setTimeout(() => {
-        if (confirming) {
-          confirming = false;
-          clearBtn.textContent = t("log.clearLogButton");
-        }
-      }, 4000);
       return;
     }
     confirming = false;
@@ -3110,6 +3246,12 @@ function buildLogFilterRow() {
       // permanently reading "Точно очистити?" - misleadingly implying a
       // confirmation was still pending even though the action already
       // completed.
+      clearBtn.textContent = t("log.clearLogButton");
+    }
+  });
+  disarmOnLeave(clearBtn, () => {
+    if (confirming) {
+      confirming = false;
       clearBtn.textContent = t("log.clearLogButton");
     }
   });
@@ -3167,12 +3309,7 @@ function renderLogPage(slot) {
   list.className = "log-list";
   currentLogList = list;
   logUpdateMissed = false;
-  list.addEventListener("scroll", () => {
-    renderLogLiveMarker();
-    if (list.scrollTop === 0 && logUpdateMissed && logPage === 0) {
-      refreshLog(BACKGROUND);
-    }
-  });
+  list.addEventListener("focusout", () => setTimeout(releaseHeldLogUpdate, 0));
   logEntriesNewestFirst
     .slice(logPage * LOG_PAGE_SIZE, (logPage + 1) * LOG_PAGE_SIZE)
     .forEach((entry) => list.appendChild(logItem(entry)));
@@ -3183,12 +3320,15 @@ function renderLogPage(slot) {
     pager.className = "log-pager";
     const newer = document.createElement("button");
     newer.type = "button";
+    newer.id = "log-page-newer";
     newer.textContent = t("log.pageNewer");
     newer.disabled = logPage === 0;
     const status = document.createElement("span");
+    status.setAttribute("role", "status");
     status.textContent = t("log.pageStatus", { page: logPage + 1, pages });
     const older = document.createElement("button");
     older.type = "button";
+    older.id = "log-page-older";
     older.textContent = t("log.pageOlder");
     const onLastPage = logPage >= pages - 1;
     older.disabled = onLastPage && !logHasOlder;
@@ -3208,10 +3348,28 @@ function showLogPage(page, slot) {
   logPage = page;
   if (logPage <= 0) {
     // Back on the newest page: catch up on whatever arrived meanwhile.
-    refreshLog();
+    refreshLog().then(keepPagerFocus);
     return;
   }
-  renderLogPage(slot);
+  renderPagedLog(slot);
+}
+
+// UX-2 (WCAG 2.4.3): paging keeps focus on the pager; when the button just
+// used turns disabled (first/last page), focus moves to the other one.
+function renderPagedLog(slot) {
+  keepFocus(() => renderLogPage(slot));
+  keepPagerFocus();
+}
+function keepPagerFocus() {
+  const active = document.activeElement;
+  const onPager = Boolean(active && active.id && active.id.startsWith("log-page-"));
+  if ((onPager && !active.disabled) || (!onPager && active && active !== document.body)) {
+    return;
+  }
+  const other = ["log-page-older", "log-page-newer"]
+    .map((id) => document.getElementById(id))
+    .find((el) => el && !el.disabled);
+  focusIfPresent(other);
 }
 
 // T-291: the next chunk older than everything fetched so far, appended to
@@ -3230,7 +3388,7 @@ async function loadOlderLog(slot) {
     logEntriesNewestFirst = logEntriesNewestFirst.concat([...data.entries].reverse());
     logHasOlder = Boolean(data.truncated) && data.entries.length > 0;
     logPage += 1;
-    renderLogPage(slot);
+    renderPagedLog(slot);
   } catch (err) {
     renderLogError(err);
   }
@@ -3241,6 +3399,7 @@ function renderLogError(err) {
   currentLogList = null;
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -3478,7 +3637,7 @@ function customProviderForm() {
   }
   const wrap = document.createElement("div");
 
-  const heading = document.createElement("h4");
+  const heading = document.createElement("h3");
   heading.textContent = t("providers.customFormHeading");
   wrap.appendChild(heading);
 
@@ -3539,6 +3698,7 @@ function customProviderForm() {
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
 
   addBtn.addEventListener("click", async () => {
     const id = idInput.value.trim();
@@ -3622,6 +3782,10 @@ function retranslateCustomProviderForm() {
 }
 
 function renderProviders(data) {
+  keepFocus(() => buildProviders(data));
+}
+
+function buildProviders(data) {
   lastProvidersData = data;
   providersBody.textContent = "";
 
@@ -3629,6 +3793,7 @@ function renderProviders(data) {
 
   const actionError = document.createElement("div");
   actionError.className = "override-error";
+  actionError.setAttribute("role", "status");
   actionError.textContent = providersActionError ? providersActionError() : "";
   providersBody.appendChild(actionError);
 
@@ -3651,7 +3816,7 @@ function renderProviders(data) {
     if (inCategory.length === 0) {
       return;
     }
-    const catHeading = document.createElement("h4");
+    const catHeading = document.createElement("h3");
     catHeading.textContent = providerCategoryLabel(cat);
     providersBody.appendChild(catHeading);
     const list = document.createElement("ul");
@@ -3663,7 +3828,7 @@ function renderProviders(data) {
   const activeIds = new Set(data.active.map((entry) => entry.id));
   const addable = data.available_presets.filter((preset) => !activeIds.has(preset.id));
   if (addable.length > 0) {
-    const addHeading = document.createElement("h4");
+    const addHeading = document.createElement("h3");
     addHeading.textContent = t("providers.addPresetHeading");
     providersBody.appendChild(addHeading);
     const list = document.createElement("ul");
@@ -3701,11 +3866,12 @@ function renderProvidersError(err) {
     message: (err && err.message) || String(err),
   });
   providersBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("providers.heading");
   providersBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = message;
   providersBody.appendChild(panel);
   // T-176: the basic-view toggles ride on this same fetch - if it failed,
@@ -3713,6 +3879,7 @@ function renderProvidersError(err) {
   filterControlsBody.textContent = "";
   const basicPanel = document.createElement("div");
   basicPanel.className = "error-panel";
+  basicPanel.setAttribute("role", "alert");
   basicPanel.textContent = message;
   filterControlsBody.appendChild(basicPanel);
 }
@@ -3914,7 +4081,17 @@ async function flipAllCategories(enabled, targets) {
 }
 
 function renderFilterControls(data) {
+  keepFocus(() => buildFilterControls(data));
+}
+
+function buildFilterControls(data) {
   filterControlsBody.textContent = "";
+  // UX-2 (WCAG 1.3.1): the one card without a visible heading still gets
+  // one in the outline.
+  const outlineHeading = document.createElement("h2");
+  outlineHeading.className = "visually-hidden";
+  outlineHeading.textContent = t("filterControls.masterToggleLabel");
+  filterControlsBody.appendChild(outlineHeading);
   const providers = data.active || [];
   const anyOn = providers.some((entry) => entry.enabled);
 
@@ -3996,6 +4173,7 @@ function renderFilterControls(data) {
 
   const errLine = document.createElement("div");
   errLine.className = "override-error";
+  errLine.setAttribute("role", "status");
   errLine.id = "filter-controls-error";
   errLine.textContent = filterControlsActionError ? filterControlsActionError() : "";
   filterControlsBody.appendChild(errLine);
@@ -4243,6 +4421,7 @@ function renderRemoveAllError(err) {
     box.textContent = "";
     const panel = document.createElement("p");
     panel.className = "error-panel";
+    panel.setAttribute("role", "alert");
     panel.textContent = t("error.generic", {
       message: (err && err.message) || String(err),
     });
@@ -4254,8 +4433,8 @@ function renderRemoveAllError(err) {
 const uninstallBtn = document.getElementById("uninstall-local-state-btn");
 let confirmingUninstall = false;
 // Not a plain data-i18n node: the label must follow confirmingUninstall, or a
-// live locale switch during the 4s confirm window would repaint the default
-// label while the next click still deletes everything.
+// live locale switch while it is armed would repaint the default label while
+// the next click still deletes everything.
 function syncUninstallButtonLabel() {
   uninstallBtn.textContent = confirmingUninstall
     ? t("danger.confirmUninstallButton")
@@ -4268,12 +4447,6 @@ uninstallBtn.addEventListener("click", async () => {
   if (!confirmingUninstall) {
     confirmingUninstall = true;
     syncUninstallButtonLabel();
-    setTimeout(() => {
-      if (confirmingUninstall) {
-        confirmingUninstall = false;
-        syncUninstallButtonLabel();
-      }
-    }, 4000);
     return;
   }
   confirmingUninstall = false;
@@ -4285,6 +4458,13 @@ uninstallBtn.addEventListener("click", async () => {
     // Same live-verified fix as #log-body's clearBtn - without it a
     // successful click leaves the button permanently reading "Точно
     // видалити все?" even though the action already completed.
+    syncUninstallButtonLabel();
+  }
+});
+
+disarmOnLeave(uninstallBtn, () => {
+  if (confirmingUninstall) {
+    confirmingUninstall = false;
     syncUninstallButtonLabel();
   }
 });
@@ -4381,7 +4561,7 @@ function renderRatingFilter(status) {
   const rf = status.rating_filter;
   ratingFilterBody.textContent = "";
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("rating.heading");
   ratingFilterBody.appendChild(heading);
 
@@ -4478,6 +4658,7 @@ function renderRatingFilter(status) {
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
   card.appendChild(errorLine);
 
   const sub = document.createElement("div");
@@ -4539,6 +4720,7 @@ function renderRatingFilter(status) {
   menu.className = "rf-menu";
   menu.id = "rf-zone-menu";
   menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-multiselectable", "true");
   menu.hidden = true;
   combo.appendChild(input);
   combo.appendChild(menu);
@@ -4786,6 +4968,7 @@ function renderRatingFilter(status) {
       switchInput.checked = false;
       confirmNotice.hidden = false;
       confirmRow.hidden = false;
+      announceConfirm(confirmNotice);
     } else {
       try {
         renderRatingFilter(await setRatingFilter(false, [...picked]));
@@ -4797,7 +4980,10 @@ function renderRatingFilter(status) {
       }
     }
   });
-  cancelBtn.addEventListener("click", clearArm);
+  cancelBtn.addEventListener("click", () => {
+    clearArm();
+    focusIfPresent(switchInput);
+  });
   confirmBtn.addEventListener("click", async () => {
     if (lastNetworkStatus === "OFFLINE") {
       errorLine.textContent = t("rating.offlineMessage");
@@ -4833,11 +5019,12 @@ function renderRatingFilter(status) {
 
 function renderRatingFilterError(err) {
   ratingFilterBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("rating.heading");
   ratingFilterBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });
@@ -4976,7 +5163,7 @@ function renderBlocklistBundles(status) {
   const bb = status.blocklist_bundles;
   blocklistBundlesBody.textContent = "";
 
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("blocklist.heading");
   blocklistBundlesBody.appendChild(heading);
 
@@ -5153,6 +5340,7 @@ function renderBlocklistBundles(status) {
 
   const errorLine = document.createElement("div");
   errorLine.className = "override-error";
+  errorLine.setAttribute("role", "status");
   card.appendChild(errorLine);
 
   const sourcesDetails = document.createElement("details");
@@ -5289,11 +5477,12 @@ function renderBlocklistBundles(status) {
 
 function renderBlocklistBundlesError(err) {
   blocklistBundlesBody.textContent = "";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("h2");
   heading.textContent = t("blocklist.heading");
   blocklistBundlesBody.appendChild(heading);
   const panel = document.createElement("div");
   panel.className = "error-panel";
+  panel.setAttribute("role", "alert");
   panel.textContent = t("error.generic", {
     message: (err && err.message) || String(err),
   });

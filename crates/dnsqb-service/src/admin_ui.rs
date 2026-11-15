@@ -1041,16 +1041,15 @@ mod tests {
     }
 
     // T-176 — the fan-out privacy line and the pass-through warning moved into
-    // the basic view (renderFilterControls), so they render even when the
+    // the basic view (buildFilterControls), so they render even when the
     // advanced disclosure is collapsed (CLAUDE.md "not buried" / SPEC.md §8.1).
     #[test]
     fn main_js_keeps_the_fanout_and_passthrough_notices_in_the_basic_view() {
-        let Some((_, filter_controls)) = MAIN_JS.split_once("function renderFilterControls(")
-        else {
-            panic!("renderFilterControls must exist");
+        let Some((_, filter_controls)) = MAIN_JS.split_once("function buildFilterControls(") else {
+            panic!("buildFilterControls must exist");
         };
         let Some((body, _)) = filter_controls.split_once("\nfunction ") else {
-            panic!("renderFilterControls must be a bounded function");
+            panic!("buildFilterControls must be a bounded function");
         };
         assert!(
             body.contains("third_party_count"),

@@ -63,6 +63,8 @@ function elStub(rec) {
       if (p === "length") return 0;
       if (p === Symbol.iterator) return function* () {};
       if (p in store) return store[p];
+      if (p === "getBoundingClientRect") return () => ({ top: 0 });
+      if (p === "contains") return () => false;
       if (p === "addEventListener") return (type, fn) => { (rec.listeners[type] = rec.listeners[type] || []).push(fn); };
       if (p === "setAttribute") return (a, v) => { rec.attrs[a] = String(v); if (typeof v === "string") assigned.push([`<${rec.tag}>.attr(${a})`, v]); };
       if (["appendChild", "append", "prepend", "insertBefore", "replaceChildren"].includes(p)) {
@@ -329,7 +331,7 @@ for (const [fn, data] of xssCalls) {
   // what the user typed and opened, and waits while the card is in use. A
   // user-action render (any mode other than BACKGROUND) is never held back.
   const FIELDS = ["input", "select", "textarea"];
-  const fel = (tag, props) => Object.assign({ tag, dataset: {}, hidden: false, value: "", open: false, matches(sel) { return sel.split(",").map((s) => s.trim()).includes(this.tag); } }, props);
+  const fel = (tag, props) => Object.assign({ tag, tagName: tag.toUpperCase(), dataset: {}, hidden: false, value: "", open: false, textContent: "", getAttribute() { return null; }, matches(sel) { return sel.split(",").map((s) => s.trim()).includes(this.tag); } }, props);
   const card = (kids) => ({
     kids, listeners: {},
     contains(el) { return this.kids.includes(el); },
@@ -415,6 +417,43 @@ for (const [fn, data] of xssCalls) {
   vm.runInContext("paint", ctx)(c, { type: "click" }, () => { renders++; }, () => {});
   guard("user-action render was held back", renders === 2);
   doc.activeElement = null;
+
+  // UX-2: a render that rebuilds the focused control hands focus to its
+  // successor (same key, same position), not to <body>.
+  {
+    const mk = (n) => fel("button", { textContent: "To allowlist", focus() { focusedNow = n; } });
+    let focusedNow = null;
+    let live = [mk(1), mk(2), mk(3)];
+    const savedQsa = doc.querySelectorAll;
+    const savedBody = doc.body;
+    doc.querySelectorAll = (sel) => (sel.startsWith("button,") ? live : []);
+    doc.body = { contains: (el) => live.includes(el) };
+    doc.activeElement = live[1];
+    vm.runInContext("keepFocus", ctx)(() => { live = [mk(1), mk(2), mk(3)]; });
+    guard("focus not restored to the rebuilt 2nd button", focusedNow === 2);
+    focusedNow = null;
+    doc.activeElement = live[0];
+    vm.runInContext("keepFocus", ctx)(() => {});
+    guard("focus moved although the control survived", focusedNow === null);
+    doc.querySelectorAll = savedQsa;
+    doc.body = savedBody;
+    doc.activeElement = null;
+  }
+
+  // UX-2: the hidden status node speaks a hero state change, not a new
+  // count in the same state, and not the first render.
+  {
+    const node = vm.runInContext("heroAnnounce", ctx);
+    const announce = vm.runInContext("announceHeroChange", ctx);
+    vm.runInContext("lastHeroAnnounceKey = null", ctx);
+    node.textContent = "";
+    announce({ cls: "is-ok", state: "On", detail: "1 blocked" });
+    guard("first hero render was announced", node.textContent === "");
+    announce({ cls: "is-ok", state: "On", detail: "2 blocked" });
+    guard("a count change in the same state was announced", node.textContent === "");
+    announce({ cls: "is-bad", state: "Off", detail: "x" });
+    guard("a state change was not announced", node.textContent === "Off. x");
+  }
 
   // Selected text inside the card holds a background render back too.
   c = card([fel("input", { name: "x" })]);
@@ -673,9 +712,9 @@ for (const [fn, data] of xssCalls) {
   es.emit("log", "4");
   guard("a log event re-fetched while reading an older page", fire(1000) === 0 && spy.refreshLog.length === 1);
   run("logPage = 0");
-  // A list scrolled down is held the same way (a re-render would reset its
-  // scroll), and scrolling back to the top catches up once.
-  const scrolledList = { scrollTop: 300 };
+  // A list whose top the page has scrolled past is held the same way (new
+  // rows would shift what is being read).
+  const scrolledList = { contains: () => false, getBoundingClientRect: () => ({ top: -300 }) };
   vm.runInContext("currentLogList = __list", Object.assign(ctx, { __list: scrolledList }));
   es.emit("log", "5");
   guard("a log event re-fetched while the list was scrolled down", fire(1000) === 0 && spy.refreshLog.length === 1);

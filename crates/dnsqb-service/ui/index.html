@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="uk">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -28,7 +28,12 @@
        (the same condition set as diagrams/ui-status-indicator.md, just
        surfaced as a hero instead of a header pill). Empty until the first
        render; carries no layout of its own when empty. -->
+  <main>
   <div id="protection-hero"></div>
+  <!-- UX-2 (WCAG 4.1.3): announces a change of protection state only - the
+       hero itself is not live, its detail carries the blocked count and
+       would speak on every block. -->
+  <p id="hero-announce" class="visually-hidden" role="status"></p>
   <!-- ARCH-04 / T-243 (хвиля 3): when a browser last sent a query (no colour
        of its own - the browser may simply be closed) and, only while the MSIX
        autostart task is off, a row linking to Settings. Updated in place by
@@ -68,7 +73,7 @@
        navigator.userAgent (+ navigator.brave), so the section is useful
        even before the script runs and needs no CSP change. -->
   <div id="browser-setup-body" class="card">
-    <h3 data-i18n="browserSetup.heading">Підключення браузера</h3>
+    <h2 data-i18n="browserSetup.heading">Підключення браузера</h2>
     <p class="setup-intro" data-i18n="browserSetup.intro">
       Вкажіть цю адресу як «власний DNS-провайдер» у налаштуваннях браузера:
     </p>
@@ -185,7 +190,7 @@
         Якщо сайт просить дозволу на доступ до інших застосунків і служб на цьому пристрої (локальна мережа), оберіть «Блокувати»: з таким дозволом сайт зможе надсилати запити цій службі — дізнаватися, які сайти ви нещодавно відкривали, і додавати записи в лог запитів.
       </p>
     </div>
-    <div id="browser-setup-result"></div>
+    <div id="browser-setup-result" role="status"></div>
   </div>
 
   <!-- T-47: kept outside #app-body, which the 2s status poll fully
@@ -193,7 +198,7 @@
        container would lose in-progress typing every refresh. This section
        has its own independent fetch/render cycle instead (see main.js). -->
   <div id="overrides-body" class="card">
-    <h3>Списки виключень</h3>
+    <h2>Списки виключень</h2>
     <p>Завантаження…</p>
   </div>
 
@@ -209,7 +214,7 @@
        own placement rationale: this extends Blocklist (SPEC.md §5 step 2)
        itself, not a niche add-on. -->
   <div id="blocklist-bundles-body" class="card">
-    <h3>Блок-лист-бандли</h3>
+    <h2>Блок-лист-бандли</h2>
     <p>Завантаження…</p>
   </div>
 
@@ -219,7 +224,7 @@
        on its own timer (see main.js) - a log table re-rendering under a
        reader every few seconds would be disruptive, not helpful. -->
   <div id="log-body" class="card">
-    <h3>Лог запитів</h3>
+    <h2>Лог запитів</h2>
     <p>Завантаження…</p>
   </div>
 
@@ -241,7 +246,7 @@
            an advanced failure-behaviour choice. Driven by the 2s status poll
            (click-only, no free-text), same as the stats card. -->
       <div id="timeout-config-body" class="card">
-        <h3>Поведінка при збої</h3>
+        <h2>Поведінка при збої</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -250,7 +255,7 @@
            inputs (id / URL / display name) that must not be wiped mid-typing,
            same reasoning as #overrides-body above. -->
       <div id="providers-body" class="card">
-        <h3>Провайдери-voter'и</h3>
+        <h2>Провайдери-voter'и</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -258,7 +263,7 @@
            user is actively editing must not lose their in-progress value to the
            unrelated 2s status poll. -->
       <div id="cache-config-body" class="card">
-        <h3>Кеш</h3>
+        <h2>Кеш</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -269,7 +274,7 @@
            #geoip-body - both block by a country-derived code, ccTLD is the
            blunter of the two signals. -->
       <div id="cctld-block-body" class="card">
-        <h3>Блокування за ccTLD</h3>
+        <h2>Блокування за ccTLD</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -277,7 +282,7 @@
            country-code input the user is actively typing into must not lose its
            value to the unrelated 2s status poll. -->
       <div id="geoip-body" class="card">
-        <h3>GeoIP-блокування</h3>
+        <h2>GeoIP-блокування</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -286,7 +291,7 @@
            is typing into must not be wiped by the 2s status poll, so this has
            its own independent fetch/render cycle (see main.js). -->
       <div id="geoip-maxmind-body" class="card">
-        <h3>Джерело GeoIP: MaxMind GeoLite2</h3>
+        <h2>Джерело GeoIP: MaxMind GeoLite2</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -300,7 +305,7 @@
            mini-row switch (T-127). Kept before #danger-zone-body so the
            danger zone stays visually last. -->
       <div id="rating-filter-body" class="card">
-        <h3>Рейтинговий фільтр «бульбашка»</h3>
+        <h2>Рейтинговий фільтр «бульбашка»</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -312,12 +317,12 @@
            видалити», so both places do the one same thing. Static markup
            (no fetch/render cycle - only a button and its one-shot answer). -->
       <div id="danger-zone-body" class="card danger-zone">
-        <h3 data-i18n="danger.heading">Повне видалення</h3>
+        <h2 data-i18n="danger.heading">Повне видалення</h2>
         <p class="notice warn" data-i18n-html="danger.warning">
           Зупиняє DNS Quorum Filter і видаляє все, що він залишив на цьому комп'ютері: довірений сертифікат, збережені ключі й креденшели (TLS-ключ, ключ шифрування журналу й кешу, ключ особистої зони, креденшели MaxMind, якщо є) і всю теку даних, а потім відкриває Параметри Windows, щоб ви видалили сам застосунок. Це та сама дія, що пункт «Повністю видалити» у меню іконки в треї; підтвердити її треба у вікні DNS Quorum Filter.
         </p>
         <button type="button" id="uninstall-local-state-btn">Повністю видалити</button>
-        <div id="uninstall-local-state-result"></div>
+        <div id="uninstall-local-state-result" role="status"></div>
       </div>
     </div>
   </details>
@@ -348,6 +353,7 @@
        domains (Public Suffix List, MPL-2.0). Present unconditionally, same
        as the DB-IP line - the зона lists ship with the app once the filter
        lands (Фаза 4). -->
+  </main>
   <footer id="credits">
     <p>DNS Quorum Filter — <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener noreferrer">Apache License 2.0</a>.</p>
     <p data-i18n-html="footer.geoipAttribution">

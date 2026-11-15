@@ -145,14 +145,14 @@ input:not([type]), select {
   padding: 0.85rem 1rem;
   margin-bottom: 0.8rem;
 }
-.card h3 {
+.card h2 {
   font-size: 12px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.6rem;
 }
 
 /* T-159: a small "?" toggle next to a card heading - native <details>, not
    a hover-only tooltip (works on touch, keyboard-reachable via Tab/Enter
-   out of the box). <h3> only permits phrasing content, so the toggle is a
+   out of the box). <h2> only permits phrasing content, so the toggle is a
    flex-row sibling of the heading (main.js's cardHeading()), never nested
    inside it - nesting would be invalid HTML even though browsers recover. */
 /* UX-1: the open help text is a popover anchored to the whole heading row
@@ -160,7 +160,7 @@ input:not([type]), select {
    longer re-centres the heading against a tall paragraph. The visible "?"
    ring stays small; the hit area is 24px (WCAG 2.5.8). */
 .card-heading-row { position: relative; display: flex; align-items: center; margin: 0 0 0.6rem; }
-.card-heading-row h3 { margin: 0; }
+.card-heading-row h2 { margin: 0; }
 .field-help {
   display: inline-block; margin-inline-start: 0.2rem;
 }
@@ -229,8 +229,8 @@ html[dir="rtl"] .switch input:checked + .track + .thumb { transform: translateX(
 /* T-47: override-list editor (#overrides-body, main.js) */
 /* T-72/T-73: provider-list editor (#providers-body) reuses the same
    sub-heading + .override-* row styling. */
-#overrides-body h4,
-#providers-body h4 {
+#overrides-body h3,
+#providers-body h3 {
   font-size: 11px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.03em; margin: 0.7rem 0 0.4rem;
 }
