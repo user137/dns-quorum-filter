@@ -212,6 +212,12 @@ html[dir="rtl"] .switch input:checked + .track + .thumb { transform: translateX(
 .baseline-fallback-opt { margin-top: 0.75rem; }
 
 .stat { font-size: var(--fs-num); font-weight: 700; }
+/* UX-3: the "blocked" figure is a button into the filtered log. */
+button.stat-link {
+  background: none; border: none; padding: 0; min-height: 0; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+button.stat-link:hover:not(:disabled) { background: none; color: var(--accent-strong); }
 .stat-row { display: flex; flex-wrap: wrap; gap: 1.5rem; }
 .stat-sub { font-size: 12px; color: var(--text-muted); }
 
@@ -270,12 +276,21 @@ html[dir="rtl"] .switch input:checked + .track + .thumb { transform: translateX(
   .log-filter-row { display: grid; grid-template-columns: 1fr 1fr; }
   .log-filter-row input { grid-column: 1 / -1; }
 }
-.log-empty { color: var(--text-muted); font-size: 13px; }
+.log-empty, .empty-note { color: var(--text-muted); font-size: 13px; }
+.empty-note { margin: 0.2rem 0 0.4rem; }
+.card-intro { margin: 0 0 0.5rem; font-size: 13px; }
 .log-list { list-style: none; margin: 0; padding: 0; }
 .log-pager { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; font-size: 13px; }
 .log-live { color: var(--text-muted); font-size: 13px; margin: 0 0 0.4rem; }
-/* T-291: the retention choice above the filter row. */
-.log-retention { margin-bottom: 0.6rem; }
+/* T-291: the retention choice above the filter row; UX-3: "Clear log" at
+   its end, both are about what is kept. */
+.log-manage { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.4rem 0.9rem; margin-bottom: 0.6rem; }
+.log-manage .log-retention { flex: 1 1 18rem; }
+.log-retention { margin-bottom: 0; }
+/* UX-3: a two-state filter chip (aria-pressed). */
+.chip { border-radius: var(--r-pill); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.chip[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent-strong); }
 .log-retention-choice {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem;
   border: none; padding: 0; margin: 0 0 0.3rem;
@@ -404,6 +419,8 @@ html[dir="rtl"] .switch.is-partial .thumb { transform: translateX(-7.5px); }
   font-size: 12px; color: var(--text);
 }
 .setup-steps li { margin: 0.25rem 0; }
+.setup-note { margin: 0.4rem 0 0; font-size: 12px; color: var(--text-muted); }
+.setup-connected { margin: 0; font-size: 13px; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; }
 /* T-189: inline "code + copy" for a browser settings URL. */
 .setup-copy-row {
   display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
@@ -436,6 +453,8 @@ html[dir="rtl"] .switch.is-partial .thumb { transform: translateX(-7.5px); }
   color: var(--accent); font-size: 12px; text-decoration: underline;
 }
 .link-button:hover:not(:disabled) { background: none; color: var(--accent-strong); }
+
+.uninstall-link-row { margin: 0 0 0.8rem; text-align: end; }
 
 /* The <details> disclosure that holds every advanced card. */
 #advanced-settings { margin-bottom: 0.8rem; }

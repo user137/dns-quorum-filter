@@ -8,6 +8,14 @@
 
 const appTitle = document.getElementById("app-title");
 const appBody = document.getElementById("app-body");
+// UX-3: the "blocked" figure opens the log filtered to blocked rows.
+appBody.addEventListener("click", (event) => {
+  const link = event.target && event.target.closest ? event.target.closest("[data-log-filter]") : null;
+  if (link) {
+    showBlockedInLog(true);
+    document.getElementById("log-body").scrollIntoView({ block: "start" });
+  }
+});
 const providersBody = document.getElementById("providers-body");
 const overridesBody = document.getElementById("overrides-body");
 const cacheConfigBody = document.getElementById("cache-config-body");
@@ -313,6 +321,7 @@ function applyStaticTranslations() {
     el.setAttribute(attr, t(key));
   });
   syncBrowserSetupToggleLabel();
+  syncBrowserSetupFold();
   syncBrowserFamilyLabel();
   syncUninstallButtonLabel();
 }
@@ -631,7 +640,32 @@ function renderLastQuery(unixMs) {
   if (heroLastQuery.textContent !== text) {
     heroLastQuery.textContent = text;
   }
+  // UX-3: "no query yet" is the one sign the browser is not pointed here.
+  heroLastQuery.classList.toggle("is-warn", unixMs === null);
   heroLastQuery.hidden = false;
+  if (typeof unixMs === "number" && !browserSeenConnected) {
+    browserSeenConnected = true;
+    syncBrowserSetupFold();
+  }
+}
+
+// UX-3: the setup card stays open until a browser has sent a query, then
+// folds to one line. Latched for the page's life, so clearing the log does
+// not reopen it; the user's own unfold/fold wins over both.
+let browserSeenConnected = false;
+let browserSetupUserFolded = null;
+function syncBrowserSetupFold() {
+  const line = document.getElementById("browser-setup-connected");
+  const content = document.getElementById("browser-setup-content");
+  const unfold = document.getElementById("browser-setup-unfold");
+  if (!line || !content || !unfold) {
+    return;
+  }
+  const folded = browserSetupUserFolded ?? browserSeenConnected;
+  line.hidden = !browserSeenConnected;
+  content.hidden = folded;
+  unfold.setAttribute("aria-expanded", String(!folded));
+  unfold.textContent = folded ? t("browserSetup.unfold") : t("browserSetup.fold");
 }
 
 setInterval(() => {
@@ -1001,16 +1035,12 @@ function render(status) {
       <h2>${t("app.statsHeading")}</h2>
       <div class="stat-row">
         <div>
-          <div class="stat">${status.stats.blocked}</div>
+          <button type="button" class="stat stat-link" data-log-filter="BLOCKED" aria-label="${escapeAttr(t("app.statBlockedShow", { count: status.stats.blocked }))}">${status.stats.blocked}</button>
           <div class="stat-sub">${t("app.statBlocked")}</div>
         </div>
         <div>
           <div class="stat">${status.stats.total}</div>
           <div class="stat-sub">${t("app.statTotal")}</div>
-        </div>
-        <div>
-          <div class="stat">${status.stats.in_flight}</div>
-          <div class="stat-sub">${t("app.statInFlight")}</div>
         </div>
         <div>
           <div class="stat">${blockedPercentLabel(status.stats)}</div>
@@ -1025,6 +1055,15 @@ function render(status) {
     appBody.innerHTML = appBodyHtml;
     appBody.dataset.rendered = appBodyHtml;
   }
+}
+
+// A translated string going into an attribute of the stats card's HTML.
+function escapeAttr(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 function renderError(err) {
@@ -1427,7 +1466,7 @@ function renderOverrides(data) {
   data.allowlist.forEach((entry) =>
     allowList.appendChild(overrideListItem(entry, "allowlist", data.conflicts))
   );
-  overridesBody.appendChild(allowList);
+  overridesBody.appendChild(data.allowlist.length > 0 ? allowList : emptyNote("overrides.allowlistEmpty"));
 
   const blockHeading = document.createElement("h3");
   blockHeading.textContent = t("overrides.blocklistHeading");
@@ -1437,7 +1476,15 @@ function renderOverrides(data) {
   data.blocklist.forEach((entry) =>
     blockList.appendChild(overrideListItem(entry, "blocklist", data.conflicts))
   );
-  overridesBody.appendChild(blockList);
+  overridesBody.appendChild(data.blocklist.length > 0 ? blockList : emptyNote("overrides.blocklistEmpty"));
+}
+
+// UX-3: an empty list says so, and what would put something in it.
+function emptyNote(key) {
+  const p = document.createElement("p");
+  p.className = "empty-note";
+  p.textContent = t(key);
+  return p;
 }
 
 function renderOverridesError(err) {
@@ -2216,6 +2263,11 @@ function renderGeoip(data) {
   const heading = document.createElement("h2");
   heading.textContent = t("geoip.heading");
   geoipBody.appendChild(heading);
+  // UX-3: say what the card does before its database status lines.
+  const intro = document.createElement("p");
+  intro.className = "card-intro";
+  intro.textContent = t("geoip.intro");
+  geoipBody.appendChild(intro);
 
   // T-78: three distinct, always-visible lines - not a banner - for three
   // states that must not collapse into one another (advisor-caught while
@@ -2368,7 +2420,7 @@ function renderGeoip(data) {
   const list = document.createElement("ul");
   list.className = "override-list";
   data.blocked_countries.forEach((code) => list.appendChild(geoipListItem(code)));
-  geoipBody.appendChild(list);
+  geoipBody.appendChild(data.blocked_countries.length > 0 ? list : emptyNote("geoip.listEmpty"));
 }
 
 function renderGeoipError(err) {
@@ -2664,6 +2716,21 @@ function decisionLabel(decision) {
 }
 // ALLOWLIST/BLOCKLIST/QUORUM/GEOIP are product/technical names, kept as-is
 // in every locale.
+// UX-3: a blocked quorum row names the providers that blocked it, so the
+// reason is readable without opening "Details".
+function logSourceText(entry) {
+  const label = decisionSourceLabel(entry.decision_source);
+  if (entry.decision !== "BLOCKED" || entry.decision_source !== "QUORUM") {
+    return label;
+  }
+  const blockers = entry.voters
+    .filter((voter) => voter.status.status === "BLOCK")
+    .map((voter) => providerNames.get(voter.provider_name) || voter.provider_name);
+  return blockers.length > 0
+    ? t("log.blockedByTemplate", { providers: blockers.join(", ") })
+    : label;
+}
+
 function decisionSourceLabel(source) {
   switch (source) {
     case "ALLOWLIST":
@@ -2801,7 +2868,7 @@ function logItem(entry) {
 
   const source = document.createElement("span");
   source.className = "log-item-source";
-  source.textContent = decisionSourceLabel(entry.decision_source);
+  source.textContent = logSourceText(entry);
   row.appendChild(source);
 
   const latency = document.createElement("span");
@@ -2817,7 +2884,10 @@ function logItem(entry) {
   // Row-level "add in one click" (T-46) - reuses the already-established
   // addOverride() from the T-47 section above rather than a second copy of
   // the same POST /admin/overrides/add call.
-  ["allowlist", "blocklist"].forEach((list) => {
+  // UX-3: one action per row, the one that undoes what happened - a blocked
+  // domain can be allowed, an allowed one blocked; a failed lookup has none.
+  const rowLists = { BLOCKED: ["allowlist"], ALLOWED: ["blocklist"] }[entry.decision] || [];
+  rowLists.forEach((list) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent =
@@ -2882,7 +2952,7 @@ function logItem(entry) {
 // "Older" on the last fetched page asks for the next chunk with
 // ?before_seq= (the oldest shown entry's seq).
 const LOG_FETCH_LIMIT = 1000;
-const LOG_PAGE_SIZE = 50;
+const LOG_PAGE_SIZE = 20;
 let logPage = 0; // 0 = newest
 let logEntriesNewestFirst = [];
 let logHasOlder = false;
@@ -3156,7 +3226,12 @@ function buildLogFilterRow() {
   logBody.textContent = "";
 
   logBody.appendChild(cardHeading(t("log.heading"), "logFilters"));
-  logBody.appendChild(logRetentionBox);
+  // UX-3: "Clear log" sits with the retention choice - both are about what
+  // is kept, not about what is shown.
+  const manage = document.createElement("div");
+  manage.className = "log-manage";
+  manage.appendChild(logRetentionBox);
+  logBody.appendChild(manage);
   renderLogRetention();
 
   const filterRow = document.createElement("div");
@@ -3191,8 +3266,23 @@ function buildLogFilterRow() {
     opt.textContent = decisionLabel(value).text;
     decisionSelect.appendChild(opt);
   });
-  decisionSelect.addEventListener("change", refreshLog);
+  decisionSelect.addEventListener("change", () => {
+    syncBlockedOnlyChip();
+    refreshLog();
+  });
   filterRow.appendChild(decisionSelect);
+
+  // UX-3: the page's most common question is "why was this blocked?".
+  logBlockedChip = document.createElement("button");
+  logBlockedChip.type = "button";
+  logBlockedChip.id = "log-blocked-only";
+  logBlockedChip.className = "chip";
+  logBlockedChip.textContent = t("log.blockedOnlyChip");
+  logBlockedChip.addEventListener("click", () => {
+    showBlockedInLog(decisionSelect.value !== "BLOCKED");
+  });
+  filterRow.insertBefore(logBlockedChip, filterRow.firstChild);
+  syncBlockedOnlyChip();
 
   const voterSelect = document.createElement("select");
   voterSelect.id = "log-voter";
@@ -3215,11 +3305,13 @@ function buildLogFilterRow() {
   searchBtn.addEventListener("click", refreshLog);
   filterRow.appendChild(searchBtn);
 
-  const refreshBtn = document.createElement("button");
-  refreshBtn.type = "button";
-  refreshBtn.textContent = t("log.refreshButton");
-  refreshBtn.addEventListener("click", refreshLog);
-  filterRow.appendChild(refreshBtn);
+  // Only while live updates are off: then nothing else re-fetches the log.
+  logRefreshBtn = document.createElement("button");
+  logRefreshBtn.type = "button";
+  logRefreshBtn.textContent = t("log.refreshButton");
+  logRefreshBtn.hidden = pushLive;
+  logRefreshBtn.addEventListener("click", refreshLog);
+  filterRow.appendChild(logRefreshBtn);
 
   // Two-step confirm instead of a blocking window.confirm() (no precedent
   // for one anywhere else on this page, and a native dialog can't be styled
@@ -3255,7 +3347,8 @@ function buildLogFilterRow() {
       clearBtn.textContent = t("log.clearLogButton");
     }
   });
-  filterRow.appendChild(clearBtn);
+  clearBtn.className = "log-clear";
+  manage.appendChild(clearBtn);
 
   logBody.appendChild(filterRow);
   logBody.appendChild(logLiveLine);
@@ -3274,6 +3367,29 @@ function logLiveText() {
 
 function renderLogLiveMarker() {
   logLiveLine.textContent = logLiveText();
+  if (logRefreshBtn) {
+    logRefreshBtn.hidden = pushLive;
+  }
+}
+
+let logRefreshBtn = null;
+let logBlockedChip = null;
+function syncBlockedOnlyChip() {
+  const select = document.getElementById("log-decision");
+  if (logBlockedChip && select) {
+    logBlockedChip.setAttribute("aria-pressed", String(select.value === "BLOCKED"));
+  }
+}
+// The chip, and the "blocked" figure in the stats, both land here.
+function showBlockedInLog(on) {
+  const select = document.getElementById("log-decision");
+  if (!select) {
+    return;
+  }
+  select.value = on ? "BLOCKED" : "";
+  syncBlockedOnlyChip();
+  logPage = 0;
+  refreshLog();
 }
 
 function renderLog(data) {
@@ -4095,20 +4211,67 @@ function buildFilterControls(data) {
   const providers = data.active || [];
   const anyOn = providers.some((entry) => entry.enabled);
 
+  // UX-3: switching everything off is the one toggle that removes all
+  // protection, so it asks first - per event, like the tray's pause.
+  const masterOff = document.createElement("div");
+  masterOff.hidden = true;
+  masterOff.dataset.pending = "";
+  const masterOffNotice = document.createElement("div");
+  masterOffNotice.className = "notice warn";
+  masterOffNotice.textContent = t("filterControls.masterOffConfirm");
+  masterOff.appendChild(masterOffNotice);
+  const masterOffRow = document.createElement("div");
+  masterOffRow.className = "rf-confirm-row";
+  const masterOffCancel = document.createElement("button");
+  masterOffCancel.type = "button";
+  masterOffCancel.textContent = t("common.cancel");
+  const masterOffGo = document.createElement("button");
+  masterOffGo.type = "button";
+  masterOffGo.className = "rf-confirm";
+  masterOffGo.textContent = t("filterControls.masterOffButton");
+  masterOffRow.appendChild(masterOffCancel);
+  masterOffRow.appendChild(masterOffGo);
+  masterOff.appendChild(masterOffRow);
+
+  const masterToggle = toggleControl(
+    anyOn,
+    false,
+    (want) => {
+      if (want) {
+        flipAllCategories(true, data.master_switch_targets);
+        return;
+      }
+      masterInput().checked = true;
+      masterOff.hidden = false;
+      announceConfirm(masterOffNotice);
+    },
+    t("filterControls.masterToggleLabel"),
+    "filter-master",
+  );
+  const masterInput = () => masterToggle.querySelector('input[type="checkbox"]');
+  const cancelMasterOff = () => {
+    masterOff.hidden = true;
+    focusIfPresent(masterInput());
+  };
+  masterOffCancel.addEventListener("click", cancelMasterOff);
+  masterOff.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      cancelMasterOff();
+    }
+  });
+  masterOffGo.addEventListener("click", () => {
+    masterOff.hidden = true;
+    flipAllCategories(false, data.master_switch_targets);
+  });
   filterControlsBody.appendChild(
     toggleRow(
       t("filterControls.masterToggleLabel"),
       t("filterControls.masterToggleSub"),
-      toggleControl(
-        anyOn,
-        false,
-        (want) => flipAllCategories(want, data.master_switch_targets),
-        t("filterControls.masterToggleLabel"),
-        "filter-master",
-      ),
+      masterToggle,
       true,
     ),
   );
+  filterControlsBody.appendChild(masterOff);
 
   CATEGORY_META.forEach((cat) => {
     const state = categoryStateFrom(data, cat.key);
@@ -4332,6 +4495,15 @@ function initBrowserSetup() {
   const toggle = document.getElementById("browser-setup-toggle");
   const field = document.getElementById("doh-url");
 
+  const unfold = document.getElementById("browser-setup-unfold");
+  if (unfold) {
+    unfold.addEventListener("click", () => {
+      const content = document.getElementById("browser-setup-content");
+      browserSetupUserFolded = !(content && content.hidden);
+      syncBrowserSetupFold();
+    });
+  }
+
   if (toggle && steps) {
     toggle.addEventListener("click", () => {
       steps.hidden = !steps.hidden;
@@ -4431,6 +4603,11 @@ function renderRemoveAllError(err) {
 }
 
 const uninstallBtn = document.getElementById("uninstall-local-state-btn");
+document.getElementById("uninstall-jump").addEventListener("click", () => {
+  document.getElementById("advanced-settings").open = true;
+  document.getElementById("danger-zone-body").scrollIntoView({ block: "start" });
+  uninstallBtn.focus({ preventScroll: true });
+});
 let confirmingUninstall = false;
 // Not a plain data-i18n node: the label must follow confirmingUninstall, or a
 // live locale switch while it is armed would repaint the default label while
@@ -4868,12 +5045,13 @@ function renderRatingFilter(status) {
       nm.className = "rf-nm";
       nm.textContent = ratingFilterZoneLabel(code);
       li.appendChild(nm);
-      const ct = document.createElement("span");
-      ct.className = "rf-ct";
-      ct.textContent = Object.prototype.hasOwnProperty.call(counts, code)
-        ? String(counts[code])
-        : "—";
-      li.appendChild(ct);
+      // UX-3: an unknown count shows nothing - a bare dash read as "zero".
+      if (Object.prototype.hasOwnProperty.call(counts, code)) {
+        const ct = document.createElement("span");
+        ct.className = "rf-ct";
+        ct.textContent = String(counts[code]);
+        li.appendChild(ct);
+      }
       // mousedown, not click: it fires before the input's blur handler
       // closes the menu.
       li.addEventListener("mousedown", (event) => {

@@ -48,24 +48,6 @@
        turns it on lives in the advanced disclosure (#rating-filter-body). -->
   <div id="rating-filter-badge"></div>
 
-  <!-- T-176: master filter switch + the three category toggles (malware /
-       ads / adult). Its own fetch/render cycle off GET /admin/providers (not
-       the 2s status poll) so a toggle click never races a poll - same
-       pattern as #providers-body. The fan-out privacy line and the
-       "filtering not active" warning render here, in the basic view, not
-       hidden in the advanced disclosure (CLAUDE.md / SPEC.md §8.1). -->
-  <div id="filter-controls-body" class="card">
-    <p>Завантаження…</p>
-  </div>
-
-  <!-- T-176: quick stats. The 2s status poll fully replaces this subtree, so
-       it holds no free-text input (the timeout-mode radios and the
-       baseline-fallback checkbox it also renders live in the advanced
-       disclosure's own card). -->
-  <div id="app-body">
-    <p>Завантаження…</p>
-  </div>
-
   <!-- T-176: browser DoH setup / onboarding. Always available; on a first
        visit main.js auto-opens it (a localStorage flag on the admin origin,
        no backend "first run" signal). T-189: the per-browser step blocks
@@ -74,6 +56,14 @@
        even before the script runs and needs no CSP change. -->
   <div id="browser-setup-body" class="card">
     <h2 data-i18n="browserSetup.heading">Підключення браузера</h2>
+    <!-- UX-3: once a browser has sent a query the card folds to this one
+         line (main.js syncBrowserSetupFold); a click unfolds it for the
+         rest of the session. -->
+    <p id="browser-setup-connected" class="setup-connected" hidden>
+      <span data-i18n="browserSetup.connected">✓ Браузер підключено.</span>
+      <button type="button" id="browser-setup-unfold" class="link-button" aria-expanded="false" aria-controls="browser-setup-content"></button>
+    </p>
+    <div id="browser-setup-content">
     <p class="setup-intro" data-i18n="browserSetup.intro">
       Вкажіть цю адресу як «власний DNS-провайдер» у налаштуваннях браузера:
     </p>
@@ -99,80 +89,94 @@
         <button type="button" class="link-button" data-browser="opera" aria-pressed="false">Opera</button>
         <button type="button" class="link-button" data-browser="vivaldi" aria-pressed="false">Vivaldi</button>
       </div>
-      <ol id="browser-steps-chrome" class="setup-steps" hidden>
-        <li>
-          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
-          <span class="setup-copy-row">
-            <code id="settings-url-chrome">chrome://settings/security</code>
-            <button type="button" id="settings-copy-chrome" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
-          </span>
-        </li>
-        <li data-i18n="browserSetup.chromium.step2">«Використовувати безпечний DNS» → «Власний» → вставте адресу зверху.</li>
-      </ol>
-      <ol id="browser-steps-edge" class="setup-steps" hidden>
-        <li>
-          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
-          <span class="setup-copy-row">
-            <code id="settings-url-edge">edge://settings/privacy/security</code>
-            <button type="button" id="settings-copy-edge" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
-          </span>
-        </li>
-        <li data-i18n="browserSetup.edge.step2">Увімкніть «Використовувати захищену службу DNS» → «Виберіть постачальника послуг» → вставте адресу зверху.</li>
-        <li data-i18n="browserSetup.edge.managedNote">Якщо перемикач сірий і поруч значок портфеля — Edge вважає себе керованим організацією: на комп'ютері є хоча б одна політика Edge (часто її лишають програми «оптимізації» Windows). Тоді змінити DNS у налаштуваннях Edge не вийде; список політик — на сторінці edge://policy.</li>
-      </ol>
-      <ol id="browser-steps-brave" class="setup-steps" hidden>
-        <li>
-          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
-          <span class="setup-copy-row">
-            <code id="settings-url-brave">brave://settings/security</code>
-            <button type="button" id="settings-copy-brave" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
-          </span>
-        </li>
-        <li data-i18n="browserSetup.brave.step2">«Використовувати захищений DNS-сервер» уже ввімкнено → у списку постачальників виберіть «Додати власного постачальника» → вставте адресу зверху.</li>
-      </ol>
-      <ol id="browser-steps-opera" class="setup-steps" hidden>
-        <li>
-          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
-          <span class="setup-copy-row">
-            <code id="settings-url-opera">opera://settings/system</code>
-            <button type="button" id="settings-copy-opera" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
-          </span>
-        </li>
-        <li data-i18n="browserSetup.opera.step2">Увімкніть «Використовуйте DNS-поверх-HTTPS замість параметрів DNS системи» (Opera одразу вибере Cloudflare) → виберіть останній пункт списку, без назви, з полем вводу → вставте адресу зверху.</li>
-      </ol>
-      <ol id="browser-steps-vivaldi" class="setup-steps" hidden>
-        <li>
-          <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
-          <span class="setup-copy-row">
-            <code id="settings-url-vivaldi">vivaldi:settings/network/</code>
-            <button type="button" id="settings-copy-vivaldi" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
-          </span>
-        </li>
-        <li data-i18n="browserSetup.vivaldi.step2">Розділ «DNS через HTTPS» → «Інший провайдер DNS» → вставте адресу зверху; зелена галочка означає, що Vivaldi прийняв адресу.</li>
-      </ol>
-      <ol id="browser-steps-firefox" class="setup-steps" hidden>
-        <li>
-          <span data-i18n="browserSetup.firefox.step1">Відкрийте новий таб і вставте в адресний рядок:</span>
-          <span class="setup-copy-row">
-            <code id="settings-url-firefox">about:preferences#privacy</code>
-            <button type="button" id="settings-copy-firefox" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
-          </span>
-        </li>
-        <li data-i18n="browserSetup.firefox.step2">
-          Розділ «DNS через HTTPS» → «Максимальний захист» → «Обрати постачальника» →
-          «Власний» → вставте адресу зверху.
-        </li>
-        <li data-i18n="browserSetup.firefox.mode2Warning">Саме «Максимальний захист», не «Посилений захист»: у «Посиленому» Firefox на кожному заблокованому сайті тихо переходить на системний DNS — і сайт відкривається.</li>
-        <li data-i18n="browserSetup.firefox.librewolf">LibreWolf не підтримується: він не довіряє сертифікатам зі сховища Windows, тож не може під'єднатися до служби.</li>
-      </ol>
+      <div id="browser-steps-chrome" hidden>
+        <ol class="setup-steps">
+          <li>
+            <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+            <span class="setup-copy-row">
+              <code id="settings-url-chrome">chrome://settings/security</code>
+              <button type="button" id="settings-copy-chrome" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            </span>
+          </li>
+          <li data-i18n="browserSetup.chromium.step2">«Використовувати безпечний DNS» → «Власний» → вставте адресу зверху.</li>
+        </ol>
+      </div>
+      <div id="browser-steps-edge" hidden>
+        <ol class="setup-steps">
+          <li>
+            <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+            <span class="setup-copy-row">
+              <code id="settings-url-edge">edge://settings/privacy/security</code>
+              <button type="button" id="settings-copy-edge" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            </span>
+          </li>
+          <li data-i18n="browserSetup.edge.step2">Увімкніть «Використовувати захищену службу DNS» → «Виберіть постачальника послуг» → вставте адресу зверху.</li>
+        </ol>
+        <p class="setup-note" data-i18n="browserSetup.edge.managedNote">Якщо перемикач сірий і поруч значок портфеля — Edge вважає себе керованим організацією: на комп'ютері є хоча б одна політика Edge (часто її лишають програми «оптимізації» Windows). Тоді змінити DNS у налаштуваннях Edge не вийде; список політик — на сторінці edge://policy.</p>
+      </div>
+      <div id="browser-steps-brave" hidden>
+        <ol class="setup-steps">
+          <li>
+            <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+            <span class="setup-copy-row">
+              <code id="settings-url-brave">brave://settings/security</code>
+              <button type="button" id="settings-copy-brave" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            </span>
+          </li>
+          <li data-i18n="browserSetup.brave.step2">«Використовувати захищений DNS-сервер» уже ввімкнено → у списку постачальників виберіть «Додати власного постачальника» → вставте адресу зверху.</li>
+        </ol>
+      </div>
+      <div id="browser-steps-opera" hidden>
+        <ol class="setup-steps">
+          <li>
+            <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+            <span class="setup-copy-row">
+              <code id="settings-url-opera">opera://settings/system</code>
+              <button type="button" id="settings-copy-opera" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            </span>
+          </li>
+          <li data-i18n="browserSetup.opera.step2">Увімкніть «Використовуйте DNS-поверх-HTTPS замість параметрів DNS системи» (Opera одразу вибере Cloudflare) → виберіть останній пункт списку, без назви, з полем вводу → вставте адресу зверху.</li>
+        </ol>
+      </div>
+      <div id="browser-steps-vivaldi" hidden>
+        <ol class="setup-steps">
+          <li>
+            <span data-i18n="browserSetup.chromium.step1">Відкрийте нову вкладку й вставте в адресний рядок (з веб-сторінки посилання на сторінки налаштувань браузера не відкриваються — лише вручну):</span>
+            <span class="setup-copy-row">
+              <code id="settings-url-vivaldi">vivaldi:settings/network/</code>
+              <button type="button" id="settings-copy-vivaldi" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            </span>
+          </li>
+          <li data-i18n="browserSetup.vivaldi.step2">Розділ «DNS через HTTPS» → «Інший провайдер DNS» → вставте адресу зверху; зелена галочка означає, що Vivaldi прийняв адресу.</li>
+        </ol>
+      </div>
+      <div id="browser-steps-firefox" hidden>
+        <ol class="setup-steps">
+          <li>
+            <span data-i18n="browserSetup.firefox.step1">Відкрийте новий таб і вставте в адресний рядок:</span>
+            <span class="setup-copy-row">
+              <code id="settings-url-firefox">about:preferences#privacy</code>
+              <button type="button" id="settings-copy-firefox" class="link-button" data-i18n="browserSetup.copyButton">Копіювати</button>
+            </span>
+          </li>
+          <li data-i18n="browserSetup.firefox.step2">
+            Розділ «DNS через HTTPS» → «Максимальний захист» → «Обрати постачальника» →
+            «Власний» → вставте адресу зверху.
+          </li>
+        </ol>
+        <p class="setup-note" data-i18n="browserSetup.firefox.mode2Warning">Саме «Максимальний захист», не «Посилений захист»: у «Посиленому» Firefox на кожному заблокованому сайті тихо переходить на системний DNS — і сайт відкривається.</p>
+        <p class="setup-note" data-i18n="browserSetup.firefox.librewolf">LibreWolf не підтримується: він не довіряє сертифікатам зі сховища Windows, тож не може під'єднатися до служби.</p>
+      </div>
       <!-- Unknown / other browser. -->
-      <ol id="browser-steps-other" class="setup-steps" hidden>
-        <li data-i18n="browserSetup.other.step1">
-          У налаштуваннях браузера знайдіть «DNS через HTTPS» / «Secure DNS» /
-          «Custom DNS provider».
-        </li>
-        <li data-i18n="browserSetup.other.step2">Оберіть режим «Власний» / «Custom» і вставте адресу зверху.</li>
-      </ol>
+      <div id="browser-steps-other" hidden>
+        <ol class="setup-steps">
+          <li data-i18n="browserSetup.other.step1">
+            У налаштуваннях браузера знайдіть «DNS через HTTPS» / «Secure DNS» /
+            «Custom DNS provider».
+          </li>
+          <li data-i18n="browserSetup.other.step2">Оберіть режим «Власний» / «Custom» і вставте адресу зверху.</li>
+        </ol>
+      </div>
       <p id="browser-verify-chromium" class="setup-verify" data-i18n-html="browserSetup.verify">
         Перевірка: відкрийте будь-який сайт — у логу нижче має з'явитися рядок
         <code>ALLOWED</code>. Що браузер справді резолвить саме через цю службу —
@@ -190,7 +194,36 @@
         Якщо сайт просить дозволу на доступ до інших застосунків і служб на цьому пристрої (локальна мережа), оберіть «Блокувати»: з таким дозволом сайт зможе надсилати запити цій службі — дізнаватися, які сайти ви нещодавно відкривали, і додавати записи в лог запитів.
       </p>
     </div>
+    </div>
     <div id="browser-setup-result" role="status"></div>
+  </div>
+
+  <!-- T-176: master filter switch + the three category toggles (malware /
+       ads / adult). Its own fetch/render cycle off GET /admin/providers (not
+       the 2s status poll) so a toggle click never races a poll - same
+       pattern as #providers-body. The fan-out privacy line and the
+       "filtering not active" warning render here, in the basic view, not
+       hidden in the advanced disclosure (CLAUDE.md / SPEC.md §8.1). -->
+  <div id="filter-controls-body" class="card">
+    <p>Завантаження…</p>
+  </div>
+
+  <!-- T-176: quick stats. The 2s status poll fully replaces this subtree, so
+       it holds no free-text input (the timeout-mode radios and the
+       baseline-fallback checkbox it also renders live in the advanced
+       disclosure's own card). -->
+  <div id="app-body">
+    <p>Завантаження…</p>
+  </div>
+
+  <!-- T-46/T-54: same reasoning as #overrides-body - a search box the
+       user is actively typing into must not lose its value to the unrelated
+       2s status poll. Unlike that one, this section also doesn't auto-refresh
+       on its own timer (see main.js) - a log table re-rendering under a
+       reader every few seconds would be disruptive, not helpful. -->
+  <div id="log-body" class="card">
+    <h2>Лог запитів</h2>
+    <p>Завантаження…</p>
   </div>
 
   <!-- T-47: kept outside #app-body, which the 2s status poll fully
@@ -209,22 +242,12 @@
        status poll: a just-clicked per-source checkbox must not visually
        revert under the unrelated poll before its own POST resolves, same
        reasoning as #providers-body's category checkboxes (T-176) and
-       #rating-filter-body above. Sits in the basic view, next to
+       #rating-filter-body. Sits in the basic view, next to
        #overrides-body rather than inside #advanced-settings - the mockup's
        own placement rationale: this extends Blocklist (SPEC.md §5 step 2)
        itself, not a niche add-on. -->
   <div id="blocklist-bundles-body" class="card">
     <h2>Блок-лист-бандли</h2>
-    <p>Завантаження…</p>
-  </div>
-
-  <!-- T-46/T-54: same reasoning as #overrides-body above - a search box the
-       user is actively typing into must not lose its value to the unrelated
-       2s status poll. Unlike that one, this section also doesn't auto-refresh
-       on its own timer (see main.js) - a log table re-rendering under a
-       reader every few seconds would be disruptive, not helpful. -->
-  <div id="log-body" class="card">
-    <h2>Лог запитів</h2>
     <p>Завантаження…</p>
   </div>
 
@@ -241,29 +264,12 @@
       <span class="summary-chevron" aria-hidden="true">›</span>
     </summary>
     <div class="advanced-inner">
-      <!-- T-176: timeout mode (fail_open / fail_closed / degraded) + the
-           baseline-fallback checkbox. Moved here from the basic view - it is
-           an advanced failure-behaviour choice. Driven by the 2s status poll
-           (click-only, no free-text), same as the stats card. -->
-      <div id="timeout-config-body" class="card">
-        <h2>Поведінка при збої</h2>
-        <p>Завантаження…</p>
-      </div>
-
       <!-- T-72/T-73: the voter (provider) list. Own fetch/render cycle, not on
            the 2s status poll - the "add custom provider" sub-form has free-text
            inputs (id / URL / display name) that must not be wiped mid-typing,
-           same reasoning as #overrides-body above. -->
+           same reasoning as #overrides-body. -->
       <div id="providers-body" class="card">
         <h2>Провайдери-voter'и</h2>
-        <p>Завантаження…</p>
-      </div>
-
-      <!-- T-153: same reasoning as #overrides-body above - number inputs the
-           user is actively editing must not lose their in-progress value to the
-           unrelated 2s status poll. -->
-      <div id="cache-config-body" class="card">
-        <h2>Кеш</h2>
         <p>Завантаження…</p>
       </div>
 
@@ -309,6 +315,23 @@
         <p>Завантаження…</p>
       </div>
 
+      <!-- T-176: timeout mode (fail_open / fail_closed / degraded) + the
+           baseline-fallback checkbox. Moved here from the basic view - it is
+           an advanced failure-behaviour choice. Driven by the 2s status poll
+           (click-only, no free-text), same as the stats card. -->
+      <div id="timeout-config-body" class="card">
+        <h2>Поведінка при збої</h2>
+        <p>Завантаження…</p>
+      </div>
+
+      <!-- T-153: same reasoning as #overrides-body - number inputs the
+           user is actively editing must not lose their in-progress value to the
+           unrelated 2s status poll. -->
+      <div id="cache-config-body" class="card">
+        <h2>Кеш</h2>
+        <p>Завантаження…</p>
+      </div>
+
       <!-- T-70: MSIX (T-156) has no uninstall-time code hook - the OS just
            deletes the package's files, nothing runs afterward - so the trusted
            certificate and Credential Manager secrets have to be cleared from
@@ -326,6 +349,12 @@
       </div>
     </div>
   </details>
+  <!-- UX-3: removal lives at the end of "Розширені"; this line finds it
+       without the user having to guess where. main.js opens the disclosure
+       and scrolls to the card. -->
+  <p class="uninstall-link-row">
+    <button type="button" id="uninstall-jump" class="link-button" data-i18n="danger.jumpLink">Видалити застосунок…</button>
+  </p>
 
   <!-- T-81/T-226(б): attribution / credits. Static markup, no JS and no DTO
        - it must be present on every render because this page displays

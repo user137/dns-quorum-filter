@@ -161,8 +161,8 @@ const logData = {
     voters: [{ provider_name: "quad9", status: { status: "ERROR", message: "x" } }, { provider_name: "z", status: { status: "ALLOW", ip_count: 2 } }],
     resolved_ip_country: "SE", geoip_country: "RU" }], truncated: true,
 };
-// T-279: 120 entries = 3 pages of LOG_PAGE_SIZE 50.
-const bigLogData = { entries: Array.from({ length: 120 }, (_, i) => Object.assign({}, logData.entries[0], { domain: `d${i}.com`, timestamp_ms: i })), truncated: false };
+// T-279 / UX-3: 50 entries = 3 pages of LOG_PAGE_SIZE 20.
+const bigLogData = { entries: Array.from({ length: 50 }, (_, i) => Object.assign({}, logData.entries[0], { domain: `d${i}.com`, timestamp_ms: i })), truncated: false };
 const calls = [
   ["renderProtectionHero", `renderProtectionHero(heroPresentation("PROTECTED", {blocked: 3}))`],
   ["renderProtectionHeroCert", `renderProtectionHero(heroPresentation("CERT_NOT_TRUSTED", {blocked: 0}))`],
@@ -327,6 +327,31 @@ for (const [fn, data] of xssCalls) {
   await pending;
   check("vivaldi", "manual pick vs late isBrave");
 
+  // UX-3: the setup card folds once a browser has queried, stays folded when
+  // the log empties, and the user's own unfold wins.
+  {
+    byId["browser-setup-unfold"] = { id: "browser-setup-unfold", attrs: {}, setAttribute(a, v) { this.attrs[a] = v; }, textContent: "" };
+    doc.getElementById("browser-setup-connected").hidden = true;
+    doc.getElementById("browser-setup-content").hidden = false;
+    const fold = (label, wantFolded, wantLine) => {
+      const content = byId["browser-setup-content"];
+      const line = byId["browser-setup-connected"];
+      if (content.hidden !== wantFolded || line.hidden === wantLine) { failures++; console.log(`[fold] ${label}: folded=${content.hidden} line=${!line.hidden}`); }
+    };
+    const heroLine = vm.runInContext("heroLastQuery", ctx);
+    heroLine.classList = { on: false, toggle(_c, v) { this.on = v; } };
+    vm.runInContext("browserSeenConnected = false; browserSetupUserFolded = null; renderLastQuery(null)", ctx);
+    fold("no query yet", false, false);
+    if (!heroLine.classList.on) { failures++; console.log("[fold] no-query subline is not a warning"); }
+    vm.runInContext("renderLastQuery(Date.now())", ctx);
+    fold("after a query", true, true);
+    vm.runInContext("renderLastQuery(null)", ctx);
+    fold("log emptied again", true, true);
+    vm.runInContext("browserSetupUserFolded = false; syncBrowserSetupFold()", ctx);
+    fold("user unfolded", false, true);
+    vm.runInContext("browserSetupUserFolded = null; browserSeenConnected = false", ctx);
+  }
+
   // T-277 / T-248: a background re-render (locale switch, server push) keeps
   // what the user typed and opened, and waits while the card is in use. A
   // user-action render (any mode other than BACKGROUND) is never held back.
@@ -467,22 +492,42 @@ for (const [fn, data] of xssCalls) {
   guard("collapsed selection still held the render back", renders === 1);
   doc.getSelection = () => null;
 
-  // T-279: pager - 50 rows per page, newest first, page clamped to the data.
+  // T-279 / UX-3: pager - 20 rows per page, newest first, page clamped to the data.
   const logRows = () => created.filter((r) => r.tag === "li" && String(r.props.className).split(" ").includes("log-item"));
   const pagerText = () => assigned.filter(([w]) => w === "<span>.textContent").map(([, v]) => v);
   const run = (code) => vm.runInContext(code, ctx);
   created.length = 0; assigned.length = 0;
   run(`logPage = 0; renderLog(${JSON.stringify(bigLogData)})`);
-  guard(`page 1 shows ${logRows().length} rows, want 50`, logRows().length === 50);
-  guard("page 1 is not newest-first", logRows()[0] && created.some((r) => r.props.textContent === "d119.com"));
+  guard(`page 1 shows ${logRows().length} rows, want 20`, logRows().length === 20);
+  guard("page 1 is not newest-first", logRows()[0] && created.some((r) => r.props.textContent === "d49.com"));
   guard("pager status missing on page 1", pagerText().some((v) => v.includes("1") && v.includes("3")));
   created.length = 0; assigned.length = 0;
   run(`logPage = 2; renderLogPage(document.createElement("div"))`);
-  guard(`last page shows ${logRows().length} rows, want 20`, logRows().length === 20);
+  guard(`last page shows ${logRows().length} rows, want 10`, logRows().length === 10);
   created.length = 0;
   run(`logPage = 2; renderLog(${JSON.stringify(logData)})`);
   guard("page not clamped when the data shrank", run("logPage") === 0 && logRows().length === 1);
   run("logPage = 0");
+
+  // UX-3: one row action, the one that undoes the decision; a blocked
+  // quorum row names its blockers inline.
+  {
+    const rowButtons = () => assigned.filter(([w]) => w === "<button>.textContent").map(([, v]) => v);
+    const one = (e) => JSON.stringify({ entries: [Object.assign({}, logData.entries[0], e)], truncated: false });
+    created.length = 0; assigned.length = 0;
+    run(`renderLog(${one({ decision: "BLOCKED" })})`);
+    guard("blocked row lacks the allow action", rowButtons().includes(run(`t("log.addToAllowlistButton")`)) && !rowButtons().includes(run(`t("log.addToBlocklistButton")`)));
+    assigned.length = 0;
+    run(`renderLog(${one({ decision: "ALLOWED", decision_source: "QUORUM" })})`);
+    guard("allowed row lacks the block action", rowButtons().includes(run(`t("log.addToBlocklistButton")`)) && !rowButtons().includes(run(`t("log.addToAllowlistButton")`)));
+    assigned.length = 0;
+    run(`renderLog(${one({ decision: "FAILED" })})`);
+    guard("failed row offers an override", !rowButtons().includes(run(`t("log.addToBlocklistButton")`)) && !rowButtons().includes(run(`t("log.addToAllowlistButton")`)));
+    const quorumBlock = { decision: "BLOCKED", decision_source: "QUORUM", voters: [{ provider_name: "quad9", status: { status: "BLOCK" } }, { provider_name: "z", status: { status: "ALLOW", ip_count: 1 } }] };
+    guard("blocked quorum row does not name its blocker", run(`logSourceText(${JSON.stringify(Object.assign({}, logData.entries[0], quorumBlock))})`) === run(`t("log.blockedByTemplate", { providers: "quad9" })`));
+    guard("non-quorum row got a blocker list", run(`logSourceText(${JSON.stringify(logData.entries[0])})`) === run(`t("log.source.cctldBlock")`));
+    created.length = 0; assigned.length = 0;
+  }
 
   // ARCH-12: an expanded voter-detail row marks the log card busy, so the
   // pushed log refresh waits instead of collapsing it.

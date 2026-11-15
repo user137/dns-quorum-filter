@@ -1078,7 +1078,8 @@ mod tests {
             panic!("flipAllCategories must be a bounded function");
         };
         assert!(
-            MAIN_JS.contains("flipAllCategories(want, data.master_switch_targets)"),
+            MAIN_JS.contains("flipAllCategories(true, data.master_switch_targets)")
+                && MAIN_JS.contains("flipAllCategories(false, data.master_switch_targets)"),
             "the master switch must be driven by the server's target list"
         );
         assert!(
