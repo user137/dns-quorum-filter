@@ -432,10 +432,15 @@ function focusIfPresent(el) {
 // which drops focus to <body>. keepFocus() notes which control had focus by
 // a structural key (rebuilt nodes are new objects) and refocuses its
 // successor - the nth control with the same key, as before the render.
-const FOCUSABLE = "button, input, select, textarea, a[href], summary";
+const FOCUSABLE = 'button, input, select, textarea, a[href], summary, [role="checkbox"]';
 function focusKey(el) {
   if (el.id) {
     return `#${el.id}`;
+  }
+  // A partial category switch (span role=checkbox) turns into a real checkbox
+  // once activated - same label, so focus follows it across the swap.
+  if (el.matches('[role="checkbox"], input[type="checkbox"]') && el.getAttribute("aria-label")) {
+    return `switch|${el.getAttribute("aria-label")}`;
   }
   const choice = el.type === "checkbox" || el.type === "radio" ? el.value : "";
   const text = el.matches("button, summary, a") ? el.textContent.trim().slice(0, 60) : "";
@@ -659,7 +664,10 @@ function renderLastQuery(unixMs) {
   // UX-3: "no query yet" is the one sign the browser is not pointed here.
   heroLastQuery.classList.toggle("is-warn", unixMs === null);
   heroLastQuery.hidden = false;
-  if (typeof unixMs === "number" && !browserSeenConnected) {
+  // Not while the user is working in the card: folding would drop their focus.
+  const setupCard = document.getElementById("browser-setup-content");
+  const userInSetup = setupCard && setupCard.contains(document.activeElement);
+  if (typeof unixMs === "number" && !browserSeenConnected && !userInSetup) {
     browserSeenConnected = true;
     syncBrowserSetupFold();
   }
@@ -1068,7 +1076,9 @@ function render(status) {
   // T-277: an unchanged poll leaves the stats card alone, so a number being
   // selected for copying is not wiped every 2 s.
   if (appBody.dataset.rendered !== appBodyHtml) {
-    appBody.innerHTML = appBodyHtml;
+    keepFocus(() => {
+      appBody.innerHTML = appBodyHtml;
+    });
     appBody.dataset.rendered = appBodyHtml;
   }
 }
@@ -2641,6 +2651,7 @@ function renderMaxmind(data) {
         clearBtn.textContent = t("maxmind.confirmClearButton");
         return;
       }
+      armed = false;
       try {
         renderMaxmind(await clearMaxmind());
       } catch (err) {
@@ -2648,6 +2659,10 @@ function renderMaxmind(data) {
           message: errorMessage(err),
         });
       }
+    });
+    disarmOnLeave(clearBtn, () => {
+      armed = false;
+      clearBtn.textContent = t("maxmind.clearButton");
     });
     addRow.appendChild(clearBtn);
   }
@@ -3004,6 +3019,27 @@ function releaseHeldLogUpdate() {
   }
 }
 document.addEventListener("scroll", releaseHeldLogUpdate, { passive: true });
+
+// UX re-review: an open "?" help floats over the content below it, so it
+// closes like a popover - Escape (focus back to its "?") or a click elsewhere.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") {
+    return;
+  }
+  document.querySelectorAll(".field-help[open]").forEach((help) => {
+    help.open = false;
+    if (help.contains(document.activeElement)) {
+      focusIfPresent(help.querySelector("summary"));
+    }
+  });
+});
+document.addEventListener("click", (event) => {
+  document.querySelectorAll(".field-help[open]").forEach((help) => {
+    if (!help.contains(event.target)) {
+      help.open = false;
+    }
+  });
+});
 
 function currentLogQuery() {
   const params = new URLSearchParams();
@@ -3744,7 +3780,12 @@ function providerRow(entry) {
         removeBtn.textContent = t("providers.confirmRemoveButton");
         return;
       }
+      armed = false;
       await providerAction(() => removeProvider(entry.id), "providers.changeFailedTemplate");
+    });
+    disarmOnLeave(removeBtn, () => {
+      armed = false;
+      removeBtn.textContent = t("common.delete");
     });
     li.appendChild(removeBtn);
   }
@@ -4279,7 +4320,14 @@ function buildFilterControls(data) {
   });
   masterOffGo.addEventListener("click", () => {
     masterOff.hidden = true;
+    focusIfPresent(masterInput());
     flipAllCategories(false, data.master_switch_targets);
+  });
+  // Same as every other two-step confirm: leaving it disarms it.
+  masterOff.addEventListener("focusout", (event) => {
+    if (!masterOff.hidden && !masterOff.contains(event.relatedTarget)) {
+      masterOff.hidden = true;
+    }
   });
   filterControlsBody.appendChild(
     toggleRow(

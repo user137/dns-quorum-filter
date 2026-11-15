@@ -171,8 +171,9 @@ input:not([type]), select {
   background: radial-gradient(circle, transparent 7px, var(--control-border) 7.5px, var(--control-border) 8.5px, transparent 9px);
 }
 .field-help summary::-webkit-details-marker { display: none; }
-.field-help summary:hover, .field-help summary:focus-visible {
-  border-color: var(--accent); color: var(--accent); outline: none;
+.field-help summary:hover { color: var(--accent); }
+.field-help summary:focus-visible {
+  color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; border-radius: 50%;
 }
 .field-help[open] summary { color: var(--accent); }
 .field-help p {

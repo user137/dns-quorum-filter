@@ -333,6 +333,8 @@ for (const [fn, data] of xssCalls) {
     byId["browser-setup-unfold"] = { id: "browser-setup-unfold", attrs: {}, setAttribute(a, v) { this.attrs[a] = v; }, textContent: "" };
     doc.getElementById("browser-setup-connected").hidden = true;
     doc.getElementById("browser-setup-content").hidden = false;
+    const setupFocus = { inside: false };
+    byId["browser-setup-content"].contains = () => setupFocus.inside;
     const fold = (label, wantFolded, wantLine) => {
       const content = byId["browser-setup-content"];
       const line = byId["browser-setup-connected"];
@@ -343,6 +345,10 @@ for (const [fn, data] of xssCalls) {
     vm.runInContext("browserSeenConnected = false; browserSetupUserFolded = null; renderLastQuery(null)", ctx);
     fold("no query yet", false, false);
     if (!heroLine.classList.on) { failures++; console.log("[fold] no-query subline is not a warning"); }
+    setupFocus.inside = true;
+    vm.runInContext("renderLastQuery(Date.now())", ctx);
+    fold("first query while the user is in the card", false, false);
+    setupFocus.inside = false;
     vm.runInContext("renderLastQuery(Date.now())", ctx);
     fold("after a query", true, true);
     vm.runInContext("renderLastQuery(null)", ctx);
