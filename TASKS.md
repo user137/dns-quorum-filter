@@ -1204,8 +1204,10 @@ pipeline-wiring, частина 2 admin-route/DTO/status-view, частина 3 
   (3) кнопки рядка журналу на сенсорі 26 px (`.log-item-actions button` перебиває `pointer:coarse`);
   (4) шеврон «Розширених» не обертається в RTL; (5) лишки сирих 11/12/13/15 px і радіусів поза токенами;
   (6) en: «providers/filters/checks» — один термін; « - » проти «—»; «baseline»/«quorum» у «Розширених»;
-  (7) uk: «Списки виключень» проти «винятки»; трей `confirm.pause`/`uninstall.label.maxmindCreds` —
-  «резолвитимуться», «baseline-резолвер», «Креденшели»; «Заблокував: {providers}» в однині;
+  en `fieldHelp.providers` ще каже «quorum»; (7) uk: «Списки виключень» проти «винятки»; трей
+  (`crates/dnsqb-tray/i18n`, en+uk, усі 37) `confirm.pause.description` («quorum», «baseline»,
+  «резолвитимуться»), `confirm.removeAll.description` і `menu.resetCacheLog` («лог»),
+  `uninstall.label.maxmindCreds` («Креденшели») — поза набором UX-4; «Заблокував: {providers}» в однині;
   (8) «Підтвердити …» ще у трьох підтвердженнях проти «Натисніть ще раз, щоб …»; (9) помилки кнопок рядка
   й hero не оголошуються (замінюють підпис); 5xx → «не відповіла», хоча відповіла; (10) у hero число
   заблокованих не веде до фільтра журналу; рядок «Фільтри» на кожному рядку журналу — шум.
