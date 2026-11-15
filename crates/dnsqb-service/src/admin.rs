@@ -1312,17 +1312,19 @@ impl DatabaseSource {
     /// publishes `DBIP-Country-Lite`, `MaxMind` `GeoLite2-Country`,
     /// `sapics/ip-location-db`'s `user-country` publishes `country ipvAll`
     /// (verified directly against the real downloaded file, T-226(б) — not
-    /// guessed); anything else is [`DatabaseSource::Other`]. Checked in this
-    /// order because none of the three substrings overlap — confirmed, not
-    /// assumed, before picking an order that would otherwise matter.
+    /// guessed) and, since late 2026, `Country (compat=GeoLite2-Country)` —
+    /// a `GeoLite2`-*compatible* layout that names `GeoLite2` without being
+    /// `MaxMind`'s, so `GeoLite2` is matched only as a prefix (`MaxMind`'s own
+    /// types are exactly `GeoLite2-Country` / `GeoLite2-City`); anything else
+    /// is [`DatabaseSource::Other`].
     #[must_use]
     pub fn classify(database_type: &str) -> Self {
         let lowered = database_type.to_ascii_lowercase();
         if lowered.contains("dbip") {
             Self::DbIpLite
-        } else if lowered.contains("ipvall") {
+        } else if lowered.contains("ipvall") || lowered.contains("compat=") {
             Self::UserCountry
-        } else if lowered.contains("geolite2") {
+        } else if lowered.starts_with("geolite2") {
             Self::GeoLite2
         } else {
             Self::Other
@@ -2753,6 +2755,17 @@ mod maxmind_dto_tests {
         assert_eq!(
             DatabaseSource::classify("Some-Other-Vendor-DB"),
             DatabaseSource::Other
+        );
+        // UX-0 (2026-11-15): `user-country` switched its type to this compat
+        // string (read off a freshly downloaded file) — the GeoIP card called
+        // it "MaxMind GeoLite2" while MaxMind was not configured.
+        assert_eq!(
+            DatabaseSource::classify("Country (compat=GeoLite2-Country)"),
+            DatabaseSource::UserCountry
+        );
+        assert_eq!(
+            DatabaseSource::classify("GeoLite2-City"),
+            DatabaseSource::GeoLite2
         );
     }
 

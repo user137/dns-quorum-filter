@@ -2570,7 +2570,7 @@ function decisionLabel(decision) {
   }
 }
 // ALLOWLIST/BLOCKLIST/QUORUM/GEOIP are product/technical names, kept as-is
-// in every locale (same convention as PROVIDER_LABELS below).
+// in every locale.
 function decisionSourceLabel(source) {
   switch (source) {
     case "ALLOWLIST":
@@ -2627,10 +2627,10 @@ function voterStatusLabel(status) {
       return status;
   }
 }
-// Pretty names for the two Phase-1 provider ids; any other id (a preset
-// toggled on, or a custom entry) falls through to its raw wire id, which is
-// already human-readable enough (e.g. "cloudflare-family").
-const PROVIDER_LABELS = { quad9: "Quad9", adguard: "AdGuard" };
+// id -> display_name from /admin/providers (filled by syncLogVoterOptions),
+// the same name the Providers card shows; an id not (yet) known falls back
+// to its raw wire id.
+const providerNames = new Map();
 
 // Built via DOM methods only, same discipline as overrideListItem above -
 // `domain`/`voter.status.message` are both untrusted (a domain from live DNS
@@ -2645,7 +2645,7 @@ function voterDetailList(voters) {
     const li = document.createElement("li");
     const provider = document.createElement("span");
     provider.className = "log-voter-provider";
-    provider.textContent = PROVIDER_LABELS[voter.provider_name] || voter.provider_name;
+    provider.textContent = providerNames.get(voter.provider_name) || voter.provider_name;
     li.appendChild(provider);
     const status = document.createElement("span");
     let text = voterStatusLabel(voter.status.status);
@@ -3378,7 +3378,9 @@ function syncLogVoterOptions(data) {
       pairs.push([entry.id, entry.display_name]);
     }
   });
+  providerNames.clear();
   pairs.forEach(([value, text]) => {
+    providerNames.set(value, text);
     const opt = document.createElement("option");
     opt.value = value;
     opt.textContent = text;
@@ -5057,7 +5059,11 @@ function renderBlocklistBundles(status) {
         : { text: t("blocklist.status.notTracked"), cls: "" };
     }
     if (loaded.length === 0) {
-      return { text: t("blocklist.status.loading"), cls: "loading" };
+      // While bundles are off the updater fetches nothing, so "loading…"
+      // would never resolve - show the neutral not-tracked state instead.
+      return bb.enabled
+        ? { text: t("blocklist.status.loading"), cls: "loading" }
+        : { text: t("blocklist.status.notTracked"), cls: "" };
     }
     const failed = loaded.find((entry) => entry.last_error);
     if (failed) {
