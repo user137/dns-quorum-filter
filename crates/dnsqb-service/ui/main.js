@@ -2663,7 +2663,7 @@ function voterDetailList(voters) {
 
 function logItem(entry) {
   const li = document.createElement("li");
-  li.className = "log-item";
+  li.className = entry.decision === "BLOCKED" ? "log-item is-blocked" : "log-item";
 
   const row = document.createElement("div");
   row.className = "log-item-row";

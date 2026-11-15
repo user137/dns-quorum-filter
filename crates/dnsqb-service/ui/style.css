@@ -15,7 +15,6 @@
   --paper: #eff1f5;
   --surface-raised: #ffffff;
   --line: #ccd0da;
-  --line-soft: #e6e9ef;
   --text: #4c4f69;
   --text-muted: #5c5f77;
   --accent: #8839ef;
@@ -26,6 +25,23 @@
   --bad-soft: #fce4e9;
   --warn: #8a6400;
   --warn-soft: #f8ecd3;
+  /* UX-1 (2026-11-15 UX review): split roles of the old --line-soft (it equalled
+     --surface-raised in dark, erasing every divider/chip), plus control tokens. */
+  --divider: #e6e9ef;
+  --surface-sunken: #e6e9ef;
+  --control-border: #7c7f93; /* >= 3:1 on paper and white (WCAG 1.4.11) */
+  --on-accent: var(--paper);
+  --focus: var(--accent);
+  --shadow-pop: 0 6px 18px rgba(0, 0, 0, 0.14);
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-num: 20px;
+  --fs-xl: 21px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --r-sm: 4px; --r-md: 6px; --r-lg: 10px; --r-pill: 999px;
+  accent-color: var(--accent);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -33,7 +49,6 @@
     --paper: #1e1e2e;
     --surface-raised: #313244;
     --line: #45475a;
-    --line-soft: #313244;
     --text: #cdd6f4;
     --text-muted: #a6adc8;
     --accent: #cba6f7;
@@ -44,38 +59,84 @@
     --bad-soft: #3a2530;
     --warn: #f9e2af;
     --warn-soft: #3a3327;
+    --divider: #45475a;
+    --surface-sunken: #24273a;
+    --control-border: #7f849c;
+    --shadow-pop: 0 6px 18px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
 }
 * { box-sizing: border-box; }
 body {
-  margin: 0;
+  max-width: 52rem;
+  margin: 0 auto;
   padding: 1rem;
   background: var(--paper);
   color: var(--text);
   font-family: "Segoe UI", -apple-system, sans-serif;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
 }
-h1 { font-size: 15px; margin: 0 0 0.9rem; }
+h1 { font-size: var(--fs-lg); margin: 0; }
+/* h1 and the language picker share one header row. */
+.app-header {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--s2) var(--s4); margin-bottom: var(--s3);
+}
+
+/* UX-1: one control system. Every <button> gets the secondary look; the
+   classes below only add a role (primary / danger / link). */
+button {
+  font: inherit; font-size: var(--fs-sm); line-height: 1.3;
+  padding: 0.35rem 0.75rem; min-height: 30px;
+  border: 1px solid var(--control-border); border-radius: var(--r-md);
+  background: var(--surface-raised); color: var(--text); cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--surface-sunken); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: 0.6; cursor: default; }
+button:focus-visible, summary:focus-visible, a:focus-visible,
+input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+.btn-primary, .setup-url-row button, .rf-save, .rf-suggestion-add,
+.rf-confirm-row button.rf-confirm {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.btn-primary:hover:not(:disabled), .setup-url-row button:hover:not(:disabled),
+.rf-save:hover:not(:disabled), .rf-suggestion-add:hover:not(:disabled),
+.rf-confirm-row button.rf-confirm:hover:not(:disabled) {
+  background: var(--accent-strong); border-color: var(--accent-strong);
+}
+.btn-danger, #uninstall-local-state-btn, .hero-action {
+  border-color: var(--bad); color: var(--bad); font-weight: 600;
+}
+.btn-danger:hover:not(:disabled), #uninstall-local-state-btn:hover:not(:disabled),
+.hero-action:hover:not(:disabled) { background: var(--bad-soft); }
+input[type="text"], input[type="search"], input[type="number"], input[type="password"],
+input:not([type]), select {
+  font: inherit; font-size: var(--fs-md);
+  border: 1px solid var(--control-border); border-radius: var(--r-md);
+  background: var(--paper); color: var(--text);
+}
+::placeholder { color: var(--text-muted); opacity: 1; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+@media (pointer: coarse) {
+  button { min-height: 36px; }
+}
 
 /* T-151 Батч 5.2 */
 #locale-switcher {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-muted, var(--text));
-  margin-bottom: 0.9rem;
 }
-#locale-switcher select {
-  font: inherit;
-  color: inherit;
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0.15rem 0.4rem;
-}
+#locale-switcher select { font-size: var(--fs-sm); padding: 0.2rem 0.4rem; }
 
 .card {
   background: var(--surface-raised);
@@ -85,7 +146,7 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   margin-bottom: 0.8rem;
 }
 .card h3 {
-  font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
   text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.6rem;
 }
 
@@ -94,66 +155,75 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
    out of the box). <h3> only permits phrasing content, so the toggle is a
    flex-row sibling of the heading (main.js's cardHeading()), never nested
    inside it - nesting would be invalid HTML even though browsers recover. */
-.card-heading-row { display: flex; align-items: center; margin: 0 0 0.6rem; }
+/* UX-1: the open help text is a popover anchored to the whole heading row
+   (the row is the positioned ancestor, not the <details>), so opening it no
+   longer re-centres the heading against a tall paragraph. The visible "?"
+   ring stays small; the hit area is 24px (WCAG 2.5.8). */
+.card-heading-row { position: relative; display: flex; align-items: center; margin: 0 0 0.6rem; }
 .card-heading-row h3 { margin: 0; }
 .field-help {
-  display: inline-block; margin-left: 0.4rem;
+  display: inline-block; margin-inline-start: 0.2rem;
 }
 .field-help summary {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; border-radius: 50%; cursor: pointer;
-  border: 1px solid var(--line); color: var(--text-muted);
-  font-size: 10px; list-style: none; user-select: none;
+  width: 24px; height: 24px; cursor: pointer; list-style: none; user-select: none;
+  color: var(--text-muted); font-size: var(--fs-xs);
+  background: radial-gradient(circle, transparent 7px, var(--control-border) 7.5px, var(--control-border) 8.5px, transparent 9px);
 }
 .field-help summary::-webkit-details-marker { display: none; }
 .field-help summary:hover, .field-help summary:focus-visible {
   border-color: var(--accent); color: var(--accent); outline: none;
 }
-.field-help[open] summary { background: var(--line-soft); }
+.field-help[open] summary { color: var(--accent); }
 .field-help p {
-  margin: 0.35rem 0 0; padding: 0.5rem 0.65rem; max-width: 32em;
-  font-size: 12px; color: var(--text-muted); background: var(--line-soft);
-  border-radius: 6px;
+  position: absolute; inset-inline-start: 0; top: calc(100% + 4px); z-index: 6;
+  width: min(40em, 100%);
+  margin: 0; padding: 0.6rem 0.75rem;
+  font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: normal;
+  color: var(--text); background: var(--surface-raised);
+  border: 1px solid var(--line); border-radius: var(--r-md); box-shadow: var(--shadow-pop);
 }
 
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0.4rem 0; border-bottom: 1px solid var(--line-soft);
+  padding: 0.5rem 0; border-bottom: 1px solid var(--divider);
 }
 .toggle-row:last-child { border-bottom: none; }
-.switch { position: relative; width: 34px; height: 20px; flex-shrink: 0; }
+.switch { position: relative; width: 36px; height: 21px; flex-shrink: 0; }
 .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .switch .track {
-  position: absolute; inset: 0; background: var(--line); border-radius: 999px;
+  position: absolute; inset: 0; background: var(--control-border); border-radius: var(--r-pill);
   pointer-events: none;
 }
 .switch .thumb {
-  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--paper); box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-  pointer-events: none; transition: transform 0.1s;
+  position: absolute; top: 2px; inset-inline-start: 2px; width: 17px; height: 17px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+  pointer-events: none; transition: transform 0.12s;
 }
 .switch input:checked + .track { background: var(--accent); }
-.switch input:checked + .track + .thumb { transform: translateX(14px); }
+.switch input:checked + .track + .thumb { transform: translateX(15px); }
+html[dir="rtl"] .switch input:checked + .track + .thumb { transform: translateX(-15px); }
+.switch input:focus-visible + .track { outline: 2px solid var(--focus); outline-offset: 2px; }
 .switch input:disabled + .track { opacity: 0.5; }
 
 .radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
-.radio-opt { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 12.8px; }
-.radio-opt input { margin-top: 0.2rem; accent-color: var(--accent); }
+.radio-opt { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 13px; }
+.radio-opt input { margin-top: 0.2rem; }
 .baseline-fallback-opt { margin-top: 0.75rem; }
 
-.stat { font-size: 24px; font-weight: 700; }
+.stat { font-size: var(--fs-num); font-weight: 700; }
 .stat-row { display: flex; flex-wrap: wrap; gap: 1.5rem; }
-.stat-sub { font-size: 11.5px; color: var(--text-muted); }
+.stat-sub { font-size: 12px; color: var(--text-muted); }
 
 .notice {
-  border-radius: 8px; padding: 0.6rem 0.75rem; font-size: 12.3px;
+  border-radius: 8px; padding: 0.6rem 0.75rem; font-size: 13px;
   margin-bottom: 0.8rem;
 }
 .notice.warn { background: var(--warn-soft); color: var(--warn); }
 .notice.ok { background: var(--good-soft); color: var(--good); }
 .error-panel {
   background: var(--bad-soft); color: var(--bad);
-  border-radius: 8px; padding: 0.7rem 0.85rem; font-size: 12.8px;
+  border-radius: 8px; padding: 0.7rem 0.85rem; font-size: 13px;
 }
 
 /* T-47: override-list editor (#overrides-body, main.js) */
@@ -165,108 +235,83 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   text-transform: uppercase; letter-spacing: 0.03em; margin: 0.7rem 0 0.4rem;
 }
 .override-add-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.4rem; }
-.override-add-row input {
-  flex: 1 1 12rem; min-width: 0; padding: 0.35rem 0.5rem;
-  border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper); color: var(--text); font-size: 12.8px;
-}
-.override-add-row select {
-  padding: 0.35rem 0.5rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper); color: var(--text); font-size: 12.8px;
-}
-.override-add-row button, .override-remove {
-  padding: 0.35rem 0.7rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--surface-raised); color: var(--text); font-size: 12.3px;
-  cursor: pointer;
-}
+.override-add-row input { flex: 1 1 12rem; min-width: 0; padding: 0.35rem 0.5rem; }
+.override-add-row select { padding: 0.35rem 0.5rem; }
 .override-error { color: var(--bad); font-size: 12px; margin-bottom: 0.4rem; }
 .override-list { list-style: none; margin: 0 0 0.6rem; padding: 0; }
 .override-item {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem;
-  padding: 0.35rem 0; border-bottom: 1px solid var(--line-soft);
-  font-size: 12.8px;
+  padding: 0.35rem 0; border-bottom: 1px solid var(--divider);
+  font-size: 13px;
 }
 .override-item:last-child { border-bottom: none; }
 .override-item span:first-child { flex: 1 1 auto; word-break: break-all; }
-.override-item .conflict-note { color: var(--warn); font-size: 11.5px; }
-.override-item.conflict { background: var(--warn-soft); border-radius: 6px; padding-left: 0.4rem; }
+.override-item .conflict-note { color: var(--warn); font-size: 12px; }
+.override-item.conflict { background: var(--warn-soft); border-radius: 6px; padding-inline-start: 0.4rem; }
 
 /* T-78: GeoIP database build-date indicator (#geoip-body, main.js) */
-.geoip-database-status { font-size: 11.5px; color: var(--text-muted); margin: 0 0 0.6rem; }
+.geoip-database-status { font-size: 12px; color: var(--text-muted); margin: 0 0 0.6rem; }
 
 /* T-153: cache TTL/capacity editor (#cache-config-body, main.js) */
-.cache-config-flush-notice { font-size: 11.5px; color: var(--text-muted); margin: 0 0 0.6rem; }
+.cache-config-flush-notice { font-size: 12px; color: var(--text-muted); margin: 0 0 0.6rem; }
 .cache-config-form { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.6rem; }
 .cache-config-row {
   display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-  font-size: 12.8px;
+  font-size: 13px;
 }
 .cache-config-row span { flex: 1 1 auto; }
-.cache-config-row input {
-  width: 8rem; padding: 0.35rem 0.5rem;
-  border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper); color: var(--text); font-size: 12.8px;
-}
-.cache-config-apply {
-  padding: 0.35rem 0.7rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--surface-raised); color: var(--text); font-size: 12.3px;
-  cursor: pointer;
-}
+.cache-config-row input { width: 8rem; padding: 0.35rem 0.5rem; }
 
 /* T-46/T-54: query log (#log-body, main.js) */
 .log-filter-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
-.log-filter-row input {
-  flex: 1 1 12rem; min-width: 0; padding: 0.35rem 0.5rem;
-  border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper); color: var(--text); font-size: 12.8px;
+.log-filter-row input { flex: 1 1 12rem; min-width: 0; padding: 0.35rem 0.5rem; }
+.log-filter-row select { padding: 0.35rem 0.5rem; font-size: 12px; }
+@media (max-width: 480px) {
+  .log-filter-row { display: grid; grid-template-columns: 1fr 1fr; }
+  .log-filter-row input { grid-column: 1 / -1; }
 }
-.log-filter-row select, .log-filter-row button {
-  padding: 0.35rem 0.6rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--surface-raised); color: var(--text); font-size: 12.3px;
-  cursor: pointer;
-}
-.log-empty { color: var(--text-muted); font-size: 12.8px; }
-.log-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
-.log-pager { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; font-size: 12.8px; }
-.log-live { color: var(--text-muted); font-size: 12.8px; margin: 0 0 0.4rem; }
+.log-empty { color: var(--text-muted); font-size: 13px; }
+.log-list { list-style: none; margin: 0; padding: 0; }
+.log-pager { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.6rem; font-size: 13px; }
+.log-live { color: var(--text-muted); font-size: 13px; margin: 0 0 0.4rem; }
 /* T-291: the retention choice above the filter row. */
 .log-retention { margin-bottom: 0.6rem; }
 .log-retention-choice {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem;
   border: none; padding: 0; margin: 0 0 0.3rem;
 }
-.log-retention-choice legend { float: left; margin-right: 0.3rem; padding: 0; font-size: 12.8px; }
-.log-retention-choice label { font-size: 12.8px; white-space: nowrap; }
-.log-item { padding: 0.5rem 0; border-bottom: 1px solid var(--line-soft); }
+.log-retention-choice legend { float: inline-start; margin-inline-end: 0.3rem; padding: 0; font-size: 13px; }
+.log-retention-choice label { font-size: 13px; white-space: nowrap; }
+.log-item { padding: 0.5rem 0; border-bottom: 1px solid var(--divider); }
+.log-item.is-blocked {
+  border-inline-start: 3px solid var(--bad); padding-inline-start: var(--s2);
+  background: color-mix(in srgb, var(--bad-soft) 55%, transparent);
+}
 .log-item:last-child { border-bottom: none; }
 .log-item-row {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
-  font-size: 12.5px;
+  font-size: 13px;
 }
-.log-item-time { color: var(--text-muted); font-size: 11.5px; flex-shrink: 0; }
+.log-item-time { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
 .log-item-domain { flex: 1 1 auto; word-break: break-all; font-weight: 600; }
 .log-item-badge {
   display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px;
-  font-size: 11px; background: var(--line-soft); color: var(--text-muted);
+  font-size: 11px; background: var(--surface-sunken); color: var(--text-muted);
 }
 .log-item-decision.good { background: var(--good-soft); color: var(--good); }
 .log-item-decision.bad { background: var(--bad-soft); color: var(--bad); }
 .log-item-decision.warn { background: var(--warn-soft); color: var(--warn); }
-.log-item-source { color: var(--text-muted); font-size: 11.5px; }
-.log-item-latency { color: var(--text-muted); font-size: 11.5px; flex-shrink: 0; }
+.log-item-source { color: var(--text-muted); font-size: 12px; }
+.log-item-latency { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
 .log-item-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.35rem; }
-.log-item-actions button {
-  padding: 0.25rem 0.55rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--surface-raised); color: var(--text); font-size: 11.5px;
-  cursor: pointer;
-}
+.log-item-actions button { padding: 0.2rem 0.55rem; min-height: 26px; }
 .log-voter-list {
   list-style: none; margin: 0.4rem 0 0; padding: 0.5rem 0.6rem;
-  background: var(--line-soft); border-radius: 6px;
+  background: var(--surface-sunken); border-radius: 6px;
 }
 .log-voter-list li {
   display: flex; justify-content: space-between; gap: 0.6rem;
-  font-size: 11.8px; padding: 0.15rem 0;
+  font-size: 12px; padding: 0.15rem 0;
 }
 .log-voter-provider { color: var(--text-muted); }
 
@@ -276,7 +321,7 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   padding-top: 0.9rem;
   border-top: 1px solid var(--line);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 #credits p { margin: 0.3rem 0; }
@@ -303,9 +348,10 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
   display: grid; place-items: center; font-size: 15px; color: var(--paper);
 }
-.hero .hero-state { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.hero .hero-state { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
 .hero .hero-detail { font-size: 12px; margin: 0.4rem 0 0; }
-.hero-subline { font-size: 12px; color: var(--text-muted); margin: 0.4rem 0; }
+.hero-subline { font-size: 12px; color: var(--text-muted); margin: -0.4rem 0 0.8rem; padding-inline: 1rem; }
+.hero-subline.is-warn { color: var(--warn); font-weight: 600; }
 .hero.is-ok { background: var(--good-soft); border-color: var(--good); }
 .hero.is-ok .hero-mark { background: var(--good); }
 .hero.is-ok .hero-state { color: var(--good); }
@@ -320,81 +366,76 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .hero.is-warn .hero-detail { color: var(--warn); }
 /* T-188: the "install the local cert" action button, only ever rendered on
    the is-bad (NOT_TRUSTED) hero. */
-.hero-action {
-  margin-top: 0.7rem; padding: 0.4rem 0.9rem;
-  border: 1px solid var(--bad); border-radius: 6px;
-  background: var(--paper); color: var(--bad);
-  font-size: 12px; font-weight: 600; cursor: pointer;
-}
-.hero-action:disabled { opacity: 0.6; cursor: default; }
+.hero-action { margin-top: 0.7rem; padding: 0.4rem 0.9rem; background: var(--paper); }
 
 /* Master + per-category toggles (basic view). Row layout reuses the
    .toggle-row / .switch primitives already defined above; these add the
    label column and the "partially enabled" switch state. */
 .toggle-row .toggle-meta { flex: 1 1 auto; min-width: 0; }
-.toggle-row .toggle-name { font-size: 13px; font-weight: 600; }
-.toggle-row .toggle-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 0.1rem; }
-.toggle-row.is-master .toggle-name { font-size: 13.5px; }
-.switch.is-partial .track { background: var(--accent); opacity: 0.55; }
-.switch.is-partial .thumb { transform: translateX(7px); }
+.toggle-row .toggle-name { font-size: 14px; font-weight: 600; }
+.toggle-row .toggle-sub { font-size: 12px; color: var(--text-muted); margin-top: 0.1rem; }
+.toggle-row.is-master .toggle-name { font-size: 15px; }
+/* Partial: a solid track (the old opacity failed WCAG 1.4.11) plus a dash
+   in the centred thumb, so "some on" never reads as "on". */
+.switch.is-partial .track { background: var(--accent); }
+.switch.is-partial .thumb { transform: translateX(7.5px); }
+html[dir="rtl"] .switch.is-partial .thumb { transform: translateX(-7.5px); }
+.switch.is-partial .thumb::after {
+  content: ""; position: absolute; inset: 7.5px 4px; border-radius: 1px; background: var(--accent);
+}
 
 /* The fan-out privacy line stays in the basic view (CLAUDE.md: "not
    buried") - a quiet rule-topped line under the toggles. */
 .fanout-note {
-  font-size: 11.5px; color: var(--text-muted);
+  font-size: 12px; color: var(--text-muted);
   margin: 0.7rem 0 0; padding-top: 0.55rem; border-top: 1px dashed var(--line);
 }
 
 /* Browser-setup / onboarding card. */
-#browser-setup-body .setup-intro { font-size: 12.5px; margin: 0 0 0.5rem; }
+#browser-setup-body .setup-intro { font-size: 13px; margin: 0 0 0.5rem; }
 .setup-url-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
 .setup-url-row input {
   flex: 1 1 14rem; min-width: 0;
   font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
-  font-size: 11.5px; padding: 0.35rem 0.5rem;
-  border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper); color: var(--text);
-}
-.setup-url-row button {
-  padding: 0.35rem 0.75rem; border: 1px solid var(--accent); border-radius: 6px;
-  background: var(--accent); color: var(--paper); font-size: 12px; cursor: pointer;
+  font-size: 12px; padding: 0.35rem 0.5rem;
 }
 .setup-steps {
-  margin: 0.5rem 0 0; padding-left: 1.4rem;
+  margin: 0.5rem 0 0; padding-inline-start: 1.4rem;
   font-size: 12px; color: var(--text);
 }
 .setup-steps li { margin: 0.25rem 0; }
 /* T-189: inline "code + copy" for a browser settings URL. */
 .setup-copy-row {
   display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
-  margin-left: 0.15rem;
+  margin-inline-start: 0.15rem;
 }
 /* T-260: "Instructions for: X" + the manual browser picker. */
 .setup-detected { margin: 0.5rem 0 0.2rem; font-size: 12px; font-weight: 600; }
 .browser-picker {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.6rem;
-  font-size: 11.5px; color: var(--text-muted);
+  font-size: 12px; color: var(--text-muted);
 }
 .browser-picker [aria-pressed="true"] { font-weight: 600; text-decoration: none; }
 .setup-verify {
-  margin: 0.6rem 0 0; font-size: 11.5px; color: var(--text-muted);
+  margin: 0.6rem 0 0; font-size: 12px; color: var(--text-muted);
   padding-top: 0.5rem; border-top: 1px dashed var(--line);
 }
 .setup-verify code {
   font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
-  font-size: 11px; background: var(--line-soft); padding: 0.05rem 0.3rem; border-radius: 4px;
+  font-size: 11px; background: var(--surface-sunken); padding: 0.05rem 0.3rem; border-radius: 4px;
 }
 .setup-steps code {
   font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
-  font-size: 11px; background: var(--line-soft); padding: 0.05rem 0.3rem; border-radius: 4px;
+  font-size: 11px; background: var(--surface-sunken); padding: 0.05rem 0.3rem; border-radius: 4px;
 }
 
 /* A button that reads as a link - used for "show the steps" and other
    inline reveals. No new colour, just the accent. */
 .link-button {
-  background: none; border: none; padding: 0; cursor: pointer;
-  color: var(--accent); font-size: 11.5px; text-decoration: underline;
+  background: none; border: none; padding: 0; min-height: 0; cursor: pointer;
+  color: var(--accent); font-size: 12px; text-decoration: underline;
 }
+.link-button:hover:not(:disabled) { background: none; color: var(--accent-strong); }
 
 /* The <details> disclosure that holds every advanced card. */
 #advanced-settings { margin-bottom: 0.8rem; }
@@ -404,29 +445,26 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   padding: 0.7rem 0.85rem;
   border: 1px solid var(--line); border-radius: 10px;
   background: var(--surface-raised);
-  font-size: 12.5px; color: var(--text);
+  font-size: 13px; color: var(--text);
 }
 #advanced-settings > summary::-webkit-details-marker { display: none; }
 #advanced-settings > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #advanced-settings > summary .summary-label { font-weight: 600; }
 #advanced-settings > summary .summary-hint { font-size: 11px; color: var(--text-muted); }
 #advanced-settings > summary .summary-chevron {
-  margin-left: auto; color: var(--text-muted); transition: transform 0.12s;
+  margin-inline-start: auto; color: var(--text-muted); transition: transform 0.12s;
 }
+html[dir="rtl"] #advanced-settings > summary .summary-chevron { transform: scaleX(-1); }
 #advanced-settings[open] > summary .summary-chevron { transform: rotate(90deg); }
-#advanced-settings[open] > summary {
-  border-radius: 10px 10px 0 0; border-bottom-color: transparent;
-}
-.advanced-inner {
-  border: 1px solid var(--line); border-top: none;
-  border-radius: 0 0 10px 10px;
-  padding: 0.8rem 0.85rem 0.2rem;
-}
+
+.advanced-inner { padding: 0.8rem 0 0.2rem; }
 .advanced-inner .card:last-child { margin-bottom: 0.6rem; }
 .card.danger-zone { border-color: var(--bad); }
 
 @media (prefers-reduced-motion: reduce) {
-  #advanced-settings > summary .summary-chevron { transition: none; }
+  #advanced-settings > summary .summary-chevron,
+  details.bl-sources > summary .chev,
+  .switch .thumb { transition: none; }
 }
 
 /* ===================================================================
@@ -446,10 +484,10 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 .rf-head { display: flex; align-items: center; gap: 0.5rem; }
-.rf-title { flex: 1 1 auto; font-size: 12.5px; font-weight: 700; }
-.rf-desc { font-size: 11.5px; color: var(--text-muted); margin: 0.35rem 0 0; }
+.rf-title { flex: 1 1 auto; font-size: 13px; font-weight: 700; }
+.rf-desc { font-size: 12px; color: var(--text-muted); margin: 0.35rem 0 0; }
 .rf-sub {
-  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.05em; color: var(--text-muted); margin: 0.75rem 0 0.35rem;
 }
 
@@ -458,29 +496,24 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .rating-filter-switch { width: 34px; height: 20px; flex-shrink: 0; }
 
 .rf-combo { position: relative; }
-.rf-combo input {
-  width: 100%; box-sizing: border-box;
-  font-size: 12.8px; padding: 0.4rem 0.55rem;
-  border: 1px solid var(--line); border-radius: 7px;
-  background: var(--paper); color: var(--text);
-}
+.rf-combo input { width: 100%; box-sizing: border-box; padding: 0.4rem 0.55rem; }
 .rf-menu {
-  position: absolute; left: 0; right: 0; top: calc(100% + 3px); z-index: 5;
+  position: absolute; inset-inline: 0; top: calc(100% + 3px); z-index: 5;
   list-style: none; margin: 0; padding: 0;
   border: 1px solid var(--line); border-radius: 7px;
   background: var(--surface-raised);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-pop);
   overflow: hidden;
 }
 .rf-opt {
   display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem;
-  font-size: 12.5px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+  font-size: 13px; border-bottom: 1px solid var(--divider); cursor: pointer;
 }
 .rf-opt:last-child { border-bottom: none; }
 .rf-opt.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rf-opt .rf-box {
   width: 13px; height: 13px; border-radius: 3px;
-  border: 1.5px solid var(--line);
+  border: 1.5px solid var(--control-border);
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 9px; font-weight: 700; color: var(--accent); flex: none;
 }
@@ -490,29 +523,29 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 }
 .rf-opt .rf-nm { flex: 1 1 auto; }
 .rf-opt .rf-ct {
-  font-size: 10.5px; color: var(--text-muted);
+  font-size: 11px; color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .rf-picked { list-style: none; margin: 0.45rem 0 0; padding: 0; }
 .rf-picked li {
   display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft);
-  font-size: 12.5px;
+  padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--divider);
+  font-size: 13px;
 }
 .rf-picked li:last-child { border-bottom: none; }
 .rf-picked .rf-nm { flex: 1 1 auto; font-weight: 600; }
 .rf-picked .rf-meta {
-  font-size: 10.5px; color: var(--text-muted);
+  font-size: 11px; color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 .rf-picked .rf-meta.loading { color: var(--warn); }
 .rf-picked .rf-x {
   border: none; background: none; cursor: pointer; color: var(--text-muted);
-  font-size: 15px; line-height: 1; padding: 0 0.2rem;
+  font-size: 15px; line-height: 1; padding: 0; min-width: 24px; min-height: 24px;
 }
 .rf-picked .rf-x:hover { color: var(--bad); }
-.rf-empty { font-size: 11.5px; color: var(--text-muted); margin: 0.45rem 0 0; }
+.rf-empty { font-size: 12px; color: var(--text-muted); margin: 0.45rem 0 0; }
 
 /* T-227: the region-matched suggestion hint — accent-tinted like .rf-card
    itself (a hint, not a warning), shown above the combobox while nothing is
@@ -533,18 +566,9 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
   gap: 0.6rem; background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text);
 }
-.rf-suggestion-add {
-  flex: none; padding: 0.3rem 0.6rem; border: 1px solid var(--accent);
-  border-radius: 6px; background: var(--accent); color: var(--paper);
-  font-size: 11.8px; cursor: pointer;
-}
+.rf-suggestion-add { flex: none; }
 
-.rf-save {
-  margin-top: 0.6rem; padding: 0.35rem 0.7rem;
-  border: 1px solid var(--accent); border-radius: 6px;
-  background: var(--accent); color: var(--paper);
-  font-size: 12.3px; cursor: pointer;
-}
+.rf-save { margin-top: 0.6rem; }
 /* T-227 fix (pre-existing since T-127): `:not([hidden])` — see the
    `.notice.rf-suggestion` comment above for why a bare `display: flex` here
    defeats `confirmRow.hidden = true` in main.js and leaves the OFF→ON
@@ -554,14 +578,7 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .rf-confirm-row:not([hidden]) {
   display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.5rem;
 }
-.rf-confirm-row button {
-  padding: 0.35rem 0.7rem; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--surface-raised); color: var(--text);
-  font-size: 12.3px; cursor: pointer;
-}
-.rf-confirm-row button.rf-confirm {
-  border-color: var(--accent); background: var(--accent); color: var(--paper);
-}
+
 
 /* T-128: the always-visible badge under the hero (#rating-filter-badge,
    renderRatingFilterBadge). Empty div when the filter is off. */
@@ -599,7 +616,7 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .bl-list { list-style: none; margin: 0.3rem 0 0; padding: 0; }
 .bl-list li {
   display: flex; align-items: flex-start; gap: 0.5rem;
-  padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--line-soft); font-size: 12px;
+  padding: 0.34rem 0.15rem; border-bottom: 1px solid var(--divider); font-size: 12px;
 }
 .bl-list li:last-child { border-bottom: none; }
 .bl-list input[type="checkbox"] { margin-top: 0.15rem; }
@@ -607,11 +624,11 @@ h1 { font-size: 15px; margin: 0 0 0.9rem; }
 .bl-row-top { display: flex; align-items: baseline; gap: 0.5rem; justify-content: space-between; }
 .bl-list .nm { font-weight: 600; }
 .bl-list .meta {
-  font-size: 10.5px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .bl-list .meta.stale, .bl-list .meta.loading { color: var(--warn); }
-.bl-list .desc { font-size: 10.5px; color: var(--text-muted); margin: 0.1rem 0 0; }
+.bl-list .desc { font-size: 11px; color: var(--text-muted); margin: 0.1rem 0 0; }
 
 /* Source list collapses behind its own native <details> (no JS, same
    mechanic as details.advanced but lighter-weight - nested one level in,
@@ -623,5 +640,5 @@ details.bl-sources > summary {
   font-size: 11px; font-weight: 600; color: var(--text-muted); padding: 0.15rem 0;
 }
 details.bl-sources > summary::-webkit-details-marker { display: none; }
-details.bl-sources > summary .chev { margin-left: auto; transition: transform .12s; }
+details.bl-sources > summary .chev { margin-inline-start: auto; transition: transform .12s; }
 details.bl-sources[open] > summary .chev { transform: rotate(90deg); }

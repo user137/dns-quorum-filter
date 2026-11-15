@@ -429,7 +429,7 @@ for (const [fn, data] of xssCalls) {
   doc.getSelection = () => null;
 
   // T-279: pager - 50 rows per page, newest first, page clamped to the data.
-  const logRows = () => created.filter((r) => r.tag === "li" && r.props.className === "log-item");
+  const logRows = () => created.filter((r) => r.tag === "li" && String(r.props.className).split(" ").includes("log-item"));
   const pagerText = () => assigned.filter(([w]) => w === "<span>.textContent").map(([, v]) => v);
   const run = (code) => vm.runInContext(code, ctx);
   created.length = 0; assigned.length = 0;
