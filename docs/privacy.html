@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Privacy policy — DNS Quorum Filter</title>
 <meta name="description" content="What DNS Quorum Filter sends over the network, what it stores on your computer, and what it never collects.">
 <link rel="canonical" href="https://user137.github.io/dns-quorum-filter/privacy.html">
@@ -17,36 +18,48 @@
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="./">
-      <img src="assets/icon-64.png" width="30" height="30" alt="">
+      <img src="assets/icon-64.png" width="28" height="28" alt="">
       <span>DNS Quorum Filter</span>
     </a>
     <nav class="nav" aria-label="Site">
       <a href="./">Home</a>
       <a href="https://github.com/user137/dns-quorum-filter">GitHub</a>
-      <span class="lang-switch" role="group" aria-label="Language">
-        <span aria-current="page">EN</span>
-        <a href="uk/privacy.html" lang="uk" hreflang="uk">UK</a>
-      </span>
     </nav>
+    <span class="lang-switch" role="group" aria-label="Language">
+      <span aria-current="page" title="English">EN</span>
+      <a href="uk/privacy.html" lang="uk" hreflang="uk" title="Українська">УКР</a>
+    </span>
   </div>
 </header>
 
 <main id="main">
   <section>
-    <div class="wrap">
+    <div class="wrap doc">
+      <nav class="toc" aria-label="On this page">
+        <p>On this page</p>
+        <ul>
+        <li><a href="#short">In short</a></li>
+        <li><a href="#leaves">What leaves your computer</a></li>
+        <li><a href="#stays">What stays on your computer</a></li>
+        <li><a href="#delete">Deleting your data</a></li>
+        <li><a href="#site">This website</a></li>
+        <li><a href="#contact">Contact</a></li>
+        </ul>
+      </nav>
+      <div class="doc-body">
       <h1>Privacy policy</h1>
-      <div class="callout">
+      <div class="callout info" role="note">
         <p><strong>Draft</strong>, last updated 26 November 2026. It describes the current pre-release version and will be finalised before the Microsoft Store release.</p>
       </div>
 
-      <h2>In short</h2>
-      <ul>
+      <h2 id="short">In short</h2>
+      <div class="callout info"><ul>
         <li>The app has no accounts, no telemetry, no analytics, no crash reporting and no ads. The developer receives nothing from it.</li>
         <li>To filter, it sends the domain names your browser looks up to the DNS providers you have enabled. That is the one deliberate disclosure, and the settings page names every recipient.</li>
         <li>Everything else it keeps stays on your computer.</li>
-      </ul>
+      </ul></div>
 
-      <h2>What leaves your computer</h2>
+      <h2 id="leaves">What leaves your computer</h2>
       <h3>Domain names you visit</h3>
       <p>
         When your browser looks up a domain that isn't answered locally (by your allow or block
@@ -65,22 +78,20 @@
       </p>
 
       <h3>Background connections (no domain names you visit)</h3>
-      <div class="table-wrap">
       <table>
         <thead><tr><th>Purpose</th><th>Server</th><th>When</th></tr></thead>
         <tbody>
-          <tr><td>Is the internet reachable?</td><td><code>www.google.com</code>, <code>cloudflare.com</code>, <code>captive.apple.com</code> (one at a time)</td><td>About once a minute, more often while offline</td></tr>
-          <tr><td>Is the reference resolver working?</td><td>the active reference resolver, asking for <code>example.com</code></td><td>About once a minute while online</td></tr>
-          <tr><td>IP-to-country database</td><td><code>github.com</code> and GitHub's download servers (sapics/ip-location-db)</td><td>Once a day</td></tr>
-          <tr><td>MaxMind GeoLite2 database</td><td><code>download.maxmind.com</code>, with your licence key</td><td>At each start and once a day, only if you entered a MaxMind key</td></tr>
-          <tr><td>“Popular sites only” lists</td><td><code>raw.githubusercontent.com</code> (this project's repository)</td><td>Once a day, only while that filter is on</td></tr>
-          <tr><td>Public block lists</td><td><code>raw.githubusercontent.com</code>, <code>adguardteam.github.io</code></td><td>Once a day, only while public block lists are on</td></tr>
+          <tr><td data-label="Purpose">Is the internet reachable?</td><td data-label="Server"><code>www.google.com</code>, <code>cloudflare.com</code>, <code>captive.apple.com</code> (one at a time)</td><td data-label="When">About once a minute, more often while offline</td></tr>
+          <tr><td data-label="Purpose">Is the reference resolver working?</td><td data-label="Server">the active reference resolver, asking for <code>example.com</code></td><td data-label="When">About once a minute while online</td></tr>
+          <tr><td data-label="Purpose">IP-to-country database</td><td data-label="Server"><code>github.com</code> and GitHub's download servers (sapics/ip-location-db)</td><td data-label="When">Once a day</td></tr>
+          <tr><td data-label="Purpose">MaxMind GeoLite2 database</td><td data-label="Server"><code>download.maxmind.com</code>, with your licence key</td><td data-label="When">At each start and once a day, only if you entered a MaxMind key</td></tr>
+          <tr><td data-label="Purpose">“Popular sites only” lists</td><td data-label="Server"><code>raw.githubusercontent.com</code> (this project's repository)</td><td data-label="When">Once a day, only while that filter is on</td></tr>
+          <tr><td data-label="Purpose">Public block lists</td><td data-label="Server"><code>raw.githubusercontent.com</code>, <code>adguardteam.github.io</code></td><td data-label="When">Once a day, only while public block lists are on</td></tr>
         </tbody>
       </table>
-      </div>
       <p>These servers see your IP address and that the app is in use. The app doesn't check for updates and contacts no server run by the developer.</p>
 
-      <h2>What stays on your computer</h2>
+      <h2 id="stays">What stays on your computer</h2>
       <ul>
         <li><strong>Settings</strong> (providers, your lists, options) in the app's data folder.</li>
         <li><strong>The query log</strong> (domain, time, decision) is kept in memory and lost when the app stops, unless you turn on saving it. Saved logs and the saved cache are encrypted; the key is in Windows Credential Manager.</li>
@@ -91,7 +102,7 @@
       </ul>
       <p>The settings page and the DNS service listen on <code>127.0.0.1</code> only and can't be reached from other devices.</p>
 
-      <h2>Deleting your data</h2>
+      <h2 id="delete">Deleting your data</h2>
       <p>
         Tray menu → <em>Remove everything</em> deletes the certificate, all stored keys and
         credentials, and the app's data folder, then opens Windows Settings so you can uninstall
@@ -99,22 +110,35 @@
         The log can also be cleared at any time on the settings page.
       </p>
 
-      <h2>This website</h2>
+      <h2 id="site">This website</h2>
       <p>
         This site is hosted on GitHub Pages and uses no cookies, scripts, analytics or third-party
         resources. GitHub may log visitors' IP addresses; see the
         <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub privacy statement</a>.
       </p>
 
-      <h2>Contact</h2>
+      <h2 id="contact">Contact</h2>
       <p>Questions or concerns: open an issue at <a href="https://github.com/user137/dns-quorum-filter/issues">github.com/user137/dns-quorum-filter/issues</a>.</p>
+      </div>
     </div>
   </section>
 </main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <p>DNS Quorum Filter — <a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a> · <a href="./">Home</a></p>
+    <div>
+      <p class="name">DNS Quorum Filter</p>
+      <p><a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a></p>
+    </div>
+    <ul>
+      <li><a href="./">Home</a></li>
+      <li><a href="https://github.com/user137/dns-quorum-filter">GitHub</a></li>
+      <li><a href="https://github.com/user137/dns-quorum-filter/releases">Releases</a></li>
+      <li><a href="https://github.com/user137/dns-quorum-filter/blob/main/KNOWN-LIMITATIONS.md">Known limitations</a></li>
+    </ul>
+    <div>
+      <p>This site uses no cookies, scripts, analytics or third-party resources.</p>
+    </div>
   </div>
 </footer>
 </body>

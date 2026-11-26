@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>DNS Quorum Filter — DNS filtering decided by a quorum</title>
 <meta name="description" content="A local DNS-over-HTTPS filter for Windows. Your browser sends DNS queries to it; it asks several independent filtering DNS providers in parallel and blocks a domain if any one of them says block.">
 <link rel="canonical" href="https://user137.github.io/dns-quorum-filter/">
@@ -18,62 +19,111 @@
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="./">
-      <img src="assets/icon-64.png" width="30" height="30" alt="">
+      <img src="assets/icon-64.png" width="28" height="28" alt="">
       <span>DNS Quorum Filter</span>
     </a>
     <nav class="nav" aria-label="Site">
-      <a class="hide-xs" href="#how">How it works</a>
-      <a class="hide-xs" href="#install">Install</a>
-      <a class="hide-xs" href="#browser">Connect a browser</a>
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a href="#browser">Browsers</a>
       <a href="privacy.html">Privacy</a>
       <a href="https://github.com/user137/dns-quorum-filter">GitHub</a>
-      <span class="lang-switch" role="group" aria-label="Language">
-        <span aria-current="page">EN</span>
-        <a href="uk/" lang="uk" hreflang="uk">UK</a>
-      </span>
     </nav>
+    <span class="lang-switch" role="group" aria-label="Language">
+      <span aria-current="page" title="English">EN</span>
+      <a href="uk/" lang="uk" hreflang="uk" title="Українська">УКР</a>
+    </span>
   </div>
 </header>
 
 <main id="main">
   <section>
-    <div class="wrap">
-      <p class="eyebrow">Local DNS-over-HTTPS filter for Windows</p>
-      <h1>DNS filtering decided by a quorum, not by one provider.</h1>
-      <p class="lede">
-        Your browser sends its DNS queries to a small server on your own computer
-        (<code>127.0.0.1</code>). For each domain it asks several independent filtering DNS
-        providers in parallel and blocks the domain if <strong>any one</strong> of them says
-        block. One compromised or mistaken provider can't let a threat through on its own.
-      </p>
-      <div class="cta-row">
-        <a class="btn btn-primary" href="https://github.com/user137/dns-quorum-filter/releases">Download from GitHub</a>
-        <a class="btn" href="https://github.com/user137/dns-quorum-filter">Source code</a>
+    <div class="wrap hero">
+      <div>
+        <p class="eyebrow">Local DNS-over-HTTPS filter for Windows</p>
+        <h1>DNS filtering decided by a quorum, not by one provider.</h1>
+        <p class="lede">
+          Your browser sends its DNS queries to a small server on your own computer
+          (<code>127.0.0.1</code>). For each domain it asks several independent filtering DNS
+          providers in parallel and blocks the domain if <strong>any one</strong> of them says
+          block. One compromised or mistaken provider can't let a threat through on its own.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/user137/dns-quorum-filter/releases">Download from GitHub</a>
+          <a class="btn" href="https://github.com/user137/dns-quorum-filter">Source code</a>
+        </div>
+        <p class="spec">Pre-release · Windows 10 (2004) or later, x64 · Free, open source, Apache 2.0 · Not in Microsoft Store yet</p>
       </div>
-      <p class="muted">
-        Pre-release. Windows 10 (version 2004) or later, x64. Free and open source, Apache 2.0.
-        Not in Microsoft Store yet.
-      </p>
+      <figure class="qd-figure">
+        <svg class="qd" viewBox="0 0 360 440" role="img" aria-labelledby="qd-t qd-d">
+          <title id="qd-t">How one query is decided</title>
+          <desc id="qd-d">If your lists and the cache don't answer, DNS Quorum Filter on 127.0.0.1 sends the query for tracker.example to Quad9, Cloudflare and AdGuard in parallel, and to an unfiltered reference resolver that does not vote. Quad9 and Cloudflare allow it, AdGuard says block. Because at least one said block, the domain is blocked and resolves to 0.0.0.0 / ::.</desc>
+          <rect class="node" x="120" y="8" width="120" height="36" rx="8"/>
+          <text class="t13" x="180" y="31">Browser</text>
+          <line class="edge" x1="180" y1="44" x2="180" y2="76"/>
+          <text class="mono start" x="190" y="64">tracker.example</text>
+          <rect class="hub" x="90" y="76" width="180" height="48" rx="10"/>
+          <text class="t13 strong" x="180" y="97">DNS Quorum Filter</text>
+          <text class="mono" x="180" y="114">127.0.0.1</text>
+          <line class="edge" x1="180" y1="124" x2="180" y2="148"/>
+          <text class="mono start muted" x="190" y="141">steps 1–5: no answer</text>
+          <path class="edge" d="M180 148 C180 166, 51 166, 51 184"/>
+          <path class="edge" d="M180 148 C180 166, 137 166, 137 184"/>
+          <path class="edge" d="M180 148 C180 166, 223 166, 223 184"/>
+          <path class="edge dashed" d="M180 148 C180 166, 309 166, 309 184"/>
+          <rect class="node" x="12" y="184" width="78" height="44" rx="8"/>
+          <text class="strong" x="51" y="211">Quad9</text>
+          <rect class="node" x="98" y="184" width="78" height="44" rx="8"/>
+          <text class="strong" x="137" y="211">Cloudflare</text>
+          <rect class="node" x="184" y="184" width="78" height="44" rx="8"/>
+          <text class="strong" x="223" y="211">AdGuard</text>
+          <rect class="node dashed" x="270" y="184" width="78" height="44" rx="8"/>
+          <text class="strong t115" x="309" y="203">Reference</text>
+          <text class="mono muted" x="309" y="220">unfiltered</text>
+          <line class="edge" x1="51" y1="228" x2="51" y2="240"/>
+          <line class="edge" x1="137" y1="228" x2="137" y2="240"/>
+          <line class="edge" x1="223" y1="228" x2="223" y2="240"/>
+          <line class="edge dashed" x1="309" y1="228" x2="309" y2="240"/>
+          <rect class="chip allow" x="16" y="240" width="70" height="24" rx="12"/>
+          <text class="t-allow" x="51" y="256">allow</text>
+          <rect class="chip allow" x="102" y="240" width="70" height="24" rx="12"/>
+          <text class="t-allow" x="137" y="256">allow</text>
+          <rect class="chip block" x="188" y="240" width="70" height="24" rx="12"/>
+          <text class="t-block" x="223" y="256">block</text>
+          <rect class="chip ref" x="270" y="240" width="78" height="24" rx="12"/>
+          <text class="muted mono" x="309" y="256">no vote</text>
+          <path class="edge" d="M51 264 C51 290, 180 286, 180 312"/>
+          <path class="edge" d="M137 264 C137 290, 180 286, 180 312"/>
+          <path class="edge hot" d="M223 264 C223 290, 180 286, 180 312"/>
+          <polygon class="gate" points="162,330 171,314.4 189,314.4 198,330 189,345.6 171,345.6"/>
+          <text class="t-gate" x="180" y="334">OR</text>
+          <text class="start" x="208" y="334">any block?</text>
+          <line class="edge hot" x1="180" y1="346" x2="180" y2="384"/>
+          <rect class="verdict" x="50" y="384" width="260" height="48" rx="10"/>
+          <text class="t-verdict" x="180" y="413">Blocked → 0.0.0.0 / ::</text>
+        </svg>
+        <figcaption>One query, decided. Two providers allow it, one says block, so it is blocked. The dashed box is the unfiltered reference resolver: it sees the query too, and only helps tell a real answer from a block.</figcaption>
+      </figure>
     </div>
   </section>
 
   <section id="what">
-    <div class="wrap">
+    <div class="wrap rail">
       <h2>What it is, and what it isn't</h2>
-      <div class="pillars">
-        <div class="pillar">
+      <div class="items">
+        <div class="item">
           <h3>A DNS-level filter</h3>
           <p>Malware, phishing, ads, trackers and (if you turn it on) adult content, blocked by domain name before a connection starts.</p>
         </div>
-        <div class="pillar">
+        <div class="item">
           <h3>Not an ad blocker extension</h3>
           <p>No element picker, no cosmetic filtering. It works alongside uBlock Origin or a similar extension rather than replacing it.</p>
         </div>
-        <div class="pillar">
+        <div class="item">
           <h3>Browsers only</h3>
           <p>It filters browsers you point at it. Other apps keep using the system DNS: the system-wide setting is left alone on purpose, so a crash can't take your whole network down.</p>
         </div>
-        <div class="pillar">
+        <div class="item">
           <h3>Open to audit</h3>
           <p>Every claim on this page can be checked in the code, the design spec and the test suite on GitHub.</p>
         </div>
@@ -82,39 +132,39 @@
   </section>
 
   <section id="how">
-    <div class="wrap">
+    <div class="wrap rail">
       <h2>How filtering works</h2>
-      <p>Each query goes through the same checks, top to bottom. The first one that gives a final answer wins; the rest are skipped.</p>
-      <ol class="pipeline">
-        <li><div><strong>Your allow list.</strong> Listed domains are always allowed.</div></li>
-        <li><div><strong>Your block list</strong>, plus optional public block lists (ads, trackers, threats; off by default). Blocked without any network request.</div></li>
-        <li><div><strong>Country domain zones</strong> you chose to block, such as a whole <code>.xx</code> zone.</div></li>
-        <li><div><strong>Cache.</strong> A domain checked recently is answered from memory.</div></li>
-        <li><div><strong>Popular sites only</strong> (optional, off by default): domains outside the zones you picked are blocked.</div></li>
-        <li class="main"><div><strong>The quorum.</strong> The enabled providers are asked in parallel. If any one says block, the domain is blocked. Out of the box: Quad9, Cloudflare (malware) and AdGuard DNS; you can change the list.</div></li>
-        <li><div><strong>Country check</strong> (optional): an allowed answer whose IP address is in a country you blocked is blocked too.</div></li>
-      </ol>
-      <p class="muted">
-        A blocked domain resolves to <code>0.0.0.0</code> / <code>::</code>, never to “no such domain”:
-        some browsers treat “no such domain” as a reason to quietly ask another resolver,
-        which would skip the filter.
-      </p>
+      <div>
+        <p class="prose">Each query goes through the same checks, top to bottom. The first one that gives a final answer wins; the rest are skipped.</p>
+        <ol class="pipeline">
+          <li><div><strong>Your allow list.</strong> Listed domains are always allowed.</div></li>
+          <li><div><strong>Your block list</strong>, plus optional public block lists (ads, trackers, threats; off by default). Blocked without any network request.</div></li>
+          <li><div><strong>Country domain zones</strong> you chose to block, such as a whole <code>.xx</code> zone.</div></li>
+          <li><div><strong>Cache.</strong> A domain checked recently is answered from memory.</div></li>
+          <li><div><strong>Popular sites only</strong> <span class="tag">Optional · off by default</span><br>Domains outside the zones you picked are blocked.</div></li>
+          <li class="main"><div><strong>The quorum.</strong> The enabled providers are asked in parallel. If any one says block, the domain is blocked. Out of the box: Quad9, Cloudflare (malware) and AdGuard DNS; you can change the list.</div></li>
+          <li><div><strong>Country check</strong> <span class="tag">Optional</span><br>An allowed answer whose IP address is in a country you blocked is blocked too.</div></li>
+        </ol>
+        <div class="callout info prose" role="note">
+          <p>A blocked domain resolves to <code>0.0.0.0</code> / <code>::</code>, never to “no such domain”: some browsers treat “no such domain” as a reason to quietly ask another resolver, which would skip the filter.</p>
+        </div>
+      </div>
     </div>
   </section>
 
   <section id="trust">
-    <div class="wrap">
+    <div class="wrap rail">
       <h2>Trade-offs, stated up front</h2>
-      <div class="pillars">
-        <div class="pillar">
+      <div class="items three costs">
+        <div class="item">
           <h3>Several providers see your queries</h3>
           <p>To get a quorum, every query not in the cache goes to each enabled provider and to an unfiltered reference resolver. More third parties see which domains you visit, in exchange for wider threat coverage. The settings page shows exactly who they are. See the <a href="privacy.html">privacy policy</a>.</p>
         </div>
-        <div class="pillar">
+        <div class="item">
           <h3>A certificate for 127.0.0.1 only</h3>
           <p>Browsers only talk DNS-over-HTTPS to a trusted server, so the app installs a self-signed certificate valid for <code>127.0.0.1</code> alone. It is deliberately not a certificate authority: a stolen key could imitate this local server, not other websites.</p>
         </div>
-        <div class="pillar">
+        <div class="item">
           <h3>When filters can't be reached</h3>
           <p>By default the app lets the answer through rather than breaking your browsing, and the tray icon and settings page tell you that filtering is degraded. You can switch to failing closed instead.</p>
         </div>
@@ -123,78 +173,101 @@
   </section>
 
   <section id="install">
-    <div class="wrap">
+    <div class="wrap rail">
       <h2>Install</h2>
-      <p>
-        Each release on the <a href="https://github.com/user137/dns-quorum-filter/releases">Releases page</a>
-        has an MSIX package. It is test-signed for now, so Windows needs its certificate trusted
-        once. A helper script does that and installs the package.
-      </p>
-      <ol class="steps">
-        <li>Download <code>dns-quorum-filter.msix</code>, <code>dns-quorum-filter.cer</code> and <code>Trust-TestCert.ps1</code> into one folder.</li>
-        <li>In that folder, run:
-          <pre><code>powershell -ExecutionPolicy Bypass -File .\Trust-TestCert.ps1 -Install</code></pre>
-          It asks for administrator rights, trusts the package certificate and installs the app.
-          Read the script first if you like: it is short and plain PowerShell.</li>
-        <li>Start <strong>DNS Quorum Filter</strong> from the Start menu once. Windows only registers it to start with Windows after that first launch.</li>
-        <li>The first-run wizard offers to trust the local certificate for <code>127.0.0.1</code>. Accept it, then connect your browser (next section).</li>
-      </ol>
-      <div class="callout">
-        <p><strong>Before uninstalling,</strong> use the tray menu → <em>Remove everything</em>. Windows runs no app code when an MSIX package is removed, so the local certificate and the stored keys have to be cleaned up first.</p>
+      <div class="prose">
+        <p>
+          Each release on the <a href="https://github.com/user137/dns-quorum-filter/releases">Releases page</a>
+          has an MSIX package. It is test-signed for now, so Windows needs its certificate trusted
+          once. A helper script does that and installs the package.
+        </p>
+        <ol class="steps">
+          <li><div>Download <code>dns-quorum-filter.msix</code>, <code>dns-quorum-filter.cer</code> and <code>Trust-TestCert.ps1</code> into one folder.</div></li>
+          <li><div>In that folder, run:
+            <figure class="code">
+              <figcaption>PowerShell</figcaption>
+              <pre><code>powershell -ExecutionPolicy Bypass -File .\Trust-TestCert.ps1 -Install</code></pre>
+            </figure>
+            It asks for administrator rights, trusts the package certificate and installs the app.
+            Read the script first if you like: it is short and plain PowerShell.</div></li>
+          <li><div>Start <strong>DNS Quorum Filter</strong> from the Start menu once. Windows only registers it to start with Windows after that first launch.</div></li>
+          <li><div>The first-run wizard offers to trust the local certificate for <code>127.0.0.1</code>. Accept it, then connect your browser (next section).</div></li>
+        </ol>
+        <div class="callout warn" role="note">
+          <p><span class="lead"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1 15.5 14.5H.5Zm-.8 5v4.2h1.6V6Zm0 5.6v1.6h1.6v-1.6Z"/></svg>Before uninstalling,</span> use the tray menu → <em>Remove everything</em>. Windows runs no app code when an MSIX package is removed, so the local certificate and the stored keys have to be cleaned up first.</p>
+        </div>
       </div>
     </div>
   </section>
 
   <section id="browser">
-    <div class="wrap">
+    <div class="wrap rail">
       <h2>Connect a browser</h2>
-      <p>
-        Set the browser's secure DNS (DNS-over-HTTPS) to a custom provider with this address
-        (<code>8443</code> is the default port):
-      </p>
-      <pre><code>https://127.0.0.1:8443/dns-query</code></pre>
-      <p>The app's settings page shows the same steps for the browser you open it in, with a copy button.</p>
-      <div class="browsers">
-        <div class="browser"><h3>Chrome</h3><p><code>chrome://settings/security</code> → Use secure DNS → Custom.</p></div>
-        <div class="browser"><h3>Edge</h3><p><code>edge://settings/privacy/security</code> → Use secure DNS → Choose a service provider. If the switch is grey with a briefcase icon, Edge thinks it is managed by an organisation and won't let you change it; <code>edge://policy</code> lists the policies.</p></div>
-        <div class="browser"><h3>Brave</h3><p><code>brave://settings/security</code> → Use secure DNS (already on) → Add custom provider.</p></div>
-        <div class="browser"><h3>Opera</h3><p><code>opera://settings/system</code> → turn on “Use DNS-over-HTTPS instead of the system's DNS settings” → the last, unnamed item with a text field.</p></div>
-        <div class="browser"><h3>Vivaldi</h3><p><code>vivaldi:settings/network/</code> → DNS over HTTPS → Other DNS provider. A green tick means Vivaldi accepted the address.</p></div>
-        <div class="browser"><h3>Firefox</h3><p><code>about:preferences#privacy</code> → DNS over HTTPS → <strong>Max Protection only</strong> → Choose provider → Custom. In “Increased Protection” Firefox quietly falls back to the system DNS for every blocked site, so the site opens anyway.</p></div>
-        <div class="browser"><h3>LibreWolf</h3><p>Not supported: it doesn't trust certificates from the Windows certificate store.</p></div>
+      <div class="prose">
+        <p>Set the browser's secure DNS (DNS-over-HTTPS) to a custom provider with this address (<code>8443</code> is the default port):</p>
+        <figure class="code big">
+          <figcaption>DoH address</figcaption>
+          <pre><code>https://127.0.0.1:8443/dns-query</code></pre>
+        </figure>
+        <p>The app's settings page shows the same steps for the browser you open it in, with a copy button.</p>
+        <dl class="browsers">
+          <div><dt>Chrome</dt><dd><code>chrome://settings/security</code> → Use secure DNS → Custom.</dd></div>
+          <div><dt>Edge</dt><dd><code>edge://settings/privacy/security</code> → Use secure DNS → Choose a service provider.
+            <p class="note">If the switch is grey with a briefcase icon, Edge thinks it is managed by an organisation and won't let you change it; <code>edge://policy</code> lists the policies.</p></dd></div>
+          <div><dt>Brave</dt><dd><code>brave://settings/security</code> → Use secure DNS (already on) → Add custom provider.</dd></div>
+          <div><dt>Opera</dt><dd><code>opera://settings/system</code> → turn on “Use DNS-over-HTTPS instead of the system's DNS settings” → the last, unnamed item with a text field.</dd></div>
+          <div><dt>Vivaldi</dt><dd><code>vivaldi:settings/network/</code> → DNS over HTTPS → Other DNS provider.
+            <p class="note">A green tick means Vivaldi accepted the address.</p></dd></div>
+          <div><dt>Firefox</dt><dd><code>about:preferences#privacy</code> → DNS over HTTPS → <strong>Max Protection only</strong> → Choose provider → Custom.
+            <p class="note">In “Increased Protection” Firefox quietly falls back to the system DNS for every blocked site, so the site opens anyway.</p></dd></div>
+          <div><dt>LibreWolf</dt><dd><span class="pill-bad">Not supported</span>It doesn't trust certificates from the Windows certificate store.</dd></div>
+        </dl>
+        <div class="callout warn" role="note">
+          <p><span class="lead"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1 15.5 14.5H.5Zm-.8 5v4.2h1.6V6Zm0 5.6v1.6h1.6v-1.6Z"/></svg>If a website asks to access “other apps and services on this device”, choose Block.</span></p>
+          <p>With that permission a site could send requests to the local service: guess from response times which sites you opened recently, and add lines to its log. Without it, all five browsers we tested (Chrome, Edge, Brave, Opera, Firefox) refuse such requests.</p>
+        </div>
+        <h3>Check that it works</h3>
+        <ol class="steps">
+          <li><div>Open the settings page, <code>https://127.0.0.1:8443/admin/ui</code>, directly. The status at the top says whether filtering is on, and when the browser last sent a query.</div></li>
+          <li><div>Add a harmless domain to your block list there and open it. Chromium browsers show <code>ERR_ADDRESS_INVALID</code>, Firefox shows “Hmm. We're having trouble finding that site.” The log shows the same domain as blocked at that moment.</div></li>
+          <li><div>Remove the domain from the block list again.</div></li>
+        </ol>
       </div>
-      <div class="callout">
-        <p><strong>If a website asks to access “other apps and services on this device”, choose Block.</strong></p>
-        <p>With that permission a site could send requests to the local service: guess from response times which sites you opened recently, and add lines to its log. Without it, all five browsers we tested (Chrome, Edge, Brave, Opera, Firefox) refuse such requests.</p>
-      </div>
-      <h3>Check that it works</h3>
-      <ol class="steps">
-        <li>Open the settings page, <code>https://127.0.0.1:8443/admin/ui</code>, directly. The status at the top says whether filtering is on, and when the browser last sent a query.</li>
-        <li>Add a harmless domain to your block list there and open it. Chromium browsers show <code>ERR_ADDRESS_INVALID</code>, Firefox shows “Hmm. We're having trouble finding that site.” The log shows the same domain as blocked at that moment.</li>
-        <li>Remove the domain from the block list again.</li>
-      </ol>
     </div>
   </section>
 
   <section id="limits">
-    <div class="wrap">
+    <div class="wrap rail">
       <h2>Known limitations</h2>
-      <ul>
-        <li>Windows only for now. macOS and Linux are planned.</li>
-        <li>Only browsers set up as above are filtered.</li>
-        <li>Firefox must use Max Protection; LibreWolf is not supported.</li>
-        <li>The package is test-signed until the Microsoft Store release.</li>
-        <li>The interface is in 37 languages; 35 of them are machine translations not yet reviewed by native speakers.</li>
-      </ul>
-      <p>The full, technical list is in <a href="https://github.com/user137/dns-quorum-filter/blob/main/KNOWN-LIMITATIONS.md">KNOWN-LIMITATIONS.md</a>.</p>
+      <div class="prose">
+        <ul class="limits">
+          <li>Windows only for now. macOS and Linux are planned.</li>
+          <li>Only browsers set up as above are filtered.</li>
+          <li>Firefox must use Max Protection; LibreWolf is not supported.</li>
+          <li>The package is test-signed until the Microsoft Store release.</li>
+          <li>The interface is in 37 languages; 35 of them are machine translations not yet reviewed by native speakers.</li>
+        </ul>
+        <p><a href="https://github.com/user137/dns-quorum-filter/blob/main/KNOWN-LIMITATIONS.md">The full, technical list: KNOWN-LIMITATIONS.md</a> →</p>
+      </div>
     </div>
   </section>
 </main>
 
 <footer class="site-footer">
   <div class="wrap">
-    <p>DNS Quorum Filter — <a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a> · <a href="privacy.html">Privacy policy</a> · <a href="https://github.com/user137/dns-quorum-filter">GitHub</a></p>
-    <p>This site uses no cookies, scripts, analytics or third-party resources.</p>
+    <div>
+      <p class="name">DNS Quorum Filter</p>
+      <p><a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a></p>
+    </div>
+    <ul>
+      <li><a href="privacy.html">Privacy policy</a></li>
+      <li><a href="https://github.com/user137/dns-quorum-filter">GitHub</a></li>
+      <li><a href="https://github.com/user137/dns-quorum-filter/releases">Releases</a></li>
+      <li><a href="https://github.com/user137/dns-quorum-filter/blob/main/KNOWN-LIMITATIONS.md">Known limitations</a></li>
+    </ul>
+    <div>
+      <p>This site uses no cookies, scripts, analytics or third-party resources.</p>
+    </div>
   </div>
 </footer>
 </body>
