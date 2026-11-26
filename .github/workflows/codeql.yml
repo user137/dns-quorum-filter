@@ -3,9 +3,9 @@ name: CodeQL
 on:
   push:
     branches: ['**']  # not tags (same reason as ci.yml)
-    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'docs/**', 'LICENSE']
   pull_request:
-    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'docs/**', 'LICENSE']
 
 concurrency:
   group: codeql-${{ github.ref }}

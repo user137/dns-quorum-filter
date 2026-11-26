@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy policy — DNS Quorum Filter</title>
+<meta name="description" content="What DNS Quorum Filter sends over the network, what it stores on your computer, and what it never collects.">
+<link rel="canonical" href="https://user137.github.io/dns-quorum-filter/privacy.html">
+<link rel="alternate" hreflang="en" href="https://user137.github.io/dns-quorum-filter/privacy.html">
+<link rel="alternate" hreflang="uk" href="https://user137.github.io/dns-quorum-filter/uk/privacy.html">
+<link rel="icon" href="assets/icon-32.png" type="image/png">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="assets/icon-64.png" width="30" height="30" alt="">
+      <span>DNS Quorum Filter</span>
+    </a>
+    <nav class="nav" aria-label="Site">
+      <a href="./">Home</a>
+      <a href="https://github.com/user137/dns-quorum-filter">GitHub</a>
+      <span class="lang-switch" role="group" aria-label="Language">
+        <span aria-current="page">EN</span>
+        <a href="uk/privacy.html" lang="uk" hreflang="uk">UK</a>
+      </span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section>
+    <div class="wrap">
+      <h1>Privacy policy</h1>
+      <div class="callout">
+        <p><strong>Draft</strong>, last updated 26 November 2026. It describes the current pre-release version and will be finalised before the Microsoft Store release.</p>
+      </div>
+
+      <h2>In short</h2>
+      <ul>
+        <li>The app has no accounts, no telemetry, no analytics, no crash reporting and no ads. The developer receives nothing from it.</li>
+        <li>To filter, it sends the domain names your browser looks up to the DNS providers you have enabled. That is the one deliberate disclosure, and the settings page names every recipient.</li>
+        <li>Everything else it keeps stays on your computer.</li>
+      </ul>
+
+      <h2>What leaves your computer</h2>
+      <h3>Domain names you visit</h3>
+      <p>
+        When your browser looks up a domain that isn't answered locally (by your allow or block
+        lists, the cache, or another local rule), the app sends that domain name over encrypted
+        DNS-over-HTTPS to:
+      </p>
+      <ul>
+        <li><strong>each enabled filtering provider.</strong> Out of the box: Quad9 (<code>dns.quad9.net</code>), Cloudflare's malware filter (<code>security.cloudflare-dns.com</code>) and AdGuard DNS (<code>dns.adguard-dns.com</code>). You can turn providers off, add others from the built-in list, or add your own address;</li>
+        <li><strong>an unfiltered reference resolver,</strong> used to tell a real answer from a block and to answer when filtering isn't available: Cloudflare (<code>cloudflare-dns.com</code>), with Quad9's unfiltered service (<code>dns10.quad9.net</code>) and Google (<code>dns.google</code>) as fallbacks.</li>
+      </ul>
+      <p>
+        These providers also see your public IP address, as with any DNS service. Their own
+        privacy policies apply to what they do with it. The app does not send them anything
+        else: no identifier, no account, no browsing history beyond the lookups themselves.
+      </p>
+
+      <h3>Background connections (no domain names you visit)</h3>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Purpose</th><th>Server</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td>Is the internet reachable?</td><td><code>www.google.com</code>, <code>cloudflare.com</code>, <code>captive.apple.com</code> (one at a time)</td><td>About once a minute, more often while offline</td></tr>
+          <tr><td>Is the reference resolver working?</td><td>the active reference resolver, asking for <code>example.com</code></td><td>About once a minute while online</td></tr>
+          <tr><td>IP-to-country database</td><td><code>github.com</code> (sapics/ip-location-db)</td><td>Once a day</td></tr>
+          <tr><td>MaxMind GeoLite2 database</td><td><code>download.maxmind.com</code>, with your licence key</td><td>Once a day, only if you entered a MaxMind key</td></tr>
+          <tr><td>“Popular sites only” lists</td><td><code>raw.githubusercontent.com</code> (this project's repository)</td><td>Once a day, only while that filter is on</td></tr>
+          <tr><td>Public block lists</td><td><code>raw.githubusercontent.com</code>, <code>adguardteam.github.io</code></td><td>Once a day, only while public block lists are on</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>These servers see your IP address and that the app is in use. The app doesn't check for updates and contacts no server run by the developer.</p>
+
+      <h2>What stays on your computer</h2>
+      <ul>
+        <li><strong>Settings</strong> (providers, your lists, options) in the app's data folder.</li>
+        <li><strong>The query log</strong> (domain, time, decision) is kept in memory and lost when the app stops, unless you turn on saving it. Saved logs and the saved cache are encrypted; the key is in Windows Credential Manager.</li>
+        <li><strong>Personal zone</strong> (only if you turn it on): which domains you visit often, stored encrypted with its own key.</li>
+        <li><strong>Diagnostic logs</strong> contain errors and timings, never domain names.</li>
+        <li><strong>The local certificate</strong> for <code>127.0.0.1</code> is in your user's trusted root store; its private key is in Windows Credential Manager. A MaxMind key, if you enter one, is stored there too.</li>
+      </ul>
+      <p>The settings page and the DNS service listen on <code>127.0.0.1</code> only and can't be reached from other devices.</p>
+
+      <h2>Deleting your data</h2>
+      <p>
+        Tray menu → <em>Remove everything</em> deletes the certificate, all stored keys and
+        credentials, and the app's data folder, then opens Windows Settings so you can uninstall
+        the app. Do this before uninstalling: Windows runs no app code when the package is removed.
+        The log can also be cleared at any time on the settings page.
+      </p>
+
+      <h2>This website</h2>
+      <p>
+        This site is hosted on GitHub Pages and uses no cookies, scripts, analytics or third-party
+        resources. GitHub may log visitors' IP addresses; see the
+        <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub privacy statement</a>.
+      </p>
+
+      <h2>Contact</h2>
+      <p>Questions or concerns: open an issue at <a href="https://github.com/user137/dns-quorum-filter/issues">github.com/user137/dns-quorum-filter/issues</a>.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>DNS Quorum Filter — <a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a> · <a href="./">Home</a></p>
+  </div>
+</footer>
+</body>
+</html>

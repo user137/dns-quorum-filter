@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DNS Quorum Filter — фільтрація DNS кворумом провайдерів</title>
+<meta name="description" content="Локальний DNS-over-HTTPS фільтр для Windows. Браузер надсилає йому DNS-запити, а він паралельно питає кілька незалежних фільтрувальних DNS-провайдерів і блокує домен, якщо хоч один із них каже «блок».">
+<link rel="canonical" href="https://user137.github.io/dns-quorum-filter/uk/">
+<link rel="alternate" hreflang="en" href="https://user137.github.io/dns-quorum-filter/">
+<link rel="alternate" hreflang="uk" href="https://user137.github.io/dns-quorum-filter/uk/">
+<link rel="alternate" hreflang="x-default" href="https://user137.github.io/dns-quorum-filter/">
+<link rel="icon" href="../assets/icon-32.png" type="image/png">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Перейти до вмісту</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="../assets/icon-64.png" width="30" height="30" alt="">
+      <span>DNS Quorum Filter</span>
+    </a>
+    <nav class="nav" aria-label="Сайт">
+      <a class="hide-xs" href="#how">Як це працює</a>
+      <a class="hide-xs" href="#install">Встановлення</a>
+      <a class="hide-xs" href="#browser">Підключення браузера</a>
+      <a href="privacy.html">Приватність</a>
+      <a href="https://github.com/user137/dns-quorum-filter">GitHub</a>
+      <span class="lang-switch" role="group" aria-label="Мова">
+        <a href="../" lang="en" hreflang="en">EN</a>
+        <span aria-current="page">UK</span>
+      </span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section>
+    <div class="wrap">
+      <p class="eyebrow">Локальний DNS-over-HTTPS фільтр для Windows</p>
+      <h1>Що блокувати, вирішує кворум, а не один провайдер.</h1>
+      <p class="lede">
+        Браузер надсилає DNS-запити невеликому серверу на вашому ж комп'ютері
+        (<code>127.0.0.1</code>). Для кожного домену той паралельно питає кілька незалежних
+        фільтрувальних DNS-провайдерів і блокує домен, якщо <strong>хоч один</strong> із них
+        каже «блок». Один скомпрометований чи помилковий провайдер сам загрозу не пропустить.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/user137/dns-quorum-filter/releases">Завантажити з GitHub</a>
+        <a class="btn" href="https://github.com/user137/dns-quorum-filter">Вихідний код</a>
+      </div>
+      <p class="muted">
+        Попередня версія. Windows 10 (версія 2004) або новіша, x64. Безкоштовно, відкритий код,
+        Apache 2.0. У Microsoft Store поки немає.
+      </p>
+    </div>
+  </section>
+
+  <section id="what">
+    <div class="wrap">
+      <h2>Що це, а що ні</h2>
+      <div class="pillars">
+        <div class="pillar">
+          <h3>Фільтр на рівні DNS</h3>
+          <p>Шкідливе ПЗ, фішинг, реклама, трекери і (якщо ввімкнете) вміст для дорослих блокуються за доменом ще до з'єднання.</p>
+        </div>
+        <div class="pillar">
+          <h3>Не розширення-блокувальник реклами</h3>
+          <p>Немає вибору елементів сторінки чи косметичної фільтрації. Працює поряд з uBlock Origin або схожим розширенням, а не замість нього.</p>
+        </div>
+        <div class="pillar">
+          <h3>Лише браузери</h3>
+          <p>Фільтрує браузери, які ви на нього налаштуєте. Інші програми й далі користуються системним DNS: системне налаштування навмисно не чіпаємо, щоб збій не поклав вам усю мережу.</p>
+        </div>
+        <div class="pillar">
+          <h3>Відкрито для перевірки</h3>
+          <p>Кожне твердження на цій сторінці можна перевірити в коді, специфікації й тестах на GitHub.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>Як працює фільтрація</h2>
+      <p>Кожен запит проходить ті самі перевірки згори донизу. Перша, що дає остаточну відповідь, вирішує; решта пропускаються.</p>
+      <ol class="pipeline">
+        <li><div><strong>Ваш список дозволених.</strong> Домени з нього завжди дозволені.</div></li>
+        <li><div><strong>Ваш список заблокованих</strong> і, за бажанням, публічні списки блокування (реклама, трекери, загрози; типово вимкнені). Блокуються без жодного мережевого запиту.</div></li>
+        <li><div><strong>Доменні зони країн,</strong> які ви вирішили блокувати, наприклад уся зона <code>.xx</code>.</div></li>
+        <li><div><strong>Кеш.</strong> Нещодавно перевірений домен отримує відповідь із пам'яті.</div></li>
+        <li><div><strong>Лише популярні сайти</strong> (за бажанням, типово вимкнено): домени поза обраними зонами блокуються.</div></li>
+        <li class="main"><div><strong>Кворум.</strong> Увімкнені провайдери питаються паралельно. Якщо хоч один каже «блок», домен блокується. Одразу після встановлення: Quad9, Cloudflare (шкідливе ПЗ) і AdGuard DNS; список можна змінити.</div></li>
+        <li><div><strong>Перевірка країни</strong> (за бажанням): дозволена відповідь, чия IP-адреса в заблокованій вами країні, теж блокується.</div></li>
+      </ol>
+      <p class="muted">
+        Заблокований домен отримує адресу <code>0.0.0.0</code> / <code>::</code>, а не «такого
+        домену немає»: дехто з браузерів на «такого домену немає» тихо питає інший резолвер, і
+        фільтр опиняється в обході.
+      </p>
+    </div>
+  </section>
+
+  <section id="trust">
+    <div class="wrap">
+      <h2>Компроміси — одразу й чесно</h2>
+      <div class="pillars">
+        <div class="pillar">
+          <h3>Ваші запити бачать кілька провайдерів</h3>
+          <p>Щоб був кворум, кожен запит поза кешем іде до кожного увімкненого провайдера і до нефільтрованого довідкового DNS. Більше третіх сторін бачать, які домени ви відкриваєте, — в обмін на ширше покриття загроз. Сторінка налаштувань показує, хто саме. Див. <a href="privacy.html">політику приватності</a>.</p>
+        </div>
+        <div class="pillar">
+          <h3>Сертифікат лише для 127.0.0.1</h3>
+          <p>Браузери говорять DNS-over-HTTPS лише з довіреним сервером, тому застосунок встановлює самопідписаний сертифікат, дійсний тільки для <code>127.0.0.1</code>. Це навмисно не центр сертифікації: викраденим ключем можна підробити цей локальний сервер, а не інші сайти.</p>
+        </div>
+        <div class="pillar">
+          <h3>Коли фільтри недоступні</h3>
+          <p>Типово застосунок пропускає відповідь, щоб не ламати перегляд, а іконка в треї та сторінка налаштувань кажуть, що фільтрація неповна. Можна натомість увімкнути блокування в такому разі.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Встановлення</h2>
+      <p>
+        Кожен реліз на <a href="https://github.com/user137/dns-quorum-filter/releases">сторінці Releases</a>
+        має MSIX-пакет. Поки він підписаний тестовим сертифікатом, тож Windows треба один раз
+        довірити цей сертифікат. Це й встановлення робить допоміжний скрипт.
+      </p>
+      <ol class="steps">
+        <li>Завантажте <code>dns-quorum-filter.msix</code>, <code>dns-quorum-filter.cer</code> і <code>Trust-TestCert.ps1</code> в одну теку.</li>
+        <li>У цій теці виконайте:
+          <pre><code>powershell -ExecutionPolicy Bypass -File .\Trust-TestCert.ps1 -Install</code></pre>
+          Скрипт попросить права адміністратора, довірить сертифікат пакета й встановить застосунок.
+          За бажанням спершу прочитайте його: він короткий і на звичайному PowerShell.</li>
+        <li>Один раз запустіть <strong>DNS Quorum Filter</strong> з меню «Пуск». Автозапуск разом із Windows реєструється лише після цього першого запуску.</li>
+        <li>Майстер першого запуску запропонує довірити локальний сертифікат для <code>127.0.0.1</code>. Погодьтеся, потім підключіть браузер (наступний розділ).</li>
+      </ol>
+      <div class="callout">
+        <p><strong>Перед видаленням</strong> скористайтеся меню трею → <em>Повністю видалити</em>. Windows не запускає коду застосунку, коли видаляє MSIX-пакет, тож локальний сертифікат і збережені ключі треба прибрати заздалегідь.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="browser">
+    <div class="wrap">
+      <h2>Підключення браузера</h2>
+      <p>
+        У налаштуваннях безпечного DNS (DNS-over-HTTPS) браузера оберіть власного провайдера з
+        цією адресою (<code>8443</code> — типовий порт):
+      </p>
+      <pre><code>https://127.0.0.1:8443/dns-query</code></pre>
+      <p>Сторінка налаштувань застосунку показує ті самі кроки для браузера, в якому її відкрито, з кнопкою «Копіювати».</p>
+      <div class="browsers">
+        <div class="browser"><h3>Chrome</h3><p><code>chrome://settings/security</code> → «Використовувати безпечний DNS» → «Власний».</p></div>
+        <div class="browser"><h3>Edge</h3><p><code>edge://settings/privacy/security</code> → «Використовувати захищену службу DNS» → «Виберіть постачальника послуг». Якщо перемикач сірий зі значком портфеля, Edge вважає себе керованим організацією і змінити це не дасть; список політик — <code>edge://policy</code>.</p></div>
+        <div class="browser"><h3>Brave</h3><p><code>brave://settings/security</code> → «Використовувати захищений DNS-сервер» (уже ввімкнено) → «Додати власного постачальника».</p></div>
+        <div class="browser"><h3>Opera</h3><p><code>opera://settings/system</code> → увімкніть «Використовуйте DNS-поверх-HTTPS замість параметрів DNS системи» → останній пункт списку, без назви, з полем вводу.</p></div>
+        <div class="browser"><h3>Vivaldi</h3><p><code>vivaldi:settings/network/</code> → «DNS через HTTPS» → «Інший провайдер DNS». Зелена галочка означає, що Vivaldi прийняв адресу.</p></div>
+        <div class="browser"><h3>Firefox</h3><p><code>about:preferences#privacy</code> → «DNS через HTTPS» → <strong>лише «Максимальний захист»</strong> → «Обрати постачальника» → «Власний». У «Посиленому захисті» Firefox на кожному заблокованому сайті тихо переходить на системний DNS, і сайт відкривається.</p></div>
+        <div class="browser"><h3>LibreWolf</h3><p>Не підтримується: не довіряє сертифікатам зі сховища Windows.</p></div>
+      </div>
+      <div class="callout">
+        <p><strong>Якщо сайт просить доступ до «інших застосунків і служб на цьому пристрої», оберіть «Блокувати».</strong></p>
+        <p>З таким дозволом сайт міг би надсилати запити локальній службі: за часом відповіді вгадувати, які сайти ви нещодавно відкривали, і дописувати рядки в її журнал. Без дозволу всі п'ять перевірених браузерів (Chrome, Edge, Brave, Opera, Firefox) такі запити не пропускають.</p>
+      </div>
+      <h3>Перевірка, що працює</h3>
+      <ol class="steps">
+        <li>Відкрийте сторінку налаштувань <code>https://127.0.0.1:8443/admin/ui</code> напряму. Статус угорі каже, чи фільтрація ввімкнена і коли браузер востаннє надіслав запит.</li>
+        <li>Додайте там нешкідливий домен до списку заблокованих і відкрийте його. Браузери на Chromium покажуть <code>ERR_ADDRESS_INVALID</code>, Firefox — «Не вдається знайти сайт». У журналі в ту саму мить цей домен позначено заблокованим.</li>
+        <li>Приберіть домен зі списку заблокованих.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="limits">
+    <div class="wrap">
+      <h2>Відомі обмеження</h2>
+      <ul>
+        <li>Поки лише Windows. macOS і Linux заплановано.</li>
+        <li>Фільтруються лише браузери, налаштовані як описано вище.</li>
+        <li>Firefox — лише в режимі «Максимальний захист»; LibreWolf не підтримується.</li>
+        <li>Пакет підписаний тестовим сертифікатом до виходу в Microsoft Store.</li>
+        <li>Інтерфейс — 37 мовами; 35 із них — машинний переклад, ще не перевірений носіями мови.</li>
+      </ul>
+      <p>Повний технічний список — у <a href="https://github.com/user137/dns-quorum-filter/blob/main/KNOWN-LIMITATIONS.md">KNOWN-LIMITATIONS.md</a> (англійською).</p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>DNS Quorum Filter — <a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a> · <a href="privacy.html">Політика приватності</a> · <a href="https://github.com/user137/dns-quorum-filter">GitHub</a></p>
+    <p>Цей сайт не використовує cookie, скриптів, аналітики чи сторонніх ресурсів.</p>
+  </div>
+</footer>
+</body>
+</html>

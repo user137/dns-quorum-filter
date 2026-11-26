@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Політика приватності — DNS Quorum Filter</title>
+<meta name="description" content="Що DNS Quorum Filter надсилає в мережу, що зберігає на вашому комп'ютері і чого ніколи не збирає.">
+<link rel="canonical" href="https://user137.github.io/dns-quorum-filter/uk/privacy.html">
+<link rel="alternate" hreflang="en" href="https://user137.github.io/dns-quorum-filter/privacy.html">
+<link rel="alternate" hreflang="uk" href="https://user137.github.io/dns-quorum-filter/uk/privacy.html">
+<link rel="icon" href="../assets/icon-32.png" type="image/png">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Перейти до вмісту</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="../assets/icon-64.png" width="30" height="30" alt="">
+      <span>DNS Quorum Filter</span>
+    </a>
+    <nav class="nav" aria-label="Сайт">
+      <a href="./">Головна</a>
+      <a href="https://github.com/user137/dns-quorum-filter">GitHub</a>
+      <span class="lang-switch" role="group" aria-label="Мова">
+        <a href="../privacy.html" lang="en" hreflang="en">EN</a>
+        <span aria-current="page">UK</span>
+      </span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section>
+    <div class="wrap">
+      <h1>Політика приватності</h1>
+      <div class="callout">
+        <p><strong>Чернетка</strong>, оновлено 26 листопада 2026 року. Описує поточну попередню версію; остаточний текст буде перед виходом у Microsoft Store.</p>
+      </div>
+
+      <h2>Коротко</h2>
+      <ul>
+        <li>У застосунку немає облікових записів, телеметрії, аналітики, звітів про збої й реклами. Розробник від нього нічого не отримує.</li>
+        <li>Щоб фільтрувати, він надсилає домени, які шукає ваш браузер, увімкненим DNS-провайдерам. Це єдина свідома передача даних, і сторінка налаштувань називає кожного отримувача.</li>
+        <li>Решта того, що він зберігає, лишається на вашому комп'ютері.</li>
+      </ul>
+
+      <h2>Що залишає ваш комп'ютер</h2>
+      <h3>Домени, які ви відкриваєте</h3>
+      <p>
+        Коли браузер шукає домен, на який немає локальної відповіді (з ваших списків дозволених
+        чи заблокованих, кешу чи іншого локального правила), застосунок надсилає цей домен
+        зашифрованим DNS-over-HTTPS:
+      </p>
+      <ul>
+        <li><strong>кожному увімкненому фільтрувальному провайдеру.</strong> Одразу після встановлення це Quad9 (<code>dns.quad9.net</code>), фільтр шкідливого ПЗ Cloudflare (<code>security.cloudflare-dns.com</code>) і AdGuard DNS (<code>dns.adguard-dns.com</code>). Провайдерів можна вимкнути, додати інших із вбудованого списку або вказати власну адресу;</li>
+        <li><strong>нефільтрованому довідковому DNS,</strong> щоб відрізнити справжню відповідь від блоку і відповідати, коли фільтрація недоступна: Cloudflare (<code>cloudflare-dns.com</code>), запасні — нефільтрований Quad9 (<code>dns10.quad9.net</code>) і Google (<code>dns.google</code>).</li>
+      </ul>
+      <p>
+        Ці провайдери бачать і вашу публічну IP-адресу, як будь-який DNS-сервіс. Що вони з нею
+        роблять, визначають їхні власні політики приватності. Більше нічого застосунок їм не
+        надсилає: ні ідентифікатора, ні облікового запису, ні історії поза самими запитами.
+      </p>
+
+      <h3>Фонові з'єднання (без доменів, які ви відкриваєте)</h3>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Навіщо</th><th>Сервер</th><th>Коли</th></tr></thead>
+        <tbody>
+          <tr><td>Чи є інтернет?</td><td><code>www.google.com</code>, <code>cloudflare.com</code>, <code>captive.apple.com</code> (по одному)</td><td>Приблизно раз на хвилину, частіше без мережі</td></tr>
+          <tr><td>Чи працює довідковий DNS?</td><td>активний довідковий DNS, запит <code>example.com</code></td><td>Приблизно раз на хвилину, коли мережа є</td></tr>
+          <tr><td>База «IP → країна»</td><td><code>github.com</code> (sapics/ip-location-db)</td><td>Раз на добу</td></tr>
+          <tr><td>База MaxMind GeoLite2</td><td><code>download.maxmind.com</code>, з вашим ліцензійним ключем</td><td>Раз на добу, лише якщо ви ввели ключ MaxMind</td></tr>
+          <tr><td>Списки «Лише популярні сайти»</td><td><code>raw.githubusercontent.com</code> (репозиторій цього проєкту)</td><td>Раз на добу, лише поки цей фільтр увімкнено</td></tr>
+          <tr><td>Публічні списки блокування</td><td><code>raw.githubusercontent.com</code>, <code>adguardteam.github.io</code></td><td>Раз на добу, лише поки їх увімкнено</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Ці сервери бачать вашу IP-адресу і те, що застосунок працює. Оновлень застосунок не перевіряє і до серверів розробника не звертається.</p>
+
+      <h2>Що лишається на вашому комп'ютері</h2>
+      <ul>
+        <li><strong>Налаштування</strong> (провайдери, ваші списки, параметри) — у теці даних застосунку.</li>
+        <li><strong>Журнал запитів</strong> (домен, час, рішення) зберігається в пам'яті й зникає, коли застосунок зупиняється, якщо ви не ввімкнули його збереження. Збережені журнал і кеш зашифровано; ключ — у диспетчері облікових даних Windows.</li>
+        <li><strong>Особиста зона</strong> (лише якщо ввімкнете): які домени ви відкриваєте часто, зашифровано окремим ключем.</li>
+        <li><strong>Діагностичні журнали</strong> містять помилки й час, ніколи — домени.</li>
+        <li><strong>Локальний сертифікат</strong> для <code>127.0.0.1</code> — у довірених кореневих сертифікатах вашого користувача; його закритий ключ — у диспетчері облікових даних Windows. Там же ключ MaxMind, якщо ви його ввели.</li>
+      </ul>
+      <p>Сторінка налаштувань і DNS-служба слухають лише <code>127.0.0.1</code> і недоступні з інших пристроїв.</p>
+
+      <h2>Видалення даних</h2>
+      <p>
+        Меню трею → <em>Повністю видалити</em> прибирає сертифікат, усі збережені ключі й облікові
+        дані та теку даних застосунку, а потім відкриває Параметри Windows, щоб ви видалили сам
+        застосунок. Робіть це до видалення: Windows не запускає коду застосунку, коли видаляє пакет.
+        Журнал можна очистити будь-коли на сторінці налаштувань.
+      </p>
+
+      <h2>Цей сайт</h2>
+      <p>
+        Сайт розміщено на GitHub Pages; він не використовує cookie, скриптів, аналітики чи
+        сторонніх ресурсів. GitHub може записувати IP-адреси відвідувачів; див.
+        <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">заяву GitHub про приватність</a>.
+      </p>
+
+      <h2>Зв'язок</h2>
+      <p>Питання чи зауваження — відкрийте issue на <a href="https://github.com/user137/dns-quorum-filter/issues">github.com/user137/dns-quorum-filter/issues</a>.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>DNS Quorum Filter — <a href="https://github.com/user137/dns-quorum-filter/blob/main/LICENSE">Apache License 2.0</a> · <a href="./">Головна</a></p>
+  </div>
+</footer>
+</body>
+</html>

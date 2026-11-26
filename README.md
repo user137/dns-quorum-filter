@@ -7,7 +7,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 ![Status: Phase 5 closed](https://img.shields.io/badge/status-Phase%205%20closed-green)
 
-[`SPEC.md`](SPEC.md) · [`SERVICES.md`](SERVICES.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`SECURITY.md`](SECURITY.md)
+**Сайт:** [user137.github.io/dns-quorum-filter](https://user137.github.io/dns-quorum-filter/) ([політика приватності](https://user137.github.io/dns-quorum-filter/uk/privacy.html)) · [`SPEC.md`](SPEC.md) · [`SERVICES.md`](SERVICES.md) · [`CONFIGURATION.md`](CONFIGURATION.md) · [`SECURITY.md`](SECURITY.md)
 
 * * *
 

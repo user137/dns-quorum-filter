@@ -199,6 +199,11 @@ const calls = [
 const RAW_KEY = /^(hero|startupTask|error|app|warning|common|timeoutConfig|overrides|cacheConfig|cctldBlock|geoip|maxmind|log|providers|filterControls|browserSetup|advanced|danger|rating|blocklist|footer|fieldHelp|localeSwitcher)\.[A-Za-z0-9.]+$/;
 const TOKEN = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
 let failures = 0;
+// Wave 25 (T-285): the project-site link in the footer opens a new tab, so it must carry noopener.
+if (!/<a href="https:\/\/user137\.github\.io\/dns-quorum-filter\/" target="_blank" rel="noopener noreferrer">/.test(html)) {
+  failures++;
+  console.log("footer: project-site link missing or without rel=\"noopener noreferrer\"");
+}
 for (const loc of Object.keys(dicts).sort()) {
   vm.runInContext(`DICT = __dict; CURRENT_LOCALE = ${JSON.stringify(loc)}; regionNamesCacheLocale = null;`, Object.assign(ctx, { __dict: dicts[loc] }));
   for (const [name, code] of calls) {

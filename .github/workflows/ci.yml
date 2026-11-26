@@ -4,9 +4,9 @@ on:
   push:
     branches: ['**']  # not tags — a v* tag is a commit that already passed CI on main;
                        # release.yml owns the tag path and has its own repro gate.
-    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'docs/**', 'LICENSE']
   pull_request:
-    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'LICENSE']
+    paths-ignore: ['**/*.md', 'diagrams/**', 'mockups/**', 'docs/**', 'LICENSE']
 
 # A docs-only push cannot break a cargo gate, so it skips this workflow (a change
 # touching ci.yml itself, or any non-doc file, still runs). Superseded runs on
