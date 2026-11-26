@@ -57,10 +57,11 @@
         <li><strong>each enabled filtering provider.</strong> Out of the box: Quad9 (<code>dns.quad9.net</code>), Cloudflare's malware filter (<code>security.cloudflare-dns.com</code>) and AdGuard DNS (<code>dns.adguard-dns.com</code>). You can turn providers off, add others from the built-in list, or add your own address;</li>
         <li><strong>an unfiltered reference resolver,</strong> used to tell a real answer from a block and to answer when filtering isn't available: Cloudflare (<code>cloudflare-dns.com</code>), with Quad9's unfiltered service (<code>dns10.quad9.net</code>) and Google (<code>dns.google</code>) as fallbacks.</li>
       </ul>
+      <p>If you add a provider whose address contains your own account ID (NextDNS, Control D or a custom address), that ID goes with every query, as that provider intends.</p>
       <p>
         These providers also see your public IP address, as with any DNS service. Their own
         privacy policies apply to what they do with it. The app does not send them anything
-        else: no identifier, no account, no browsing history beyond the lookups themselves.
+        else: no identifier added by the app, no account, no browsing history beyond the lookups themselves.
       </p>
 
       <h3>Background connections (no domain names you visit)</h3>
@@ -70,8 +71,8 @@
         <tbody>
           <tr><td>Is the internet reachable?</td><td><code>www.google.com</code>, <code>cloudflare.com</code>, <code>captive.apple.com</code> (one at a time)</td><td>About once a minute, more often while offline</td></tr>
           <tr><td>Is the reference resolver working?</td><td>the active reference resolver, asking for <code>example.com</code></td><td>About once a minute while online</td></tr>
-          <tr><td>IP-to-country database</td><td><code>github.com</code> (sapics/ip-location-db)</td><td>Once a day</td></tr>
-          <tr><td>MaxMind GeoLite2 database</td><td><code>download.maxmind.com</code>, with your licence key</td><td>Once a day, only if you entered a MaxMind key</td></tr>
+          <tr><td>IP-to-country database</td><td><code>github.com</code> and GitHub's download servers (sapics/ip-location-db)</td><td>Once a day</td></tr>
+          <tr><td>MaxMind GeoLite2 database</td><td><code>download.maxmind.com</code>, with your licence key</td><td>At each start and once a day, only if you entered a MaxMind key</td></tr>
           <tr><td>“Popular sites only” lists</td><td><code>raw.githubusercontent.com</code> (this project's repository)</td><td>Once a day, only while that filter is on</td></tr>
           <tr><td>Public block lists</td><td><code>raw.githubusercontent.com</code>, <code>adguardteam.github.io</code></td><td>Once a day, only while public block lists are on</td></tr>
         </tbody>
@@ -84,6 +85,7 @@
         <li><strong>Settings</strong> (providers, your lists, options) in the app's data folder.</li>
         <li><strong>The query log</strong> (domain, time, decision) is kept in memory and lost when the app stops, unless you turn on saving it. Saved logs and the saved cache are encrypted; the key is in Windows Credential Manager.</li>
         <li><strong>Personal zone</strong> (only if you turn it on): which domains you visit often, stored encrypted with its own key.</li>
+        <li><strong>“Popular sites only”</strong> (only while it is on): popular-list domains the filtering providers blocked, so they are dropped from your allowed zone; stored encrypted.</li>
         <li><strong>Diagnostic logs</strong> contain errors and timings, never domain names.</li>
         <li><strong>The local certificate</strong> for <code>127.0.0.1</code> is in your user's trusted root store; its private key is in Windows Credential Manager. A MaxMind key, if you enter one, is stored there too.</li>
       </ul>

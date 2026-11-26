@@ -265,18 +265,6 @@ does **not** — structurally incapable of becoming a filter later. The allowlis
 every-provider-disabled pass-through are exempt from GeoIP *filtering* but still get
 `resolved_ip_country` annotation.
 
-### Фаза 1 closure — open gaps (not numbered tasks; see SPEC.md's closure paragraph)
-
-Both open gaps from Ф1's closure are resolved; full methodology, raw output paths, and re-measure
-numbers are in `TASKS-DONE.md` (T-172, T-174, T-175) — kept only as one-liners here:
-
-- Live "browser → local DoH" test — **closed by T-172 (2026-09-06)**, verified via
-  chrome-devtools MCP against a real Chrome `secure` DoH config. Procedure in `README.md`
-  ("Перевірка: браузер → локальний DoH").
-- Quorum-hypothesis metrics — **closed by confirmation, T-174/T-175 (2026-09-05/06)**: quorum
-  **89.2 %** vs. best single voter **82.9 %** (`dns4eu-protective`), +6.3 pp. Hypothesis
-  confirmed (DECISIONS.md 2026-09-05, PERFORMANCE.md).
-
 ### Known limitations in shipped code
 
 Moved to [KNOWN-LIMITATIONS.md](KNOWN-LIMITATIONS.md) — this is the fastest-growing part of
@@ -508,6 +496,7 @@ entry there, not here, on the same trigger CLAUDE.md's own maintenance rule alre
 | `CONFIGURATION.md` | operator-facing reference for both TOML config files (`resolver_config.toml`, `overrides.toml`) — fields, defaults, validation, examples | a config field is added, changed, or removed |
 | `SERVICES.md` | what each binary does, how to run it, its logs and startup behavior | a binary's runtime behavior, ports, or file I/O changes |
 | `PERFORMANCE.md` | critical-path complexity analysis, load-test methodology and measured results — not design reasoning (that's SPEC.md) | a hot-path complexity fact changes, or a load-test run produces new numbers |
+| `docs/` | public site (GitHub Pages, en + `uk/`) and the privacy policy the Store reads | install/browser steps change, or a feature adds an outbound connection or a stored file (the privacy table must list it) |
 
 Don't duplicate a fact across files — link to the owner instead. `SPEC.md` stays the deep source of
 truth; the other files summarize or track state, they don't re-derive it.
