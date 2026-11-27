@@ -77,6 +77,9 @@ function detectLocale() {
 }
 
 let CURRENT_LOCALE = detectLocale();
+// Now, not after the dictionary fetch: Firefox reads <html lang> at load to
+// offer a translation and ignores translate="no" (Win10 VM smoke 2026-11-27).
+applyDocumentLanguage();
 let DICT = {};
 
 // Kicked off at parse time so every top-level render kickoff below (refresh(),

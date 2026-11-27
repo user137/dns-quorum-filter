@@ -390,6 +390,18 @@ mod tests {
         );
     }
 
+    /// Win10 VM smoke 2026-11-27: Firefox ignores `translate="no"` and offers a
+    /// translation from the static `<html lang="uk">` it reads at load; the
+    /// real locale used to be applied only after the async dictionary fetch.
+    /// `main.js` is a blocking script, so a synchronous top-level call lands
+    /// before the browser's language detection.
+    #[test]
+    fn document_language_is_set_before_the_dictionary_loads() {
+        let first_call = MAIN_JS.find("\napplyDocumentLanguage();");
+        let dict_wait = MAIN_JS.find("await DICTIONARY_READY;");
+        assert!(matches!((first_call, dict_wait), (Some(a), Some(b)) if a < b));
+    }
+
     /// Win10 VM smoke 2026-11-27: `.setup-connected { display: flex }` beat the
     /// user-agent `[hidden]` rule, so "Your browser is connected" showed on a
     /// fresh install before any browser was set up. The display rule must
