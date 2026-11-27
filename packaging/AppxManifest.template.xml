@@ -36,21 +36,65 @@
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
+  <!--
+    T-287: the 37 interface languages (crates/dnsqb-service/ui/i18n), as the
+    Store's supported language codes. The first entry is the package's
+    default language. There is no resources.pri: the app picks its language
+    at run time, so these entries only tell the Store which languages the
+    app supports (and which listing languages Partner Center offers).
+  -->
   <Resources>
+    <Resource Language="en-US" />
     <Resource Language="uk-UA" />
+    <Resource Language="ar-SA" />
+    <Resource Language="bg-BG" />
+    <Resource Language="cs-CZ" />
+    <Resource Language="da-DK" />
+    <Resource Language="de-DE" />
+    <Resource Language="el-GR" />
+    <Resource Language="es-ES" />
+    <Resource Language="et-EE" />
+    <Resource Language="fi-FI" />
+    <Resource Language="fr-FR" />
+    <Resource Language="he-IL" />
+    <Resource Language="hi-IN" />
+    <Resource Language="hr-HR" />
+    <Resource Language="hu-HU" />
+    <Resource Language="id-ID" />
+    <Resource Language="it-IT" />
+    <Resource Language="ja-JP" />
+    <Resource Language="ko-KR" />
+    <Resource Language="lt-LT" />
+    <Resource Language="lv-LV" />
+    <Resource Language="nb-NO" />
+    <Resource Language="nl-NL" />
+    <Resource Language="pl-PL" />
+    <Resource Language="pt-BR" />
+    <Resource Language="ro-RO" />
+    <Resource Language="sk-SK" />
+    <Resource Language="sl-SI" />
+    <Resource Language="sr-Latn-RS" />
+    <Resource Language="sv-SE" />
+    <Resource Language="sw-KE" />
+    <Resource Language="th-TH" />
+    <Resource Language="tr-TR" />
+    <Resource Language="ur-PK" />
+    <Resource Language="vi-VN" />
+    <Resource Language="zh-Hans-CN" />
   </Resources>
 
   <!--
-    runFullTrust (T-156): this is a packaged Win32 desktop app ("Desktop
-    Bridge"), not an AppContainer-sandboxed UWP app — it needs ordinary
-    Win32 access this project already relies on outside the package:
-    spawning sibling processes (dnsqb-watcher's launcher, T-150), the
-    CurrentUser\Root certificate store (T-49), and Windows Credential
-    Manager (T-67/T-146/T-163). None of that is available to a sandboxed
-    app. No hidden MITM or traffic interception — this is a DoH filter the
-    browser is pointed at explicitly, not a proxy, so there's no capability
-    here a Store reviewer would need to specially justify beyond
-    runFullTrust itself.
+    runFullTrust (T-156; full list T-287, packaging/STORE-LISTING.md): a
+    packaged Win32 desktop app, not an AppContainer app. It needs: spawning
+    its own sibling processes (watcher -> service/tray, by absolute path);
+    certutil.exe for the user's CurrentUser\Root store (install/remove the
+    local 127.0.0.1 leaf certificate, only after the user confirms);
+    Windows Credential Manager (TLS key, encryption keys, MaxMind key);
+    named pipes and files in its own data folder for the watchdog; reading
+    two HKCU values (startup-task state, region); rundll32/explorer to open
+    the settings page and Windows Settings; one PowerShell child for
+    "Remove everything". No traffic interception: the browser is pointed at
+    the local DoH address explicitly; the app is not a proxy.
   -->
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
@@ -68,7 +112,7 @@
       -->
       <uap:VisualElements
         DisplayName="DNS Quorum Filter"
-        Description="Локальний DoH quorum-фільтр"
+        Description="Local DNS filter for your browser"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
         BackgroundColor="transparent" />

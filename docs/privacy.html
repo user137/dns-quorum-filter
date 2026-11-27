@@ -49,7 +49,7 @@
       <div class="doc-body">
       <h1>Privacy policy</h1>
       <div class="callout info" role="note">
-        <p><strong>Draft</strong>, last updated 27 November 2026. It describes the current pre-release version and will be finalised before the Microsoft Store release.</p>
+        <p>Last updated 27 November 2026.</p>
       </div>
 
       <h2 id="short">In short</h2>
@@ -89,7 +89,7 @@
         <thead><tr><th>Purpose</th><th>Server</th><th>When</th></tr></thead>
         <tbody>
           <tr><td data-label="Purpose">Is the internet reachable?</td><td data-label="Server"><code>www.google.com</code>, <code>cloudflare.com</code>, <code>captive.apple.com</code> (one at a time)</td><td data-label="When">About once a minute, more often while offline</td></tr>
-          <tr><td data-label="Purpose">Is the reference resolver working?</td><td data-label="Server">the active reference resolver, asking for <code>example.com</code></td><td data-label="When">About once a minute while online</td></tr>
+          <tr><td data-label="Purpose">Is the reference resolver working?</td><td data-label="Server">the active reference resolver, asking for <code>example.com</code></td><td data-label="When">About once a minute while online, only after you allowed sending domain names</td></tr>
           <tr><td data-label="Purpose">IP-to-country database</td><td data-label="Server"><code>github.com</code> and GitHub's download servers (sapics/ip-location-db)</td><td data-label="When">Once a day</td></tr>
           <tr><td data-label="Purpose">MaxMind GeoLite2 database</td><td data-label="Server"><code>download.maxmind.com</code>, with your licence key</td><td data-label="When">At each start and once a day, only if you entered a MaxMind key</td></tr>
           <tr><td data-label="Purpose">“Popular sites only” lists</td><td data-label="Server"><code>raw.githubusercontent.com</code> (this project's repository)</td><td data-label="When">Once a day, only while that filter is on</td></tr>
@@ -100,7 +100,7 @@
 
       <h2 id="stays">What stays on your computer</h2>
       <ul>
-        <li><strong>Settings</strong> (providers, your lists, options) in the app's data folder.</li>
+        <li><strong>Settings</strong> (providers, your lists, options, and whether you allowed sending domain names) in the app's data folder.</li>
         <li><strong>The query log</strong> (domain, time, decision) is kept in memory and lost when the app stops, unless you turn on saving it. Saved logs and the saved cache are encrypted; the key is in Windows Credential Manager.</li>
         <li><strong>Personal zone</strong> (only if you turn it on): which domains you visit often, stored encrypted with its own key.</li>
         <li><strong>“Popular sites only”</strong> (only while it is on): popular-list domains the filtering providers blocked, so they are dropped from your allowed zone; stored encrypted.</li>

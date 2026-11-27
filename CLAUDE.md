@@ -247,9 +247,7 @@ routes/UI, MaxMind opt-in source + OS-secret-store creds) — full per-task hist
 custom-URL entry, 3 `BlockSignature` heuristics, 4 `/admin/providers/*` routes). **T-164**
 (ECS-enabled upstream) was **rejected** — Quad9 forwards the client's real /24 regardless, a
 `127.0.0.1` resolver can't coarsen it; rationale in SPEC.md §3.4 "Розглянуті й відхилені
-провайдери". Second/third-platform work (macOS/Linux halves) is `## Фаза 6` in TASKS.md/SPEC.md —
-planned, deferred, with the standing seam requirement in "Current phase boundaries" below.
-**T-226(б) (2026-09-12, DECISIONS.md):** default GeoIP source changed to `sapics/ip-location-db`'s
+провайдери". **T-226(б) (2026-09-12, DECISIONS.md):** default GeoIP source changed to `sapics/ip-location-db`'s
 `user-country` (PDDL, no registration) — DB-IP Lite kept, not removed.
 
 GeoIP design invariants (SPEC.md §3.5): the verdict is never cached — a cheap local lookup applied
@@ -491,6 +489,7 @@ entry there, not here, on the same trigger CLAUDE.md's own maintenance rule alre
 | `CONFIGURATION.md` | operator-facing reference for both TOML config files (`resolver_config.toml`, `overrides.toml`) — fields, defaults, validation, examples | a config field is added, changed, or removed |
 | `SERVICES.md` | what each binary does, how to run it, its logs and startup behavior | a binary's runtime behavior, ports, or file I/O changes |
 | `PERFORMANCE.md` | critical-path complexity analysis, load-test methodology and measured results — not design reasoning (that's SPEC.md) | a hot-path complexity fact changes, or a load-test run produces new numbers |
+| `packaging/STORE-LISTING.md` + `store-listing/` | Microsoft Store text: listing per locale (37 JSON, `check.py` limits), `runFullTrust` justification, notes for certification | a feature, outbound connection, setup step or uninstall behaviour the listing describes changes |
 | `docs/` | public site (GitHub Pages, en + `uk/`) and the privacy policy the Store reads | install/browser steps change, or a feature adds an outbound connection or a stored file (the privacy table must list it) |
 
 Don't duplicate a fact across files — link to the owner instead. `SPEC.md` stays the deep source of

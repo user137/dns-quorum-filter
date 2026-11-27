@@ -1,0 +1,18 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blocks malware, phishing and ads for your browser by asking several filtering DNS services at once: if any one of them blocks a site, it is blocked. Runs on your computer; nothing is sent until you allow it.",
+  "description": "DNS Quorum Filter is a local DNS filter for your browser. You point the browser's own \"secure DNS\" setting at the filter, and every site name the browser looks up is checked before the site opens.\n\nHow it works\nInstead of trusting one filtering DNS service, the filter asks several at the same time. If any one of them blocks a name, the browser gets a blocked answer. By default it uses three services: two against malware and phishing and one against ads and trackers. You can switch categories on and off (malware, ads, adult content) and add or remove services.\n\nWhat you control\n- Your own lists of always-allowed and always-blocked domains.\n- Public block lists against ads, trackers and threats, updated once a day.\n- Blocking whole country domains (for example every site ending in a chosen country code).\n- Blocking sites hosted in chosen countries.\n- \"Popular sites only\": an optional mode that lets through only widely used sites for your region.\n- A query log on the settings page: what was blocked, by whom, and when.\n\nPrivacy\nNothing is sent until you allow it on first launch. After that, names that are not in the local cache go to the filtering services you enabled and to an unfiltered reference DNS; the settings page lists them. The log stays in memory unless you choose to save it, and saved data is encrypted. No account, no telemetry, no ads. The app listens on 127.0.0.1 only.\n\nSetup\nOn first launch the app asks for consent and offers to install its own certificate for 127.0.0.1, so the browser can trust the local address. The settings page then shows step-by-step instructions for Edge, Chrome, Brave, Opera, Vivaldi and Firefox. Only the browser you set up is filtered; other apps keep using the system DNS.\n\nBefore uninstalling\nUse the tray menu > \"Remove everything\" first. It removes the local certificate, the keys stored in Windows Credential Manager and the app's data. Windows runs no app code when a package is removed, so uninstalling alone leaves the certificate and those keys behind.",
+  "features": [
+    "Several filtering DNS services at once: blocked if any one says block",
+    "Categories: malware and phishing, ads and trackers, adult content",
+    "Your own allowed and blocked domain lists",
+    "Public block lists, updated daily",
+    "Block country domains and sites hosted in chosen countries",
+    "\"Popular sites only\" mode",
+    "Query log with the reason for every block",
+    "Nothing is sent until you allow it; no telemetry, no account",
+    "Works only on this computer (127.0.0.1)",
+    "Settings page and tray icon in 37 languages"
+  ],
+  "searchTerms": ["DNS filter", "DNS over HTTPS", "ad blocker", "malware protection", "phishing protection", "content filter", "privacy"]
+}

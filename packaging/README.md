@@ -78,8 +78,9 @@
 
 `pwsh -File packaging\smoke-installed.ps1` checks an installed package before a release: the three
 processes, the `DnsqbWatcherStartup` startup-task state, every JSON GET route (TLS pinned to the
-package's `cert.pem`), the static site and all 37 dictionaries, one DoH query, `--help` of each
-binary run inside the package identity, and a `POST /admin/config` round trip that must leave
+package's `cert.pem`), the static site and all 37 dictionaries, one DoH query (on an install
+without consent: SERVFAIL, then granted, answered, withdrawn, SERVFAIL again — T-286), `--help` of
+each binary run inside the package identity, and a `POST /admin/config` round trip that must leave
 `resolver_config.toml` byte-identical. Exit code 1 on any failure (`-InjectFailure` proves it). It
 never prints a `/admin/log` body and never calls a destructive route.
 
@@ -103,6 +104,9 @@ other sizes and the wordmark aren't MSIX's concern and never get bundled into th
 3. Drop the `-PfxPath`/`CODESIGN_PFX` self-signed path entirely for that submission — the Store
    re-signs the package with Microsoft's own certificate at publication, same as it does for the
    raw binaries (T-102, SPEC.md §"Наскрізні вимоги").
+
+The listing text, the `runFullTrust` justification and the notes for certification are in
+[`STORE-LISTING.md`](STORE-LISTING.md); the per-language listing JSON is in `store-listing/`.
 
 Nothing else in the manifest (capabilities, the startup-task extension, the application entry
 point) needs to change for a Store submission — those describe what the app *does*, not who
