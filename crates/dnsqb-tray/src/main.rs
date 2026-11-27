@@ -1407,7 +1407,16 @@ fn ask_for_consent(
         onboarding::mark_consent_offer_seen(app_data);
         return ConsentStep::Declined;
     }
-    match runtime.block_on(client.set_consent(true)) {
+    // A fresh client, not `client`: while the dialog was open nothing drove
+    // this current-thread runtime, so the pooled connection never saw the
+    // service close it on its idle timeout, and the reused one failed
+    // ("error sending request", Win10 VM smoke 2026-11-27).
+    drop(client);
+    let sent = match AdminClient::new(app_data, port) {
+        Ok(client) => runtime.block_on(client.set_consent(true)),
+        Err(err) => Err(err),
+    };
+    match sent {
         Ok(response) if response.persisted => onboarding::mark_consent_offer_seen(app_data),
         Ok(_) => tracing::warn!("consent granted but not saved; asking again next launch"),
         Err(err) => {
