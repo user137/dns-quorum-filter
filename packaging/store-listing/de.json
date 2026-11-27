@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blockiert Malware, Phishing und Werbung für Ihren Browser, indem mehrere filternde DNS-Dienste gleichzeitig gefragt werden: Sperrt einer davon eine Website, wird sie blockiert. Läuft auf Ihrem Computer; nichts wird gesendet, bevor Sie es erlauben.",
+  "description": "DNS Quorum Filter ist ein lokaler DNS-Filter für Ihren Browser. Sie richten die browsereigene Einstellung „Sicheres DNS“ auf den Filter, und jeder Websitename, den der Browser nachschlägt, wird geprüft, bevor sich die Website öffnet.\n\nSo funktioniert es\nStatt einem einzigen filternden DNS-Dienst zu vertrauen, fragt der Filter mehrere gleichzeitig. Sperrt einer von ihnen einen Namen, erhält der Browser eine Sperrantwort. Standardmäßig nutzt er drei Dienste: zwei gegen Malware und Phishing und einen gegen Werbung und Tracker. Sie können Kategorien ein- und ausschalten (Malware, Werbung, Inhalte für Erwachsene) und Dienste hinzufügen oder entfernen.\n\nWas Sie steuern\n- Eigene Listen immer erlaubter und immer blockierter Domains.\n- Öffentliche Sperrlisten gegen Werbung, Tracker und Bedrohungen, einmal täglich aktualisiert.\n- Sperren ganzer Länderdomains (zum Beispiel jeder Website, die auf einen gewählten Ländercode endet).\n- Sperren von Websites, die in gewählten Ländern gehostet werden.\n- „Nur beliebte Websites“: ein optionaler Modus, der nur in Ihrer Region weit verbreitete Websites durchlässt.\n- Ein Abfrageprotokoll auf der Einstellungsseite: was blockiert wurde, von wem und wann.\n\nDatenschutz\nNichts wird gesendet, bevor Sie es beim ersten Start erlauben. Danach gehen Namen, die nicht im lokalen Cache sind, an die von Ihnen eingeschalteten Filterdienste und an ein ungefiltertes Referenz-DNS; die Einstellungsseite listet sie auf. Das Protokoll bleibt im Arbeitsspeicher, sofern Sie es nicht speichern, und gespeicherte Daten sind verschlüsselt. Kein Konto, keine Telemetrie, keine Werbung. Die App lauscht nur auf 127.0.0.1.\n\nEinrichtung\nBeim ersten Start fragt die App nach Ihrer Einwilligung und bietet an, ein eigenes Zertifikat für 127.0.0.1 zu installieren, damit der Browser der lokalen Adresse vertrauen kann. Die Einstellungsseite zeigt dann Schritt-für-Schritt-Anleitungen für Edge, Chrome, Brave, Opera, Vivaldi und Firefox. Gefiltert wird nur der Browser, den Sie einrichten; andere Apps nutzen weiter das System-DNS.\n\nVor der Deinstallation\nVerwenden Sie zuerst das Tray-Menü > „Alles entfernen“. Es entfernt das lokale Zertifikat, die in der Windows-Anmeldeinformationsverwaltung gespeicherten Schlüssel und die App-Daten. Windows führt beim Entfernen eines Pakets keinen App-Code aus, daher bleiben nach einer bloßen Deinstallation das Zertifikat und diese Schlüssel zurück.",
+  "features": [
+    "Mehrere filternde DNS-Dienste gleichzeitig: blockiert, wenn einer sperrt",
+    "Kategorien: Malware und Phishing, Werbung und Tracker, Inhalte für Erwachsene",
+    "Eigene Listen erlaubter und blockierter Domains",
+    "Öffentliche Sperrlisten, täglich aktualisiert",
+    "Länderendungen und in gewählten Ländern gehostete Websites sperren",
+    "Modus „Nur beliebte Websites“",
+    "Abfrageprotokoll mit dem Grund jeder Sperre",
+    "Nichts wird gesendet, bevor Sie es erlauben; keine Telemetrie, kein Konto",
+    "Läuft nur auf diesem Computer (127.0.0.1)",
+    "Einstellungsseite und Tray-Symbol in 37 Sprachen"
+  ],
+  "searchTerms": [
+    "DNS-Filter",
+    "DNS über HTTPS",
+    "Werbeblocker",
+    "Schutz vor Malware",
+    "Phishing-Schutz",
+    "Inhaltsfilter",
+    "Datenschutz"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Huzuia programu hasidi, hadaa na matangazo kwa kivinjari chako kwa kuuliza huduma kadhaa za DNS za kuchuja kwa wakati mmoja: ikiwa yoyote kati yao itazuia tovuti, inazuiwa. Huendeshwa kwenye kompyuta yako; hakuna kinachotumwa hadi uruhusu.",
+  "description": "DNS Quorum Filter ni kichujio cha DNS cha ndani kwa kivinjari chako. Unaelekeza mpangilio wa kivinjari wa “DNS salama” kwenye kichujio, na kila jina la tovuti ambalo kivinjari hutafuta hukaguliwa kabla tovuti haijafunguka.\n\nJinsi inavyofanya kazi\nBadala ya kuamini huduma moja ya DNS ya kuchuja, kichujio huuliza huduma kadhaa kwa wakati mmoja. Ikiwa yoyote kati yao itazuia jina, kivinjari hupata jibu la kuzuiwa. Kwa chaguo-msingi hutumia huduma tatu: mbili dhidi ya programu hasidi na hadaa, na moja dhidi ya matangazo na vifuatiliaji. Unaweza kuwasha na kuzima aina (programu hasidi, matangazo, maudhui ya watu wazima) na kuongeza au kuondoa huduma.\n\nUnachodhibiti\n- Orodha zako mwenyewe za vikoa vinavyoruhusiwa daima na vinavyozuiwa daima.\n- Orodha za umma za kuzuia dhidi ya matangazo, vifuatiliaji na vitisho, zinazosasishwa mara moja kwa siku.\n- Kuzuia vikoa vyote vya nchi (kwa mfano kila tovuti inayoishia na msimbo wa nchi uliochaguliwa).\n- Kuzuia tovuti zinazopangishwa katika nchi ulizochagua.\n- “Tovuti maarufu pekee”: hali ya hiari inayoruhusu tu tovuti zinazotumika sana katika eneo lako.\n- Kumbukumbu ya maswali kwenye ukurasa wa mipangilio: kilichozuiwa, na nani, na lini.\n\nFaragha\nHakuna kinachotumwa hadi uruhusu wakati wa kuanzisha kwa mara ya kwanza. Baada ya hapo, majina yasiyo kwenye akiba ya ndani huenda kwa huduma za kuchuja ulizowasha na kwa DNS ya marejeleo isiyochujwa; ukurasa wa mipangilio unaziorodhesha. Kumbukumbu ya maswali hubaki kwenye kumbukumbu ya muda tu isipokuwa ukichagua kuihifadhi, na data iliyohifadhiwa husimbwa kwa njia fiche. Hakuna akaunti, hakuna telemetria, hakuna matangazo. Programu husikiliza kwenye 127.0.0.1 pekee.\n\nUsanidi\nWakati wa kuanzisha kwa mara ya kwanza, programu huomba idhini na hupendekeza kusakinisha cheti chake yenyewe cha 127.0.0.1, ili kivinjari kiweze kuamini anwani ya ndani. Kisha ukurasa wa mipangilio huonyesha maagizo ya hatua kwa hatua kwa Edge, Chrome, Brave, Opera, Vivaldi na Firefox. Kivinjari unachosanidi pekee ndicho huchujwa; programu nyingine zinaendelea kutumia DNS ya mfumo.\n\nKabla ya kuondoa programu\nKwanza tumia menyu ya aikoni ya trei > “Ondoa kila kitu”. Huondoa cheti cha ndani, funguo zilizohifadhiwa katika Kidhibiti cha Vitambulisho cha Windows na data ya programu. Windows haiendeshi msimbo wowote wa programu kifurushi kinapoondolewa, kwa hivyo kuondoa programu pekee huacha cheti na funguo hizo.",
+  "features": [
+    "Huduma kadhaa za DNS za kuchuja kwa wakati mmoja: inazuiwa ikiwa yoyote itasema zuia",
+    "Aina: programu hasidi na hadaa, matangazo na vifuatiliaji, maudhui ya watu wazima",
+    "Orodha zako mwenyewe za vikoa vilivyoruhusiwa na vilivyozuiwa",
+    "Orodha za umma za kuzuia, zinazosasishwa kila siku",
+    "Zuia vikoa vya nchi na tovuti zinazopangishwa katika nchi ulizochagua",
+    "Hali ya «Tovuti maarufu pekee»",
+    "Kumbukumbu ya maswali yenye sababu ya kila uzuiaji",
+    "Hakuna kinachotumwa hadi uruhusu; hakuna telemetria, hakuna akaunti",
+    "Hufanya kazi kwenye kompyuta hii pekee (127.0.0.1)",
+    "Ukurasa wa mipangilio na aikoni ya trei katika lugha 37"
+  ],
+  "searchTerms": [
+    "kichujio cha DNS",
+    "DNS juu ya HTTPS",
+    "kizuia matangazo",
+    "kinga ya programu hasidi",
+    "kinga dhidi ya hadaa",
+    "kichujio cha maudhui",
+    "faragha"
+  ]
+}

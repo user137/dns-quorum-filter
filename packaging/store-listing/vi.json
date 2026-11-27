@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Chặn phần mềm độc hại, lừa đảo trực tuyến và quảng cáo cho trình duyệt của bạn bằng cách hỏi nhiều dịch vụ DNS lọc cùng lúc: nếu bất kỳ dịch vụ nào chặn một trang, trang đó sẽ bị chặn. Chạy trên máy tính của bạn; không gửi gì cho đến khi bạn cho phép.",
+  "description": "DNS Quorum Filter là bộ lọc DNS cục bộ cho trình duyệt của bạn. Bạn trỏ cài đặt «DNS bảo mật» của chính trình duyệt đến bộ lọc, và mọi tên trang web mà trình duyệt tra cứu đều được kiểm tra trước khi trang mở ra.\n\nCách hoạt động\nThay vì tin vào một dịch vụ DNS lọc duy nhất, bộ lọc hỏi nhiều dịch vụ cùng lúc. Nếu bất kỳ dịch vụ nào chặn một tên, trình duyệt sẽ nhận câu trả lời bị chặn. Theo mặc định, bộ lọc dùng ba dịch vụ: hai dịch vụ chống phần mềm độc hại và lừa đảo, một dịch vụ chống quảng cáo và trình theo dõi. Bạn có thể bật và tắt các danh mục (phần mềm độc hại, quảng cáo, nội dung người lớn) cũng như thêm hoặc xóa dịch vụ.\n\nNhững gì bạn kiểm soát\n- Danh sách miền luôn được cho phép và luôn bị chặn của riêng bạn.\n- Danh sách chặn công khai chống quảng cáo, trình theo dõi và mối đe dọa, cập nhật mỗi ngày một lần.\n- Chặn toàn bộ tên miền của một quốc gia (ví dụ mọi trang web kết thúc bằng mã quốc gia đã chọn).\n- Chặn các trang web được lưu trữ tại các quốc gia đã chọn.\n- «Chỉ trang web phổ biến»: chế độ tùy chọn chỉ cho phép các trang web được sử dụng rộng rãi trong khu vực của bạn.\n- Nhật ký truy vấn trên trang cài đặt: cái gì bị chặn, bởi ai và khi nào.\n\nQuyền riêng tư\nKhông có gì được gửi đi cho đến khi bạn cho phép ở lần khởi chạy đầu tiên. Sau đó, các tên không có trong bộ nhớ đệm cục bộ được gửi đến các dịch vụ lọc bạn đã bật và đến một DNS tham chiếu không lọc; trang cài đặt liệt kê các dịch vụ này. Nhật ký chỉ nằm trong bộ nhớ trừ khi bạn chọn lưu, và dữ liệu đã lưu được mã hóa. Không cần tài khoản, không đo từ xa, không quảng cáo. Ứng dụng chỉ lắng nghe trên 127.0.0.1.\n\nThiết lập\nỞ lần khởi chạy đầu tiên, ứng dụng xin sự đồng ý và đề nghị cài đặt chứng chỉ riêng cho 127.0.0.1 để trình duyệt có thể tin cậy địa chỉ cục bộ. Sau đó, trang cài đặt hiển thị hướng dẫn từng bước cho Edge, Chrome, Brave, Opera, Vivaldi và Firefox. Chỉ trình duyệt bạn thiết lập mới được lọc; các ứng dụng khác vẫn dùng DNS của hệ thống.\n\nTrước khi gỡ cài đặt\nTrước tiên hãy dùng menu biểu tượng khay hệ thống > «Xóa tất cả». Thao tác này xóa chứng chỉ cục bộ, các khóa được lưu trong Trình quản lý Thông tin xác thực của Windows và dữ liệu của ứng dụng. Windows không chạy mã nào của ứng dụng khi gỡ một gói, vì vậy chỉ gỡ cài đặt sẽ để lại chứng chỉ và các khóa đó.",
+  "features": [
+    "Nhiều dịch vụ DNS lọc cùng lúc: bị chặn nếu bất kỳ dịch vụ nào chặn",
+    "Danh mục: phần mềm độc hại và lừa đảo, quảng cáo và trình theo dõi, nội dung người lớn",
+    "Danh sách miền được cho phép và bị chặn của riêng bạn",
+    "Danh sách chặn công khai, cập nhật hằng ngày",
+    "Chặn tên miền quốc gia và trang web được lưu trữ tại các quốc gia đã chọn",
+    "Chế độ «Chỉ trang web phổ biến»",
+    "Nhật ký truy vấn kèm lý do cho mỗi lần chặn",
+    "Không gửi gì cho đến khi bạn cho phép; không đo từ xa, không cần tài khoản",
+    "Chỉ hoạt động trên máy tính này (127.0.0.1)",
+    "Trang cài đặt và biểu tượng khay hệ thống bằng 37 ngôn ngữ"
+  ],
+  "searchTerms": [
+    "bộ lọc DNS",
+    "DNS qua HTTPS",
+    "chặn quảng cáo",
+    "chống phần mềm độc hại",
+    "chống lừa đảo",
+    "lọc nội dung",
+    "quyền riêng tư"
+  ]
+}

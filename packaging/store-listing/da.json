@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokerer malware, phishing og reklamer i din browser ved at spørge flere filtrerende DNS-tjenester på én gang: hvis bare én af dem blokerer et websted, blokeres det. Kører på din computer; intet sendes, før du tillader det.",
+  "description": "DNS Quorum Filter er et lokalt DNS-filter til din browser. Du peger browserens egen indstilling for „sikker DNS“ mod filteret, og hvert webstedsnavn, browseren slår op, tjekkes, før webstedet åbner.\n\nSådan virker det\nI stedet for at stole på én filtrerende DNS-tjeneste spørger filteret flere på samme tid. Hvis bare én af dem blokerer et navn, får browseren et blokeret svar. Som standard bruges tre tjenester: to mod malware og phishing og én mod reklamer og trackere. Du kan slå kategorier til og fra (malware, reklamer, voksenindhold) og tilføje eller fjerne tjenester.\n\nDet styrer du\n- Dine egne lister over altid tilladte og altid blokerede domæner.\n- Offentlige blokeringslister mod reklamer, trackere og trusler, opdateret én gang om dagen.\n- Blokering af hele landedomæner (f.eks. alle websteder, der ender på en valgt landekode).\n- Blokering af websteder, der hostes i valgte lande.\n- „Kun populære websteder“: en valgfri tilstand, der kun lukker meget brugte websteder for din region igennem.\n- En forespørgselslog på indstillingssiden: hvad der blev blokeret, af hvem og hvornår.\n\nPrivatliv\nIntet sendes, før du tillader det ved første start. Derefter går navne, der ikke er i den lokale cache, til de filtreringstjenester, du har slået til, og til en ufiltreret reference-DNS; indstillingssiden viser dem. Loggen forbliver i hukommelsen, medmindre du vælger at gemme den, og gemte data er krypterede. Ingen konto, ingen telemetri, ingen reklamer. Appen lytter kun på 127.0.0.1.\n\nOpsætning\nVed første start beder appen om samtykke og tilbyder at installere sit eget certifikat til 127.0.0.1, så browseren kan stole på den lokale adresse. Indstillingssiden viser derefter trin-for-trin-vejledning til Edge, Chrome, Brave, Opera, Vivaldi og Firefox. Kun den browser, du sætter op, filtreres; andre apps bruger fortsat systemets DNS.\n\nFør afinstallation\nBrug først bakkemenuen > „Fjern alt“. Det fjerner det lokale certifikat, nøglerne gemt i Windows Legitimationsstyring og appens data. Windows kører ingen appkode, når en pakke fjernes, så en afinstallation alene efterlader certifikatet og disse nøgler.",
+  "features": [
+    "Flere filtrerende DNS-tjenester på én gang: blokeret, hvis bare én siger bloker",
+    "Kategorier: malware og phishing, reklamer og trackere, voksenindhold",
+    "Dine egne lister over tilladte og blokerede domæner",
+    "Offentlige blokeringslister, opdateret dagligt",
+    "Bloker landeendelser og websteder hostet i valgte lande",
+    "Tilstanden „Kun populære websteder“",
+    "Forespørgselslog med årsagen til hver blokering",
+    "Intet sendes, før du tillader det; ingen telemetri, ingen konto",
+    "Virker kun på denne computer (127.0.0.1)",
+    "Indstillingsside og bakkeikon på 37 sprog"
+  ],
+  "searchTerms": [
+    "DNS-filter",
+    "DNS over HTTPS",
+    "reklameblokering",
+    "beskyttelse mod malware",
+    "beskyttelse mod phishing",
+    "indholdsfilter",
+    "privatliv"
+  ]
+}

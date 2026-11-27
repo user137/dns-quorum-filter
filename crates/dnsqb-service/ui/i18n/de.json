@@ -39,7 +39,7 @@
   "consent.withdrawButton": "Einwilligung widerrufen",
   "consent.withdrawConfirm": "Einwilligung widerrufen? Es wird nichts mehr gesendet, daher öffnet ein Browser, der auf diesen Filter eingestellt ist, keine Websites, bis Sie es oben auf dieser Seite wieder erlauben.",
   "consent.withdrawConfirmButton": "Einwilligung widerrufen",
-  "consent.withdrawNotSaved": "Einwilligung widerrufen, aber die Änderung konnte nicht gespeichert werden: Nach einem Neustart werden wieder Domains gesendet. Prüfen Sie den Zugriff auf den Einstellungsordner und widerrufen Sie erneut.",
+  "consent.withdrawNotSaved": "Die Einwilligung wurde widerrufen, aber die Änderung konnte nicht gespeichert werden: Nach einem Neustart werden wieder Domains gesendet. Prüfen Sie den Zugriff auf den Einstellungsordner und widerrufen Sie die Einwilligung erneut.",
   "consent.grantNotSaved": "Die Filterung ist eingeschaltet, aber die Einwilligung wurde nicht gespeichert: Nach einem Neustart fragt die App erneut.",
   "consent.privacyPolicyLink": "Datenschutzerklärung",
   "startupTask.disabled": "Autostart ist aus: Nach einem Neustart startet der Filter nicht von selbst, und der Browser bleibt ohne DNS.",

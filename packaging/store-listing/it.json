@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blocca malware, phishing e pubblicità per il tuo browser interrogando più servizi DNS di filtraggio contemporaneamente: se anche uno solo blocca un sito, il sito viene bloccato. Funziona sul tuo computer; non viene inviato nulla finché non lo consenti.",
+  "description": "DNS Quorum Filter è un filtro DNS locale per il tuo browser. Indirizzi l'impostazione «DNS sicuro» del browser verso il filtro, e ogni nome di sito che il browser cerca viene controllato prima che il sito si apra.\n\nCome funziona\nInvece di affidarsi a un solo servizio DNS di filtraggio, il filtro ne interroga diversi contemporaneamente. Se anche uno solo blocca un nome, il browser riceve una risposta bloccata. Per impostazione predefinita usa tre servizi: due contro malware e phishing e uno contro pubblicità e tracker. Puoi attivare e disattivare le categorie (malware, pubblicità, contenuti per adulti) e aggiungere o rimuovere servizi.\n\nCosa controlli\n- I tuoi elenchi «Domini consentiti» e «Domini bloccati».\n- Liste di blocco pubbliche contro pubblicità, tracker e minacce, aggiornate una volta al giorno.\n- Blocco di intere estensioni di dominio nazionali (ad esempio ogni sito che termina con un codice paese scelto).\n- Blocco dei siti ospitati nei paesi scelti.\n- «Solo siti popolari»: una modalità facoltativa che lascia passare solo i siti più usati nella tua regione.\n- Un registro delle query nella pagina delle impostazioni: cosa è stato bloccato, da chi e quando.\n\nPrivacy\nNon viene inviato nulla finché non lo consenti al primo avvio. Dopo, i nomi che non sono nella cache locale vanno ai servizi di filtraggio che hai attivato e a un DNS di riferimento non filtrato; la pagina delle impostazioni li elenca. Il registro resta in memoria a meno che tu non scelga di salvarlo, e i dati salvati sono cifrati. Nessun account, nessuna telemetria, nessuna pubblicità. L'app è in ascolto solo su 127.0.0.1.\n\nConfigurazione\nAl primo avvio l'app chiede il consenso e propone di installare un proprio certificato per 127.0.0.1, così il browser può fidarsi dell'indirizzo locale. La pagina delle impostazioni mostra poi istruzioni passo passo per Edge, Chrome, Brave, Opera, Vivaldi e Firefox. Viene filtrato solo il browser che configuri; le altre app continuano a usare il DNS di sistema.\n\nPrima di disinstallare\nUsa prima il menu dell'icona nella barra delle applicazioni > «Rimuovi tutto». Rimuove il certificato locale, le chiavi salvate in Gestione credenziali di Windows e i dati dell'app. Windows non esegue codice dell'app quando un pacchetto viene rimosso, quindi la sola disinstallazione lascia il certificato e quelle chiavi.",
+  "features": [
+    "Più servizi DNS di filtraggio insieme: bloccato se anche uno solo lo blocca",
+    "Categorie: malware e phishing, pubblicità e tracker, contenuti per adulti",
+    "I tuoi elenchi di domini consentiti e bloccati",
+    "Liste di blocco pubbliche, aggiornate ogni giorno",
+    "Blocco delle estensioni di dominio nazionali e dei siti ospitati nei paesi scelti",
+    "Modalità «Solo siti popolari»",
+    "Registro delle query con il motivo di ogni blocco",
+    "Non viene inviato nulla finché non lo consenti; niente telemetria, niente account",
+    "Funziona solo su questo computer (127.0.0.1)",
+    "Pagina delle impostazioni e icona nella barra in 37 lingue"
+  ],
+  "searchTerms": [
+    "filtro DNS",
+    "DNS su HTTPS",
+    "blocco pubblicità",
+    "protezione malware",
+    "protezione phishing",
+    "filtro contenuti",
+    "privacy"
+  ]
+}

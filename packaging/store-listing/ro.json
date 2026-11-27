@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blochează programele malware, phishingul și reclamele pentru browserul dvs., interogând simultan mai multe servicii DNS de filtrare: dacă oricare dintre ele blochează un site, acesta este blocat. Rulează pe computerul dvs.; nu se trimite nimic până nu permiteți.",
+  "description": "DNS Quorum Filter este un filtru DNS local pentru browserul dvs. Direcționați setarea „DNS securizat” a browserului către filtru, iar fiecare nume de site pe care browserul îl caută este verificat înainte ca site-ul să se deschidă.\n\nCum funcționează\nÎn loc să se bazeze pe un singur serviciu DNS de filtrare, filtrul interoghează mai multe în același timp. Dacă oricare dintre ele blochează un nume, browserul primește un răspuns de blocare. Implicit folosește trei servicii: două împotriva programelor malware și a phishingului și unul împotriva reclamelor și a urmăritoarelor. Puteți activa și dezactiva categorii (malware, reclame, conținut pentru adulți) și puteți adăuga sau elimina servicii.\n\nCe controlați\n- Propriile liste de domenii permise întotdeauna și blocate întotdeauna.\n- Liste publice de blocare împotriva reclamelor, urmăritoarelor și amenințărilor, actualizate o dată pe zi.\n- Blocarea tuturor domeniilor unei țări (de exemplu, fiecare site care se termină cu un cod de țară ales).\n- Blocarea site-urilor găzduite în țările alese.\n- „Doar site-uri populare”: un mod opțional care lasă să treacă doar site-urile utilizate pe scară largă în regiunea dvs.\n- Un jurnal de interogări pe pagina de setări: ce a fost blocat, de cine și când.\n\nConfidențialitate\nNu se trimite nimic până nu permiteți acest lucru la prima lansare. După aceea, numele care nu sunt în cache-ul local ajung la serviciile de filtrare pe care le-ați activat și la un DNS de referință nefiltrat; pagina de setări le enumeră. Jurnalul rămâne în memorie, cu excepția cazului în care alegeți să îl salvați, iar datele salvate sunt criptate. Fără cont, fără telemetrie, fără reclame. Aplicația ascultă doar pe 127.0.0.1.\n\nConfigurare\nLa prima lansare, aplicația cere consimțământul și se oferă să instaleze propriul certificat pentru 127.0.0.1, astfel încât browserul să aibă încredere în adresa locală. Pagina de setări afișează apoi instrucțiuni pas cu pas pentru Edge, Chrome, Brave, Opera, Vivaldi și Firefox. Doar browserul configurat este filtrat; celelalte aplicații folosesc în continuare DNS-ul sistemului.\n\nÎnainte de dezinstalare\nFolosiți mai întâi meniul pictogramei din bara de sistem > „Elimină totul”. Acesta elimină certificatul local, cheile stocate în Manager acreditări din Windows și datele aplicației. Windows nu rulează niciun cod al aplicației când un pachet este eliminat, așa că simpla dezinstalare lasă în urmă certificatul și acele chei.",
+  "features": [
+    "Mai multe servicii DNS de filtrare simultan: blocat dacă oricare spune blocare",
+    "Categorii: malware și phishing, reclame și urmăritoare, conținut pentru adulți",
+    "Propriile liste de domenii permise și blocate",
+    "Liste publice de blocare, actualizate zilnic",
+    "Blocarea domeniilor de țară și a site-urilor găzduite în țările alese",
+    "Modul «Doar site-uri populare»",
+    "Jurnal de interogări cu motivul fiecărei blocări",
+    "Nu se trimite nimic până nu permiteți; fără telemetrie, fără cont",
+    "Funcționează doar pe acest computer (127.0.0.1)",
+    "Pagina de setări și pictograma din bara de sistem în 37 de limbi"
+  ],
+  "searchTerms": [
+    "filtru DNS",
+    "DNS peste HTTPS",
+    "blocare reclame",
+    "protecție malware",
+    "protecție phishing",
+    "filtru de conținut",
+    "confidențialitate"
+  ]
+}

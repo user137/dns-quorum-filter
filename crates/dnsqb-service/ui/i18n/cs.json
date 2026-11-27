@@ -203,7 +203,7 @@
   "log.retention.option.30d": "30 dní",
   "log.retention.memoryOnly": "Pouze v paměti - vymaže se při restartu služby.",
   "log.retention.memoryOnlyLong": "Pouze v paměti, takže tento protokol se při příštím restartu služby ztratí.",
-  "log.retention.onDisk": "Uloženo na disku v šifrované podobě; klíč je uložen ve Správci přihlašovacích údajů systému Windows.",
+  "log.retention.onDisk": "Uloženo na disku v šifrované podobě; klíč je uložen ve Správci pověření systému Windows.",
   "log.retention.diskFailed": "Uložení nebo vymazání protokolu na disku selhalo - historie nemusí přežít restart nebo je stále na disku.",
   "log.retention.leftover": "Historie protokolu z dřívější relace je stále uložena na disku (šifrovaná).",
   "log.retention.confirmDisk": "Uchovávání protokolu déle než 24 hodin ukládá vaši historii prohlížení (navštívené názvy domén) na disk v šifrované podobě, s klíčem ve Správci přihlašovacích údajů systému Windows. Vymazání protokolu ji smaže i z disku.",

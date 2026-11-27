@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokuje złośliwe oprogramowanie, phishing i reklamy w przeglądarce, pytając jednocześnie kilka filtrujących usług DNS: jeśli którakolwiek blokuje stronę, zostaje ona zablokowana. Działa na Twoim komputerze; nic nie jest wysyłane, dopóki na to nie zezwolisz.",
+  "description": "DNS Quorum Filter to lokalny filtr DNS dla Twojej przeglądarki. Kierujesz własne ustawienie przeglądarki „Bezpieczny DNS” na filtr, a każda nazwa strony, której szuka przeglądarka, jest sprawdzana, zanim strona się otworzy.\n\nJak to działa\nZamiast ufać jednej filtrującej usłudze DNS, filtr pyta jednocześnie kilka. Jeśli którakolwiek z nich blokuje nazwę, przeglądarka otrzymuje zablokowaną odpowiedź. Domyślnie używane są trzy usługi: dwie przeciw złośliwemu oprogramowaniu i phishingowi oraz jedna przeciw reklamom i elementom śledzącym. Możesz włączać i wyłączać kategorie (złośliwe oprogramowanie, reklamy, treści dla dorosłych) oraz dodawać i usuwać usługi.\n\nCo kontrolujesz\n- Własne listy „Dozwolone domeny” i „Zablokowane domeny”.\n- Publiczne listy blokad przeciw reklamom, elementom śledzącym i zagrożeniom, aktualizowane raz dziennie.\n- Blokowanie całych krajowych końcówek domen (na przykład wszystkich stron kończących się wybranym kodem kraju).\n- Blokowanie stron hostowanych w wybranych krajach.\n- „Tylko popularne strony”: opcjonalny tryb, który przepuszcza tylko strony powszechnie używane w Twoim regionie.\n- Dziennik zapytań na stronie ustawień: co zostało zablokowane, przez kogo i kiedy.\n\nPrywatność\nNic nie jest wysyłane, dopóki nie zezwolisz na to przy pierwszym uruchomieniu. Potem nazwy, których nie ma w lokalnej pamięci podręcznej, trafiają do włączonych przez Ciebie usług filtrujących i do referencyjnego DNS bez filtrowania; strona ustawień je wymienia. Dziennik pozostaje w pamięci, chyba że zdecydujesz się go zapisywać, a zapisane dane są szyfrowane. Bez konta, bez telemetrii, bez reklam. Aplikacja nasłuchuje tylko na 127.0.0.1.\n\nKonfiguracja\nPrzy pierwszym uruchomieniu aplikacja prosi o zgodę i proponuje zainstalowanie własnego certyfikatu dla 127.0.0.1, aby przeglądarka mogła ufać adresowi lokalnemu. Następnie strona ustawień pokazuje instrukcje krok po kroku dla przeglądarek Edge, Chrome, Brave, Opera, Vivaldi i Firefox. Filtrowana jest tylko skonfigurowana przez Ciebie przeglądarka; inne aplikacje nadal używają systemowego DNS.\n\nPrzed odinstalowaniem\nNajpierw wybierz w menu ikony w zasobniku systemowym „Usuń wszystko”. Usuwa to lokalny certyfikat, klucze przechowywane w Menedżerze poświadczeń Windows i dane aplikacji. Podczas usuwania pakietu Windows nie uruchamia kodu aplikacji, więc samo odinstalowanie pozostawia certyfikat i te klucze.",
+  "features": [
+    "Kilka filtrujących usług DNS naraz: blokada, jeśli blokuje którakolwiek z nich",
+    "Kategorie: złośliwe oprogramowanie i phishing, reklamy i elementy śledzące, treści dla dorosłych",
+    "Własne listy dozwolonych i zablokowanych domen",
+    "Publiczne listy blokad, aktualizowane codziennie",
+    "Blokowanie krajowych końcówek domen i stron hostowanych w wybranych krajach",
+    "Tryb „Tylko popularne strony”",
+    "Dziennik zapytań z przyczyną każdej blokady",
+    "Nic nie jest wysyłane, dopóki nie zezwolisz; bez telemetrii, bez konta",
+    "Działa tylko na tym komputerze (127.0.0.1)",
+    "Strona ustawień i ikona w zasobniku w 37 językach"
+  ],
+  "searchTerms": [
+    "filtr DNS",
+    "DNS przez HTTPS",
+    "bloker reklam",
+    "ochrona przed malware",
+    "ochrona przed phishingiem",
+    "filtr treści",
+    "prywatność"
+  ]
+}

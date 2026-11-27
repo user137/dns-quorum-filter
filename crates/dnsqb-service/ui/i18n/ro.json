@@ -36,7 +36,7 @@
   "hero.grantConsentButton": "Permiteți și porniți filtrarea",
   "hero.grantConsentFailedLabel": "Nu a funcționat - încercați din nou",
   "consent.givenLine": "Ați permis trimiterea domeniilor către serviciile enumerate mai sus.",
-  "consent.withdrawButton": "Retrageți consimțământul",
+  "consent.withdrawButton": "Retrage consimțământul",
   "consent.withdrawConfirm": "Retrageți consimțământul? Nu se va mai trimite nimic, așa că un browser setat să folosească acest filtru nu va deschide site-uri până când nu permiteți din nou, în partea de sus a acestei pagini.",
   "consent.withdrawConfirmButton": "Retrage consimțământul",
   "consent.withdrawNotSaved": "Consimțământul a fost retras, dar modificarea nu a putut fi salvată: după o repornire, domeniile vor fi trimise din nou. Verificați accesul la folderul de setări și retrageți-l din nou.",

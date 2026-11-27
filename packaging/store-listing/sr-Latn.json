@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokira zlonamerni softver, fišing i reklame za vaš pregledač tako što istovremeno pita više DNS usluga za filtriranje: ako bilo koja od njih blokira sajt, on je blokiran. Radi na vašem računaru; ništa se ne šalje dok to ne dozvolite.",
+  "description": "DNS Quorum Filter je lokalni DNS filter za vaš pregledač. Sopstveno podešavanje pregledača „bezbedni DNS“ usmerite na filter i svako ime sajta koje pregledač potraži proverava se pre nego što se sajt otvori.\n\nKako radi\nUmesto da veruje jednoj DNS usluzi za filtriranje, filter istovremeno pita više njih. Ako bilo koja od njih blokira ime, pregledač dobija blokirani odgovor. Podrazumevano koristi tri usluge: dve protiv zlonamernog softvera i fišinga i jednu protiv reklama i alata za praćenje. Kategorije (zlonamerni softver, reklame, sadržaj za odrasle) možete uključivati i isključivati, a usluge dodavati ili uklanjati.\n\nŠta kontrolišete\n- Sopstvene liste uvek dozvoljenih i uvek blokiranih domena.\n- Javne liste blokiranja protiv reklama, alata za praćenje i pretnji, ažurirane jednom dnevno.\n- Blokiranje celih domena zemalja (na primer svakog sajta koji se završava izabranim kodom zemlje).\n- Blokiranje sajtova hostovanih u izabranim zemljama.\n- „Samo popularni sajtovi“: opcioni režim koji propušta samo široko korišćene sajtove za vaš region.\n- Dnevnik upita na stranici podešavanja: šta je blokirano, ko je blokirao i kada.\n\nPrivatnost\nNišta se ne šalje dok to ne dozvolite pri prvom pokretanju. Nakon toga imena koja nisu u lokalnom kešu idu uslugama filtriranja koje ste uključili i nefiltriranom referentnom DNS-u; stranica podešavanja ih navodi. Dnevnik ostaje u memoriji osim ako odlučite da ga sačuvate, a sačuvani podaci su šifrovani. Bez naloga, bez telemetrije, bez reklama. Aplikacija sluša samo na 127.0.0.1.\n\nPodešavanje\nPri prvom pokretanju aplikacija traži saglasnost i nudi instaliranje sopstvenog sertifikata za 127.0.0.1, kako bi pregledač verovao lokalnoj adresi. Stranica podešavanja zatim prikazuje uputstva korak po korak za Edge, Chrome, Brave, Opera, Vivaldi i Firefox. Filtrira se samo pregledač koji podesite; ostale aplikacije i dalje koriste sistemski DNS.\n\nPre deinstalacije\nPrvo upotrebite meni ikone u sistemskoj traci > „Ukloni sve“. To uklanja lokalni sertifikat, ključeve sačuvane u Windows menadžeru akreditiva i podatke aplikacije. Windows ne pokreće nikakav kod aplikacije kada se paket ukloni, pa sama deinstalacija ostavlja sertifikat i te ključeve.",
+  "features": [
+    "Više DNS usluga za filtriranje odjednom: blokirano ako bilo koja kaže blokiraj",
+    "Kategorije: zlonamerni softver i fišing, reklame i alati za praćenje, sadržaj za odrasle",
+    "Sopstvene liste dozvoljenih i blokiranih domena",
+    "Javne liste blokiranja, ažurirane svakodnevno",
+    "Blokiranje domena zemalja i sajtova hostovanih u izabranim zemljama",
+    "Režim „Samo popularni sajtovi“",
+    "Dnevnik upita sa razlogom za svako blokiranje",
+    "Ništa se ne šalje dok ne dozvolite; bez telemetrije, bez naloga",
+    "Radi samo na ovom računaru (127.0.0.1)",
+    "Stranica podešavanja i ikona u sistemskoj traci na 37 jezika"
+  ],
+  "searchTerms": [
+    "DNS filter",
+    "DNS preko HTTPS",
+    "blokator reklama",
+    "zaštita od malvera",
+    "zaštita od fišinga",
+    "filter sadržaja",
+    "privatnost"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokuoja kenkėjiškas programas, sukčiavimą ir reklamas jūsų naršyklėje, vienu metu klausdama kelių filtruojančių DNS paslaugų: jei bent viena blokuoja svetainę, ji užblokuojama. Veikia jūsų kompiuteryje; nieko nesiunčiama, kol neleisite.",
+  "description": "DNS Quorum Filter – tai vietinis DNS filtras jūsų naršyklei. Naršyklės nustatymą „Saugus DNS“ nukreipiate į filtrą, ir kiekvienas svetainės vardas, kurio ieško naršyklė, patikrinamas prieš atsidarant svetainei.\n\nKaip tai veikia\nUžuot pasitikėjęs viena filtruojančia DNS paslauga, filtras vienu metu klausia kelių. Jei bent viena jų blokuoja vardą, naršyklė gauna užblokuotą atsakymą. Pagal numatytuosius nustatymus naudojamos trys paslaugos: dvi prieš kenkėjiškas programas ir sukčiavimą ir viena prieš reklamas ir sekiklius. Kategorijas (kenkėjiškos programos, reklamos, turinys suaugusiesiems) galite įjungti ir išjungti, o paslaugas – pridėti ar pašalinti.\n\nKą valdote jūs\n- Savi sąrašai „Leidžiami domenai“ ir „Blokuojami domenai“.\n- Vieši blokavimo sąrašai prieš reklamas, sekiklius ir grėsmes, atnaujinami kartą per dieną.\n- Ištisų šalių domenų galūnių blokavimas (pavyzdžiui, visų svetainių, kurios baigiasi pasirinktu šalies kodu).\n- Pasirinktose šalyse talpinamų svetainių blokavimas.\n- „Tik populiarios svetainės“: pasirenkamas režimas, praleidžiantis tik jūsų regione plačiai naudojamas svetaines.\n- Užklausų žurnalas nustatymų puslapyje: kas užblokuota, kieno ir kada.\n\nPrivatumas\nNieko nesiunčiama, kol neleisite to pirmą kartą paleidę programą. Po to vardai, kurių nėra vietinėje talpykloje, siunčiami jūsų įjungtoms filtravimo paslaugoms ir nefiltruojamam etaloniniam DNS; nustatymų puslapyje jie išvardyti. Žurnalas lieka atmintyje, nebent nuspręsite jį išsaugoti, o išsaugoti duomenys šifruojami. Jokios paskyros, jokios telemetrijos, jokių reklamų. Programa klausosi tik adresu 127.0.0.1.\n\nSąranka\nPirmą kartą paleista programa paprašo sutikimo ir pasiūlo įdiegti savo sertifikatą adresui 127.0.0.1, kad naršyklė galėtų pasitikėti vietiniu adresu. Tada nustatymų puslapis rodo nuoseklias instrukcijas naršyklėms Edge, Chrome, Brave, Opera, Vivaldi ir Firefox. Filtruojama tik jūsų nustatyta naršyklė; kitos programos ir toliau naudoja sistemos DNS.\n\nPrieš pašalinant\nPirmiausia dėklo meniu pasirinkite „Pašalinti viską“. Tai pašalina vietinį sertifikatą, „Windows“ kredencialų tvarkyklėje saugomus raktus ir programos duomenis. Šalinant paketą Windows nevykdo jokio programos kodo, todėl vien pašalinus programą sertifikatas ir tie raktai lieka.",
+  "features": [
+    "Kelios filtruojančios DNS paslaugos vienu metu: blokuojama, jei blokuoja bent viena",
+    "Kategorijos: kenkėjiškos programos ir sukčiavimas, reklamos ir sekikliai, turinys suaugusiesiems",
+    "Savi leidžiamų ir blokuojamų domenų sąrašai",
+    "Vieši blokavimo sąrašai, atnaujinami kasdien",
+    "Šalių domenų galūnių ir pasirinktose šalyse talpinamų svetainių blokavimas",
+    "Režimas „Tik populiarios svetainės“",
+    "Užklausų žurnalas su kiekvieno blokavimo priežastimi",
+    "Nieko nesiunčiama, kol neleisite; jokios telemetrijos, jokios paskyros",
+    "Veikia tik šiame kompiuteryje (127.0.0.1)",
+    "Nustatymų puslapis ir dėklo piktograma 37 kalbomis"
+  ],
+  "searchTerms": [
+    "DNS filtras",
+    "DNS per HTTPS",
+    "reklamų blokavimas",
+    "apsauga nuo kenkėjų",
+    "apsauga nuo sukčiavimo",
+    "turinio filtras",
+    "privatumas"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Memblokir malware, phishing, dan iklan untuk browser Anda dengan bertanya ke beberapa layanan DNS pemfilter sekaligus: jika salah satunya memblokir situs, situs itu diblokir. Berjalan di komputer Anda; tidak ada yang dikirim sampai Anda mengizinkannya.",
+  "description": "DNS Quorum Filter adalah filter DNS lokal untuk browser Anda. Anda mengarahkan pengaturan «DNS aman» milik browser ke filter ini, dan setiap nama situs yang dicari browser diperiksa sebelum situs terbuka.\n\nCara kerjanya\nAlih-alih memercayai satu layanan DNS pemfilter, filter ini bertanya ke beberapa layanan sekaligus. Jika salah satunya memblokir sebuah nama, browser mendapat jawaban yang diblokir. Secara default digunakan tiga layanan: dua untuk melawan malware dan phishing, dan satu untuk melawan iklan dan pelacak. Anda dapat mengaktifkan dan menonaktifkan kategori (malware, iklan, konten dewasa) serta menambah atau menghapus layanan.\n\nYang Anda kendalikan\n- Daftar Anda sendiri: «Domain yang diizinkan» dan «Domain yang diblokir».\n- Daftar blokir publik untuk iklan, pelacak, dan ancaman, diperbarui sekali sehari.\n- Memblokir seluruh akhiran domain negara (misalnya setiap situs yang berakhiran kode negara pilihan).\n- Memblokir situs yang di-hosting di negara pilihan.\n- «Hanya situs populer»: mode opsional yang hanya meloloskan situs yang banyak digunakan di wilayah Anda.\n- Log kueri di halaman pengaturan: apa yang diblokir, oleh siapa, dan kapan.\n\nPrivasi\nTidak ada yang dikirim sampai Anda mengizinkannya saat aplikasi pertama kali dijalankan. Setelah itu, nama yang tidak ada di cache lokal dikirim ke layanan pemfilter yang Anda aktifkan dan ke DNS referensi tanpa filter; halaman pengaturan mencantumkannya. Log tetap di memori kecuali Anda memilih untuk menyimpannya, dan data yang disimpan dienkripsi. Tanpa akun, tanpa telemetri, tanpa iklan. Aplikasi hanya mendengarkan di 127.0.0.1.\n\nPenyiapan\nSaat pertama kali dijalankan, aplikasi meminta persetujuan dan menawarkan pemasangan sertifikatnya sendiri untuk 127.0.0.1 agar browser dapat memercayai alamat lokal. Halaman pengaturan kemudian menampilkan petunjuk langkah demi langkah untuk Edge, Chrome, Brave, Opera, Vivaldi, dan Firefox. Hanya browser yang Anda siapkan yang difilter; aplikasi lain tetap menggunakan DNS sistem.\n\nSebelum menghapus instalasi\nGunakan dulu menu ikon baki > «Hapus semua». Ini menghapus sertifikat lokal, kunci yang tersimpan di Manajer Kredensial Windows, dan data aplikasi. Windows tidak menjalankan kode aplikasi saat paket dihapus, jadi menghapus instalasi saja akan meninggalkan sertifikat dan kunci tersebut.",
+  "features": [
+    "Beberapa layanan DNS pemfilter sekaligus: diblokir jika salah satunya memblokir",
+    "Kategori: malware dan phishing, iklan dan pelacak, konten dewasa",
+    "Daftar domain yang diizinkan dan diblokir milik Anda sendiri",
+    "Daftar blokir publik, diperbarui setiap hari",
+    "Blokir akhiran domain negara dan situs yang di-hosting di negara pilihan",
+    "Mode «Hanya situs populer»",
+    "Log kueri dengan alasan setiap pemblokiran",
+    "Tidak ada yang dikirim sampai Anda mengizinkannya; tanpa telemetri, tanpa akun",
+    "Hanya bekerja di komputer ini (127.0.0.1)",
+    "Halaman pengaturan dan ikon baki dalam 37 bahasa"
+  ],
+  "searchTerms": [
+    "filter DNS",
+    "DNS over HTTPS",
+    "pemblokir iklan",
+    "perlindungan malware",
+    "perlindungan phishing",
+    "filter konten",
+    "privasi"
+  ]
+}

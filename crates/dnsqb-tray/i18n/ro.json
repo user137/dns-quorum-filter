@@ -25,7 +25,7 @@
   "onboarding.consentTitle": "Consimțământ pentru trimiterea domeniilor",
   "onboarding.consentDescriptionTemplate": "Pentru a verifica un site, DNS Quorum Filter trimite domeniul acestuia (de ex. example.com) furnizorilor de filtrare pe care îi activați și unui DNS de referință nefiltrat, folosit pentru comparație. Ca orice serviciu DNS, aceștia vă văd adresa IP. Domeniile aflate deja în cache nu sunt trimise din nou.\n\n{providersLine}\n\nDacă alegeți «Nu», nu se trimite nimic și filtrarea rămâne oprită. O puteți permite mai târziu pe pagina de setări și vă puteți retrage consimțământul acolo oricând.\n\nPolitica de confidențialitate: {privacyUrl}\n\nPermiteți trimiterea domeniilor și porniți filtrarea?",
   "onboarding.descriptionNoConsent": "Filtrarea rămâne oprită până când o permiteți pe pagina de setări. Pentru a deschide acea pagină, browserul are nevoie de certificatul local.\n\nNu direcționați încă browserul către filtru: până când nu permiteți, site-urile nu se vor deschide prin el.\n\nInstalați certificatul acum?",
-  "onboarding.consentProvidersTemplate": "Activați acum: {providers}. Îi puteți schimba în setări.",
+  "onboarding.consentProvidersTemplate": "Furnizori activi acum: {providers}. Îi puteți schimba în setări.",
   "onboarding.consentNoProviders": "Încă nu este activat niciun furnizor de filtrare, așa că doar DNS-ul de referință ar vedea domeniile. Îi puteți activa în setări.",
   "tooltip.consentRequired": "DNS Quorum Filter: oprit până când permiteți trimiterea domeniilor în setări",
   "certOutcome.installed": "certificatul a fost instalat",

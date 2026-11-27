@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blockerar skadlig kod, nätfiske och annonser för din webbläsare genom att fråga flera filtrerande DNS-tjänster samtidigt: om någon av dem blockerar en webbplats blockeras den. Körs på din dator; ingenting skickas förrän du tillåter det.",
+  "description": "DNS Quorum Filter är ett lokalt DNS-filter för din webbläsare. Du riktar webbläsarens egen inställning för ”säker DNS” mot filtret, och varje webbplatsnamn som webbläsaren slår upp kontrolleras innan webbplatsen öppnas.\n\nSå fungerar det\nI stället för att lita på en enda filtrerande DNS-tjänst frågar filtret flera samtidigt. Om någon av dem blockerar ett namn får webbläsaren ett blockerat svar. Som standard används tre tjänster: två mot skadlig kod och nätfiske och en mot annonser och spårare. Du kan slå på och av kategorier (skadlig kod, annonser, vuxeninnehåll) och lägga till eller ta bort tjänster.\n\nDet här styr du\n- Egna listor över alltid tillåtna och alltid blockerade domäner.\n- Offentliga blockeringslistor mot annonser, spårare och hot, uppdaterade en gång om dagen.\n- Blockering av hela landsdomäner (till exempel alla webbplatser som slutar på en vald landskod).\n- Blockering av webbplatser som ligger hos värdar i valda länder.\n- ”Endast populära webbplatser”: ett valfritt läge som bara släpper igenom allmänt använda webbplatser för din region.\n- En frågelogg på inställningssidan: vad som blockerades, av vem och när.\n\nIntegritet\nIngenting skickas förrän du tillåter det vid första start. Därefter går namn som inte finns i den lokala cachen till de filtreringstjänster du har slagit på och till en ofiltrerad referens-DNS; inställningssidan listar dem. Loggen stannar i minnet om du inte väljer att spara den, och sparade data krypteras. Inget konto, ingen telemetri, inga annonser. Appen lyssnar endast på 127.0.0.1.\n\nKonfiguration\nVid första start ber appen om samtycke och erbjuder att installera sitt eget certifikat för 127.0.0.1, så att webbläsaren kan lita på den lokala adressen. Inställningssidan visar sedan steg-för-steg-instruktioner för Edge, Chrome, Brave, Opera, Vivaldi och Firefox. Bara den webbläsare du konfigurerar filtreras; andra appar fortsätter att använda systemets DNS.\n\nInnan du avinstallerar\nAnvänd först menyn för ikonen i meddelandefältet > ”Ta bort allt”. Det tar bort det lokala certifikatet, nycklarna som lagras i Autentiseringshanteraren i Windows och appens data. Windows kör ingen appkod när ett paket tas bort, så enbart avinstallation lämnar kvar certifikatet och nycklarna.",
+  "features": [
+    "Flera filtrerande DNS-tjänster samtidigt: blockeras om någon säger blockera",
+    "Kategorier: skadlig kod och nätfiske, annonser och spårare, vuxeninnehåll",
+    "Egna listor över tillåtna och blockerade domäner",
+    "Offentliga blockeringslistor, uppdateras dagligen",
+    "Blockera landsdomäner och webbplatser med värd i valda länder",
+    "Läget ”Endast populära webbplatser”",
+    "Frågelogg med orsaken till varje blockering",
+    "Ingenting skickas förrän du tillåter det; ingen telemetri, inget konto",
+    "Fungerar bara på den här datorn (127.0.0.1)",
+    "Inställningssida och ikon i meddelandefältet på 37 språk"
+  ],
+  "searchTerms": [
+    "DNS-filter",
+    "DNS över HTTPS",
+    "annonsblockerare",
+    "skydd mot skadlig kod",
+    "skydd mot nätfiske",
+    "innehållsfilter",
+    "integritet"
+  ]
+}

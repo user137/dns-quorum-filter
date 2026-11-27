@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokeerib brauseris pahavara, andmepüügi ja reklaamid, küsides korraga mitmelt filtreerivalt DNS-teenuselt: kui ükskõik milline neist saidi blokeerib, see blokeeritakse. Töötab teie arvutis; midagi ei saadeta enne, kui te lubate.",
+  "description": "DNS Quorum Filter on kohalik DNS-filter teie brauserile. Suunate brauseri enda „turvalise DNS-i“ seade filtrile ja iga saidinime, mida brauser otsib, kontrollitakse enne saidi avanemist.\n\nKuidas see töötab\nSelle asemel et usaldada üht filtreerivat DNS-teenust, küsib filter korraga mitmelt. Kui ükskõik milline neist nime blokeerib, saab brauser blokeeriva vastuse. Vaikimisi kasutab see kolme teenust: kaks pahavara ja andmepüügi vastu ning üks reklaamide ja jälgijate vastu. Saate kategooriaid sisse ja välja lülitada (pahavara, reklaamid, täiskasvanute sisu) ning teenuseid lisada või eemaldada.\n\nMida te juhite\n- Oma loendid alati lubatud ja alati blokeeritud domeenidest.\n- Avalikud blokeerimisloendid reklaamide, jälgijate ja ohtude vastu, uuendatakse kord päevas.\n- Terve riigi domeenide blokeerimine (näiteks iga sait, mis lõpeb valitud riigikoodiga).\n- Valitud riikides majutatud saitide blokeerimine.\n- „Ainult populaarsed saidid“: valikuline režiim, mis laseb läbi ainult teie piirkonnas laialt kasutatavad saidid.\n- Päringulogi seadete lehel: mis blokeeriti, kelle poolt ja millal.\n\nPrivaatsus\nMidagi ei saadeta enne, kui te esimesel käivitamisel loa annate. Seejärel lähevad nimed, mida pole kohalikus vahemälus, teie sisse lülitatud filtreerimisteenustele ja filtreerimata võrdlus-DNS-ile; seadete leht loetleb need. Logi jääb mällu, kui te ei vali selle salvestamist, ja salvestatud andmed on krüpteeritud. Kontot pole, telemeetriat pole, reklaame pole. Rakendus kuulab ainult aadressil 127.0.0.1.\n\nSeadistamine\nEsimesel käivitamisel küsib rakendus nõusolekut ja pakub paigaldada oma sertifikaadi aadressile 127.0.0.1, et brauser saaks kohalikku aadressi usaldada. Seejärel näitab seadete leht samm-sammulisi juhiseid brauseritele Edge, Chrome, Brave, Opera, Vivaldi ja Firefox. Filtreeritakse ainult teie seadistatud brauserit; teised rakendused kasutavad edasi süsteemi DNS-i.\n\nEnne desinstallimist\nKasutage esmalt salve menüüd > „Eemalda kõik“. See eemaldab kohaliku sertifikaadi, Windowsi mandaadihalduris talletatud võtmed ja rakenduse andmed. Windows ei käivita paketi eemaldamisel rakenduse koodi, seega jätab pelgalt desinstallimine sertifikaadi ja need võtmed alles.",
+  "features": [
+    "Mitu filtreerivat DNS-teenust korraga: blokeeritakse, kui ükskõik milline blokeerib",
+    "Kategooriad: pahavara ja andmepüük, reklaamid ja jälgijad, täiskasvanute sisu",
+    "Oma lubatud ja blokeeritud domeenide loendid",
+    "Avalikud blokeerimisloendid, uuendatakse iga päev",
+    "Riikide domeenilõppude ja valitud riikides majutatud saitide blokeerimine",
+    "Režiim „Ainult populaarsed saidid“",
+    "Päringulogi iga blokeeringu põhjusega",
+    "Midagi ei saadeta enne teie luba; telemeetriat ega kontot pole",
+    "Töötab ainult selles arvutis (127.0.0.1)",
+    "Seadete leht ja salveikoon 37 keeles"
+  ],
+  "searchTerms": [
+    "DNS-filter",
+    "DNS üle HTTPS-i",
+    "reklaamiblokeerija",
+    "pahavarakaitse",
+    "andmepüügikaitse",
+    "sisufilter",
+    "privaatsus"
+  ]
+}

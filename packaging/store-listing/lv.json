@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Bloķē ļaunprātīgu programmatūru, pikšķerēšanu un reklāmas jūsu pārlūkprogrammā, vienlaikus vaicājot vairākiem filtrējošiem DNS pakalpojumiem: ja kaut viens bloķē vietni, tā tiek bloķēta. Darbojas jūsu datorā; nekas netiek sūtīts, kamēr to neatļausiet.",
+  "description": "DNS Quorum Filter ir lokāls DNS filtrs jūsu pārlūkprogrammai. Pārlūkprogrammas iestatījumu „Drošs DNS“ novirzāt uz filtru, un katrs vietnes nosaukums, ko pārlūkprogramma meklē, tiek pārbaudīts, pirms vietne atveras.\n\nKā tas darbojas\nTā vietā, lai uzticētos vienam filtrējošam DNS pakalpojumam, filtrs vienlaikus vaicā vairākiem. Ja kaut viens no tiem bloķē nosaukumu, pārlūkprogramma saņem bloķētu atbildi. Pēc noklusējuma tiek izmantoti trīs pakalpojumi: divi pret ļaunprātīgu programmatūru un pikšķerēšanu un viens pret reklāmām un izsekotājiem. Kategorijas (ļaunprātīga programmatūra, reklāmas, pieaugušo saturs) varat ieslēgt un izslēgt, kā arī pievienot vai noņemt pakalpojumus.\n\nKo kontrolējat jūs\n- Savi saraksti „Atļautie domēni“ un „Bloķētie domēni“.\n- Publiski bloķēšanas saraksti pret reklāmām, izsekotājiem un draudiem, atjaunināti reizi dienā.\n- Veselu valstu domēnu galotņu bloķēšana (piemēram, visas vietnes, kas beidzas ar izvēlētu valsts kodu).\n- Izvēlētajās valstīs mitinātu vietņu bloķēšana.\n- „Tikai populāras vietnes“: izvēles režīms, kas izlaiž tikai jūsu reģionā plaši izmantotas vietnes.\n- Vaicājumu žurnāls iestatījumu lapā: kas tika bloķēts, kurš to bloķēja un kad.\n\nPrivātums\nNekas netiek sūtīts, kamēr to neatļausiet pirmajā palaišanas reizē. Pēc tam nosaukumi, kas nav lokālajā kešatmiņā, tiek nosūtīti jūsu ieslēgtajiem filtrēšanas pakalpojumiem un nefiltrētajam atsauces DNS; iestatījumu lapā tie ir uzskaitīti. Žurnāls paliek atmiņā, ja vien neizvēlaties to saglabāt, un saglabātie dati ir šifrēti. Bez konta, bez telemetrijas, bez reklāmām. Lietotne klausās tikai adresē 127.0.0.1.\n\nIestatīšana\nPirmajā palaišanas reizē lietotne lūdz piekrišanu un piedāvā instalēt savu sertifikātu adresei 127.0.0.1, lai pārlūkprogramma varētu uzticēties lokālajai adresei. Pēc tam iestatījumu lapā redzami soli pa solim norādījumi pārlūkprogrammām Edge, Chrome, Brave, Opera, Vivaldi un Firefox. Tiek filtrēta tikai jūsu iestatītā pārlūkprogramma; citas lietotnes turpina izmantot sistēmas DNS.\n\nPirms atinstalēšanas\nVispirms ikonjoslas izvēlnē izvēlieties „Noņemt visu“. Tas noņem lokālo sertifikātu, Windows akreditācijas datu pārvaldniekā glabātās atslēgas un lietotnes datus. Noņemot pakotni, Windows neizpilda lietotnes kodu, tāpēc pēc vienkāršas atinstalēšanas sertifikāts un šīs atslēgas paliek.",
+  "features": [
+    "Vairāki filtrējoši DNS pakalpojumi vienlaikus: bloķēts, ja bloķē kaut viens",
+    "Kategorijas: ļaunprātīga programmatūra un pikšķerēšana, reklāmas un izsekotāji, pieaugušo saturs",
+    "Savi atļauto un bloķēto domēnu saraksti",
+    "Publiski bloķēšanas saraksti, atjaunināti katru dienu",
+    "Valstu domēnu galotņu un izvēlētajās valstīs mitinātu vietņu bloķēšana",
+    "Režīms „Tikai populāras vietnes“",
+    "Vaicājumu žurnāls ar katras bloķēšanas iemeslu",
+    "Nekas netiek sūtīts, kamēr to neatļausiet; bez telemetrijas, bez konta",
+    "Darbojas tikai šajā datorā (127.0.0.1)",
+    "Iestatījumu lapa un ikonjoslas ikona 37 valodās"
+  ],
+  "searchTerms": [
+    "DNS filtrs",
+    "DNS pār HTTPS",
+    "reklāmu bloķētājs",
+    "aizsardzība pret ļaunatūru",
+    "pikšķerēšanas aizsardzība",
+    "satura filtrs",
+    "privātums"
+  ]
+}

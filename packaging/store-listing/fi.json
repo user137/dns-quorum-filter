@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Estää haittaohjelmat, tietojenkalastelun ja mainokset selaimessasi kysymällä useilta suodattavilta DNS-palveluilta kerralla: jos yksikin niistä estää sivuston, se estetään. Toimii tietokoneellasi; mitään ei lähetetä ennen kuin sallit sen.",
+  "description": "DNS Quorum Filter on paikallinen DNS-suodatin selaimellesi. Suuntaat selaimen oman ”suojattu DNS” -asetuksen suodattimeen, ja jokainen sivustonimi, jota selain hakee, tarkistetaan ennen kuin sivusto avautuu.\n\nMiten se toimii\nSen sijaan, että suodatin luottaisi yhteen suodattavaan DNS-palveluun, se kysyy useilta samanaikaisesti. Jos yksikin niistä estää nimen, selain saa estovastauksen. Oletuksena se käyttää kolmea palvelua: kahta haittaohjelmia ja tietojenkalastelua vastaan ja yhtä mainoksia ja seurantaa vastaan. Voit kytkeä luokkia päälle ja pois (haittaohjelmat, mainokset, aikuisille suunnattu sisältö) sekä lisätä tai poistaa palveluja.\n\nMitä hallitset\n- Omat luettelot aina sallituista ja aina estetyistä verkkotunnuksista.\n- Julkiset estolistat mainoksia, seurantaa ja uhkia vastaan, päivitetään kerran päivässä.\n- Kokonaisten maiden verkkotunnusten esto (esimerkiksi jokainen sivusto, joka päättyy valittuun maatunnukseen).\n- Valituissa maissa sijaitsevien sivustojen esto.\n- ”Vain suositut sivustot”: valinnainen tila, joka päästää läpi vain alueellasi laajasti käytetyt sivustot.\n- Kyselyloki asetussivulla: mitä estettiin, kuka esti ja milloin.\n\nYksityisyys\nMitään ei lähetetä ennen kuin sallit sen ensimmäisellä käynnistyskerralla. Sen jälkeen nimet, jotka eivät ole paikallisessa välimuistissa, lähetetään käyttöön ottamillesi suodatuspalveluille ja suodattamattomalle vertailu-DNS:lle; asetussivu luettelee ne. Loki pysyy muistissa, ellet päätä tallentaa sitä, ja tallennetut tiedot salataan. Ei tiliä, ei telemetriaa, ei mainoksia. Sovellus kuuntelee vain osoitteessa 127.0.0.1.\n\nKäyttöönotto\nEnsimmäisellä käynnistyskerralla sovellus pyytää suostumusta ja tarjoutuu asentamaan oman varmenteensa osoitteelle 127.0.0.1, jotta selain voi luottaa paikalliseen osoitteeseen. Asetussivu näyttää sitten vaiheittaiset ohjeet selaimille Edge, Chrome, Brave, Opera, Vivaldi ja Firefox. Vain määrittämäsi selain suodatetaan; muut sovellukset käyttävät edelleen järjestelmän DNS:ää.\n\nEnnen asennuksen poistamista\nKäytä ensin ilmaisinalueen valikkoa > ”Poista kaikki”. Se poistaa paikallisen varmenteen, Windowsin Tunnistetietojen hallintaan tallennetut avaimet ja sovelluksen tiedot. Windows ei suorita sovelluksen koodia paketin poiston yhteydessä, joten pelkkä asennuksen poisto jättää varmenteen ja nämä avaimet jäljelle.",
+  "features": [
+    "Useita suodattavia DNS-palveluja kerralla: estetään, jos yksikin estää",
+    "Luokat: haittaohjelmat ja tietojenkalastelu, mainokset ja seuranta, aikuisille suunnattu sisältö",
+    "Omat sallittujen ja estettyjen verkkotunnusten luettelot",
+    "Julkiset estolistat, päivitetään päivittäin",
+    "Maiden verkkotunnuspäätteiden ja valituissa maissa sijaitsevien sivustojen esto",
+    "”Vain suositut sivustot” -tila",
+    "Kyselyloki, jossa jokaisen eston syy",
+    "Mitään ei lähetetä ilman lupaasi; ei telemetriaa, ei tiliä",
+    "Toimii vain tällä tietokoneella (127.0.0.1)",
+    "Asetussivu ja ilmaisinalueen kuvake 37 kielellä"
+  ],
+  "searchTerms": [
+    "DNS-suodatin",
+    "DNS HTTPS:n kautta",
+    "mainosten esto",
+    "haittaohjelmasuojaus",
+    "tietojenkalastelusuojaus",
+    "sisältösuodatin",
+    "yksityisyys"
+  ]
+}

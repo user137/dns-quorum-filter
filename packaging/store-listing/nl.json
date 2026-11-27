@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokkeert malware, phishing en advertenties voor je browser door meerdere filterende DNS-diensten tegelijk te vragen: als er één een site blokkeert, wordt die geblokkeerd. Draait op je eigen computer; er wordt niets verstuurd totdat je het toestaat.",
+  "description": "DNS Quorum Filter is een lokaal DNS-filter voor je browser. Je richt de eigen instelling „Veilige DNS“ van de browser op het filter, en elke sitenaam die de browser opzoekt, wordt gecontroleerd voordat de site opent.\n\nHoe het werkt\nIn plaats van op één filterende DNS-dienst te vertrouwen, vraagt het filter er meerdere tegelijk. Als er één een naam blokkeert, krijgt de browser een geblokkeerd antwoord. Standaard worden drie diensten gebruikt: twee tegen malware en phishing en één tegen advertenties en trackers. Je kunt categorieën in- en uitschakelen (malware, advertenties, inhoud voor volwassenen) en diensten toevoegen of verwijderen.\n\nWat je zelf bepaalt\n- Je eigen lijsten „Toegestane domeinen“ en „Geblokkeerde domeinen“.\n- Openbare blokkeerlijsten tegen advertenties, trackers en bedreigingen, één keer per dag bijgewerkt.\n- Hele landextensies blokkeren (bijvoorbeeld elke site die eindigt op een gekozen landcode).\n- Sites blokkeren die in gekozen landen worden gehost.\n- „Alleen populaire sites“: een optionele modus die alleen veelgebruikte sites voor jouw regio doorlaat.\n- Een querylogboek op de instellingenpagina: wat er is geblokkeerd, door wie en wanneer.\n\nPrivacy\nEr wordt niets verstuurd totdat je het bij de eerste start toestaat. Daarna gaan namen die niet in de lokale cache staan naar de filterdiensten die je hebt ingeschakeld en naar een ongefilterde referentie-DNS; de instellingenpagina toont welke. Het logboek blijft in het geheugen, tenzij je ervoor kiest het op te slaan, en opgeslagen gegevens zijn versleuteld. Geen account, geen telemetrie, geen advertenties. De app luistert alleen op 127.0.0.1.\n\nInstellen\nBij de eerste start vraagt de app om toestemming en biedt aan een eigen certificaat voor 127.0.0.1 te installeren, zodat de browser het lokale adres kan vertrouwen. De instellingenpagina toont daarna stapsgewijze instructies voor Edge, Chrome, Brave, Opera, Vivaldi en Firefox. Alleen de browser die je instelt, wordt gefilterd; andere apps blijven de systeem-DNS gebruiken.\n\nVoor het verwijderen\nGebruik eerst het menu van het systeemvakpictogram > „Alles verwijderen“. Dat verwijdert het lokale certificaat, de sleutels die zijn opgeslagen in Windows Referentiebeheer en de gegevens van de app. Windows voert geen app-code uit wanneer een pakket wordt verwijderd, dus alleen verwijderen laat het certificaat en die sleutels achter.",
+  "features": [
+    "Meerdere filterende DNS-diensten tegelijk: geblokkeerd als er één blokkeert",
+    "Categorieën: malware en phishing, advertenties en trackers, inhoud voor volwassenen",
+    "Je eigen lijsten met toegestane en geblokkeerde domeinen",
+    "Openbare blokkeerlijsten, dagelijks bijgewerkt",
+    "Landextensies en sites die in gekozen landen worden gehost blokkeren",
+    "Modus „Alleen populaire sites“",
+    "Querylogboek met de reden voor elke blokkering",
+    "Er wordt niets verstuurd totdat je het toestaat; geen telemetrie, geen account",
+    "Werkt alleen op deze computer (127.0.0.1)",
+    "Instellingenpagina en systeemvakpictogram in 37 talen"
+  ],
+  "searchTerms": [
+    "DNS-filter",
+    "DNS over HTTPS",
+    "adblocker",
+    "bescherming tegen malware",
+    "bescherming tegen phishing",
+    "inhoudsfilter",
+    "privacy"
+  ]
+}

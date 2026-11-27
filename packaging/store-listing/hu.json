@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokkolja a kártevőket, az adathalászatot és a hirdetéseket a böngészőben: egyszerre több szűrő DNS-szolgáltatást kérdez meg, és ha bármelyik blokkol egy webhelyet, az blokkolva lesz. A számítógépén fut; semmit sem küld, amíg nem engedélyezi.",
+  "description": "A DNS Quorum Filter egy helyi DNS-szűrő a böngészőjéhez. A böngésző saját „biztonságos DNS” beállítását a szűrőre irányítja, és a böngésző által lekérdezett minden webhelynév ellenőrzésen megy át, mielőtt a webhely megnyílna.\n\nHogyan működik\nAhelyett, hogy egyetlen szűrő DNS-szolgáltatásban bízna, a szűrő egyszerre többet kérdez meg. Ha bármelyikük blokkol egy nevet, a böngésző blokkolt választ kap. Alapértelmezés szerint három szolgáltatást használ: kettőt a kártevők és az adathalászat ellen, egyet a hirdetések és a követők ellen. A kategóriákat (kártevők, hirdetések, felnőtt tartalom) be- és kikapcsolhatja, a szolgáltatásokat hozzáadhatja és eltávolíthatja.\n\nAmit Ön szabályoz\n- Saját „Engedélyezett domainek” és „Blokkolt domainek” listák.\n- Nyilvános tiltólisták hirdetések, követők és fenyegetések ellen, naponta egyszer frissülnek.\n- Teljes országos domainvégződések blokkolása (például minden olyan webhelyé, amely egy kiválasztott országkódra végződik).\n- A kiválasztott országokban tárolt webhelyek blokkolása.\n- „Csak népszerű oldalak”: választható mód, amely csak a régiójában széles körben használt webhelyeket engedi át.\n- Lekérdezési napló a beállítások oldalán: mi lett blokkolva, ki által és mikor.\n\nAdatvédelem\nSemmi sem kerül elküldésre, amíg az első indításkor nem engedélyezi. Ezután a helyi gyorsítótárban nem szereplő nevek az Ön által bekapcsolt szűrőszolgáltatásokhoz és egy szűretlen referencia-DNS-hez kerülnek; a beállítások oldala felsorolja őket. A napló a memóriában marad, hacsak nem dönt a mentése mellett, a mentett adatok pedig titkosítva vannak. Nincs fiók, nincs telemetria, nincsenek hirdetések. Az alkalmazás csak a 127.0.0.1 címen figyel.\n\nBeállítás\nAz első indításkor az alkalmazás hozzájárulást kér, és felajánlja saját tanúsítványának telepítését a 127.0.0.1 címhez, hogy a böngésző megbízhasson a helyi címben. Ezután a beállítások oldala lépésről lépésre útmutatót mutat az Edge, a Chrome, a Brave, az Opera, a Vivaldi és a Firefox böngészőhöz. Csak a beállított böngésző lesz szűrve; a többi alkalmazás továbbra is a rendszer DNS-ét használja.\n\nEltávolítás előtt\nElőbb válassza a tálcaikon menüjében a „Minden eltávolítása” pontot. Ez eltávolítja a helyi tanúsítványt, a Windows Hitelesítőadat-kezelőjében tárolt kulcsokat és az alkalmazás adatait. A Windows nem futtat alkalmazáskódot egy csomag eltávolításakor, így az eltávolítás önmagában a gépen hagyja a tanúsítványt és ezeket a kulcsokat.",
+  "features": [
+    "Egyszerre több szűrő DNS-szolgáltatás: blokkolva, ha bármelyik blokkolja",
+    "Kategóriák: kártevők és adathalászat, hirdetések és követők, felnőtt tartalom",
+    "Saját engedélyezett és blokkolt domainlisták",
+    "Nyilvános tiltólisták, naponta frissítve",
+    "Országos domainvégződések és a kiválasztott országokban tárolt webhelyek blokkolása",
+    "„Csak népszerű oldalak” mód",
+    "Lekérdezési napló minden blokkolás okával",
+    "Semmit sem küld, amíg nem engedélyezi; nincs telemetria, nincs fiók",
+    "Csak ezen a számítógépen működik (127.0.0.1)",
+    "Beállítások oldal és tálcaikon 37 nyelven"
+  ],
+  "searchTerms": [
+    "DNS-szűrő",
+    "DNS HTTPS-en keresztül",
+    "reklámblokkoló",
+    "kártevők elleni védelem",
+    "adathalászat elleni védelem",
+    "tartalomszűrő",
+    "adatvédelem"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Aynı anda birkaç filtreleme DNS hizmetine sorarak tarayıcınız için kötü amaçlı yazılımları, kimlik avını ve reklamları engeller: bunlardan herhangi biri bir siteyi engellerse site engellenir. Bilgisayarınızda çalışır; siz izin verene kadar hiçbir şey gönderilmez.",
+  "description": "DNS Quorum Filter, tarayıcınız için yerel bir DNS filtresidir. Tarayıcının kendi «güvenli DNS» ayarını filtreye yönlendirirsiniz ve tarayıcının aradığı her site adı, site açılmadan önce denetlenir.\n\nNasıl çalışır\nFiltre, tek bir filtreleme DNS hizmetine güvenmek yerine aynı anda birkaçına sorar. Bunlardan herhangi biri bir adı engellerse tarayıcı engellendi yanıtı alır. Varsayılan olarak üç hizmet kullanır: ikisi kötü amaçlı yazılım ve kimlik avına, biri reklam ve izleyicilere karşı. Kategorileri (kötü amaçlı yazılım, reklamlar, yetişkin içerik) açıp kapatabilir, hizmet ekleyip kaldırabilirsiniz.\n\nNeleri denetlersiniz\n- Her zaman izin verilen ve her zaman engellenen alan adlarından oluşan kendi listeleriniz.\n- Reklamlara, izleyicilere ve tehditlere karşı herkese açık engelleme listeleri, günde bir kez güncellenir.\n- Bir ülkenin tüm alan adlarını engelleme (örneğin seçilen ülke koduyla biten her site).\n- Seçilen ülkelerde barındırılan siteleri engelleme.\n- «Yalnızca popüler siteler»: bölgeniz için yalnızca yaygın kullanılan sitelere izin veren isteğe bağlı bir mod.\n- Ayarlar sayfasında sorgu günlüğü: neyin, kim tarafından ve ne zaman engellendiği.\n\nGizlilik\nİlk açılışta siz izin verene kadar hiçbir şey gönderilmez. Bundan sonra yerel önbellekte olmayan adlar, açtığınız filtreleme hizmetlerine ve filtresiz bir referans DNS'e gider; ayarlar sayfası bunları listeler. Günlük, kaydetmeyi seçmediğiniz sürece bellekte kalır ve kaydedilen veriler şifrelenir. Hesap yok, telemetri yok, reklam yok. Uygulama yalnızca 127.0.0.1 üzerinde dinler.\n\nKurulum\nİlk açılışta uygulama onay ister ve tarayıcının yerel adrese güvenebilmesi için 127.0.0.1 için kendi sertifikasını yüklemeyi önerir. Ardından ayarlar sayfası Edge, Chrome, Brave, Opera, Vivaldi ve Firefox için adım adım talimatlar gösterir. Yalnızca ayarladığınız tarayıcı filtrelenir; diğer uygulamalar sistem DNS'ini kullanmaya devam eder.\n\nKaldırmadan önce\nÖnce sistem tepsisi simgesinin menüsü > «Her şeyi kaldır» seçeneğini kullanın. Bu, yerel sertifikayı, Windows Kimlik Bilgileri Yöneticisi'nde saklanan anahtarları ve uygulama verilerini kaldırır. Windows bir paket kaldırılırken hiçbir uygulama kodu çalıştırmaz; bu nedenle yalnızca kaldırmak, sertifikayı ve bu anahtarları geride bırakır.",
+  "features": [
+    "Aynı anda birkaç filtreleme DNS hizmeti: herhangi biri engellerse engellenir",
+    "Kategoriler: kötü amaçlı yazılım ve kimlik avı, reklamlar ve izleyiciler, yetişkin içerik",
+    "Kendi izin verilen ve engellenen alan adı listeleriniz",
+    "Herkese açık engelleme listeleri, her gün güncellenir",
+    "Ülke alan adlarını ve seçilen ülkelerde barındırılan siteleri engelleme",
+    "«Yalnızca popüler siteler» modu",
+    "Her engellemenin nedenini gösteren sorgu günlüğü",
+    "Siz izin verene kadar hiçbir şey gönderilmez; telemetri yok, hesap yok",
+    "Yalnızca bu bilgisayarda çalışır (127.0.0.1)",
+    "37 dilde ayarlar sayfası ve sistem tepsisi simgesi"
+  ],
+  "searchTerms": [
+    "DNS filtresi",
+    "HTTPS üzerinden DNS",
+    "reklam engelleyici",
+    "kötü amaçlı yazılım koruması",
+    "kimlik avı koruması",
+    "içerik filtresi",
+    "gizlilik"
+  ]
+}

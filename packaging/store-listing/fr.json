@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Bloque les logiciels malveillants, l'hameçonnage et les publicités dans votre navigateur en interrogeant plusieurs services DNS de filtrage à la fois : si l'un d'eux bloque un site, il est bloqué. Fonctionne sur votre ordinateur ; rien n'est envoyé sans votre accord.",
+  "description": "DNS Quorum Filter est un filtre DNS local pour votre navigateur. Vous faites pointer le réglage « DNS sécurisé » intégré au navigateur vers le filtre, et chaque nom de site que le navigateur recherche est vérifié avant l'ouverture du site.\n\nFonctionnement\nAu lieu de faire confiance à un seul service DNS de filtrage, le filtre en interroge plusieurs en même temps. Si l'un d'eux bloque un nom, le navigateur reçoit une réponse de blocage. Par défaut, il utilise trois services : deux contre les logiciels malveillants et l'hameçonnage, et un contre les publicités et les traqueurs. Vous pouvez activer et désactiver des catégories (logiciels malveillants, publicités, contenu pour adultes) et ajouter ou retirer des services.\n\nCe que vous contrôlez\n- Vos propres listes de domaines toujours autorisés et toujours bloqués.\n- Des listes de blocage publiques contre les publicités, les traqueurs et les menaces, mises à jour une fois par jour.\n- Le blocage de domaines de pays entiers (par exemple tous les sites se terminant par un code de pays choisi).\n- Le blocage des sites hébergés dans des pays choisis.\n- « Sites populaires uniquement » : un mode facultatif qui ne laisse passer que les sites largement utilisés dans votre région.\n- Un journal des requêtes sur la page des paramètres : ce qui a été bloqué, par qui et quand.\n\nConfidentialité\nRien n'est envoyé tant que vous ne l'autorisez pas au premier lancement. Ensuite, les noms absents du cache local sont envoyés aux services de filtrage que vous avez activés et à un DNS de référence non filtré ; la page des paramètres les indique. Le journal reste en mémoire, sauf si vous choisissez de l'enregistrer, et les données enregistrées sont chiffrées. Pas de compte, pas de télémétrie, pas de publicité. L'application n'écoute que sur 127.0.0.1.\n\nInstallation\nAu premier lancement, l'application demande votre consentement et propose d'installer son propre certificat pour 127.0.0.1, afin que le navigateur puisse faire confiance à l'adresse locale. La page des paramètres affiche ensuite des instructions pas à pas pour Edge, Chrome, Brave, Opera, Vivaldi et Firefox. Seul le navigateur que vous configurez est filtré ; les autres applications continuent d'utiliser le DNS du système.\n\nAvant la désinstallation\nUtilisez d'abord le menu de la zone de notification > « Tout supprimer ». Cela supprime le certificat local, les clés stockées dans le Gestionnaire d'identification Windows et les données de l'application. Windows n'exécute aucun code de l'application lors de la suppression d'un package : une simple désinstallation laisse donc le certificat et ces clés.",
+  "features": [
+    "Plusieurs services DNS de filtrage à la fois : bloqué si l'un d'eux bloque",
+    "Catégories : logiciels malveillants et hameçonnage, publicités et traqueurs, contenu pour adultes",
+    "Vos propres listes de domaines autorisés et bloqués",
+    "Listes de blocage publiques, mises à jour chaque jour",
+    "Blocage d'extensions de pays et de sites hébergés dans des pays choisis",
+    "Mode « Sites populaires uniquement »",
+    "Journal des requêtes avec la raison de chaque blocage",
+    "Rien n'est envoyé sans votre accord ; pas de télémétrie, pas de compte",
+    "Fonctionne uniquement sur cet ordinateur (127.0.0.1)",
+    "Page des paramètres et icône de notification en 37 langues"
+  ],
+  "searchTerms": [
+    "filtre DNS",
+    "DNS over HTTPS",
+    "bloqueur de publicités",
+    "protection anti-malware",
+    "protection anti-hameçonnage",
+    "filtre de contenu",
+    "confidentialité"
+  ]
+}

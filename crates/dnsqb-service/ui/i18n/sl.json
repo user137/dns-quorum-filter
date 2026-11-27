@@ -39,7 +39,7 @@
   "consent.withdrawButton": "Umakni soglasje",
   "consent.withdrawConfirm": "Želite umakniti soglasje? Nič se ne bo več pošiljalo, zato brskalnik, nastavljen na ta filter, ne bo odpiral spletnih mest, dokler tega znova ne dovolite na vrhu te strani.",
   "consent.withdrawConfirmButton": "Umakni soglasje",
-  "consent.withdrawNotSaved": "Soglasje je preklicano, vendar spremembe ni bilo mogoče shraniti: po ponovnem zagonu se bodo domene znova pošiljale. Preverite dostop do mape z nastavitvami in soglasje prekličite znova.",
+  "consent.withdrawNotSaved": "Soglasje je umaknjeno, vendar spremembe ni bilo mogoče shraniti: po ponovnem zagonu se bodo domene znova pošiljale. Preverite dostop do mape z nastavitvami in soglasje znova umaknite.",
   "consent.grantNotSaved": "Filtriranje je vklopljeno, vendar soglasje ni bilo shranjeno: po ponovnem zagonu bo aplikacija znova vprašala.",
   "consent.privacyPolicyLink": "Pravilnik o zasebnosti",
   "startupTask.disabled": "Samodejni zagon je izklopljen: po ponovnem zagonu se filter ne bo zagnal sam in brskalnik bo ostal brez DNS.",

@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokuje malware, phishing a reklamy ve vašem prohlížeči tím, že se ptá několika filtrovacích služeb DNS najednou: pokud web zablokuje kterákoli z nich, je zablokován. Běží ve vašem počítači; nic se neodesílá, dokud to nepovolíte.",
+  "description": "DNS Quorum Filter je místní filtr DNS pro váš prohlížeč. Vlastní nastavení prohlížeče „Zabezpečený DNS“ nasměrujete na filtr a každý název webu, který prohlížeč vyhledává, se zkontroluje dřív, než se web otevře.\n\nJak to funguje\nMísto aby důvěřoval jedné filtrovací službě DNS, ptá se filtr několika současně. Pokud kterákoli z nich název zablokuje, prohlížeč dostane blokující odpověď. Ve výchozím stavu používá tři služby: dvě proti malwaru a phishingu a jednu proti reklamám a sledovacím prvkům. Kategorie můžete zapínat a vypínat (malware, reklamy, obsah pro dospělé) a služby přidávat nebo odebírat.\n\nCo máte pod kontrolou\n- Vlastní seznamy vždy povolených a vždy blokovaných domén.\n- Veřejné blokovací seznamy proti reklamám, sledovacím prvkům a hrozbám, aktualizované jednou denně.\n- Blokování celých domén zemí (například všech webů končících zvoleným kódem země).\n- Blokování webů hostovaných ve zvolených zemích.\n- „Jen oblíbené weby“: volitelný režim, který propustí jen široce používané weby pro váš region.\n- Protokol dotazů na stránce nastavení: co bylo zablokováno, kým a kdy.\n\nSoukromí\nNic se neodesílá, dokud to při prvním spuštění nepovolíte. Poté názvy, které nejsou v místní mezipaměti, jdou filtrovacím službám, které jste zapnuli, a nefiltrovanému referenčnímu DNS; stránka nastavení je uvádí. Protokol zůstává v paměti, pokud se ho nerozhodnete uložit, a uložená data jsou šifrovaná. Žádný účet, žádná telemetrie, žádné reklamy. Aplikace naslouchá pouze na 127.0.0.1.\n\nNastavení\nPři prvním spuštění aplikace požádá o souhlas a nabídne instalaci vlastního certifikátu pro 127.0.0.1, aby prohlížeč mohl místní adrese důvěřovat. Stránka nastavení pak zobrazí podrobné pokyny pro Edge, Chrome, Brave, Opera, Vivaldi a Firefox. Filtruje se jen prohlížeč, který nastavíte; ostatní aplikace dál používají systémový DNS.\n\nPřed odinstalací\nNejprve použijte nabídku v oznamovací oblasti > „Odebrat vše“. Odebere místní certifikát, klíče uložené ve Správci pověření systému Windows a data aplikace. Windows při odebrání balíčku nespouští žádný kód aplikace, takže samotná odinstalace certifikát a tyto klíče ponechá.",
+  "features": [
+    "Několik filtrovacích služeb DNS najednou: blokováno, pokud kterákoli řekne blokovat",
+    "Kategorie: malware a phishing, reklamy a sledovací prvky, obsah pro dospělé",
+    "Vlastní seznamy povolených a blokovaných domén",
+    "Veřejné blokovací seznamy, aktualizované denně",
+    "Blokování koncovek zemí a webů hostovaných ve zvolených zemích",
+    "Režim „Jen oblíbené weby“",
+    "Protokol dotazů s důvodem každého zablokování",
+    "Nic se neodesílá, dokud to nepovolíte; žádná telemetrie, žádný účet",
+    "Funguje jen v tomto počítači (127.0.0.1)",
+    "Stránka nastavení a ikona v oznamovací oblasti ve 37 jazycích"
+  ],
+  "searchTerms": [
+    "DNS filtr",
+    "DNS přes HTTPS",
+    "blokování reklam",
+    "ochrana před malwarem",
+    "ochrana před phishingem",
+    "filtr obsahu",
+    "soukromí"
+  ]
+}

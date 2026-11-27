@@ -1,0 +1,26 @@
+{
+  "shortTitle": "DNS Quorum Filter",
+  "shortDescription": "Blokira zlonamerno programje, lažno predstavljanje in oglase za vaš brskalnik, tako da hkrati vpraša več storitev DNS za filtriranje: če katera koli blokira spletno mesto, je blokirano. Deluje v vašem računalniku; dokler ne dovolite, se nič ne pošlje.",
+  "description": "DNS Quorum Filter je lokalni filter DNS za vaš brskalnik. Nastavitev brskalnika »varni DNS« usmerite na filter in vsako ime spletnega mesta, ki ga brskalnik poišče, se preveri, preden se spletno mesto odpre.\n\nKako deluje\nNamesto da bi zaupal eni storitvi DNS za filtriranje, filter hkrati vpraša več storitev. Če katera koli od njih blokira ime, brskalnik dobi blokiran odgovor. Privzeto uporablja tri storitve: dve proti zlonamernemu programju in lažnemu predstavljanju ter eno proti oglasom in sledilnikom. Kategorije (zlonamerno programje, oglasi, vsebina za odrasle) lahko vklapljate in izklapljate ter dodajate ali odstranjujete storitve.\n\nKaj nadzorujete\n- Lastni seznami vedno dovoljenih in vedno blokiranih domen.\n- Javni seznami blokiranja proti oglasom, sledilnikom in grožnjam, posodobljeni enkrat na dan.\n- Blokiranje celotnih državnih domen (na primer vseh spletnih mest, ki se končajo z izbrano kodo države).\n- Blokiranje spletnih mest, ki gostujejo v izbranih državah.\n- »Samo priljubljena spletna mesta«: izbirni način, ki prepusti samo splošno uporabljana spletna mesta za vašo regijo.\n- Dnevnik poizvedb na strani z nastavitvami: kaj je bilo blokirano, kdo je blokiral in kdaj.\n\nZasebnost\nDokler tega ob prvem zagonu ne dovolite, se nič ne pošlje. Nato se imena, ki niso v lokalnem predpomnilniku, pošljejo storitvam za filtriranje, ki ste jih vklopili, in nefiltriranemu referenčnemu DNS; stran z nastavitvami jih navaja. Dnevnik ostane v pomnilniku, razen če se odločite, da ga shranite, shranjeni podatki pa so šifrirani. Brez računa, brez telemetrije, brez oglasov. Aplikacija posluša samo na 127.0.0.1.\n\nNamestitev\nOb prvem zagonu aplikacija zaprosi za soglasje in ponudi namestitev lastnega potrdila za 127.0.0.1, da bo brskalnik zaupal lokalnemu naslovu. Stran z nastavitvami nato prikaže navodila po korakih za Edge, Chrome, Brave, Opera, Vivaldi in Firefox. Filtrira se samo brskalnik, ki ga nastavite; druge aplikacije še naprej uporabljajo sistemski DNS.\n\nPred odstranitvijo\nNajprej uporabite meni ikone v sistemski vrstici > »Odstrani vse«. Ta odstrani lokalno potrdilo, ključe, shranjene v Upravitelju poverilnic sistema Windows, in podatke aplikacije. Windows ob odstranitvi paketa ne zažene nobene kode aplikacije, zato sama odstranitev pusti potrdilo in te ključe v sistemu.",
+  "features": [
+    "Več storitev DNS za filtriranje hkrati: blokirano, če katera koli reče blokiraj",
+    "Kategorije: zlonamerno programje in lažno predstavljanje, oglasi in sledilniki, vsebina za odrasle",
+    "Lastni seznami dovoljenih in blokiranih domen",
+    "Javni seznami blokiranja, posodobljeni vsak dan",
+    "Blokiranje državnih domen in spletnih mest, ki gostujejo v izbranih državah",
+    "Način »Samo priljubljena spletna mesta«",
+    "Dnevnik poizvedb z razlogom za vsako blokiranje",
+    "Nič se ne pošlje, dokler ne dovolite; brez telemetrije, brez računa",
+    "Deluje samo v tem računalniku (127.0.0.1)",
+    "Stran z nastavitvami in ikona v sistemski vrstici v 37 jezikih"
+  ],
+  "searchTerms": [
+    "filter DNS",
+    "DNS prek HTTPS",
+    "blokiranje oglasov",
+    "zaščita pred zlonamerno kodo",
+    "zaščita pred phishingom",
+    "filter vsebine",
+    "zasebnost"
+  ]
+}
