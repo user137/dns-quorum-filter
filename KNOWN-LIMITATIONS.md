@@ -10,7 +10,8 @@ the task's own narrative (rationale, advisor catches, verification notes) goes t
 TASKS-DONE.md, never here.
 
 - **After a failed «Повністю видалити» wipe the app will not start for up to 30 minutes (T-303)** —
-  `removing.flag` stays in the folder the wipe could not delete, and while it is younger than 30 min
+  `removing.flag` stays in the folder the wipe could not delete (the helper removes it last, only once
+  nothing else is left), and while it is younger than 30 min
   the service and watcher exit at once (logged only in that folder). The wipe's own message box
   tells the user to delete the folder by hand, which also removes the flag.
 - **Blocklist-bundle step is empty for a few seconds after start (ARCH-10, wave 15)** — the

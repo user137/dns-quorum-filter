@@ -25,7 +25,10 @@
 //! app running for another Windows user blocked every wipe. Both failure ends
 //! (survivors, a directory still there) show a message box naming the folder:
 //! the report dialog has already said it will be removed, and the helper's
-//! failure was otherwise only in a log inside that same folder.
+//! failure was otherwise only in a log inside that same folder. The helper
+//! deletes `removing.flag` last, with the emptied folder: a wipe that stops
+//! half way keeps the tombstone, so a tile click cannot restart the app and
+//! mint new secrets into the leftovers (found in the VM smoke).
 //!
 //! **T-222 (found 2026-09-12 smoke test, fixed 2026-09-13): the same
 //! MSIX-virtualization gap T-219 found in `trust_store.rs`, in this
@@ -48,6 +51,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use dnsqb_service::REMOVING_FLAG_NAME;
 
 /// This process's own MSIX `PackageFamilyName` (`<Name>_<PublisherHash>`),
 /// parsed from `exe_dir_name` — the `WindowsApps\<Name>_<Version>_<Arch>__
@@ -186,7 +191,9 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path, failure_text: &str) ->
     //    tell the user and `exit` *without* deleting — removing `stop.flag` /
     //    `quit.flag` from under a live watcher would leave it respawning the
     //    service into a directory being erased. 3. Otherwise loop `Remove-Item`
-    //    until the directory is gone; tell the user if it is still there.
+    //    until the directory is gone, `removing.flag` only once nothing else
+    //    is left; tell the user if the directory is still there.
+    let tombstone = REMOVING_FLAG_NAME;
     Some(format!(
         "$p='dnsqb-service','dnsqb-watcher','dnsqb-tray'; \
          $s=[Diagnostics.Process]::GetCurrentProcess().SessionId; \
@@ -196,8 +203,12 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path, failure_text: &str) ->
          'DNS Quorum Filter', {POPUP_STYLE}) | Out-Null; exit 1 }}; \
          $i=0; while ((Get-Live) -and $i -lt 40) {{ Start-Sleep -Milliseconds 500; $i++ }}; \
          if (Get-Live) {{ Show-Failure }}; \
+         function Get-Rest {{ Get-ChildItem -LiteralPath '{quoted}' -Force \
+         -ErrorAction SilentlyContinue | Where-Object {{ $_.Name -ne '{tombstone}' }} }}; \
          $j=0; while ((Test-Path -LiteralPath '{quoted}') -and $j -lt 30) {{ \
-         Remove-Item -LiteralPath '{quoted}' -Recurse -Force -ErrorAction SilentlyContinue; \
+         Get-Rest | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; \
+         if (-not (Get-Rest)) {{ \
+         Remove-Item -LiteralPath '{quoted}' -Recurse -Force -ErrorAction SilentlyContinue }}; \
          Start-Sleep -Milliseconds 500; $j++ }}; \
          if (Test-Path -LiteralPath '{quoted}') {{ Show-Failure }}"
     ))
@@ -422,6 +433,27 @@ mod tests {
             "wait loop, then the bail-if-still-running guard, then the delete loop"
         );
         assert!(script.contains(&format!("-LiteralPath '{}'", target())));
+    }
+
+    // T-303 (VM smoke): a half-done wipe must keep the tombstone - the folder
+    // itself is removed only once nothing but `removing.flag` is left.
+    #[test]
+    fn wipe_script_deletes_the_tombstone_last() {
+        let script = script_for(&target(), LOCALAPPDATA);
+        assert!(script.contains("Where-Object { $_.Name -ne 'removing.flag' }"));
+        let rest_at = script.find("Get-Rest | Remove-Item").unwrap_or(usize::MAX);
+        let folder_at = script
+            .find(&format!("Remove-Item -LiteralPath '{}'", target()))
+            .unwrap_or(0);
+        assert!(rest_at < folder_at, "the rest first, then the folder");
+        assert_eq!(
+            script
+                .matches(&format!("Remove-Item -LiteralPath '{}'", target()))
+                .count(),
+            1,
+            "the folder itself is removed only behind the Get-Rest guard"
+        );
+        assert!(script.contains("if (-not (Get-Rest)) { Remove-Item"));
     }
 
     // T-303: another Windows user's copy of the app must not block the wipe.
