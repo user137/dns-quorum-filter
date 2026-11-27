@@ -71,6 +71,21 @@ pub fn mark_browser_nudge_seen(app_data_dir: &Path) {
     }
 }
 
+/// Retire the nudge for good once a poll shows the browser already uses the
+/// filter (`total_queries > 0`). The count lives in the service's memory and
+/// restarts at 0 with it, so an in-memory "never" alone let the first poll
+/// after a reboot read "no browser yet" and nudge a working setup. Returns
+/// whether the marker is (now) on disk because of this reading.
+pub fn retire_if_browser_in_use(app_data_dir: &Path, total_queries: Option<u64>) -> bool {
+    if !matches!(total_queries, Some(n) if n > 0) {
+        return false;
+    }
+    if !browser_nudge_seen(app_data_dir) {
+        mark_browser_nudge_seen(app_data_dir);
+    }
+    browser_nudge_seen(app_data_dir)
+}
+
 /// Record the first time this app has ever been observed running, if it
 /// hasn't been already. Idempotent by construction (checks existence first),
 /// so the stamp always holds the *earliest* launch, never a later one.
@@ -159,7 +174,8 @@ pub fn check_browser_nudge(
 mod tests {
     use super::{
         browser_nudge_seen, check_browser_nudge, first_seen, mark_browser_nudge_seen,
-        mark_first_seen_if_absent, should_offer_browser_nudge, OfferCheck, NUDGE_AFTER,
+        mark_first_seen_if_absent, retire_if_browser_in_use, should_offer_browser_nudge,
+        OfferCheck, NUDGE_AFTER,
     };
     use std::time::{Duration, SystemTime};
 
@@ -168,6 +184,27 @@ mod tests {
             Ok(dir) => dir,
             Err(err) => panic!("tempdir: {err}"),
         }
+    }
+
+    /// Win10 VM smoke 2026-11-27: the in-memory query count restarts at 0
+    /// with the service, so after a reboot the first poll read "no browser"
+    /// and the nudge fired for a browser that had worked for an hour. A poll
+    /// that saw queries must retire the nudge on disk, not just in memory.
+    #[test]
+    fn a_poll_with_queries_retires_the_nudge_on_disk() {
+        let dir = tempdir();
+        assert!(!retire_if_browser_in_use(dir.path(), Some(0)));
+        assert!(!retire_if_browser_in_use(dir.path(), None));
+        assert!(!browser_nudge_seen(dir.path()));
+        assert!(retire_if_browser_in_use(dir.path(), Some(3)));
+        assert!(browser_nudge_seen(dir.path()));
+        let later = SystemTime::now() + NUDGE_AFTER + Duration::from_secs(60);
+        assert_eq!(
+            check_browser_nudge(later, Some(SystemTime::now()), Some(0), || {
+                browser_nudge_seen(dir.path())
+            }),
+            OfferCheck::Never
+        );
     }
 
     // Happy path: zero queries, well past the threshold, never shown before.

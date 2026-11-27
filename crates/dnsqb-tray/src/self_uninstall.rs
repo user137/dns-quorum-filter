@@ -12,9 +12,8 @@
 //! could drop its guard and clean up.
 //!
 //! So a detached helper does it. A hidden `powershell.exe`, spawned
-//! `DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB` (mirroring
-//! `watchdog::spawn::spawn_detached`, T-182 — the MSIX process tree is
-//! job-contained) so it outlives the tray, first *waits* up to 20 s for all
+//! `CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` ([`helper_flags`]; T-182 —
+//! the MSIX process tree is job-contained) so it outlives the tray, first *waits* up to 20 s for all
 //! three DNS-QF processes to exit — `stop.flag` / `quit.flag` are plain
 //! unlocked files in that directory, and deleting them before the watcher's
 //! next tick reads `quit.flag` would leave the watcher respawning the service
@@ -185,6 +184,22 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path) -> Option<String> {
     ))
 }
 
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+/// Creation flags for the wipe helper. `CREATE_NO_WINDOW`, never
+/// `DETACHED_PROCESS`: on Windows 10 a `powershell.exe` started detached
+/// exits without running its command (Win10 VM smoke 2026-11-27 — packaged
+/// and unpackaged alike, with or without `-WindowStyle Hidden`), so "Remove
+/// everything" left the whole data folder behind.
+fn helper_flags(breakaway: bool) -> u32 {
+    if breakaway {
+        CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB
+    } else {
+        CREATE_NO_WINDOW
+    }
+}
+
 /// Spawn the detached wipe helper for `app_data`. Best-effort: a validation
 /// failure or a spawn error is logged, not propagated — the tray is about to
 /// exit regardless.
@@ -224,22 +239,12 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // Mirror `watchdog::spawn::spawn_detached` (T-182): the MSIX /
-        // Start-menu process tree is job-contained, so `DETACHED_PROCESS`
-        // alone would let this helper be killed with the tray — inside its own
-        // wait loop, before deleting anything, with only an `info!` line as a
-        // trace. `CREATE_BREAKAWAY_FROM_JOB` lifts it out; on a job that
-        // forbids that (`ERROR_ACCESS_DENIED`) we still try in-job, but say so
-        // loudly — unlike the watchdog case, an in-job wipe helper is likely a
-        // no-op, not merely degraded. (`CREATE_NO_WINDOW` is deliberately
-        // absent — Windows ignores it beside `DETACHED_PROCESS`; `-WindowStyle
-        // Hidden` covers the window.)
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        match build()
-            .creation_flags(DETACHED_PROCESS | CREATE_BREAKAWAY_FROM_JOB)
-            .spawn()
-        {
+        // The MSIX / Start-menu process tree is job-contained (T-182), so an
+        // in-job helper could be killed with the tray — inside its own wait
+        // loop, before deleting anything. `CREATE_BREAKAWAY_FROM_JOB` lifts it
+        // out; on a job that forbids that (`ERROR_ACCESS_DENIED`) we still try
+        // in-job, but say so loudly — an in-job wipe helper is likely a no-op.
+        match build().creation_flags(helper_flags(true)).spawn() {
             Ok(_child) => {
                 tracing::info!("app-data directory wipe scheduled");
                 return;
@@ -255,7 +260,7 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path) {
                 return;
             }
         }
-        match build().creation_flags(DETACHED_PROCESS).spawn() {
+        match build().creation_flags(helper_flags(false)).spawn() {
             Ok(_child) => tracing::info!("app-data directory wipe scheduled (in-job)"),
             Err(err) => tracing::warn!("could not spawn the app-data wipe helper: {err}"),
         }
@@ -265,11 +270,26 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path) {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_wipe_script_for, package_family_name, physical_app_data_dir, powershell_exe,
+        build_wipe_script_for, helper_flags, package_family_name, physical_app_data_dir,
+        powershell_exe, CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW,
     };
     use std::path::Path;
 
     const LOCALAPPDATA: &str = "C:\\Users\\x\\AppData\\Local";
+
+    /// Win10 VM smoke 2026-11-27: a `powershell.exe` started with
+    /// `DETACHED_PROCESS` never ran its command on Windows 10 — the folder
+    /// survived "Remove everything". Both attempts must be `CREATE_NO_WINDOW`.
+    #[test]
+    fn helper_flags_never_detach_the_console() {
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        for breakaway in [true, false] {
+            let flags = helper_flags(breakaway);
+            assert_eq!(flags & DETACHED_PROCESS, 0, "breakaway={breakaway}");
+            assert_eq!(flags & CREATE_NO_WINDOW, CREATE_NO_WINDOW);
+            assert_eq!(flags & CREATE_BREAKAWAY_FROM_JOB != 0, breakaway);
+        }
+    }
 
     fn target() -> String {
         format!("{LOCALAPPDATA}\\dns-quorum-filter")

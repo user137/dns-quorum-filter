@@ -1076,8 +1076,10 @@ fn maybe_offer_onboarding(
     let cert = if state.cert_settled {
         OfferCheck::Never
     } else {
-        onboarding::check_onboarding(trust.is_confirmed(), readings.cert_trusted, || {
-            onboarding::onboarding_seen(app_data)
+        onboarding::hold_cert_until_consent(consent, || {
+            onboarding::check_onboarding(trust.is_confirmed(), readings.cert_trusted, || {
+                onboarding::onboarding_seen(app_data)
+            })
         })
     };
     state.consent_settled |= consent != OfferCheck::NotYet;
@@ -1179,7 +1181,9 @@ fn drive_browser_nudge(
 /// worth retrying every tick. The persisted `browser-nudge.seen` marker is
 /// only written once [`nudge_popup::spawn`] actually returns a window — that
 /// marker means "shown", not "decided to show", so a rendering failure can't
-/// silently burn the one-shot latch a future launch could still use.
+/// silently burn the one-shot latch a future launch could still use. The
+/// other writer is [`browser_nudge::retire_if_browser_in_use`]: a poll that
+/// saw queries retires the nudge on disk, so a reboot can't revive it.
 /// [`browser_nudge::check_browser_nudge`] is the pure predicate.
 fn maybe_offer_browser_nudge(
     latch: &mut NudgeLatch,
@@ -1204,6 +1208,9 @@ fn maybe_offer_browser_nudge(
     );
     if check != OfferCheck::NotYet {
         latch.settled = true;
+    }
+    if check == OfferCheck::Never {
+        browser_nudge::retire_if_browser_in_use(app_data, total_queries);
     }
     if check == OfferCheck::Offer {
         if let Some(window) = nudge_popup::spawn(target, tray_icon.rect(), latch.locale) {

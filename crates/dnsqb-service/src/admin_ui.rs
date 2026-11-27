@@ -390,6 +390,15 @@ mod tests {
         );
     }
 
+    /// Win10 VM smoke 2026-11-27: the page is already in the user's language,
+    /// but the static `lang="uk"` made Edge and Firefox offer "Translate from
+    /// Ukrainian" — a machine pass over translated text.
+    #[test]
+    fn index_html_opts_out_of_browser_translation() {
+        assert!(INDEX_HTML.contains(r#"<html lang="uk" translate="no">"#));
+        assert!(INDEX_HTML.contains(r#"<meta name="google" content="notranslate" />"#));
+    }
+
     #[test]
     fn serve_css_rejects_non_get() {
         assert_eq!(

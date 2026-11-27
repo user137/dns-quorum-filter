@@ -77,6 +77,23 @@ pub fn check_consent_offer(consent: Option<bool>, seen: impl FnOnce() -> bool) -
     }
 }
 
+/// The cert step waits for the consent answer, so the wizard shows its steps
+/// in order — consent, then cert — in one run. A cert reading confirmed
+/// before the service's first consent answer otherwise opened the cert step
+/// alone and stacked the consent dialog on Windows' install warning later.
+/// `cert` isn't evaluated (or settled) on a held tick.
+#[must_use]
+pub fn hold_cert_until_consent(
+    consent: OfferCheck,
+    cert: impl FnOnce() -> OfferCheck,
+) -> OfferCheck {
+    if consent == OfferCheck::NotYet {
+        OfferCheck::NotYet
+    } else {
+        cert()
+    }
+}
+
 /// Whether to offer the first-run wizard now.
 ///
 /// `cert_confirmed` — the trust-watch thread has had at least one conclusive
@@ -124,8 +141,9 @@ pub fn check_onboarding(
 #[cfg(test)]
 mod tests {
     use super::{
-        check_consent_offer, check_onboarding, consent_offer_seen, mark_consent_offer_seen,
-        mark_onboarding_seen, onboarding_seen, should_offer_onboarding, OfferCheck,
+        check_consent_offer, check_onboarding, consent_offer_seen, hold_cert_until_consent,
+        mark_consent_offer_seen, mark_onboarding_seen, onboarding_seen, should_offer_onboarding,
+        OfferCheck,
     };
 
     fn tempdir() -> tempfile::TempDir {
@@ -223,5 +241,22 @@ mod tests {
             check_consent_offer(Some(false), || consent_offer_seen(dir.path())),
             OfferCheck::Never
         );
+    }
+
+    /// Win10 VM smoke 2026-11-27: the cert reading was confirmed before the
+    /// service's first consent answer, so the cert step opened alone and
+    /// consent came later, stacked on Windows' own install warning.
+    #[test]
+    fn cert_step_waits_for_the_consent_answer() {
+        let never_called = || -> OfferCheck { panic!("cert checked before consent settled") };
+        assert_eq!(
+            hold_cert_until_consent(OfferCheck::NotYet, never_called),
+            OfferCheck::NotYet
+        );
+        for consent in [OfferCheck::Offer, OfferCheck::Never] {
+            for cert in [OfferCheck::NotYet, OfferCheck::Offer, OfferCheck::Never] {
+                assert_eq!(hold_cert_until_consent(consent, || cert), cert);
+            }
+        }
     }
 }

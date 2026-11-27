@@ -671,3 +671,10 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   it, so nothing caught it before. Fix: `-C target-feature=+crt-static` in `.cargo/config.toml` and in
   every workflow step that sets `RUSTFLAGS` (the env var replaces the config). `release.yml` fails the
   build if `dumpbin /dependents` shows a `vcruntime`/`msvcp`/`concrt` import.
+- **A `powershell.exe` spawned with `DETACHED_PROCESS` exits without running its command on Windows 10**
+  (PakkoW10, 2026-11-27) — packaged or not, with or without `-WindowStyle Hidden`; `CREATE_NO_WINDOW`
+  (± `CREATE_BREAKAWAY_FROM_JOB`) runs it. "Remove everything" therefore never wiped the data folder on
+  Win10: the spawn returned `Ok`, the tray logged "wipe scheduled", and no PowerShell engine-start event
+  (Windows PowerShell log, id 400) ever appeared. T-222's earlier path fix was never re-run end to end on an installed package.
+  `self_uninstall::helper_flags`. `watchdog::spawn` keeps `DETACHED_PROCESS`: it starts
+  GUI-subsystem Rust binaries, which are unaffected.

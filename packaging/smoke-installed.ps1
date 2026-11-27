@@ -58,8 +58,11 @@ foreach ($name in 'dnsqb-service', 'dnsqb-tray', 'dnsqb-watcher') {
 # --- startup task (T-243): state lives under the package's SystemAppData key ---------------
 $taskKey = "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\$($pkg.PackageFamilyName)\DnsqbWatcherStartup"
 $taskState = (Get-ItemProperty -Path $taskKey -Name State -ErrorAction SilentlyContinue).State
-# StartupTaskState: 2 = Enabled, 4 = EnabledByPolicy.
-Check 'startupTask DnsqbWatcherStartup enabled' ($taskState -in 2, 4) "State=$taskState"
+# StartupTaskState: 2 = Enabled, 4 = EnabledByPolicy. Windows 10 writes the key only once the
+# user toggles the task in Settings; until then the manifest's Enabled="true" applies (PakkoW10
+# smoke 2026-11-27: absent key, the app still autostarted after a reboot).
+$taskDetail = if ($null -eq $taskState) { 'key absent - manifest default (enabled)' } else { "State=$taskState" }
+Check 'startupTask DnsqbWatcherStartup enabled' (($null -eq $taskState) -or ($taskState -in 2, 4)) $taskDetail
 
 # --- pinned TLS client ---------------------------------------------------------------------
 Add-Type -TypeDefinition @'
@@ -148,7 +151,10 @@ function Set-Consent([bool]$Granted) {
 # fresh CI install has none, so grant it for the check and withdraw it again afterwards.
 $consentStatus = Read-Json (Invoke-Route GET '/admin/status')
 if ($consentStatus -and $consentStatus.domain_sharing_consent -eq 'not_given') {
-    $before = if ($configExisted) { [IO.File]::ReadAllBytes($configPath) } else { $null }
+    # Not `$before = if (...) { ReadAllBytes }`: the pipeline would unroll the byte[] into an
+    # object[], which [Linq.Enumerable]::SequenceEqual has no overload for.
+    [byte[]]$before = $null
+    if ($configExisted) { $before = [IO.File]::ReadAllBytes($configPath) }
     $rcode = Invoke-DohRcode
     Check 'POST /dns-query before consent is SERVFAIL' ($rcode -eq 2) "rcode=$rcode"
     Check 'POST /admin/consent granted' (Set-Consent $true)
@@ -179,7 +185,10 @@ if ($InjectFailure) {
 }
 
 # --- mutation round trip: POST /admin/config with the current values -----------------------
-$before = if ($configExisted) { [IO.File]::ReadAllBytes($configPath) } else { $null }
+# Not `$before = if (...) { ReadAllBytes }`: the pipeline would unroll the byte[] into an
+# object[], which [Linq.Enumerable]::SequenceEqual has no overload for.
+[byte[]]$before = $null
+if ($configExisted) { $before = [IO.File]::ReadAllBytes($configPath) }
 $status = Read-Json (Invoke-Route GET '/admin/status')
 if ($status) {
     $body = @{
