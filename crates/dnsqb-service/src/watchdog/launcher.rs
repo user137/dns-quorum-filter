@@ -47,6 +47,17 @@ pub fn plan_launch(pid_file: Option<&PidFile>, pid_check: Option<PidCheck>) -> L
     }
 }
 
+/// Whether `role`'s pid file names a live process with the expected exe
+/// (T-303). A missing or unreadable pid file reads as not running: each
+/// process writes it right after taking its single-instance lock.
+#[must_use]
+pub fn sibling_is_alive(app_data: &Path, role: Role) -> bool {
+    matches!(
+        read_pid_file(app_data, role).map(|record| verify_pid_alive(record.pid, &record.exe_path)),
+        Ok(PidCheck::Alive)
+    )
+}
+
 /// Spawn `role`'s sibling binary if no live, identity-matching instance is
 /// already running (T-150 / T-187). Idempotent: the [`plan_launch`] check runs
 /// before the spawn, and the sibling's own single-instance guard is the final

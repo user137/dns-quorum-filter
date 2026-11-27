@@ -1747,11 +1747,11 @@ impl<C: DohClient + Sync> AppState<C> {
     }
 
     /// Ask the accept loop to drain and exit — the same signal `/admin/shutdown`
-    /// sends. T-303: `pause_watch` calls it when `quit.flag` appears.
+    /// sends. T-303: `pause_watch` calls it when `quit.flag` appears, possibly
+    /// before the accept loop has subscribed, so the value is stored even with
+    /// no receiver (`send` would drop it then).
     pub fn request_shutdown(&self) {
-        // `Err` = the accept loop already dropped its receiver: shutdown is
-        // already underway.
-        let _ = self.shutdown_tx.send(true);
+        self.shutdown_tx.send_replace(true);
     }
 
     /// Subscribes a new receiver for the shutdown signal (T-149) — each call
@@ -10578,6 +10578,24 @@ pub(crate) mod tests {
             Err(elapsed) => panic!("shutdown signal must arrive promptly: {elapsed}"),
         }
         assert!(*rx.borrow(), "signaled value must be true");
+    }
+
+    // T-303: quit.flag seen while the service is still starting - before the
+    // accept loop subscribed - must still stop it.
+    #[tokio::test]
+    async fn a_shutdown_requested_before_anyone_subscribed_is_not_lost() {
+        let state = state_with(no_op_client());
+        state.request_shutdown();
+        let mut rx = state.shutdown_handle();
+        let waited =
+            tokio::time::timeout(std::time::Duration::from_secs(1), rx.wait_for(|stop| *stop))
+                .await
+                .map(|seen| seen.map(|_| ()));
+        match waited {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => panic!("sender must not have been dropped: {err}"),
+            Err(elapsed) => panic!("an early shutdown request was lost: {elapsed}"),
+        }
     }
 
     // A second `/admin/shutdown` after every receiver has already been

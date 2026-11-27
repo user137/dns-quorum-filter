@@ -15,17 +15,23 @@
 //!   "Призупинити фільтрацію" only *writes* the flag; "Відновити фільтрацію"
 //!   removes it. The user's own allow/blocklist still apply during a pause;
 //!   only quorum + `GeoIP` are bypassed.
-//! - **`quit.flag`** — exit. On its next tick the watcher stops the service
-//!   and exits the process itself, then the tray exits — the whole app is
-//!   down until the next tile / login launch.
+//! - **`quit.flag`** — exit. The service stops on it by itself within a second
+//!   (`pause_watch`) and refuses to start while it exists; the watcher exits on
+//!   its next tick, the tray right away — the whole app is down until the next
+//!   tile / login launch (T-303).
+//! - **`removing.flag`** — «Повністю видалити» is under way (T-303). Neither the
+//!   service nor the watcher starts while a fresh one exists, so a tile click
+//!   during the removal cannot mint the secrets being deleted. Only the wipe
+//!   removes it (with the whole folder); one older than [`REMOVING_FLAG_WINDOW`]
+//!   is a wipe that failed and is ignored, so the app is never locked out.
 //!
-//! **Who clears them:** the **entry-point process on startup** — `dnsqb-watcher`
-//! `main` clears both, so a fresh launch is a clean slate (a pause does not
-//! survive an app restart). The watchdog's heartbeat loop no longer special-
-//! cases `stop.flag` at all (T-193) — the service staying up during a pause
-//! makes the loop a no-op. A tile re-click that hits an already-running watcher
-//! clears `quit.flag` only (the user relaunched → cancel a pending quit) but
-//! leaves `stop.flag` (don't silently un-pause).
+//! **Who clears them:** a watcher that starts with **no live service**
+//! (`dnsqb-watcher`'s `startup_plan`): it always clears `quit.flag` (that quit
+//! has finished), and `stop.flag` only when no tray runs either — a tile or
+//! login launch is a clean slate (a pause does not survive an app restart),
+//! while a watcher the tray started («Відновити нагляд», «Спробувати ще раз»)
+//! keeps the pause (T-304). A watcher the service respawned keeps both. A tile
+//! re-click that hits an already-running watcher touches neither.
 //!
 //! **Хвиля 13b** adds two more one-shot flags, same "presence is the signal"
 //! shape, for recovering from a service that will not start (DECISIONS.md
@@ -69,6 +75,11 @@ pub const REMOVE_ALL_FLAG_NAME: &str = "remove-all.flag";
 /// How long a `remove-all.flag` stays actionable. The tray checks once a
 /// second, so a live tray consumes it well inside this window.
 pub const REMOVE_ALL_FLAG_WINDOW: Duration = Duration::from_secs(30);
+/// File name of the removal tombstone (T-303) under the app-data directory.
+pub const REMOVING_FLAG_NAME: &str = "removing.flag";
+/// How long a `removing.flag` blocks a start. A removal ends in seconds once
+/// the user closes the report; an older flag is a wipe that failed.
+pub const REMOVING_FLAG_WINDOW: Duration = Duration::from_mins(30);
 
 fn flag_path(app_data_dir: &Path, name: &str) -> PathBuf {
     app_data_dir.join(name)
@@ -160,6 +171,34 @@ pub fn set_remove_all_flag(app_data_dir: &Path) -> std::io::Result<()> {
         .set_modified(SystemTime::now())
 }
 
+/// Create (or re-stamp) `removing.flag` — a full removal starts (T-303).
+///
+/// # Errors
+///
+/// The underlying I/O error if the file cannot be created or stamped.
+pub fn set_removing_flag(app_data_dir: &Path) -> std::io::Result<()> {
+    std::fs::File::create(flag_path(app_data_dir, REMOVING_FLAG_NAME))?
+        .set_modified(SystemTime::now())
+}
+
+/// Whether a full removal is under way: `removing.flag` exists and is younger
+/// than [`REMOVING_FLAG_WINDOW`]. An unreadable mtime counts as under way —
+/// refusing one start is the safe error, the window still ends it.
+#[must_use]
+pub fn removal_in_progress(app_data_dir: &Path, now: SystemTime) -> bool {
+    match std::fs::metadata(flag_path(app_data_dir, REMOVING_FLAG_NAME)) {
+        Ok(meta) => meta
+            .modified()
+            .map_or(true, |mtime| is_fresh(now, mtime, REMOVING_FLAG_WINDOW)),
+        Err(_) => false,
+    }
+}
+
+/// Remove a stale `removing.flag`. Absent is success.
+pub fn clear_removing_flag(app_data_dir: &Path) {
+    remove_if_present(&flag_path(app_data_dir, REMOVING_FLAG_NAME));
+}
+
 /// What [`take_remove_all_flag`] found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoveAllTake {
@@ -230,12 +269,33 @@ fn remove_if_present(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_remove_all_flag,
+        clear_quit_flag, clear_removing_flag, clear_stop_flag, quit_flag_is_set,
+        removal_in_progress, set_quit_flag, set_remove_all_flag, set_removing_flag,
         set_reset_config_flag, set_retry_flag, set_stop_flag, stop_flag_is_set,
         take_remove_all_flag, take_reset_config_flag, take_retry_flag, RemoveAllTake,
-        REMOVE_ALL_FLAG_WINDOW,
+        REMOVE_ALL_FLAG_WINDOW, REMOVING_FLAG_WINDOW,
     };
     use std::time::{Duration, SystemTime};
+
+    // T-303: the tombstone blocks starts while fresh, and only while fresh -
+    // a failed wipe must not lock the app out for good.
+    #[test]
+    fn removing_flag_blocks_only_while_fresh() {
+        let dir = tempdir();
+        assert!(
+            !removal_in_progress(dir.path(), SystemTime::now()),
+            "absent"
+        );
+        if let Err(err) = set_removing_flag(dir.path()) {
+            panic!("set: {err}");
+        }
+        let now = SystemTime::now();
+        assert!(removal_in_progress(dir.path(), now));
+        let later = now + REMOVING_FLAG_WINDOW + Duration::from_secs(5);
+        assert!(!removal_in_progress(dir.path(), later), "stale");
+        clear_removing_flag(dir.path());
+        assert!(!removal_in_progress(dir.path(), now), "cleared");
+    }
 
     #[test]
     fn retry_and_reset_config_flags_are_one_shot_and_independent() {

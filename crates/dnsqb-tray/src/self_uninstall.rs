@@ -193,7 +193,7 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path, failure_text: &str) ->
          function Get-Live {{ Get-Process $p -ErrorAction SilentlyContinue | \
          Where-Object {{ $_.SessionId -eq $s }} }}; \
          function Show-Failure {{ (New-Object -ComObject WScript.Shell).Popup('{message}', 0, \
-         'DNS Quorum Filter', 48) | Out-Null; exit 1 }}; \
+         'DNS Quorum Filter', {POPUP_STYLE}) | Out-Null; exit 1 }}; \
          $i=0; while ((Get-Live) -and $i -lt 40) {{ Start-Sleep -Milliseconds 500; $i++ }}; \
          if (Get-Live) {{ Show-Failure }}; \
          $j=0; while ((Test-Path -LiteralPath '{quoted}') -and $j -lt 30) {{ \
@@ -202,6 +202,11 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path, failure_text: &str) ->
          if (Test-Path -LiteralPath '{quoted}') {{ Show-Failure }}"
     ))
 }
+
+/// `MB_ICONEXCLAMATION | MB_SYSTEMMODAL`: the helper has no window of its own
+/// and the tray opens Windows Settings right after spawning it, so a plain
+/// message box would open behind Settings (the T-269 class).
+const POPUP_STYLE: u32 = 0x30 | 0x1000;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
@@ -219,9 +224,13 @@ fn helper_flags(breakaway: bool) -> u32 {
     }
 }
 
-/// Spawn the detached wipe helper for `app_data`. Best-effort: a validation
-/// failure or a spawn error is logged, not propagated — the tray is about to
-/// exit regardless.
+/// Spawn the detached wipe helper for `app_data`.
+///
+/// # Errors
+///
+/// The localised `uninstall.wipeFailed` text, for the tray to show, when the
+/// directory fails validation or no helper could be spawned (T-303): the
+/// report has already said the folder will be removed.
 ///
 /// **T-222:** the path actually handed to the spawned (unpackaged) helper is
 /// [`resolve_target`]'s result, not `app_data` itself — on a packaged
@@ -229,7 +238,7 @@ fn helper_flags(breakaway: bool) -> u32 {
 /// helper can't see. `build_wipe_script`'s own validation still runs against
 /// whichever path this resolves to (it accepts both — see that function's
 /// own doc for why).
-pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) {
+pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) -> Result<(), String> {
     let target = resolve_target(app_data);
     let failure_text = crate::i18n::t_args(
         locale,
@@ -238,7 +247,7 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) {
     );
     let Some(script) = build_wipe_script(&target, &failure_text) else {
         tracing::warn!("app-data wipe skipped: the directory failed validation");
-        return;
+        return Err(failure_text);
     };
     let powershell = powershell_exe();
     let build = || {
@@ -256,8 +265,14 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) {
 
     #[cfg(not(windows))]
     match build().spawn() {
-        Ok(_child) => tracing::info!("app-data directory wipe scheduled"),
-        Err(err) => tracing::warn!("could not spawn the app-data wipe helper: {err}"),
+        Ok(_child) => {
+            tracing::info!("app-data directory wipe scheduled");
+            Ok(())
+        }
+        Err(err) => {
+            tracing::warn!("could not spawn the app-data wipe helper: {err}");
+            Err(failure_text)
+        }
     }
 
     #[cfg(windows)]
@@ -271,7 +286,7 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) {
         match build().creation_flags(helper_flags(true)).spawn() {
             Ok(_child) => {
                 tracing::info!("app-data directory wipe scheduled");
-                return;
+                return Ok(());
             }
             Err(err) if err.raw_os_error() == Some(5) => {
                 tracing::warn!(
@@ -281,12 +296,18 @@ pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) {
             }
             Err(err) => {
                 tracing::warn!("could not spawn the app-data wipe helper: {err}");
-                return;
+                return Err(failure_text);
             }
         }
         match build().creation_flags(helper_flags(false)).spawn() {
-            Ok(_child) => tracing::info!("app-data directory wipe scheduled (in-job)"),
-            Err(err) => tracing::warn!("could not spawn the app-data wipe helper: {err}"),
+            Ok(_child) => {
+                tracing::info!("app-data directory wipe scheduled (in-job)");
+                Ok(())
+            }
+            Err(err) => {
+                tracing::warn!("could not spawn the app-data wipe helper: {err}");
+                Err(failure_text)
+            }
         }
     }
 }
@@ -420,7 +441,8 @@ mod tests {
     #[test]
     fn wipe_script_shows_the_failure_text_when_it_cannot_delete() {
         let script = script_for(&target(), LOCALAPPDATA);
-        assert!(script.contains("Popup('failed', 0, 'DNS Quorum Filter', 48)"));
+        // 4144 = MB_ICONEXCLAMATION | MB_SYSTEMMODAL: above Windows Settings.
+        assert!(script.contains("Popup('failed', 0, 'DNS Quorum Filter', 4144)"));
         assert!(script.ends_with(&format!(
             "if (Test-Path -LiteralPath '{}') {{ Show-Failure }}",
             target()

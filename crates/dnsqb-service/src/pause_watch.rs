@@ -52,11 +52,12 @@ pub const PAUSE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// reachability prober, which pins `ReqwestDohClient` for its baseline probe.
 pub async fn run_pause_watcher<C: DohClient + Sync>(app_data: PathBuf, state: Arc<AppState<C>>) {
     let mut previous = state.filtering_paused_snapshot();
+    let mut quit_seen = false;
     loop {
-        if crate::lifecycle::quit_flag_is_set(&app_data) {
+        if !quit_seen && crate::lifecycle::quit_flag_is_set(&app_data) {
             tracing::info!("quit.flag present - shutting down (T-303)");
             state.request_shutdown();
-            return;
+            quit_seen = true;
         }
         let now = crate::lifecycle::stop_flag_is_set(&app_data);
         state.update_filtering_paused(now);

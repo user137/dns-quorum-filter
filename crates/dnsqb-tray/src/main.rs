@@ -50,10 +50,9 @@ mod status;
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
-    read_pid_file, set_quit_flag, set_reset_config_flag, set_retry_flag, set_stop_flag,
-    stop_flag_is_set, take_remove_all_flag, verify_pid_alive, write_pid_file, AdminClient,
-    AdminClientError, GuardError, InstanceGuard, InstanceRole, PidCheck, RemoveAllTake,
-    ResolverConfig,
+    set_quit_flag, set_removing_flag, set_reset_config_flag, set_retry_flag, set_stop_flag,
+    sibling_is_alive, stop_flag_is_set, take_remove_all_flag, write_pid_file, AdminClient,
+    AdminClientError, GuardError, InstanceGuard, InstanceRole, RemoveAllTake, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -782,15 +781,11 @@ fn handle_menu_event(
         }
         MenuAction::RetryService => request_service_retry(app_data),
         MenuAction::ResetConfig => reset_config_and_retry(app_data, locale),
-        // T-185: quit the whole app. Write both flags and exit the tray; the
-        // watcher picks up `quit.flag` on its next tick, stops the service and
-        // exits itself. `stop.flag` covers the gap so nothing is respawned in
-        // between.
+        // T-185 / T-303: quit the whole app. Write `quit.flag` and exit the
+        // tray; the service stops on it within a second and the watcher on its
+        // next tick. No `stop.flag`: it would outlive the quit as a pause.
         MenuAction::QuitApp => {
             if confirm_quit(locale) {
-                if let Err(err) = set_stop_flag(app_data) {
-                    tracing::warn!("could not write stop.flag: {err}");
-                }
                 if let Err(err) = set_quit_flag(app_data) {
                     tracing::warn!("could not write quit.flag: {err}");
                 }
@@ -901,13 +896,38 @@ fn spawn_trust_store_action<F, E>(
     F: FnOnce() -> Result<String, E> + Send + 'static,
     E: std::fmt::Display,
 {
-    std::thread::spawn(move || match action() {
+    std::thread::spawn(move || {
+        // T-303: one trust-store change at a time, and none once a full removal
+        // has started - an install finishing after its sweep would leave a
+        // trusted certificate behind. The dialog below runs without the lock.
+        let result = {
+            let _trust_store = TRUST_STORE_LOCK.lock();
+            if REMOVAL_IN_PROGRESS.load(Ordering::SeqCst) {
+                tracing::info!("{action_name} skipped: full removal in progress");
+                return;
+            }
+            action()
+        };
+        show_trust_store_result(action_name, dialog_title, &locale, result);
+    });
+}
+
+/// Serialises every tray trust-store change with «Повністю видалити» (T-303).
+static TRUST_STORE_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
+fn show_trust_store_result<E: std::fmt::Display>(
+    action_name: &str,
+    dialog_title: String,
+    locale: &str,
+    result: Result<String, E>,
+) {
+    match result {
         Ok(outcome) => {
             tracing::info!("{action_name} succeeded: {outcome}");
             rfd::MessageDialog::new()
                 .set_title(dialog_title)
                 .set_description(i18n::t_args(
-                    &locale,
+                    locale,
                     "dialog.successTemplate",
                     &[("outcome", &outcome)],
                 ))
@@ -921,7 +941,7 @@ fn spawn_trust_store_action<F, E>(
             rfd::MessageDialog::new()
                 .set_title(dialog_title)
                 .set_description(i18n::t_args(
-                    &locale,
+                    locale,
                     "dialog.failedTemplate",
                     &[("err", &err)],
                 ))
@@ -929,7 +949,7 @@ fn spawn_trust_store_action<F, E>(
                 .set_buttons(rfd::MessageButtons::Ok)
                 .show();
         }
-    });
+    }
 }
 
 /// [`spawn_trust_store_action`] plus a trust re-poll after the action returns
@@ -965,18 +985,20 @@ static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 ///
 /// Not [`spawn_cert_action`]: the shutdown has to happen *after* the report
 /// dialog, and `spawn_cert_action` shows its dialog after the closure returns.
-/// Order (T-303): `stop.flag` + `quit.flag` (the service stops on them by
-/// itself and refuses to start again, the watcher exits on its next tick) →
-/// wait until both are gone → [`remove_all_local_state`] (cert + Credential
-/// Manager secrets) — so no running or restarted service can mint a secret
-/// after it was deleted → report dialog → spawn the detached wipe helper (it
-/// waits for every DNS-QF process to exit before deleting) → open Windows
-/// Settings → `QUIT_REQUESTED` so this tray exits too.
+/// Order (T-303): `removing.flag` (no service or watcher starts while it is
+/// fresh, whoever launches them — a tile click during the report included)
+/// and `quit.flag` (the running service stops on it, the watcher exits on its
+/// next tick) → wait until both are gone → under [`TRUST_STORE_LOCK`],
+/// [`remove_all_local_state`] (cert + Credential Manager secrets) — so nothing
+/// can mint a secret or re-trust the cert after it was deleted → report dialog
+/// → spawn the detached wipe helper (it waits for this session's DNS-QF
+/// processes to exit, then deletes the folder and the tombstone with it) →
+/// open Windows Settings → `QUIT_REQUESTED` so this tray exits too.
 fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
     REMOVAL_IN_PROGRESS.store(true, Ordering::SeqCst);
     std::thread::spawn(move || {
-        if let Err(err) = set_stop_flag(&app_data) {
-            tracing::warn!("could not write stop.flag: {err}");
+        if let Err(err) = set_removing_flag(&app_data) {
+            tracing::warn!("could not write removing.flag: {err}");
         }
         if let Err(err) = set_quit_flag(&app_data) {
             tracing::warn!("could not write quit.flag: {err}");
@@ -987,7 +1009,11 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
                  removing local state anyway"
             );
         }
-        let report = format_uninstall_report(&remove_all_local_state(Some(&app_data)), &locale);
+        let removed = {
+            let _trust_store = TRUST_STORE_LOCK.lock();
+            remove_all_local_state(Some(&app_data))
+        };
+        let report = format_uninstall_report(&removed, &locale);
         tracing::info!("remove-all-local-state finished:\n{report}");
         rfd::MessageDialog::new()
             .set_title(dialog_title(&i18n::t(&locale, "menu.removeAll")))
@@ -999,7 +1025,14 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
             .set_level(rfd::MessageLevel::Info)
             .set_buttons(rfd::MessageButtons::Ok)
             .show();
-        self_uninstall::spawn_app_data_dir_wipe(&app_data, &locale);
+        if let Err(failure_text) = self_uninstall::spawn_app_data_dir_wipe(&app_data, &locale) {
+            rfd::MessageDialog::new()
+                .set_title(dialog_title(&i18n::t(&locale, "menu.removeAll")))
+                .set_description(failure_text)
+                .set_level(rfd::MessageLevel::Warning)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
         browser::open_windows_apps_settings();
         QUIT_REQUESTED.store(true, Ordering::SeqCst);
         wake_event_loop();
@@ -1029,15 +1062,6 @@ fn wait_for_siblings_to_exit(app_data: &Path, budget: Duration) -> bool {
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-}
-
-/// A missing or unreadable pid file reads as "not running": the process
-/// writes it right after taking its single-instance lock.
-fn sibling_is_alive(app_data: &Path, role: InstanceRole) -> bool {
-    matches!(
-        read_pid_file(app_data, role).map(|record| verify_pid_alive(record.pid, &record.exe_path)),
-        Ok(PidCheck::Alive)
-    )
 }
 
 /// Set while a remove-all confirm requested from `/admin/ui` is open, so a

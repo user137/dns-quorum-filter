@@ -667,6 +667,19 @@ async fn run_service_to_watcher_watchdog(dir: std::path::PathBuf, last_ping_at: 
     }
 }
 
+/// T-303: a service started while a quit or a full removal drains must not
+/// recreate the keyring secrets `remove_all_local_state` is deleting. Runs
+/// after `service.pid` is written and before anything in [`run`] mints a key:
+/// the tray writes the flags *then* reads the pid file, so either this check
+/// sees a flag or the tray sees this process and waits for it to exit.
+fn exit_if_quitting(dir: &Path) {
+    let quitting = crate::lifecycle::quit_flag_is_set(dir);
+    if quitting || crate::lifecycle::removal_in_progress(dir, std::time::SystemTime::now()) {
+        tracing::info!("quit.flag or removing.flag present - not starting (quitting: {quitting})");
+        std::process::exit(0);
+    }
+}
+
 /// T-92: take the `dnsqb-service` single-instance lock (SPEC.md §7.1 #2) and
 /// write the pid file. A same-role process already holding the lock, or any
 /// other lock-open failure, exits the process rather than racing the first over
@@ -678,19 +691,12 @@ fn acquire_service_guard(app_data: Option<&Path>) -> Option<InstanceGuard> {
         tracing::warn!("%LOCALAPPDATA% is unset - starting without a single-instance guard");
         return None;
     };
-    // T-303: a service started while a quit or a full removal drains (the
-    // tray's «Відновити», a respawn) must not recreate the keyring secrets
-    // `remove_all_local_state` is deleting. Checked before the guard and before
-    // anything in `run` mints a key; a fresh launch clears the flag first.
-    if crate::lifecycle::quit_flag_is_set(dir) {
-        tracing::info!("quit.flag present - not starting (the app is quitting)");
-        std::process::exit(0);
-    }
     match acquire_instance_guard(dir, InstanceRole::Service) {
         Ok(guard) => {
             if let Err(err) = write_pid_file(dir, InstanceRole::Service) {
                 tracing::warn!("could not write the pid file: {err}");
             }
+            exit_if_quitting(dir);
             // Хвиля 13b: only the guard holder clears the last failure record
             // and may honour reset-config.flag (never a second instance).
             startup_failure::begin_attempt(dir);
@@ -946,12 +952,13 @@ async fn serve_until_shutdown(
                     }
                 });
             }
-            // `Receiver::changed()` only resolves on an actual `true` send
-            // from `/admin/shutdown` - `watch`'s initial value (`false`)
-            // never triggers this branch on its own.
-            _ = shutdown_rx.changed() => {
+            // `wait_for` checks the current value first: a shutdown requested
+            // before this loop subscribed (`pause_watch` seeing quit.flag
+            // during startup, T-303) still ends it. `changed()` would not -
+            // `subscribe` marks the current value as seen.
+            _ = shutdown_rx.wait_for(|stop| *stop) => {
                 tracing::info!(
-                    "shutdown requested via /admin/shutdown - draining active connections"
+                    "shutdown requested (/admin/shutdown or quit.flag) - draining active connections"
                 );
                 break;
             }

@@ -196,9 +196,9 @@ pub use dispatch::{
 };
 pub use geoip_updater::GeoipSource;
 pub use lifecycle::{
-    clear_quit_flag, clear_stop_flag, quit_flag_is_set, set_quit_flag, set_reset_config_flag,
-    set_retry_flag, set_stop_flag, stop_flag_is_set, take_remove_all_flag, take_retry_flag,
-    RemoveAllTake,
+    clear_quit_flag, clear_removing_flag, clear_stop_flag, quit_flag_is_set, removal_in_progress,
+    set_quit_flag, set_removing_flag, set_reset_config_flag, set_retry_flag, set_stop_flag,
+    stop_flag_is_set, take_remove_all_flag, take_retry_flag, RemoveAllTake,
 };
 pub use local_state::{remove_all as remove_all_local_state, ArtifactOutcome, UninstallReport};
 pub use logging::init as init_logging;
@@ -227,7 +227,7 @@ pub use watchdog::instance::{
     acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
     Role as InstanceRole,
 };
-pub use watchdog::launcher::ensure_sibling_running;
+pub use watchdog::launcher::{ensure_sibling_running, sibling_is_alive};
 pub use watchdog::loop_driver::{ChannelObs, Direction, Effect, LoopDriver};
 pub use watchdog::pid_check::{verify_pid_alive, PidCheck};
 #[cfg(windows)]
