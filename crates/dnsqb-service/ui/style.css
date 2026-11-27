@@ -427,7 +427,8 @@ html[dir="rtl"] .switch.is-partial .thumb { transform: translateX(-7.5px); }
 }
 .setup-steps li { margin: 0.25rem 0; }
 .setup-note { margin: 0.4rem 0 0; font-size: 12px; color: var(--text-muted); }
-.setup-connected { margin: 0; font-size: 13px; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; }
+/* `:not([hidden])`: a bare `display` here beats the user-agent `[hidden]` rule (T-227). */
+.setup-connected:not([hidden]) { margin: 0; font-size: 13px; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; }
 /* T-189: inline "code + copy" for a browser settings URL. */
 .setup-copy-row {
   display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;

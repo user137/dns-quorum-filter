@@ -166,7 +166,7 @@ fn respond(
 mod tests {
     use super::{
         i18n_dict, serve_css, serve_favicon, serve_html, serve_i18n, serve_js, I18N_DICTS,
-        INDEX_HTML, MAIN_JS,
+        INDEX_HTML, MAIN_JS, STYLE_CSS,
     };
     use http::{HeaderValue, Method, StatusCode};
 
@@ -388,6 +388,18 @@ mod tests {
             serve_favicon(&Method::POST).status(),
             StatusCode::METHOD_NOT_ALLOWED
         );
+    }
+
+    /// Win10 VM smoke 2026-11-27: `.setup-connected { display: flex }` beat the
+    /// user-agent `[hidden]` rule, so "Your browser is connected" showed on a
+    /// fresh install before any browser was set up. The display rule must
+    /// only apply while the element is not hidden (the T-227 pattern).
+    #[test]
+    fn browser_connected_line_stays_hidden_until_a_query_arrives() {
+        assert!(INDEX_HTML
+            .contains(r#"<p id="browser-setup-connected" class="setup-connected" hidden>"#));
+        assert!(STYLE_CSS.contains(".setup-connected:not([hidden])"));
+        assert!(!STYLE_CSS.contains(".setup-connected {"));
     }
 
     /// Win10 VM smoke 2026-11-27: the page is already in the user's language,
