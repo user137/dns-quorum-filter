@@ -6,8 +6,9 @@ Post-install live smoke test of the installed dns-quorum-filter MSIX (QA pass, P
 .DESCRIPTION
 Run against the installed package before every release; release.yml's install-smoke job also
 runs it on a freshly installed CI package (wave 29).
-Read-only apart from one rolled-back mutation (POST /admin/config with the current values,
-then resolver_config.toml must be byte-identical). Never calls /admin/shutdown,
+Read-only apart from rolled-back mutations: POST /admin/config with the current values, and on
+an install without consent (T-286) POST /admin/consent granted, then withdrawn again; after each,
+resolver_config.toml is byte-identical (or absent) again. Never calls /admin/shutdown,
 /admin/install-cert or /admin/request-remove-all, and never prints a /admin/log body.
 Exit code: 0 when every check passes, 1 otherwise.
 
@@ -130,9 +131,45 @@ Check 'i18n dictionaries' ($dictOk -eq $Locales.Count) "$dictOk/$($Locales.Count
 # --- one DoH query (RFC 8484 POST, A example.com) ------------------------------------------
 $query = [byte[]](0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 7) + [Text.Encoding]::ASCII.GetBytes('example') +
     [byte[]](3) + [Text.Encoding]::ASCII.GetBytes('com') + [byte[]](0, 0, 1, 0, 1)
-$r = Invoke-Route POST '/dns-query' $query 'application/dns-message'
-$rcode = if ($r.Bytes.Length -ge 4) { $r.Bytes[3] -band 0x0F } else { -1 }
-Check 'POST /dns-query' ($r.Status -eq 200 -and $r.Type -eq 'application/dns-message' -and $rcode -eq 0) "status=$($r.Status) rcode=$rcode"
+function Invoke-DohRcode {
+    $r = Invoke-Route POST '/dns-query' $query 'application/dns-message'
+    $rcode = if ($r.Bytes.Length -ge 4) { $r.Bytes[3] -band 0x0F } else { -1 }
+    if ($r.Status -ne 200 -or $r.Type -ne 'application/dns-message') { return "status=$($r.Status)" }
+    return $rcode
+}
+function Set-Consent([bool]$Granted) {
+    $body = @{ granted = $Granted } | ConvertTo-Json -Compress
+    $r = Invoke-Route POST '/admin/consent' ([Text.Encoding]::UTF8.GetBytes($body)) 'application/json'
+    $resp = Read-Json $r
+    return ($r.Status -eq 200 -and $resp -and $resp.persisted -eq $true)
+}
+
+# Without consent (T-286) every query is SERVFAIL (rcode 2) and nothing leaves the machine; a
+# fresh CI install has none, so grant it for the check and withdraw it again afterwards.
+$consentStatus = Read-Json (Invoke-Route GET '/admin/status')
+if ($consentStatus -and $consentStatus.domain_sharing_consent -eq 'not_given') {
+    $before = if ($configExisted) { [IO.File]::ReadAllBytes($configPath) } else { $null }
+    $rcode = Invoke-DohRcode
+    Check 'POST /dns-query before consent is SERVFAIL' ($rcode -eq 2) "rcode=$rcode"
+    Check 'POST /admin/consent granted' (Set-Consent $true)
+    $rcode = Invoke-DohRcode
+    Check 'POST /dns-query' ($rcode -eq 0) "rcode=$rcode"
+    Check 'POST /admin/consent withdrawn' (Set-Consent $false)
+    $rcode = Invoke-DohRcode
+    Check 'POST /dns-query after withdrawal is SERVFAIL' ($rcode -eq 2) "rcode=$rcode"
+    # The withdrawal saves `not_given` explicitly, which a file written before T-286 lacks; both
+    # mean the same, so put the original bytes back rather than compare them.
+    if ($configExisted) {
+        [IO.File]::WriteAllBytes($configPath, $before)
+        Check 'resolver_config.toml restored after consent round trip' ([Linq.Enumerable]::SequenceEqual($before, [IO.File]::ReadAllBytes($configPath)))
+    } else {
+        if (Test-Path $configPath) { Remove-Item -LiteralPath $configPath }
+        Check 'resolver_config.toml absent again after consent round trip' (-not (Test-Path $configPath))
+    }
+} else {
+    $rcode = Invoke-DohRcode
+    Check 'POST /dns-query' ($rcode -eq 0) "rcode=$rcode"
+}
 
 # --- unknown route stays closed ------------------------------------------------------------
 $r = Invoke-Route GET '/admin/does-not-exist'
