@@ -1149,6 +1149,7 @@ mod tests {
         // Unreachable / paused → the cert isn't the point; no suffix.
         assert!(cert_warning(TrayStatus::Unreachable, false, "uk").is_none());
         assert!(cert_warning(TrayStatus::Paused, false, "uk").is_none());
+        assert!(cert_warning(TrayStatus::ConsentRequired, false, "uk").is_none());
     }
 
     // ---- T-253: the tooltip fits the shell's buffer, problems first ----
