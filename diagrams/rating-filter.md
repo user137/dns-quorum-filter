@@ -46,6 +46,7 @@ rating_filter_personal_zone`, `record_personal_visit`, `rotate_and_republish_per
 
 | # | Крок | Дія | Мережа? |
 |---|------|-----|---------|
+| 0 | Згода (T-286) | немає згоди → `SERVFAIL`, нічого нижче не виконується, без журналу | ні |
 | 1 | Allowlist | збіг → `ALLOW`, нічого нижче не опитується | ні |
 | 2 | Blocklist | збіг → `BLOCK` | ні |
 | 3 | ccTLD-блок (§5.2) | суфікс домену в списку → `BLOCK` | ні |

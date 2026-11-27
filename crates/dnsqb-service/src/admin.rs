@@ -54,7 +54,12 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 9;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 10;
+
+/// [`AdminStatusResponse::domain_sharing_consent`]'s serde default.
+const fn consent_absent_reads_as_granted() -> crate::config::DomainSharingConsent {
+    crate::config::DomainSharingConsent::Given
+}
 
 /// The query log's encrypted disk copy, as the `/admin/ui` log card shows
 /// it (T-291).
@@ -270,6 +275,14 @@ pub struct AdminStatusResponse {
     /// "protected". `#[serde(default)]` (T-205): safe zero is `false`.
     #[serde(default)]
     pub paused: bool,
+    /// T-286 — whether the user agreed to send looked-up domains to the
+    /// filtering providers and the baseline resolver
+    /// ([`crate::ResolverConfig::domain_sharing_consent`]). `NOT_GIVEN` means every
+    /// `DoH` query is answered `SERVFAIL` and no third party is contacted.
+    /// Defaults to `given` when absent: a pre-T-286 service has no consent
+    /// gate and already sends domains, so that is the honest reading.
+    #[serde(default = "consent_absent_reads_as_granted")]
+    pub domain_sharing_consent: crate::config::DomainSharingConsent,
     /// T-154 — which entry of the baseline failover chain is currently
     /// active. `PRIMARY` unless the primary baseline has been failed over.
     /// Diagnostic only — not part of the status indicator. `#[serde(default)]`
@@ -557,6 +570,11 @@ pub enum HeroStateView {
     WatchdogGaveUp,
     /// The watchdog is mid-restart.
     WatchdogRestarting,
+    /// T-286 — the user has not agreed (or withdrew agreement) to send domains
+    /// to the providers: every query is `SERVFAIL`, nothing is filtered or
+    /// resolved. Above `Offline`: online or not, the one fix is the consent
+    /// button.
+    ConsentRequired,
     /// The machine has no internet — resolution is paused (T-152).
     Offline,
     /// The user paused filtering from the tray (T-193); DNS works, unfiltered.
@@ -587,13 +605,16 @@ pub enum HeroStateView {
 /// (offline → paused → no-voters). T-254 puts [`HeroStateView::FiltersDegraded`]
 /// after `CertNotTrusted` (an untrusted cert stops new queries, so the
 /// degraded counts could only be stale) and before `CertUnknown` (a real
-/// degraded reading beats "couldn't check the cert"). `cert` is [`None`] until the background
+/// degraded reading beats "couldn't check the cert"). T-286 puts
+/// [`HeroStateView::ConsentRequired`] right under the watchdog states: without
+/// consent nothing resolves, whatever the network. `cert` is [`None`] until the background
 /// [`crate::cert_watch::run_cert_trust_watch`] poll has produced a reading —
 /// treated as "surface no cert warning", never a fabricated one (the same
 /// "unknown ≠ not-yet-known" contract as the tray's `TrustState`, T-188).
 #[must_use]
 pub(crate) fn compute_hero_state(
     watchdog: Option<WatchdogStatusView>,
+    consent: bool,
     network: NetworkStatusView,
     paused: bool,
     has_active_provider: bool,
@@ -604,6 +625,9 @@ pub(crate) fn compute_hero_state(
         Some(WatchdogStatusView::GaveUp) => return HeroStateView::WatchdogGaveUp,
         Some(WatchdogStatusView::Restarting) => return HeroStateView::WatchdogRestarting,
         None => {}
+    }
+    if !consent {
+        return HeroStateView::ConsentRequired;
     }
     if network == NetworkStatusView::Offline {
         return HeroStateView::Offline;
@@ -1094,6 +1118,15 @@ pub struct CctldBlockConfigUpdate {
     /// The ccTLD codes to block, in caller-supplied order (deduplicated
     /// server-side, first-seen order preserved).
     pub blocked_codes: Vec<String>,
+}
+
+/// `POST /admin/consent`'s body (T-286): grant (`true`) or withdraw
+/// (`false`) consent to send looked-up domains to the providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentUpdate {
+    /// The new consent state.
+    pub granted: bool,
 }
 
 /// One override-list entry as shown to a client (T-47) — a projection of
@@ -2139,6 +2172,29 @@ impl AdminClient {
         response.json().await.map_err(AdminClientError::Request)
     }
 
+    /// Grants or withdraws consent to send domains to the providers (T-286,
+    /// `POST /admin/consent`). Check `persisted` in the result: a withdrawal
+    /// that did not reach the disk is undone by the next restart.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable or the
+    /// response doesn't decode.
+    pub async fn set_consent(
+        &self,
+        granted: bool,
+    ) -> Result<AdminStatusResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/consent", self.base_url))
+            .json(&ConsentUpdate { granted })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
     /// Sets the `[rating_filter]` «bubble» toggle and its list selection in one
     /// `resolver_config.toml` write (T-127). Returns the resulting
     /// [`AdminStatusResponse`] — `rating_filter.active` reflects whether the
@@ -2888,6 +2944,7 @@ mod hero_and_category_tests {
     ) -> HeroStateView {
         compute_hero_state(
             watchdog,
+            true,
             network,
             paused,
             has_active_provider,
@@ -2897,7 +2954,15 @@ mod hero_and_category_tests {
     }
 
     fn with_stats(stats: &AdminStats, cert: Option<CertTrustView>) -> HeroStateView {
-        compute_hero_state(None, NetworkStatusView::Online, false, true, stats, cert)
+        compute_hero_state(
+            None,
+            true,
+            NetworkStatusView::Online,
+            false,
+            true,
+            stats,
+            cert,
+        )
     }
 
     // T-254 — happy path: every recent query degraded → amber, not "Захищено".
@@ -2951,6 +3016,7 @@ mod hero_and_category_tests {
         let at = |paused, active| {
             compute_hero_state(
                 None,
+                true,
                 NetworkStatusView::Online,
                 paused,
                 active,
@@ -2977,6 +3043,39 @@ mod hero_and_category_tests {
     #[test]
     fn hero_state_protected_when_all_clear() {
         assert_eq!(all_clear(), HeroStateView::Protected);
+    }
+
+    // T-286 — no consent: nothing resolves, so it outranks every state below
+    // the watchdog (offline, pause, no voters, cert) but not the watchdog.
+    #[test]
+    fn hero_state_consent_required_sits_right_under_the_watchdog() {
+        let without_consent = |watchdog, network, paused, active, cert| {
+            compute_hero_state(watchdog, false, network, paused, active, &stats(5, 5), cert)
+        };
+        assert_eq!(
+            without_consent(
+                None,
+                NetworkStatusView::Offline,
+                true,
+                false,
+                Some(CertTrustView::NotTrusted)
+            ),
+            HeroStateView::ConsentRequired
+        );
+        assert_eq!(
+            without_consent(None, NetworkStatusView::Online, false, true, None),
+            HeroStateView::ConsentRequired
+        );
+        assert_eq!(
+            without_consent(
+                Some(WatchdogStatusView::Restarting),
+                NetworkStatusView::Online,
+                false,
+                true,
+                None
+            ),
+            HeroStateView::WatchdogRestarting
+        );
     }
 
     #[test]
@@ -3254,6 +3353,8 @@ mod dto_versioning_tests {
         assert_eq!(parsed.network, NetworkStatusView::Online);
         assert_eq!(parsed.baseline_endpoint, BaselineEndpointView::Primary);
         assert!(!parsed.paused);
+        // T-286: a pre-consent service has no gate and already sends domains.
+        assert!(parsed.domain_sharing_consent.is_given());
         assert_eq!(parsed.watchdog, None);
         assert!(!parsed.serve_baseline_when_filters_unreachable);
         assert_eq!(

@@ -604,6 +604,7 @@ const HERO_PRESENTATION = {
   WATCHDOG_RESTARTING: { cls: "is-warn" },
   OFFLINE: { cls: "is-warn" },
   PAUSED: { cls: "is-warn" },
+  CONSENT_REQUIRED: { cls: "is-warn", action: "grant-consent" },
   NO_PROVIDERS: { cls: "is-bad" },
   CERT_NOT_TRUSTED: { cls: "is-bad", action: "install-cert" },
   FILTERS_DEGRADED: { cls: "is-warn" },
@@ -785,7 +786,162 @@ function renderProtectionHero(state) {
     action.addEventListener("click", () => installCertFromHero(action));
     box.appendChild(action);
   }
+  if (state.action === "grant-consent") {
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "hero-action";
+    action.textContent = t("hero.grantConsentButton");
+    action.addEventListener("click", () => grantConsentFromHero(action));
+    box.appendChild(action);
+  }
   protectionHero.appendChild(box);
+}
+
+// --- T-286: consent to send domains to the providers (#consent-control) ---
+// Granting lives in the CONSENT_REQUIRED hero; this row, under the fan-out
+// line, shows that consent is given and withdraws it behind the same
+// two-step confirm as the master switch. Rendered from the status frames, so
+// it skips identical frames (focus) and never rebuilds an open confirm.
+const consentControl = document.getElementById("consent-control");
+let consentConfirmOpen = false;
+// Latched until the next consent change: a withdrawal that did not reach the
+// disk is undone by the next restart, so it must stay said, not flash.
+let consentNotSaved = null;
+let consentError = null;
+
+async function postConsent(granted) {
+  const response = await fetch("/admin/consent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ granted }),
+  });
+  if (!response.ok) {
+    throw await responseError(response);
+  }
+  return response.json();
+}
+
+function renderConsentControl(status) {
+  if (!consentControl || consentConfirmOpen) {
+    return;
+  }
+  const given = status.domain_sharing_consent !== "not_given";
+  const signature = [given, consentNotSaved || "", consentError || "", CURRENT_LOCALE].join("|");
+  if (consentControl.dataset.rendered === signature) {
+    return;
+  }
+  consentControl.dataset.rendered = signature;
+  keepFocus(() => buildConsentControl(given));
+}
+
+function buildConsentControl(given) {
+  consentControl.textContent = "";
+  if (consentNotSaved) {
+    const notice = document.createElement("div");
+    notice.className = "notice warn";
+    notice.setAttribute("role", "status");
+    notice.textContent = t(consentNotSaved);
+    consentControl.appendChild(notice);
+  }
+  if (consentError) {
+    const err = document.createElement("div");
+    err.className = "override-error";
+    err.setAttribute("role", "status");
+    err.textContent = consentError;
+    consentControl.appendChild(err);
+  }
+  if (!given) {
+    return;
+  }
+  const line = document.createElement("p");
+  line.className = "consent-line";
+  line.textContent = t("consent.givenLine");
+  const withdraw = document.createElement("button");
+  withdraw.type = "button";
+  withdraw.className = "link-button";
+  withdraw.id = "consent-withdraw";
+  withdraw.textContent = t("consent.withdrawButton");
+  line.appendChild(document.createTextNode(" "));
+  line.appendChild(withdraw);
+  consentControl.appendChild(line);
+
+  const confirm = document.createElement("div");
+  confirm.hidden = true;
+  const notice = document.createElement("div");
+  notice.className = "notice warn";
+  notice.textContent = t("consent.withdrawConfirm");
+  confirm.appendChild(notice);
+  const row = document.createElement("div");
+  row.className = "rf-confirm-row";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = t("common.cancel");
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "rf-confirm";
+  go.textContent = t("consent.withdrawConfirmButton");
+  row.appendChild(cancel);
+  row.appendChild(go);
+  confirm.appendChild(row);
+  consentControl.appendChild(confirm);
+
+  const close = (refocus) => {
+    confirm.hidden = true;
+    consentConfirmOpen = false;
+    if (refocus) {
+      focusIfPresent(withdraw);
+    }
+  };
+  withdraw.addEventListener("click", () => {
+    confirm.hidden = false;
+    consentConfirmOpen = true;
+    announceConfirm(notice);
+  });
+  cancel.addEventListener("click", () => close(true));
+  confirm.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      close(true);
+    }
+  });
+  // Same as every other two-step confirm: leaving it disarms it.
+  confirm.addEventListener("focusout", (event) => {
+    if (!confirm.hidden && !confirm.contains(event.relatedTarget)) {
+      close(false);
+    }
+  });
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    try {
+      const status = await postConsent(false);
+      consentNotSaved = status.persisted ? null : "consent.withdrawNotSaved";
+      consentError = null;
+      close(false);
+      render(status);
+      // The row empties without consent; the hero's grant button takes focus.
+      focusIfPresent(protectionHero.querySelector(".hero-action"));
+    } catch (err) {
+      consentError = err.message;
+      close(false);
+      if (lastStatus) {
+        renderConsentControl(lastStatus);
+      }
+    }
+  });
+}
+
+// T-286: the CONSENT_REQUIRED hero's button. A grant that did not reach the
+// disk is safe (the next restart only asks again), but it is still said.
+async function grantConsentFromHero(button) {
+  button.disabled = true;
+  try {
+    const status = await postConsent(true);
+    consentNotSaved = status.persisted ? null : "consent.grantNotSaved";
+    consentError = null;
+    render(status);
+  } catch (_err) {
+    button.disabled = false;
+    button.textContent = t("hero.grantConsentFailedLabel");
+  }
 }
 
 // T-188: POST /admin/install-cert, then re-render. On failure, point the user
@@ -1031,6 +1187,7 @@ function render(status) {
   renderRatingFilterBadge(status.rating_filter);
   renderTimeoutConfig(status);
   renderLogRetention(status);
+  renderConsentControl(status);
   syncDohUrl(status);
   // T-96: passive indicator that the query log (i.e. browsing history) is
   // being written to disk. T-291: it is switched on in the log card behind a

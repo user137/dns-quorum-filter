@@ -605,6 +605,39 @@ pub(crate) fn validate_cctld_codes(raw: &[String]) -> Result<Vec<String>, Config
     Ok(out)
 }
 
+/// T-286 — the user's answer to "may looked-up domains go to the filtering
+/// providers and the baseline resolver?" (Store Policies 10.5.2). An enum,
+/// not a bool: the file reads `domain_sharing_consent = "given"`, which says
+/// what it means on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DomainSharingConsent {
+    /// Never asked, declined, or withdrawn — the default, and what a
+    /// pre-T-286 file without the key reads as.
+    #[default]
+    NotGiven,
+    /// The user agreed.
+    Given,
+}
+
+impl DomainSharingConsent {
+    /// `Given` for `true`, `NotGiven` for `false`.
+    #[must_use]
+    pub const fn from_granted(granted: bool) -> Self {
+        if granted {
+            Self::Given
+        } else {
+            Self::NotGiven
+        }
+    }
+
+    /// Whether the user agreed.
+    #[must_use]
+    pub const fn is_given(self) -> bool {
+        matches!(self, Self::Given)
+    }
+}
+
 /// Resolver config, loaded once at startup (T-144). No longer `Copy` as of
 /// T-76 — `geoip.blocked_countries` is a `Vec<String>`, so this type is
 /// `Clone` only now (every other field stays individually `Copy`, so a
@@ -654,6 +687,13 @@ pub struct ResolverConfig {
     /// regardless of mode. Independent of `timeout_mode`, which is about
     /// interpreting *one* unresponsive voter, not all of them.
     pub serve_baseline_when_filters_unreachable: bool,
+    /// T-286 — the user's explicit opt-in to sending looked-up domains to the
+    /// filtering providers and the baseline resolver (Store Policies 10.5.2).
+    /// `not_given` (default, and the reading of a pre-T-286 file without the key)
+    /// makes every `DoH` query `SERVFAIL` before the pipeline runs, and holds
+    /// the baseline heartbeat, so no third party sees a query until the user
+    /// agrees (DECISIONS.md 2026-11-27). Set by `POST /admin/consent`.
+    pub domain_sharing_consent: DomainSharingConsent,
     /// T-146 — persist the in-memory query log to encrypted files (T-291:
     /// one per UTC day under `query-log/`, sealed with `encrypted_file` under
     /// the `key_store` persistence key) so it survives a restart (SPEC.md
@@ -713,6 +753,7 @@ impl Default for ResolverConfig {
             geoip: GeoipConfig::default(),
             limits: LimitsConfig::default(),
             serve_baseline_when_filters_unreachable: false,
+            domain_sharing_consent: DomainSharingConsent::NotGiven,
             persist_query_log: false,
             query_log_retention: LogRetention::default(),
             persist_cache: false,
@@ -844,6 +885,7 @@ impl ResolverConfig {
                 idle_timeout: Duration::from_millis(u64::from(file.limits.idle_timeout_ms)),
             },
             serve_baseline_when_filters_unreachable: file.serve_baseline_when_filters_unreachable,
+            domain_sharing_consent: file.domain_sharing_consent,
             persist_query_log: file.persist_query_log,
             query_log_retention: file.query_log_retention,
             persist_cache: file.persist_cache,
@@ -891,6 +933,7 @@ impl ResolverConfig {
             timeout_mode: self.timeout_mode,
             timeout_ms: self.timeout_ms,
             serve_baseline_when_filters_unreachable: self.serve_baseline_when_filters_unreachable,
+            domain_sharing_consent: self.domain_sharing_consent,
             persist_query_log: self.persist_query_log,
             query_log_retention: self.query_log_retention,
             persist_cache: self.persist_cache,
@@ -1085,6 +1128,8 @@ struct ResolverConfigFile {
     timeout_ms: u32,
     /// T-155 — see [`ResolverConfig::serve_baseline_when_filters_unreachable`].
     serve_baseline_when_filters_unreachable: bool,
+    /// T-286 — see [`ResolverConfig::domain_sharing_consent`].
+    domain_sharing_consent: DomainSharingConsent,
     /// T-146 — see [`ResolverConfig::persist_query_log`].
     persist_query_log: bool,
     /// T-291 — see [`ResolverConfig::query_log_retention`].
@@ -1166,6 +1211,7 @@ impl Default for ResolverConfigFile {
             timeout_ms: defaults.timeout_ms,
             serve_baseline_when_filters_unreachable: defaults
                 .serve_baseline_when_filters_unreachable,
+            domain_sharing_consent: defaults.domain_sharing_consent,
             persist_query_log: defaults.persist_query_log,
             query_log_retention: defaults.query_log_retention,
             persist_cache: defaults.persist_cache,
@@ -1400,6 +1446,7 @@ mod tests {
                 geoip: GeoipConfig::default(),
                 limits: LimitsConfig::default(),
                 serve_baseline_when_filters_unreachable: false,
+                domain_sharing_consent: crate::config::DomainSharingConsent::NotGiven,
                 persist_query_log: false,
                 query_log_retention: LogRetention::Day,
                 persist_cache: false,
@@ -1683,6 +1730,7 @@ mod tests {
                 idle_timeout: Duration::from_millis(45_500),
             },
             serve_baseline_when_filters_unreachable: true,
+            domain_sharing_consent: crate::config::DomainSharingConsent::Given,
             persist_query_log: true,
             query_log_retention: LogRetention::Day,
             persist_cache: true,

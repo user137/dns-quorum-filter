@@ -56,6 +56,12 @@ pub enum TrayStatus {
     /// `Paused`; the tray ranks `Paused` first. Both are correct — the tray's
     /// is the actionable reading. Intentional, not to be "reconciled".)
     Paused,
+    /// T-286: the user has not agreed (or withdrew agreement) to send domains
+    /// to the providers — the service answers every query `SERVFAIL`, so
+    /// nothing resolves through it. Ranked right under the dead-service
+    /// states and **above** `Paused`: a paused-looking tooltip ("DNS works,
+    /// unfiltered") would be false here. Grey: a choice, not a fault.
+    ConsentRequired,
     /// The machine has no internet connectivity (T-152). Ranked directly
     /// below the watchdog states and above `NoActiveProvider` — an
     /// environment failure the user can't fix by toggling providers
@@ -158,6 +164,11 @@ impl LastQuery {
 
 impl TrayStatus {
     fn from_response(response: &AdminStatusResponse, now_unix_ms: u64) -> Self {
+        // T-286: without consent nothing resolves — above every other admin
+        // state, offline included.
+        if !response.domain_sharing_consent.is_given() {
+            return Self::ConsentRequired;
+        }
         // T-152: no internet at all outranks the config-choice state below
         // (DECISIONS.md 2026-09-03) — showing "you disabled all providers"
         // when the real problem is a dead network would be misleading, and
@@ -209,6 +220,7 @@ impl TrayStatus {
                 (startup_failure_tooltip(*reason, locale), Vec::new())
             }
             Self::Paused => (i18n::t(locale, "tooltip.paused"), Vec::new()),
+            Self::ConsentRequired => (i18n::t(locale, "tooltip.consentRequired"), Vec::new()),
             Self::Offline => (i18n::t(locale, "tooltip.offline"), Vec::new()),
             Self::NoActiveProvider { in_flight } => (
                 i18n::t(locale, "tooltip.noActiveProvider"),
@@ -308,7 +320,9 @@ pub fn icon_colour(status: TrayStatus, cert_trusted: bool) -> IconColour {
         // as a distinct, non-failure state, so an untrusted cert does not
         // repaint it red; [`cert_warning`] still names the cert issue in the
         // tooltip.
-        TrayStatus::Paused | TrayStatus::NoActiveProvider { .. } => IconColour::Grey,
+        TrayStatus::Paused | TrayStatus::ConsentRequired | TrayStatus::NoActiveProvider { .. } => {
+            IconColour::Grey
+        }
         TrayStatus::Filtering {
             degraded_events,
             degraded_window,
@@ -366,9 +380,40 @@ pub fn recovery_actions(status: TrayStatus) -> (bool, bool) {
         TrayStatus::ServiceStartupFailed(reason) => (true, reason == StartupFailure::ConfigInvalid),
         TrayStatus::ServiceRestarting
         | TrayStatus::Paused
+        | TrayStatus::ConsentRequired
         | TrayStatus::Offline
         | TrayStatus::NoActiveProvider { .. }
         | TrayStatus::Filtering { .. } => (false, false),
+    }
+}
+
+impl TrayStatus {
+    /// What this published status says about consent (T-286): `None` when it
+    /// says nothing — the service unreachable or down, or a pause, which can
+    /// stand without an admin answer. The setup wizard offers the consent
+    /// step only on a confirmed `Some(false)`, never on "not known yet".
+    #[must_use]
+    pub fn consent_reading(self) -> Option<bool> {
+        match self {
+            Self::ConsentRequired => Some(false),
+            Self::Offline | Self::NoActiveProvider { .. } | Self::Filtering { .. } => Some(true),
+            Self::Unreachable
+            | Self::ServiceRestarting
+            | Self::ServiceGaveUp
+            | Self::ServiceStartupFailed(_)
+            | Self::Paused => None,
+        }
+    }
+}
+
+/// A local pause yields to missing consent (T-286): `stop.flag` would read
+/// "DNS works, unfiltered", but without consent nothing resolves at all.
+/// `consent` is the admin channel's answer, `None` when it gave none.
+fn pause_or_consent(consent: Option<bool>) -> TrayStatus {
+    if consent == Some(false) {
+        TrayStatus::ConsentRequired
+    } else {
+        TrayStatus::Paused
     }
 }
 
@@ -458,8 +503,8 @@ pub(crate) fn fit_tooltip(head: &str, segments: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        local_status, recovery_actions, startup_failure_tooltip, startup_failure_tooltip_key,
-        watchdog_override, LastQuery, TrayStatus,
+        local_status, pause_or_consent, recovery_actions, startup_failure_tooltip,
+        startup_failure_tooltip_key, watchdog_override, LastQuery, TrayStatus,
     };
     use crate::i18n::I18N_DICTS;
     use dnsqb_service::{StartupFailure, STARTUP_ERROR_FILE_NAME};
@@ -501,6 +546,31 @@ mod tests {
 
     // Хвиля 13b: a dead service outranks a pause (T-193 keeps the service up
     // while paused); a restarting one does not.
+    // T-286 — a pause yields to missing consent, and only a real `false`
+    // reading does that: no answer keeps the pause.
+    #[test]
+    fn missing_consent_outranks_a_pause_but_no_answer_does_not() {
+        assert_eq!(pause_or_consent(Some(false)), TrayStatus::ConsentRequired);
+        assert_eq!(pause_or_consent(Some(true)), TrayStatus::Paused);
+        assert_eq!(pause_or_consent(None), TrayStatus::Paused);
+    }
+
+    // T-286 — the consent reading the wizard keys on: only a status that came
+    // from an admin answer says anything.
+    #[test]
+    fn consent_reading_is_unknown_until_the_service_answers() {
+        assert_eq!(TrayStatus::ConsentRequired.consent_reading(), Some(false));
+        assert_eq!(TrayStatus::Offline.consent_reading(), Some(true));
+        for unknown in [
+            TrayStatus::Unreachable,
+            TrayStatus::ServiceRestarting,
+            TrayStatus::ServiceGaveUp,
+            TrayStatus::Paused,
+        ] {
+            assert_eq!(unknown.consent_reading(), None, "{unknown:?}");
+        }
+    }
+
     #[test]
     fn local_status_ranks_gave_up_above_paused_above_restarting() {
         let failed = TrayStatus::ServiceStartupFailed(StartupFailure::ConfigInvalid);
@@ -664,6 +734,7 @@ mod tests {
             serve_baseline_when_filters_unreachable: false,
             network: dnsqb_service::NetworkStatusView::Online,
             paused: false,
+            domain_sharing_consent: dnsqb_service::DomainSharingConsent::Given,
             baseline_endpoint: dnsqb_service::BaselineEndpointView::Primary,
             port: 8443,
             stats,
@@ -698,6 +769,22 @@ mod tests {
     }
 
     const NOW_MS: u64 = 1_800_000_000_000;
+
+    // T-286 — no consent outranks every admin state, offline included.
+    #[test]
+    fn from_response_reads_missing_consent_above_offline() {
+        let mut resp = response(Vec::new(), stats(0, 0));
+        resp.domain_sharing_consent = dnsqb_service::DomainSharingConsent::NotGiven;
+        resp.network = dnsqb_service::NetworkStatusView::Offline;
+        let status = TrayStatus::from_response(&resp, NOW_MS);
+        assert_eq!(status, TrayStatus::ConsentRequired);
+        assert_eq!(
+            super::icon_colour(status, false),
+            super::IconColour::Grey,
+            "a choice, not a fault — and no cert override"
+        );
+        assert_eq!(recovery_actions(status), (false, false));
+    }
 
     // ARCH-04: the bucket, not the raw age, lives in `TrayStatus`, so the
     // status (and the tooltip) changes only when the shown text does.
@@ -1436,8 +1523,12 @@ pub fn spawn(app_data_dir: PathBuf, port: u16, trust: TrustState) -> StatusHandl
                 // decision 2026-09-02: watchdog above 0-voters). Хвиля 13b: a
                 // given-up service now outranks the pause ([`local_status`]).
                 let paused = dnsqb_service::stop_flag_is_set(&app_data_dir);
-                if let Some(local) = local_status(paused, watchdog_override(&app_data_dir)) {
-                    if publish(&current, local) {
+                let local = local_status(paused, watchdog_override(&app_data_dir));
+                // T-286: a pause still asks the service — missing consent
+                // outranks it ([`pause_or_consent`]); every other local state
+                // means the service is down anyway.
+                if let Some(down) = local.filter(|status| *status != TrayStatus::Paused) {
+                    if publish(&current, down) {
                         crate::wake_event_loop();
                     }
                     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1446,35 +1537,41 @@ pub fn spawn(app_data_dir: PathBuf, port: u16, trust: TrustState) -> StatusHandl
                 if client.is_none() {
                     client = AdminClient::new(&app_data_dir, port).ok();
                 }
-                let status = if let Some(c) = &client {
-                    if let Ok(response) = c.status().await {
+                let response = match &client {
+                    Some(c) => c.status().await.ok(),
+                    None => None,
+                };
+                if response.is_none() {
+                    // Advisor-caught: a request failure is NOT always
+                    // just "the service is temporarily down" - it's also
+                    // what a stale pinned certificate looks like, e.g.
+                    // `tls::load_or_generate_server_config` regenerating
+                    // `cert.pem` after a load failure (T-142), or a
+                    // future T-69 rotation. Keeping the same client in
+                    // that case would pin this thread to a dead cert
+                    // forever - every later poll fails, the tooltip
+                    // reads "Unreachable" permanently, while
+                    // `spawn_admin_action`'s own per-click fresh clients
+                    // in `main.rs` keep working fine. Dropping the
+                    // client here means the next tick re-reads
+                    // `cert.pem` and rebuilds - a real cost only while
+                    // genuinely unreachable, which is exactly the state
+                    // where nothing else is competing for the poll
+                    // thread anyway.
+                    client = None;
+                }
+                let status = match (local, response) {
+                    (Some(_), response) => {
+                        pause_or_consent(response.map(|r| r.domain_sharing_consent.is_given()))
+                    }
+                    (None, Some(response)) => {
                         if service_cert_changed(last_hero, response.hero_state) {
                             trust.request_recheck();
                         }
                         last_hero = Some(response.hero_state);
                         TrayStatus::from_response(&response, unix_ms_now())
-                    } else {
-                        // Advisor-caught: a request failure is NOT always
-                        // just "the service is temporarily down" - it's also
-                        // what a stale pinned certificate looks like, e.g.
-                        // `tls::load_or_generate_server_config` regenerating
-                        // `cert.pem` after a load failure (T-142), or a
-                        // future T-69 rotation. Keeping the same client in
-                        // that case would pin this thread to a dead cert
-                        // forever - every later poll fails, the tooltip
-                        // reads "Unreachable" permanently, while
-                        // `spawn_admin_action`'s own per-click fresh clients
-                        // in `main.rs` keep working fine. Dropping the
-                        // client here means the next tick re-reads
-                        // `cert.pem` and rebuilds - a real cost only while
-                        // genuinely unreachable, which is exactly the state
-                        // where nothing else is competing for the poll
-                        // thread anyway.
-                        client = None;
-                        TrayStatus::Unreachable
                     }
-                } else {
-                    TrayStatus::Unreachable
+                    (None, None) => TrayStatus::Unreachable,
                 };
                 if publish(&current, status) {
                     crate::wake_event_loop();

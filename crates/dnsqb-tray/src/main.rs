@@ -321,7 +321,8 @@ fn main() {
     let mut last_paused = stop_flag_is_set(&app_data);
     let mut last_flag_check = Instant::now();
     let mut onboarding = OnboardingOffer {
-        offered: false,
+        consent_settled: false,
+        cert_settled: false,
         owner: None,
     };
     let mut browser_nudge = NudgeLatch {
@@ -361,7 +362,7 @@ fn main() {
             &app_data,
             port,
             &trust,
-            trusted,
+            OnboardingReadings::new(trusted, observed),
             locale,
             target,
         );
@@ -691,7 +692,7 @@ fn handle_menu_event(
             });
         }
         MenuAction::ShowAbout => show_about_dialog(port, locale),
-        MenuAction::RunSetupWizard => run_setup_wizard(app_data, port, trust, locale, None),
+        MenuAction::RunSetupWizard => rerun_setup_wizard(app_data, port, trust, locale),
         MenuAction::InstallCert => {
             if confirm_install_cert(locale) {
                 let cert_path = app_data.join("cert.pem");
@@ -1042,44 +1043,85 @@ fn poll_remove_all_request(
     });
 }
 
-/// One-shot first-run onboarding offer (T-188). Fires at most once per
-/// process (`offered` latch), and only once the trust-watch thread has a
-/// *confirmed* `certutil` reading — on a fresh MSIX install `cert.pem` does
-/// not exist when the tray starts (T-187), so an earlier check would read the
-/// optimistic seed, not the store. [`onboarding::check_onboarding`] is
-/// the pure predicate.
+/// One-shot first-run onboarding offers (T-188, T-286). Two independent
+/// steps, each with its own per-process latch: consent (T-286) fires on a
+/// confirmed "not granted" reading from the service, the certificate step
+/// (T-188) once the trust-watch thread has a *confirmed* `certutil` reading —
+/// on a fresh MSIX install `cert.pem` does not exist when the tray starts
+/// (T-187), so an earlier check would read the optimistic seed. Both due on
+/// the same tick share one wizard; while a wizard is open nothing is decided,
+/// so a step that becomes due meanwhile is offered after it closes, not lost.
+/// [`onboarding::check_consent_offer`] / [`onboarding::check_onboarding`] are
+/// the pure predicates.
 fn maybe_offer_onboarding(
     state: &mut OnboardingOffer,
     app_data: &Path,
     port: u16,
     trust: &TrustState,
-    trusted: bool,
+    readings: OnboardingReadings,
     locale: &str,
     target: &tao::event_loop::EventLoopWindowTarget<()>,
 ) {
-    if state.owner.is_some() && !WIZARD_ACTIVE.load(Ordering::SeqCst) {
-        state.owner = None;
-    }
-    if state.offered {
+    if WIZARD_ACTIVE.load(Ordering::SeqCst) {
         return;
     }
-    match onboarding::check_onboarding(trust.is_confirmed(), trusted, || {
-        onboarding::onboarding_seen(app_data)
-    }) {
-        OfferCheck::Offer => {
-            state.offered = true;
-            state.owner = topmost_owner(target);
-            run_setup_wizard(app_data, port, trust, locale, state.owner.as_ref());
-        }
-        OfferCheck::Never => state.offered = true,
-        OfferCheck::NotYet => {}
+    state.owner = None;
+    let consent = if state.consent_settled {
+        OfferCheck::Never
+    } else {
+        onboarding::check_consent_offer(readings.consent, || {
+            onboarding::consent_offer_seen(app_data)
+        })
+    };
+    let cert = if state.cert_settled {
+        OfferCheck::Never
+    } else {
+        onboarding::check_onboarding(trust.is_confirmed(), readings.cert_trusted, || {
+            onboarding::onboarding_seen(app_data)
+        })
+    };
+    state.consent_settled |= consent != OfferCheck::NotYet;
+    state.cert_settled |= cert != OfferCheck::NotYet;
+    let steps = WizardSteps {
+        consent: consent == OfferCheck::Offer,
+        cert: cert == OfferCheck::Offer,
+    };
+    if steps.consent || steps.cert {
+        state.owner = topmost_owner(target);
+        run_setup_wizard(app_data, port, trust, locale, state.owner.as_ref(), steps);
     }
 }
 
-/// The automatic first-run offer (T-188) and the hidden owner of its dialog.
+/// The automatic first-run offers (T-188, T-286) and the hidden owner of
+/// their dialog.
 struct OnboardingOffer {
-    offered: bool,
+    consent_settled: bool,
+    cert_settled: bool,
     owner: Option<tao::window::Window>,
+}
+
+/// What this tick knows for [`maybe_offer_onboarding`]: the cert-trust flag
+/// and the service's consent answer (`None` = no answer yet).
+#[derive(Debug, Clone, Copy)]
+struct OnboardingReadings {
+    cert_trusted: bool,
+    consent: Option<bool>,
+}
+
+impl OnboardingReadings {
+    fn new(cert_trusted: bool, observed: TrayStatus) -> Self {
+        Self {
+            cert_trusted,
+            consent: observed.consent_reading(),
+        }
+    }
+}
+
+/// Which wizard steps to show (T-286).
+#[derive(Debug, Clone, Copy)]
+struct WizardSteps {
+    consent: bool,
+    cert: bool,
 }
 
 /// T-269: an automatic offer comes from a background process — the tray was
@@ -1178,11 +1220,13 @@ fn maybe_offer_browser_nudge(
 /// (each able to spawn its own `ensure_installed`).
 static WIZARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// The first-run wizard (T-188): a welcome dialog offering to install the
-/// local certificate, then — on «Так» and a successful install — open the
-/// browser-setup page. Runs entirely on a throwaway thread because `rfd`
-/// dialogs block and both callers (the auto-offer above and the "Майстер
-/// налаштування" menu item) are on the event-loop thread. Reuses
+/// The first-run wizard (T-188, T-286). Step 1 (T-286) asks for consent to
+/// send domains to the providers ([`ask_for_consent`]); step 2 (T-188)
+/// offers to install the local certificate, then — on «Так» and a successful
+/// install — opens the browser-setup page. Runs on a throwaway thread because
+/// `rfd` dialogs block and both callers (the auto-offer above and the
+/// "Майстер налаштування" menu item) are on the event-loop thread; the
+/// dialogs are built here, on that thread, so they can take `owner`. Reuses
 /// [`spawn_cert_action`] for the install half, so the trust icon re-polls
 /// afterward for free. `onboarding.seen` is written on «Пізніше» and on a
 /// *successful* install, never on a failed one (that should re-offer next
@@ -1193,27 +1237,45 @@ fn run_setup_wizard(
     trust: &TrustState,
     locale: &str,
     owner: Option<&tao::window::Window>,
+    steps: WizardSteps,
 ) {
     if WIZARD_ACTIVE.swap(true, Ordering::SeqCst) {
         return; // a welcome dialog is already open
     }
-    let mut dialog = confirm_dialog(
-        &i18n::t(locale, "onboarding.title"),
-        &i18n::t(locale, "onboarding.description"),
-        rfd::MessageLevel::Info,
-    );
-    if let Some(owner) = owner {
-        dialog = dialog.set_parent(owner);
-    }
+    let with_owner = |dialog: rfd::MessageDialog| match owner {
+        Some(owner) => dialog.set_parent(owner),
+        None => dialog,
+    };
+    let consent_dialog = steps.consent.then(|| {
+        with_owner(confirm_dialog(
+            &i18n::t(locale, "onboarding.consentTitle"),
+            "",
+            rfd::MessageLevel::Info,
+        ))
+    });
+    let cert_dialog = steps.cert.then(|| {
+        with_owner(confirm_dialog(
+            &i18n::t(locale, "onboarding.title"),
+            &i18n::t(locale, "onboarding.description"),
+            rfd::MessageLevel::Info,
+        ))
+    });
     let app_data = app_data.to_path_buf();
     let trust = trust.clone();
     let locale = locale.to_string();
     std::thread::spawn(move || {
-        let proceed = dialog.show() == rfd::MessageDialogResult::Yes;
+        if let Some(dialog) = consent_dialog {
+            ask_for_consent(&app_data, port, dialog, &locale);
+        }
+        let proceed = cert_dialog.map(|dialog| dialog.show() == rfd::MessageDialogResult::Yes);
         WIZARD_ACTIVE.store(false, Ordering::SeqCst);
-        if !proceed {
-            onboarding::mark_onboarding_seen(&app_data);
-            return;
+        match proceed {
+            None => return,
+            Some(false) => {
+                onboarding::mark_onboarding_seen(&app_data);
+                return;
+            }
+            Some(true) => {}
         }
         let cert_path = app_data.join("cert.pem");
         let url = format!("https://127.0.0.1:{port}/admin/ui");
@@ -1232,6 +1294,99 @@ fn run_setup_wizard(
             },
         );
     });
+}
+
+/// The "Майстер налаштування" menu item: every step. The consent step
+/// re-checks the service itself and is skipped when consent is already given.
+fn rerun_setup_wizard(app_data: &Path, port: u16, trust: &TrustState, locale: &str) {
+    let steps = WizardSteps {
+        consent: true,
+        cert: true,
+    };
+    run_setup_wizard(app_data, port, trust, locale, None, steps);
+}
+
+/// The public privacy policy, in the tray's language where one exists.
+fn privacy_policy_url(locale: &str) -> &'static str {
+    if locale == "uk" {
+        "https://user137.github.io/dns-quorum-filter/uk/privacy.html"
+    } else {
+        "https://user137.github.io/dns-quorum-filter/privacy.html"
+    }
+}
+
+/// Wizard step 1 (T-286): asks the service whether consent is still missing
+/// and who would see the domains, shows `dialog` with that list, and sends
+/// the answer. Runs on the wizard's own thread. Nothing is asked when the
+/// service can't be reached (no list to show, and the answer couldn't be
+/// saved) or consent is already given. `consent-offer.seen` is written on
+/// «Ні» and on a grant that reached the disk — never on a failure, so the
+/// next launch asks again.
+fn ask_for_consent(app_data: &Path, port: u16, dialog: rfd::MessageDialog, locale: &str) {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        tracing::error!("failed to start a runtime for the consent step");
+        return;
+    };
+    let client = match AdminClient::new(app_data, port) {
+        Ok(client) => client,
+        Err(err) => {
+            tracing::warn!("consent step skipped, no admin client: {err}");
+            return;
+        }
+    };
+    let status = match runtime.block_on(client.status()) {
+        Ok(status) => status,
+        Err(err) => {
+            tracing::warn!("consent step skipped, service unreachable: {err}");
+            return;
+        }
+    };
+    if status.domain_sharing_consent.is_given() {
+        return;
+    }
+    let names: Vec<&str> = status
+        .active_providers
+        .iter()
+        .map(|provider| provider.display_name.as_str())
+        .collect();
+    let providers = if names.is_empty() {
+        "—".to_string()
+    } else {
+        names.join(", ")
+    };
+    let description = i18n::t_args(
+        locale,
+        "onboarding.consentDescriptionTemplate",
+        &[
+            ("providers", &providers),
+            ("privacyUrl", privacy_policy_url(locale)),
+        ],
+    );
+    if dialog.set_description(description).show() != rfd::MessageDialogResult::Yes {
+        onboarding::mark_consent_offer_seen(app_data);
+        return;
+    }
+    match runtime.block_on(client.set_consent(true)) {
+        Ok(response) if response.persisted => onboarding::mark_consent_offer_seen(app_data),
+        Ok(_) => tracing::warn!("consent granted but not saved; asking again next launch"),
+        Err(err) => {
+            let err = err.to_string();
+            tracing::warn!("consent could not be sent: {err}");
+            rfd::MessageDialog::new()
+                .set_title(dialog_title(&i18n::t(locale, "onboarding.consentTitle")))
+                .set_description(i18n::t_args(
+                    locale,
+                    "dialog.failedTemplate",
+                    &[("err", &err)],
+                ))
+                .set_level(rfd::MessageLevel::Error)
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+    }
 }
 
 /// The one shape every "are you sure?" dialog below shares: [`dialog_title`]

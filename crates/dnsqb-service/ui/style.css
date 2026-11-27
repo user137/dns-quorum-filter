@@ -407,6 +407,11 @@ html[dir="rtl"] .switch.is-partial .thumb { transform: translateX(-7.5px); }
   margin: 0.7rem 0 0; padding-top: 0.55rem; border-top: 1px dashed var(--line);
 }
 
+/* T-286: the consent line sits right under the card holding the fan-out
+   line it answers; empty (no margin) while consent is not given. */
+#consent-control:not(:empty) { margin: -0.4rem 0 1rem; }
+.consent-line { font-size: 12px; color: var(--text-muted); margin: 0; }
+
 /* Browser-setup / onboarding card. */
 #browser-setup-body .setup-intro { font-size: 13px; margin: 0 0 0.5rem; }
 .setup-url-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }

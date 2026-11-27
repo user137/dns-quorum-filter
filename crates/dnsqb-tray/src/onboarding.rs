@@ -15,6 +15,11 @@
 //! «Пізніше» and on a *successful* install, never on a failed one (a failed
 //! install on a machine with no trusted cert should re-offer next launch); the
 //! "Майстер налаштування" menu item is the manual re-entry regardless.
+//!
+//! T-286 adds the wizard's first step, consent to send domains to the
+//! providers, with its **own** marker `consent-offer.seen`: every install
+//! that predates the step already has `onboarding.seen`, and sharing it would
+//! keep the consent question from ever appearing after an upgrade.
 
 use std::path::{Path, PathBuf};
 
@@ -37,6 +42,38 @@ pub fn onboarding_seen(app_data_dir: &Path) -> bool {
 pub fn mark_onboarding_seen(app_data_dir: &Path) {
     if let Err(err) = std::fs::write(seen_path(app_data_dir), []) {
         tracing::warn!("could not write {ONBOARDING_SEEN_NAME}: {err}");
+    }
+}
+
+/// File name of the "consent step answered" marker (T-286).
+pub const CONSENT_OFFER_SEEN_NAME: &str = "consent-offer.seen";
+
+/// Whether the user already answered the consent step once (either way).
+#[must_use]
+pub fn consent_offer_seen(app_data_dir: &Path) -> bool {
+    app_data_dir.join(CONSENT_OFFER_SEEN_NAME).exists()
+}
+
+/// Record that the user answered the consent step. Best-effort, as
+/// [`mark_onboarding_seen`]: a failed write only means one more offer.
+pub fn mark_consent_offer_seen(app_data_dir: &Path) {
+    if let Err(err) = std::fs::write(app_data_dir.join(CONSENT_OFFER_SEEN_NAME), []) {
+        tracing::warn!("could not write {CONSENT_OFFER_SEEN_NAME}: {err}");
+    }
+}
+
+/// Whether to offer the consent step now (T-286). `consent` is the service's
+/// own answer, `None` until the tray has one — "not known yet" never offers,
+/// the same "unknown ≠ untrusted" rule as the cert step, or a user who
+/// already agreed would be asked again whenever the tray starts first.
+/// `seen` is read only when the reading says "not granted".
+#[must_use]
+pub fn check_consent_offer(consent: Option<bool>, seen: impl FnOnce() -> bool) -> OfferCheck {
+    match consent {
+        None => OfferCheck::NotYet,
+        Some(true) => OfferCheck::Never,
+        Some(false) if seen() => OfferCheck::Never,
+        Some(false) => OfferCheck::Offer,
     }
 }
 
@@ -87,8 +124,8 @@ pub fn check_onboarding(
 #[cfg(test)]
 mod tests {
     use super::{
-        check_onboarding, mark_onboarding_seen, onboarding_seen, should_offer_onboarding,
-        OfferCheck,
+        check_consent_offer, check_onboarding, consent_offer_seen, mark_consent_offer_seen,
+        mark_onboarding_seen, onboarding_seen, should_offer_onboarding, OfferCheck,
     };
 
     fn tempdir() -> tempfile::TempDir {
@@ -146,5 +183,45 @@ mod tests {
         );
         assert_eq!(check_onboarding(true, false, || true), OfferCheck::Never);
         assert_eq!(check_onboarding(true, false, || false), OfferCheck::Offer);
+    }
+
+    // T-286 — happy path: a confirmed "not granted", not yet answered.
+    #[test]
+    fn offers_the_consent_step_on_a_confirmed_no_consent_reading() {
+        assert_eq!(
+            check_consent_offer(Some(false), || false),
+            OfferCheck::Offer
+        );
+    }
+
+    // T-286 — boundary: no reading yet must wait, and must not touch the disk.
+    #[test]
+    fn waits_for_a_consent_reading_without_reading_the_marker() {
+        assert_eq!(
+            check_consent_offer(None, || panic!("must not read the marker")),
+            OfferCheck::NotYet
+        );
+        assert_eq!(
+            check_consent_offer(Some(true), || panic!("must not read the marker")),
+            OfferCheck::Never
+        );
+    }
+
+    // T-286 — an answered step stays answered; the marker is separate from
+    // `onboarding.seen`, so an upgraded install still gets the question.
+    #[test]
+    fn the_consent_marker_is_independent_of_the_onboarding_marker() {
+        let dir = tempdir();
+        mark_onboarding_seen(dir.path());
+        assert!(!consent_offer_seen(dir.path()));
+        assert_eq!(
+            check_consent_offer(Some(false), || consent_offer_seen(dir.path())),
+            OfferCheck::Offer
+        );
+        mark_consent_offer_seen(dir.path());
+        assert_eq!(
+            check_consent_offer(Some(false), || consent_offer_seen(dir.path())),
+            OfferCheck::Never
+        );
     }
 }

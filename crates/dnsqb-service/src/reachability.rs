@@ -218,17 +218,23 @@ pub async fn run_reachability_prober(
             }
         }
         state.update_reachability(current);
-        // T-154: gate on the *raw* verdict, not the published one — while the
-        // offline debounce is still counting (`raw == Offline`, `current`
-        // still `Online`) the network really is down, so a baseline probe
-        // would just report every chain entry dead and churn the selector.
-        if raw == NetworkReachability::Online {
+        if should_probe_baseline(raw, state.domain_sharing_consent_snapshot()) {
             probe_baseline_health(&state, &sentinel).await;
         }
         let delay = next_probe_delay(previous, raw);
         previous = current;
         tokio::time::sleep(delay).await;
     }
+}
+
+/// Whether this cycle sends the baseline heartbeat. T-154: gate on the *raw*
+/// verdict, not the published one — while the offline debounce is still
+/// counting (`raw == Offline`, published still `Online`) the network really
+/// is down, so a baseline probe would just report every chain entry dead and
+/// churn the selector. T-286: no heartbeat before the user agrees to send
+/// queries to third parties — the baseline is one of them.
+fn should_probe_baseline(raw: NetworkReachability, consent: bool) -> bool {
+    consent && raw == NetworkReachability::Online
 }
 
 /// One fixed `example.com A` query, built once and reused for every baseline
@@ -345,6 +351,15 @@ mod tests {
     #[test]
     fn default_is_online() {
         assert_eq!(NetworkReachability::default(), NetworkReachability::Online);
+    }
+
+    #[test]
+    fn baseline_heartbeat_waits_for_consent_and_the_network() {
+        use super::{should_probe_baseline, NetworkReachability};
+        assert!(should_probe_baseline(NetworkReachability::Online, true));
+        assert!(!should_probe_baseline(NetworkReachability::Online, false));
+        assert!(!should_probe_baseline(NetworkReachability::Offline, true));
+        assert!(!should_probe_baseline(NetworkReachability::Offline, false));
     }
 
     #[test]

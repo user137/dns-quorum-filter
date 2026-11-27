@@ -26,7 +26,7 @@ use crate::admin::{
     AdminConfigUpdate, AdminErrorReason, AdminErrorResponse, AdminStats, AdminStatusResponse,
     BaselineEndpointView, BlocklistBundlesConfigUpdate, BlocklistBundlesStatusView,
     BlocklistSourceStatusView, CacheConfigUpdate, CacheConfigView, CctldBlockConfigUpdate,
-    CctldBlockStatusView, CertStatusResponse, CertTrustView, DatabaseSource,
+    CctldBlockStatusView, CertStatusResponse, CertTrustView, ConsentUpdate, DatabaseSource,
     EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
     HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
     MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
@@ -42,6 +42,7 @@ use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::blocklist_updater::BlocklistBundleState;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::change_bus::{ChangeBus, Topic};
+use crate::config::DomainSharingConsent;
 use crate::config::{
     validate_cctld_codes, validate_country_code, BlocklistBundlesConfig, CctldBlockConfig,
     ConfigError, GeoipConfig, LimitsConfig, PersonalZoneConfig, RatingFilterConfig, ResolverConfig,
@@ -73,7 +74,7 @@ use crate::watchdog::heartbeat_file::is_stale;
 use crate::watchdog::state::{
     read as read_watchdog_state, WatchdogState, STATE_FILE_NAME, WATCHDOG_STATE_STALE_AFTER,
 };
-use crate::wire::{decode_wire_message, encode_wire_message};
+use crate::wire::{build_servfail_response, decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use bytes::Bytes;
@@ -126,6 +127,7 @@ const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
 const ADMIN_RATING_FILTER_PATH: &str = "/admin/rating-filter";
 const ADMIN_BLOCKLIST_BUNDLES_PATH: &str = "/admin/blocklist-bundles";
 const ADMIN_CCTLD_BLOCK_PATH: &str = "/admin/cctld-block";
+const ADMIN_CONSENT_PATH: &str = "/admin/consent";
 const ADMIN_QUERY_LOG_POLICY_PATH: &str = "/admin/query-log-policy";
 const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
 const ADMIN_PROVIDERS_ADD_PATH: &str = "/admin/providers/add";
@@ -175,6 +177,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_RATING_FILTER_PATH, &[Method::POST]),
     (ADMIN_BLOCKLIST_BUNDLES_PATH, &[Method::POST]),
     (ADMIN_CCTLD_BLOCK_PATH, &[Method::POST]),
+    (ADMIN_CONSENT_PATH, &[Method::POST]),
     (ADMIN_QUERY_LOG_POLICY_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_PATH, &[Method::GET]),
     (ADMIN_PROVIDERS_ADD_PATH, &[Method::POST]),
@@ -325,6 +328,9 @@ pub struct RuntimeSettings {
     /// voter failed to respond (`false` = the timeout mode decides, only
     /// the log label changes).
     pub serve_baseline_when_filters_unreachable: bool,
+    /// T-286 — [`crate::ResolverConfig::domain_sharing_consent`]: `NotGiven`
+    /// answers every `DoH` query `SERVFAIL` before the pipeline runs.
+    pub domain_sharing_consent: DomainSharingConsent,
 }
 
 /// The admin-mutable resolver settings handed to [`AppState::new`] (T-72/T-73)
@@ -339,6 +345,8 @@ pub struct RuntimeInit {
     pub timeout: TimeoutConfig,
     /// T-155 — see [`RuntimeSettings::serve_baseline_when_filters_unreachable`].
     pub serve_baseline_when_filters_unreachable: bool,
+    /// T-286 — see [`RuntimeSettings::domain_sharing_consent`].
+    pub domain_sharing_consent: DomainSharingConsent,
     /// The configured voter list, in order.
     pub providers: Vec<ProviderEntry>,
 }
@@ -348,6 +356,7 @@ impl Default for RuntimeInit {
         Self {
             timeout: TimeoutConfig::default(),
             serve_baseline_when_filters_unreachable: false,
+            domain_sharing_consent: DomainSharingConsent::NotGiven,
             providers: ProviderEntry::default_active_set(),
         }
     }
@@ -599,6 +608,13 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // same "no `.await` under the lock" precedent `query_log.rs` already
     // established for its own `RwLock`).
     let settings = *state.runtime.read();
+    // T-286 — no consent, no third party: answered before any pipeline step,
+    // since even the allowlist and the non-A/AAAA proxy go to the baseline.
+    // Not logged — nothing was decided, and a domain looked up before consent
+    // is better not kept at all.
+    if !settings.domain_sharing_consent.is_given() {
+        return encode_wire_message(&build_servfail_response(&query));
+    }
     // Same snapshot discipline as `settings` above, but `OverridesState`
     // isn't `Copy` (Vec-backed) - `Arc::clone` bumps a refcount under the
     // lock instead of either holding the lock across the `.await` below or
@@ -1104,6 +1120,7 @@ impl<C: DohClient + Sync> AppState<C> {
                 timeout: runtime.timeout,
                 serve_baseline_when_filters_unreachable: runtime
                     .serve_baseline_when_filters_unreachable,
+                domain_sharing_consent: runtime.domain_sharing_consent,
             }),
             providers: RwLock::new(Arc::new(runtime.providers)),
             cache: RwLock::new(Arc::new(cache)),
@@ -1684,6 +1701,7 @@ impl<C: DohClient + Sync> AppState<C> {
             limits: self.persist.limits,
             serve_baseline_when_filters_unreachable: runtime
                 .serve_baseline_when_filters_unreachable,
+            domain_sharing_consent: runtime.domain_sharing_consent,
             persist_query_log: log_policy.persist,
             query_log_retention: log_policy.retention,
             persist_cache: self.persist.persist_cache,
@@ -1986,6 +2004,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
             watchdog,
+            settings.domain_sharing_consent.is_given(),
             network,
             paused,
             !active_providers.is_empty(),
@@ -1998,6 +2017,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
         network,
         paused,
+        domain_sharing_consent: settings.domain_sharing_consent,
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -2081,6 +2101,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         schema_version: ADMIN_DTO_SCHEMA_VERSION,
         hero_state: compute_hero_state(
             watchdog,
+            settings.domain_sharing_consent.is_given(),
             network,
             paused,
             !active_providers.is_empty(),
@@ -2093,6 +2114,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         serve_baseline_when_filters_unreachable: settings.serve_baseline_when_filters_unreachable,
         network,
         paused,
+        domain_sharing_consent: settings.domain_sharing_consent,
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -2382,6 +2404,7 @@ fn apply_admin_reset<C: DohClient + Sync>(
             duration: Duration::from_millis(config.timeout_ms.into()),
         },
         serve_baseline_when_filters_unreachable: config.serve_baseline_when_filters_unreachable,
+        domain_sharing_consent: config.domain_sharing_consent,
     };
     // T-72/T-73: reset reloads the `[[providers]]` list too — without this a
     // hand-edited provider list would only take effect at the next process
@@ -3095,6 +3118,57 @@ where
     match apply_cctld_block_change(state, &update) {
         Ok(response) => json_response(&response),
         Err(err) => bad_request(config_rejection_reason(&err)),
+    }
+}
+
+/// Applies a consent change (T-286) under `persist_lock`: live-apply, then
+/// persist the live config. A failed write still leaves the live change in
+/// effect and reads as `persisted: false` — for a withdrawal the client must
+/// say so loudly, since the next restart would read the old `true` back.
+fn apply_consent_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: ConsentUpdate,
+) -> AdminStatusResponse {
+    let persisted = {
+        let persist_guard = state.persist_lock.lock();
+        state.runtime.write().domain_sharing_consent =
+            DomainSharingConsent::from_granted(update.granted);
+        state.persist_live_config(&persist_guard, "a consent change")
+    };
+    admin_status(state, persisted)
+}
+
+/// `POST /admin/consent` (T-286) — method allowlisting happens centrally in
+/// [`serve`]'s `ROUTES` check; same CSRF gate and body-size cap as every
+/// other write route.
+async fn serve_admin_consent<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return bad_request(AdminErrorReason::MalformedBody);
+    };
+    let Ok(update) = serde_json::from_slice::<ConsentUpdate>(&collected.to_bytes()) else {
+        return bad_request(AdminErrorReason::MalformedBody);
+    };
+    json_response(&apply_consent_change(state, update))
+}
+
+impl<C: DohClient + Sync> AppState<C> {
+    /// Whether the user agreed to send domains to the providers (T-286) —
+    /// read by the reachability prober before its baseline heartbeat.
+    pub(crate) fn domain_sharing_consent_snapshot(&self) -> bool {
+        self.runtime.read().domain_sharing_consent.is_given()
     }
 }
 
@@ -4246,6 +4320,7 @@ where
         ADMIN_RATING_FILTER_PATH => serve_admin_rating_filter(req, &state).await,
         ADMIN_BLOCKLIST_BUNDLES_PATH => serve_admin_blocklist_bundles(req, &state).await,
         ADMIN_CCTLD_BLOCK_PATH => serve_admin_cctld_block(req, &state).await,
+        ADMIN_CONSENT_PATH => serve_admin_consent(req, &state).await,
         ADMIN_QUERY_LOG_POLICY_PATH => serve_admin_query_log_policy(req, &state).await,
         ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
         ADMIN_PROVIDERS_ADD_PATH => serve_admin_providers_add(req, &state).await,
@@ -4328,7 +4403,7 @@ where
 /// fails a new `POST` route until it is listed here or deliberately exempted.
 fn route_topics(path: &str) -> Option<&'static [Topic]> {
     match path {
-        ADMIN_CONFIG_PATH | ADMIN_INSTALL_CERT_PATH => Some(&[Topic::Status]),
+        ADMIN_CONFIG_PATH | ADMIN_INSTALL_CERT_PATH | ADMIN_CONSENT_PATH => Some(&[Topic::Status]),
         ADMIN_RESET_PATH => Some(&Topic::ALL),
         ADMIN_OVERRIDES_ADD_PATH | ADMIN_OVERRIDES_REMOVE_PATH => Some(&[Topic::Overrides]),
         ADMIN_CACHE_CONFIG_APPLY_PATH => Some(&[Topic::CacheConfig]),
@@ -4461,6 +4536,15 @@ pub(crate) mod tests {
         req
     }
 
+    /// [`RuntimeInit::default`] with consent given (T-286) — the shape every
+    /// pre-T-286 test assumed; a test about the consent gate itself builds
+    /// its own.
+    fn consented_runtime() -> RuntimeInit {
+        RuntimeInit {
+            domain_sharing_consent: crate::config::DomainSharingConsent::Given,
+            ..RuntimeInit::default()
+        }
+    }
     #[test]
     fn wire_bytes_from_get_round_trips_doh_get_urls_own_encoder() {
         let message_bytes = query_bytes("example.com.", RecordType::A);
@@ -5013,7 +5097,7 @@ pub(crate) mod tests {
                 lists: overrides,
                 invalid: Vec::new(),
             },
-            RuntimeInit::default(),
+            consented_runtime(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -5045,7 +5129,7 @@ pub(crate) mod tests {
                 lists: OverrideLists::empty(),
                 invalid: Vec::new(),
             },
-            RuntimeInit::default(),
+            consented_runtime(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -5084,7 +5168,7 @@ pub(crate) mod tests {
                 lists: OverrideLists::empty(),
                 invalid: Vec::new(),
             },
-            RuntimeInit::default(),
+            consented_runtime(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -6326,6 +6410,7 @@ pub(crate) mod tests {
             },
             limits,
             serve_baseline_when_filters_unreachable: true,
+            domain_sharing_consent: crate::config::DomainSharingConsent::Given,
             persist_query_log: true,
             query_log_retention: LogRetention::Day,
             persist_cache: true,
@@ -6713,7 +6798,8 @@ pub(crate) mod tests {
         if let Err(err) = std::fs::write(
             &config_path,
             concat!(
-                "port = 8443\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 3000\n\n",
+                "port = 8443\ntimeout_mode = \"fail_closed\"\ntimeout_ms = 3000\n",
+                "domain_sharing_consent = \"given\"\n\n",
                 "[[providers]]\nid = \"quad9\"\nenabled = false\n\n",
                 "[[providers]]\nid = \"adguard\"\nenabled = true\n"
             ),
@@ -6923,7 +7009,7 @@ pub(crate) mod tests {
                 lists: OverrideLists::empty(),
                 invalid: Vec::new(),
             },
-            RuntimeInit::default(),
+            consented_runtime(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -7212,7 +7298,7 @@ pub(crate) mod tests {
                 lists: overrides,
                 invalid,
             },
-            RuntimeInit::default(),
+            consented_runtime(),
             CacheState {
                 cache: Cache::new(&CacheConfig::default()),
                 config: CacheConfig::default(),
@@ -9117,6 +9203,223 @@ pub(crate) mod tests {
         );
     }
 
+    // ---- T-286: domain-sharing consent ----
+
+    fn persist_at(path: std::path::PathBuf, overrides: std::path::PathBuf) -> PersistTarget {
+        PersistTarget {
+            port: 8443,
+            persist_query_log: false,
+            query_log_retention: LogRetention::Day,
+            persist_cache: false,
+            rating_filter: RatingFilterConfig::default(),
+            limits: LimitsConfig::default(),
+            paths: Some(PersistPaths {
+                config: path,
+                overrides,
+            }),
+        }
+    }
+
+    async fn consent_post(
+        state: Arc<AppState<MockClient>>,
+        body: &serde_json::Value,
+    ) -> Response<Full<Bytes>> {
+        match serve(admin_post_json("/admin/consent", body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        }
+    }
+
+    async fn decode_status(response: Response<Full<Bytes>>) -> AdminStatusResponse {
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+            Ok(status) => status,
+            Err(err) => panic!("response body must decode as AdminStatusResponse: {err}"),
+        }
+    }
+
+    async fn response_code_of(state: &AppState<MockClient>, qtype: RecordType) -> ResponseCode {
+        let wire_bytes = query_bytes("example.com.", qtype);
+        let bytes = match resolve_doh_request(&wire_bytes, state).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("must answer: {err}"),
+        };
+        match crate::wire::decode_wire_message(&bytes) {
+            Ok(message) => message.metadata.response_code,
+            Err(err) => panic!("response must decode: {err}"),
+        }
+    }
+
+    fn answering_client() -> MockClient {
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        }
+    }
+
+    // Security/boundary: without consent no query reaches any upstream — the
+    // panicking mock proves it for the quorum path (A, AAAA) and the
+    // single-upstream proxy (HTTPS, MX), and nothing is logged.
+    #[tokio::test]
+    async fn without_consent_every_query_is_servfail_and_no_upstream_is_called() {
+        let state = state_with(no_op_client());
+        state.runtime.write().domain_sharing_consent =
+            crate::config::DomainSharingConsent::NotGiven;
+        for qtype in [
+            RecordType::A,
+            RecordType::AAAA,
+            RecordType::HTTPS,
+            RecordType::MX,
+        ] {
+            assert_eq!(
+                response_code_of(&state, qtype).await,
+                ResponseCode::ServFail
+            );
+        }
+        assert_eq!(state.client.calls.load(Ordering::SeqCst), 0);
+        assert!(state
+            .query_log
+            .snapshot(std::time::SystemTime::now())
+            .is_empty());
+    }
+
+    // Happy path: granting consent lets the next query through, and the
+    // status and hero say so.
+    #[tokio::test]
+    async fn granting_consent_lets_queries_reach_the_pipeline() {
+        let state = state_with(answering_client());
+        state.runtime.write().domain_sharing_consent =
+            crate::config::DomainSharingConsent::NotGiven;
+        let before = admin_status(&state, true);
+        assert!(!before.domain_sharing_consent.is_given());
+        assert_eq!(before.hero_state, HeroStateView::ConsentRequired);
+
+        let status = decode_status(
+            consent_post(Arc::clone(&state), &serde_json::json!({ "granted": true })).await,
+        )
+        .await;
+        assert!(status.domain_sharing_consent.is_given());
+        assert_ne!(status.hero_state, HeroStateView::ConsentRequired);
+        assert_eq!(
+            response_code_of(&state, RecordType::A).await,
+            ResponseCode::NoError
+        );
+        assert!(state.client.calls.load(Ordering::SeqCst) > 0);
+    }
+
+    // Interaction: withdrawing after a working session stops the very next
+    // query from leaving the machine.
+    #[tokio::test]
+    async fn withdrawing_consent_stops_the_next_query_from_reaching_an_upstream() {
+        let state = state_with(answering_client());
+        assert_eq!(
+            response_code_of(&state, RecordType::A).await,
+            ResponseCode::NoError
+        );
+        let calls = state.client.calls.load(Ordering::SeqCst);
+
+        let status = decode_status(
+            consent_post(Arc::clone(&state), &serde_json::json!({ "granted": false })).await,
+        )
+        .await;
+        assert!(!status.domain_sharing_consent.is_given());
+        assert_eq!(
+            response_code_of(&state, RecordType::A).await,
+            ResponseCode::ServFail
+        );
+        assert_eq!(state.client.calls.load(Ordering::SeqCst), calls);
+    }
+
+    // Happy path + read side: the change lands on disk, and a file written
+    // without the key (every pre-T-286 install) reads as no consent.
+    #[tokio::test]
+    async fn consent_persists_and_a_file_without_the_key_reads_as_not_granted() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            persist_at(path.clone(), dir.path().join("overrides.toml")),
+        );
+        let status = decode_status(
+            consent_post(Arc::clone(&state), &serde_json::json!({ "granted": true })).await,
+        )
+        .await;
+        assert!(status.persisted);
+        match ResolverConfig::load(&path) {
+            Ok(loaded) => assert!(loaded.domain_sharing_consent.is_given()),
+            Err(err) => panic!("the saved file must load back: {err}"),
+        }
+
+        let legacy = dir.path().join("legacy.toml");
+        if let Err(err) = std::fs::write(&legacy, "port = 8443\n") {
+            panic!("must write the legacy fixture: {err}");
+        }
+        match ResolverConfig::load(&legacy) {
+            Ok(loaded) => assert!(!loaded.domain_sharing_consent.is_given()),
+            Err(err) => panic!("a pre-T-286 file must still load: {err}"),
+        }
+    }
+
+    // Error path: a failed write keeps the live withdrawal but says
+    // `persisted: false`, so the UI can warn that a restart would undo it.
+    #[tokio::test]
+    async fn a_withdrawal_that_cannot_be_saved_still_applies_and_reports_not_persisted() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let unwritable = dir.path().join("missing-dir").join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            persist_at(unwritable, dir.path().join("overrides.toml")),
+        );
+        let status = decode_status(
+            consent_post(Arc::clone(&state), &serde_json::json!({ "granted": false })).await,
+        )
+        .await;
+        assert!(!status.persisted);
+        assert!(!status.domain_sharing_consent.is_given());
+        assert_eq!(
+            response_code_of(&state, RecordType::A).await,
+            ResponseCode::ServFail
+        );
+    }
+
+    // Misuse: a malformed or extended body is a 400 and changes nothing; a
+    // non-JSON content type is refused before the body is read.
+    #[tokio::test]
+    async fn consent_route_rejects_malformed_bodies_and_non_json_requests() {
+        let state = state_with(no_op_client());
+        for body in [
+            serde_json::json!({}),
+            serde_json::json!({ "granted": "yes" }),
+            serde_json::json!({ "granted": false, "extra": 1 }),
+        ] {
+            let response = consent_post(Arc::clone(&state), &body).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        }
+        assert!(state.domain_sharing_consent_snapshot());
+
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/consent")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Full::new(Bytes::from_static(b"{\"granted\":false}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert!(state.domain_sharing_consent_snapshot());
+    }
+
     // ---- T-291: POST /admin/query-log-policy ----
 
     fn query_log_state(app_data: Option<&std::path::Path>) -> Arc<AppState<MockClient>> {
@@ -10454,6 +10757,7 @@ pub(crate) mod tests {
         ("/admin/rating-filter", &[Method::POST]),
         ("/admin/blocklist-bundles", &[Method::POST]),
         ("/admin/cctld-block", &[Method::POST]),
+        ("/admin/consent", &[Method::POST]),
         ("/admin/query-log-policy", &[Method::POST]),
         ("/admin/providers", &[Method::GET]),
         ("/admin/providers/add", &[Method::POST]),

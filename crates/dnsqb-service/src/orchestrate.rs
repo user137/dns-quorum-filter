@@ -181,6 +181,7 @@ pub async fn run() {
         },
         serve_baseline_when_filters_unreachable: resolver_config
             .serve_baseline_when_filters_unreachable,
+        domain_sharing_consent: resolver_config.domain_sharing_consent,
     };
     // T-52/T-149: the admin channel persists a config change back to
     // whichever path it was loaded from - see `build_persist_target`'s own

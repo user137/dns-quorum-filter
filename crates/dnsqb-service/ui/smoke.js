@@ -166,6 +166,8 @@ const bigLogData = { entries: Array.from({ length: 50 }, (_, i) => Object.assign
 const calls = [
   ["renderProtectionHero", `renderProtectionHero(heroPresentation("PROTECTED", {blocked: 3}))`],
   ["renderProtectionHeroCert", `renderProtectionHero(heroPresentation("CERT_NOT_TRUSTED", {blocked: 0}))`],
+  ["renderProtectionHeroConsent", `renderProtectionHero(heroPresentation("CONSENT_REQUIRED", {blocked: 0}))`],
+  ["renderConsentControl", `consentControl.dataset.rendered = ""; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "given" }))}); consentNotSaved = "consent.withdrawNotSaved"; consentError = "x"; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))}); consentNotSaved = "consent.grantNotSaved"; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))}); consentNotSaved = null; consentError = null`],
   ["renderProtectionHeroDegraded", `renderProtectionHero(heroPresentation("FILTERS_DEGRADED", {blocked: 0}))`],
   ["renderLastQuery", `renderLastQuery(null); renderLastQuery(Date.now() - 20e3); renderLastQuery(Date.now() - 7 * 60e3); renderLastQuery(Date.now() - 5 * 3600e3); renderLastQuery(Date.now() - 3 * 86400e3)`],
   ["renderStartupTask", `renderStartupTask("DISABLED"); renderStartupTask("DISABLED_BY_POLICY"); renderStartupTask("ENABLED")`],
@@ -196,7 +198,7 @@ const calls = [
   ["cctldSu", `cctldLabel("su"); cctldLabel("ru")`],
 ];
 
-const RAW_KEY = /^(hero|startupTask|error|app|warning|common|timeoutConfig|overrides|cacheConfig|cctldBlock|geoip|maxmind|log|providers|filterControls|browserSetup|advanced|danger|rating|blocklist|footer|fieldHelp|localeSwitcher)\.[A-Za-z0-9.]+$/;
+const RAW_KEY = /^(hero|consent|startupTask|error|app|warning|common|timeoutConfig|overrides|cacheConfig|cctldBlock|geoip|maxmind|log|providers|filterControls|browserSetup|advanced|danger|rating|blocklist|footer|fieldHelp|localeSwitcher)\.[A-Za-z0-9.]+$/;
 const TOKEN = /\{[A-Za-z_][A-Za-z0-9_]*\}/;
 let failures = 0;
 // Wave 25 (T-285): the project-site link in the footer opens a new tab, so it must carry noopener.
@@ -331,6 +333,19 @@ for (const [fn, data] of xssCalls) {
   release(true);
   await pending;
   check("vivaldi", "manual pick vs late isBrave");
+
+  // T-286: the no-consent hero carries the grant button, and the consent row
+  // offers withdrawal only while consent is given.
+  {
+    const consentHero = vm.runInContext(`heroPresentation("CONSENT_REQUIRED", {blocked: 0})`, ctx);
+    if (consentHero.action !== "grant-consent" || consentHero.cls !== "is-warn") { failures++; console.log(`[consent] hero: ${JSON.stringify(consentHero)}`); }
+    const withdraws = () => created.filter((r) => r.props.id === "consent-withdraw").length;
+    const before = withdraws();
+    vm.runInContext(`consentControl.dataset.rendered = ""; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "given" }))})`, ctx);
+    if (withdraws() !== before + 1) { failures++; console.log("[consent] no withdraw button while consent is given"); }
+    vm.runInContext(`renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))})`, ctx);
+    if (withdraws() !== before + 1) { failures++; console.log("[consent] withdraw button shown without consent"); }
+  }
 
   // UX-3: the setup card folds once a browser has queried, stays folded when
   // the log empties, and the user's own unfold wins.

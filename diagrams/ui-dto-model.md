@@ -198,6 +198,7 @@ classDiagram
         +bool serve_baseline_when_filters_unreachable
         +NetworkStatusView network
         +bool paused
+        +DomainSharingConsent domain_sharing_consent
         +BaselineEndpointView baseline_endpoint
         +u16 port
         +AdminStats stats
@@ -224,8 +225,15 @@ classDiagram
         +LogRetention retention
         +bool persist
     }
+    class DomainSharingConsent {
+        <<T-286 — enum given | not_given; відсутнє поле → given (стара служба без бар'єра)>>
+    }
+    class ConsentUpdate {
+        <<T-286 — тіло POST /admin/consent>>
+        +bool granted
+    }
     class HeroStateView {
-        <<T-204; FILTERS_DEGRADED — T-254. enum WATCHDOG_GAVE_UP | WATCHDOG_RESTARTING | OFFLINE | PAUSED | NO_PROVIDERS | CERT_NOT_TRUSTED | FILTERS_DEGRADED | CERT_UNKNOWN | PROTECTED>>
+        <<T-204; FILTERS_DEGRADED — T-254; CONSENT_REQUIRED — T-286. enum WATCHDOG_GAVE_UP | WATCHDOG_RESTARTING | CONSENT_REQUIRED | OFFLINE | PAUSED | NO_PROVIDERS | CERT_NOT_TRUSTED | FILTERS_DEGRADED | CERT_UNKNOWN | PROTECTED>>
     }
     class StartupTaskView {
         <<T-243, хвиля 3 — enum ENABLED | DISABLED | DISABLED_BY_POLICY | UNKNOWN>>
@@ -418,6 +426,7 @@ classDiagram
     BlocklistBundlesStatusView --> BlocklistSourceStatusView : loaded
     AdminStatusResponse --> CctldBlockStatusView
     AdminStatusResponse --> HeroStateView
+    AdminStatusResponse --> DomainSharingConsent
     AdminStatusResponse --> StartupTaskView
     AdminStatusResponse --> LogRetention
     AdminStatusResponse --> QueryLogDiskView

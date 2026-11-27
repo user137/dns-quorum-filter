@@ -63,7 +63,11 @@ fn test_state() -> Arc<AppState<UnusedClient>> {
             lists: OverrideLists::empty(),
             invalid: Vec::new(),
         },
-        RuntimeInit::default(),
+        // T-286: consent given — these tests exercise a working service.
+        RuntimeInit {
+            domain_sharing_consent: dnsqb_service::DomainSharingConsent::Given,
+            ..RuntimeInit::default()
+        },
         CacheState {
             cache: Cache::new(&CacheConfig::default()),
             config: CacheConfig::default(),

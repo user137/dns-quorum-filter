@@ -88,6 +88,15 @@ was wrong in places and every machine-translated locale inherited it; these are 
 - **uk terminology**: «журнал» (never «лог»), «облікові дані» (not «креденшели»), «типово» (not
   «дефолт»), «вміст» (not «контент»), «публічні списки блокування», no «резолвінг»/«апстрім».
 
+## T-286 consent strings (2026-11-27)
+
+- **"consent" is the legal-register word of each locale** (uk «згода», de «Einwilligung», fr
+  «consentement») — the Store-policy opt-in, not a casual "OK". "Withdraw consent" uses that
+  locale's usual GDPR verb (uk «відкликати»), never "cancel" or "turn off".
+- **The reference DNS keeps the UX-4 term** ("reference DNS", uk «довідковий DNS») in both the
+  `/admin/ui` hero and the tray wizard (`onboarding.consentDescriptionTemplate`).
+- The hero state says what the user sees — "Filtering is not on" — not "consent required".
+
 ## Terms that stay untranslated
 
 Config-mode identifiers are code literals quoted inside the sentence, not prose — translate the

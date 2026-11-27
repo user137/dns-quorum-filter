@@ -5,11 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project state
 
 **Current phase:** Фаза 5 (ccTLD block §5.2 + i18n T-151 + CLI `--help` T-235) **closed 2026-11-14** (Батч 5.7 last, not yet tagged) —
-Батч 5.1 (ccTLD-block backend: pure core, `[cctld_block]` config, `POST /admin/cctld-block`,
-pipeline step 3, `DecisionSource::CctldBlock`) shipped 2026-09-19. Батч 5.2 (i18n infra: flat
-per-locale JSON dictionaries, `t()`/`tPlural()`, `/admin/ui/i18n/{uk,en}.json`, pilot-migrated
-FIELD_HELP + HERO_PRESENTATION + one plural key) shipped 2026-09-19. T-236 (same day, user request — full 37-locale switcher, see `ui/i18n/GLOSSARY.md` and
-DECISIONS.md) shipped 2026-09-19; Батч 5.3 (ccTLD UI, T-118) shipped 2026-09-19; Батч 5.4 (the rest
+Батчі 5.1 (ccTLD backend), 5.2 (i18n infra) and T-236 (37 locales) shipped 2026-09-19; Батч 5.3 (ccTLD UI, T-118) shipped 2026-09-19; Батч 5.4 (the rest
 of `/admin/ui` i18n, T-151 — ~330 keys × 37 locales) shipped 2026-09-22, **not yet verified in a real
 browser** (`KNOWN-LIMITATIONS.md`); Батч 5.5 (`dnsqb-tray` i18n, T-151, 37 locales, own
 `crates/dnsqb-tray/i18n/*.json` file tree — see TASKS.md for why not shared with `ui/i18n/`)
@@ -132,6 +128,8 @@ branch — see the `dispatch` row for why; **not** in `FUZZ_EXCLUDED_ROUTES`);
 `POST /admin/cctld-block` (Фаза 5, Батч 5.1, `CctldBlockConfigUpdate { blocked_codes:
 Vec<String> }`, full replace; shares `persist_lock`; validates codes via `validate_cctld_codes` →
 `400`; no wake call — this list has no background updater; **not** in `FUZZ_EXCLUDED_ROUTES`);
+`POST /admin/consent` (T-286, `ConsentUpdate { granted }`, `persist_lock` + `persist_live_config`;
+no consent = hero `CONSENT_REQUIRED`, tray `ConsentRequired` above `Paused`);
 `POST /admin/request-remove-all` (хвиля 14, removes nothing: writes `remove-all.flag` for a live
 tray → `REQUESTED`, else `TRAY_NOT_RUNNING`); `GET /admin/cert-status` (`CertStatusResponse { trusted: CertTrustView }`,
 three-state `TRUSTED`/`NOT_TRUSTED`/`UNKNOWN`; read-only, no CSRF gate — a pure read of
@@ -600,6 +598,7 @@ Two long-running processes:
 ### Request pipeline (fixed order — see SPEC.md §5.3 for the authoritative, most-recently-corrected version)
 
 ```
+0. Consent (T-286)  → no `domain_sharing_consent` → SERVFAIL for every query, no upstream, no log
 1. Allowlist        → ALLOW, nothing below is consulted
 2. Blocklist        → BLOCK
 3. ccTLD block (5.2)→ BLOCK on domain-suffix match, no network call
