@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "nebolo nainštalované",
   "uninstall.outcome.failed": "odstránenie ZLYHALO",
   "uninstall.reportDialogTemplate": "{report}\n\nPriečinok s údajmi aplikácie bude úplne odstránený a samotná aplikácia sa zatvorí. Otvoria sa Nastavenia systému Windows — kliknutím na „Odinštalovať“ pri „DNS Quorum Filter“ dokončite akciu.",
+  "uninstall.wipeFailed": "Priečinok s údajmi DNS Quorum Filter sa nepodarilo úplne odstrániť. Ak aplikácia ešte beží, zatvorte ju a priečinok odstráňte ručne: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicencia: Apache-2.0\nLokálny DoH kvórum filter — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: služba je nedostupná",
   "tooltip.restarting": "DNS Quorum Filter: služba sa reštartuje…",

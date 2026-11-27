@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "此前未安装",
   "uninstall.outcome.failed": "移除失败",
   "uninstall.reportDialogTemplate": "{report}\n\n应用的数据文件夹将被完全移除，应用本身也会关闭。Windows 设置将会打开——请点击「DNS Quorum Filter」的「卸载」以完成操作。",
+  "uninstall.wipeFailed": "无法完全删除 DNS Quorum Filter 的数据文件夹。如果应用仍在运行，请将其关闭，然后手动删除该文件夹：{path}",
   "about.bodyTemplate": "dnsqb-tray {version}\n许可证：Apache-2.0\n本地 DoH 法定人数过滤器 — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter：服务不可达",
   "tooltip.restarting": "DNS Quorum Filter：服务正在重启…",

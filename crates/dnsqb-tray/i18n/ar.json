@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "لم يكن مثبتًا",
   "uninstall.outcome.failed": "فشلت الإزالة",
   "uninstall.reportDialogTemplate": "{report}\n\nستتم إزالة مجلد بيانات التطبيق بالكامل، وسيُغلق التطبيق نفسه. ستُفتح إعدادات Windows — انقر على «إلغاء التثبيت» الخاص بـ «DNS Quorum Filter» للإنهاء.",
+  "uninstall.wipeFailed": "تعذّر حذف مجلد بيانات DNS Quorum Filter بالكامل. أغلق التطبيق إن كان لا يزال يعمل واحذف المجلد بنفسك: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nالترخيص: Apache-2.0\nمرشح كوروم DNS محلي — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: الخدمة غير متاحة",
   "tooltip.restarting": "DNS Quorum Filter: تتم إعادة تشغيل الخدمة…",

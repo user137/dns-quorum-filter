@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "não estava instalado",
   "uninstall.outcome.failed": "FALHA ao remover",
   "uninstall.reportDialogTemplate": "{report}\n\nA pasta de dados do aplicativo será completamente removida, e o próprio aplicativo será fechado. As Configurações do Windows abrirão — clique em „Desinstalar“ em „DNS Quorum Filter“ para concluir.",
+  "uninstall.wipeFailed": "Não foi possível remover completamente a pasta de dados do DNS Quorum Filter. Feche a aplicação se ainda estiver em execução e elimine a pasta manualmente: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicença: Apache-2.0\nFiltro de quórum DoH local — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: serviço inacessível",
   "tooltip.restarting": "DNS Quorum Filter: reiniciando o serviço…",

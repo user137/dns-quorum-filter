@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "설치되어 있지 않았습니다",
   "uninstall.outcome.failed": "제거 실패",
   "uninstall.reportDialogTemplate": "{report}\n\n앱 데이터 폴더가 완전히 제거되고 앱 자체도 종료됩니다. Windows 설정이 열립니다 — 완료하려면 「DNS Quorum Filter」의 「제거」를 클릭하세요.",
+  "uninstall.wipeFailed": "DNS Quorum Filter 데이터 폴더를 완전히 제거하지 못했습니다. 앱이 아직 실행 중이면 닫은 다음 폴더를 직접 삭제하세요: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\n라이선스: Apache-2.0\n로컬 DoH 쿼럼 필터 — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: 서비스에 연결할 수 없습니다",
   "tooltip.restarting": "DNS Quorum Filter: 서비스를 다시 시작하는 중…",

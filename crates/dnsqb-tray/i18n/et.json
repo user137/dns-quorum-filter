@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "polnud installitud",
   "uninstall.outcome.failed": "eemaldamine EBAÕNNESTUS",
   "uninstall.reportDialogTemplate": "{report}\n\nRakenduse andmekaust eemaldatakse täielikult ja rakendus ise sulgub. Avaneb Windowsi seaded — lõpetamiseks klõpsake „DNS Quorum Filter“ juures „Desinstalli“.",
+  "uninstall.wipeFailed": "DNS Quorum Filteri andmekausta ei õnnestunud täielikult eemaldada. Sulgege rakendus, kui see veel töötab, ja kustutage kaust ise: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLitsents: Apache-2.0\nKohalik DoH kvoorumifilter — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: teenus pole saadaval",
   "tooltip.restarting": "DNS Quorum Filter: teenus taaskäivitub…",

@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "nebija instalēts",
   "uninstall.outcome.failed": "noņemšana NEIZDEVĀS",
   "uninstall.reportDialogTemplate": "{report}\n\nLietotnes datu mape tiks pilnībā noņemta, un pati lietotne aizvērsies. Atvērsies Windows iestatījumi — lai pabeigtu, noklikšķiniet „Atinstalēt“ pie „DNS Quorum Filter“.",
+  "uninstall.wipeFailed": "DNS Quorum Filter datu mapi neizdevās pilnībā noņemt. Ja lietotne joprojām darbojas, aizveriet to un izdzēsiet mapi pats: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicence: Apache-2.0\nLokāls DoH kvoruma filtrs — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: pakalpojums nav sasniedzams",
   "tooltip.restarting": "DNS Quorum Filter: pakalpojums tiek restartēts…",

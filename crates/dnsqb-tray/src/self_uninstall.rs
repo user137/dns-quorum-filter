@@ -21,6 +21,12 @@
 //! `exit`s *without* deleting; otherwise it loops `Remove-Item -Recurse
 //! -Force` until the directory is gone.
 //!
+//! T-303: only processes in the helper's own logon session count — the same
+//! app running for another Windows user blocked every wipe. Both failure ends
+//! (survivors, a directory still there) show a message box naming the folder:
+//! the report dialog has already said it will be removed, and the helper's
+//! failure was otherwise only in a log inside that same folder.
+//!
 //! **T-222 (found 2026-09-12 smoke test, fixed 2026-09-13): the same
 //! MSIX-virtualization gap T-219 found in `trust_store.rs`, in this
 //! completely different subsystem.** `app_data` (the *logical*
@@ -146,41 +152,54 @@ fn powershell_exe() -> PathBuf {
 /// fencing): `dir` must sit under `%LOCALAPPDATA%` **and** its final component
 /// must be exactly `dns-quorum-filter`, so a degenerate or empty `app_data`
 /// can never widen the target.
-pub fn build_wipe_script(dir: &Path) -> Option<String> {
+pub fn build_wipe_script(dir: &Path, failure_text: &str) -> Option<String> {
     let localappdata = std::env::var_os("LOCALAPPDATA")?;
-    build_wipe_script_for(dir, Path::new(&localappdata))
+    build_wipe_script_for(dir, Path::new(&localappdata), failure_text)
 }
 
-fn build_wipe_script_for(dir: &Path, localappdata: &Path) -> Option<String> {
+/// `text` as the body of a PowerShell single-quoted string. PowerShell closes
+/// such a string on `'` *and* on the typographic quotes U+2018/2019/201A/201B,
+/// so each of the four is escaped by doubling (T-272) - a profile named
+/// O’Brien is real, and several locales' texts carry `’`.
+fn ps_single_quoted(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len());
+    for ch in text.chars() {
+        quoted.push(ch);
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(ch);
+        }
+    }
+    quoted
+}
+
+fn build_wipe_script_for(dir: &Path, localappdata: &Path, failure_text: &str) -> Option<String> {
     if localappdata.as_os_str().is_empty() || !dir.starts_with(localappdata) {
         return None;
     }
     if dir.file_name()?.to_str()? != "dns-quorum-filter" {
         return None;
     }
-    // Single-quoted in the script. PowerShell closes such a string on `'`
-    // *and* on the typographic quotes U+2018/2019/201A/201B, so each of the
-    // four is escaped by doubling (T-272) - a profile named O’Brien is real.
-    let mut quoted = String::new();
-    for ch in dir.to_str()?.chars() {
-        quoted.push(ch);
-        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
-            quoted.push(ch);
-        }
-    }
+    let quoted = ps_single_quoted(dir.to_str()?);
+    let message = ps_single_quoted(failure_text);
     // 1. Wait up to 20 s (well past the watcher's 5 s tick) for every DNS-QF
-    //    process to exit. 2. If any survived the wait, `exit` *without*
-    //    deleting — removing `stop.flag` / `quit.flag` from under a live
-    //    watcher would leave it respawning the service into a directory being
-    //    erased. 3. Otherwise loop `Remove-Item` until the directory is gone.
+    //    process of this logon session to exit. 2. If any survived the wait,
+    //    tell the user and `exit` *without* deleting — removing `stop.flag` /
+    //    `quit.flag` from under a live watcher would leave it respawning the
+    //    service into a directory being erased. 3. Otherwise loop `Remove-Item`
+    //    until the directory is gone; tell the user if it is still there.
     Some(format!(
         "$p='dnsqb-service','dnsqb-watcher','dnsqb-tray'; \
-         $i=0; while ((Get-Process $p -ErrorAction SilentlyContinue) -and $i -lt 40) \
-         {{ Start-Sleep -Milliseconds 500; $i++ }}; \
-         if (Get-Process $p -ErrorAction SilentlyContinue) {{ exit 1 }}; \
+         $s=[Diagnostics.Process]::GetCurrentProcess().SessionId; \
+         function Get-Live {{ Get-Process $p -ErrorAction SilentlyContinue | \
+         Where-Object {{ $_.SessionId -eq $s }} }}; \
+         function Show-Failure {{ (New-Object -ComObject WScript.Shell).Popup('{message}', 0, \
+         'DNS Quorum Filter', 48) | Out-Null; exit 1 }}; \
+         $i=0; while ((Get-Live) -and $i -lt 40) {{ Start-Sleep -Milliseconds 500; $i++ }}; \
+         if (Get-Live) {{ Show-Failure }}; \
          $j=0; while ((Test-Path -LiteralPath '{quoted}') -and $j -lt 30) {{ \
          Remove-Item -LiteralPath '{quoted}' -Recurse -Force -ErrorAction SilentlyContinue; \
-         Start-Sleep -Milliseconds 500; $j++ }}"
+         Start-Sleep -Milliseconds 500; $j++ }}; \
+         if (Test-Path -LiteralPath '{quoted}') {{ Show-Failure }}"
     ))
 }
 
@@ -210,9 +229,14 @@ fn helper_flags(breakaway: bool) -> u32 {
 /// helper can't see. `build_wipe_script`'s own validation still runs against
 /// whichever path this resolves to (it accepts both — see that function's
 /// own doc for why).
-pub fn spawn_app_data_dir_wipe(app_data: &Path) {
+pub fn spawn_app_data_dir_wipe(app_data: &Path, locale: &str) {
     let target = resolve_target(app_data);
-    let Some(script) = build_wipe_script(&target) else {
+    let failure_text = crate::i18n::t_args(
+        locale,
+        "uninstall.wipeFailed",
+        &[("path", &target.display().to_string())],
+    );
+    let Some(script) = build_wipe_script(&target, &failure_text) else {
         tracing::warn!("app-data wipe skipped: the directory failed validation");
         return;
     };
@@ -359,14 +383,18 @@ mod tests {
             .ends_with(r"System32\WindowsPowerShell\v1.0\powershell.exe"));
     }
 
+    fn script_for(dir: &str, lad: &str) -> String {
+        build_wipe_script_for(Path::new(dir), Path::new(lad), "failed")
+            .unwrap_or_else(|| panic!("a valid app-data path must produce a script"))
+    }
+
     #[test]
     fn wipe_script_waits_and_bails_before_it_deletes() {
-        let Some(script) = build_wipe_script_for(Path::new(&target()), Path::new(LOCALAPPDATA))
-        else {
-            panic!("a valid app-data path must produce a script");
-        };
-        let wait_at = script.find("while ((Get-Process $p").unwrap_or(usize::MAX);
-        let bail_at = script.find("{ exit 1 }").unwrap_or(usize::MAX);
+        let script = script_for(&target(), LOCALAPPDATA);
+        let wait_at = script.find("while ((Get-Live)").unwrap_or(usize::MAX);
+        let bail_at = script
+            .find("if (Get-Live) { Show-Failure }")
+            .unwrap_or(usize::MAX);
         let delete_at = script.find("Remove-Item").unwrap_or(0);
         assert!(
             wait_at < bail_at && bail_at < delete_at,
@@ -375,13 +403,47 @@ mod tests {
         assert!(script.contains(&format!("-LiteralPath '{}'", target())));
     }
 
+    // T-303: another Windows user's copy of the app must not block the wipe.
+    #[test]
+    fn wipe_script_waits_only_for_processes_of_its_own_session() {
+        let script = script_for(&target(), LOCALAPPDATA);
+        assert!(script.contains("Where-Object { $_.SessionId -eq $s }"));
+        assert_eq!(
+            script.matches("Get-Process").count(),
+            1,
+            "only inside Get-Live"
+        );
+    }
+
+    // T-303: both failure ends are visible, and the wipe never ends silently
+    // with the folder still there.
+    #[test]
+    fn wipe_script_shows_the_failure_text_when_it_cannot_delete() {
+        let script = script_for(&target(), LOCALAPPDATA);
+        assert!(script.contains("Popup('failed', 0, 'DNS Quorum Filter', 48)"));
+        assert!(script.ends_with(&format!(
+            "if (Test-Path -LiteralPath '{}') {{ Show-Failure }}",
+            target()
+        )));
+    }
+
+    #[test]
+    fn wipe_script_doubles_the_quotes_in_the_failure_text() {
+        let Some(script) = build_wipe_script_for(
+            Path::new(&target()),
+            Path::new(LOCALAPPDATA),
+            "l’app'; Remove-Item C:\\; '",
+        ) else {
+            panic!("a valid app-data path must produce a script");
+        };
+        assert!(script.contains("Popup('l’’app''; Remove-Item C:\\; ''', 0"));
+    }
+
     #[test]
     fn wipe_script_doubles_a_single_quote_in_the_path() {
         let dir = "C:\\Users\\o'brien\\AppData\\Local\\dns-quorum-filter";
         let lad = "C:\\Users\\o'brien\\AppData\\Local";
-        let Some(script) = build_wipe_script_for(Path::new(dir), Path::new(lad)) else {
-            panic!("a valid app-data path must produce a script");
-        };
+        let script = script_for(dir, lad);
         assert!(script.contains("o''brien"));
         assert!(!script.contains("o'brien'"));
     }
@@ -395,9 +457,7 @@ mod tests {
         for quote in ['\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
             let lad = format!("C:\\Users\\o{quote}brien\\AppData\\Local");
             let dir = format!("{lad}\\dns-quorum-filter");
-            let Some(script) = build_wipe_script_for(Path::new(&dir), Path::new(&lad)) else {
-                panic!("a valid app-data path must produce a script");
-            };
+            let script = script_for(&dir, &lad);
             assert!(script.contains(&format!("o{quote}{quote}brien")));
             assert!(
                 !script
@@ -411,20 +471,24 @@ mod tests {
 
     #[test]
     fn wipe_script_rejects_a_path_outside_localappdata() {
-        assert!(
-            build_wipe_script_for(Path::new("C:\\Windows\\System32"), Path::new(LOCALAPPDATA))
-                .is_none()
-        );
+        assert!(build_wipe_script_for(
+            Path::new("C:\\Windows\\System32"),
+            Path::new(LOCALAPPDATA),
+            "failed"
+        )
+        .is_none());
     }
 
     #[test]
     fn wipe_script_rejects_a_final_component_that_is_not_dns_quorum_filter() {
         let evil = format!("{LOCALAPPDATA}\\evil");
-        assert!(build_wipe_script_for(Path::new(&evil), Path::new(LOCALAPPDATA)).is_none());
+        assert!(
+            build_wipe_script_for(Path::new(&evil), Path::new(LOCALAPPDATA), "failed").is_none()
+        );
     }
 
     #[test]
     fn wipe_script_is_none_for_empty_paths() {
-        assert!(build_wipe_script_for(Path::new(""), Path::new("")).is_none());
+        assert!(build_wipe_script_for(Path::new(""), Path::new(""), "failed").is_none());
     }
 }

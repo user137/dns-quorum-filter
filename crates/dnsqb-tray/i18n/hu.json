@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "nem volt telepítve",
   "uninstall.outcome.failed": "az eltávolítás SIKERTELEN",
   "uninstall.reportDialogTemplate": "{report}\n\nAz alkalmazás adatmappája teljesen eltávolításra kerül, és maga az alkalmazás bezárul. Megnyílik a Windows Beállítások — kattintson a „DNS Quorum Filter” melletti „Eltávolítás” gombra a befejezéshez.",
+  "uninstall.wipeFailed": "A DNS Quorum Filter adatmappáját nem sikerült teljesen eltávolítani. Ha az alkalmazás még fut, zárja be, és törölje a mappát kézzel: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicenc: Apache-2.0\nHelyi DoH kvórumszűrő — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: a szolgáltatás nem érhető el",
   "tooltip.restarting": "DNS Quorum Filter: a szolgáltatás újraindul…",

@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "was not installed",
   "uninstall.outcome.failed": "FAILED to remove",
   "uninstall.reportDialogTemplate": "{report}\n\nThe app's data folder will be completely removed, and the app itself will close. Windows Settings will open - click \"Uninstall\" on \"DNS Quorum Filter\" to finish.",
+  "uninstall.wipeFailed": "The DNS Quorum Filter data folder could not be removed completely. Close the app if it is still running and delete the folder yourself: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicense: Apache-2.0\nLocal DoH quorum filter - https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: service unreachable",
   "tooltip.restarting": "DNS Quorum Filter: service restarting…",

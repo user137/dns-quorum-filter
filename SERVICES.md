@@ -398,9 +398,12 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
   `cache.enc`, і для `zone-removals.enc`), MaxMind T-163, personal-zone T-138 (Батч 4.5); кожен
   артефакт звітується
   незалежно `Removed`/`NotPresent`/`Failed`), тоді **зупиняє весь застосунок і стирає всю теку
-  app-data**: показує звіт → пише `stop.flag` + `quit.flag` (watcher зупиняє `dnsqb-service` і
-  виходить) → спавнить від'єднаний прихований `powershell.exe` (`self_uninstall.rs`), що чекає на
-  вихід `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray`, потім у retry-циклі видаляє всю
+  app-data** (T-303: спершу пише `stop.flag` + `quit.flag` і до 15 с чекає, доки служба й watcher
+  вийдуть, і лише тоді видаляє сертифікат і ключі — служба, що стартує при `quit.flag`, одразу
+  виходить, тож ключі не з'являться знову; меню трею на цей час не діє): показує звіт → спавнить
+  від'єднаний прихований `powershell.exe` (`self_uninstall.rs`), що чекає на вихід
+  `dnsqb-service`/`dnsqb-watcher`/`dnsqb-tray` **своєї сесії Windows** (інший користувач з тим самим
+  застосунком не блокує), а якщо процеси не вийшли чи тека лишилась — показує вікно з її шляхом; потім у retry-циклі видаляє всю
   `%LOCALAPPDATA%\dns-quorum-filter` (`cert.pem`, `query-log/`/`cache.enc`/`zone-removals.enc`/
   `personal-zone.enc`, `resolver_config.toml`/`overrides.toml`, `logs\`, pid/lock) → відкриває
   `ms-settings:appsfeatures` через `explorer.exe` → трей виходить (`QUIT_REQUESTED`). Причина
@@ -439,8 +442,10 @@ watcher → `ensure_sibling_running(Tray)` першим, T-187). Ручний з
 - **Сховати іконку** (колишнє «Закрити») — закриває лише трей-процес; `dnsqb-service` і watcher
   працюють, фільтрація лишається. Навмисно окремий пункт від «Вийти…» (advisor-caught, T-149).
 - **Вийти з DNS Quorum Filter** — за confirm-діалогом: пише `stop.flag` + `quit.flag`, виходить
-  трей. Watcher на наступному тіку (≤5 с) бачить `quit.flag`, зупиняє службу (`/admin/shutdown`)
-  і виходить сам. Наступний старт — плитка Пуску / логін (чистить обидва флаги).
+  трей. Служба сама бачить `quit.flag` (≤1 с, `pause_watch`) і зупиняється; watcher на наступному
+  тіку (≤5 с) теж шле `/admin/shutdown` і виходить. Флаги лишаються на диску, доки наступний
+  старт — плитка Пуску / логін, коли служба не працює — їх не почистить. Watcher, якого
+  перезапустила служба або «Відновити нагляд», флаги не чистить (T-304: пауза не знімається).
 
 ### Онбординг першого запуску (T-188, Батч 3.13)
 

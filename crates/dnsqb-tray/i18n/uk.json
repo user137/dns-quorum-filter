@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "не було встановлено",
   "uninstall.outcome.failed": "НЕ ВДАЛОСЯ видалити",
   "uninstall.reportDialogTemplate": "{report}\n\nТека даних застосунку буде повністю видалена, а сам застосунок закриється. Відкриються Параметри Windows — натисніть «Видалити» на «DNS Quorum Filter», щоб завершити.",
+  "uninstall.wipeFailed": "Не вдалося повністю видалити теку даних DNS Quorum Filter. Закрийте застосунок, якщо він ще працює, і видаліть теку вручну: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nЛіцензія: Apache-2.0\nЛокальний DoH quorum-фільтр — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: служба недоступна",
   "tooltip.restarting": "DNS Quorum Filter: служба перезапускається…",

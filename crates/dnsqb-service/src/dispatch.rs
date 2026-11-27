@@ -1746,6 +1746,14 @@ impl<C: DohClient + Sync> AppState<C> {
         }
     }
 
+    /// Ask the accept loop to drain and exit — the same signal `/admin/shutdown`
+    /// sends. T-303: `pause_watch` calls it when `quit.flag` appears.
+    pub fn request_shutdown(&self) {
+        // `Err` = the accept loop already dropped its receiver: shutdown is
+        // already underway.
+        let _ = self.shutdown_tx.send(true);
+    }
+
     /// Subscribes a new receiver for the shutdown signal (T-149) — each call
     /// returns an independent [`watch::Receiver`] starting from the current
     /// value, per `watch::Sender::subscribe`'s own semantics. `main.rs` calls

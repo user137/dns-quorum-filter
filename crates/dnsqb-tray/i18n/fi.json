@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "ei ollut asennettuna",
   "uninstall.outcome.failed": "poistaminen EPÄONNISTUI",
   "uninstall.reportDialogTemplate": "{report}\n\nSovelluksen datakansio poistetaan kokonaan, ja sovellus itse sulkeutuu. Windowsin asetukset avautuvat — napsauta „DNS Quorum Filter“-kohdan „Poista asennus“ viimeistelläksesi.",
+  "uninstall.wipeFailed": "DNS Quorum Filterin datakansiota ei voitu poistaa kokonaan. Sulje sovellus, jos se on yhä käynnissä, ja poista kansio itse: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLisenssi: Apache-2.0\nPaikallinen DoH-kvorumisuodatin — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: palvelu ei ole käytettävissä",
   "tooltip.restarting": "DNS Quorum Filter: palvelu käynnistyy uudelleen…",

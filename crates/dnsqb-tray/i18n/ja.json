@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "インストールされていませんでした",
   "uninstall.outcome.failed": "削除に失敗しました",
   "uninstall.reportDialogTemplate": "{report}\n\nアプリのデータフォルダーは完全に削除され、アプリ自体も終了します。Windows の設定が開きます — 完了するには「DNS Quorum Filter」の「アンインストール」をクリックしてください。",
+  "uninstall.wipeFailed": "DNS Quorum Filter のデータ フォルダーを完全には削除できませんでした。アプリがまだ実行中の場合は終了し、フォルダーを手動で削除してください: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nライセンス: Apache-2.0\nローカル DoH クォーラムフィルター — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: サービスに到達できません",
   "tooltip.restarting": "DNS Quorum Filter: サービスを再起動しています…",

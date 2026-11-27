@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "δεν ήταν εγκατεστημένο",
   "uninstall.outcome.failed": "ΑΠΕΤΥΧΕ η κατάργηση",
   "uninstall.reportDialogTemplate": "{report}\n\nΟ φάκελος δεδομένων της εφαρμογής θα καταργηθεί πλήρως και η ίδια η εφαρμογή θα κλείσει. Θα ανοίξουν οι Ρυθμίσεις των Windows — κάντε κλικ στην «Απεγκατάσταση» για το «DNS Quorum Filter» για να ολοκληρώσετε.",
+  "uninstall.wipeFailed": "Δεν ήταν δυνατή η πλήρης διαγραφή του φακέλου δεδομένων του DNS Quorum Filter. Κλείστε την εφαρμογή αν εξακολουθεί να εκτελείται και διαγράψτε τον φάκελο χειροκίνητα: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nΆδεια: Apache-2.0\nΤοπικό φίλτρο απαρτίας DoH — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: η υπηρεσία δεν είναι διαθέσιμη",
   "tooltip.restarting": "DNS Quorum Filter: η υπηρεσία επανεκκινείται…",

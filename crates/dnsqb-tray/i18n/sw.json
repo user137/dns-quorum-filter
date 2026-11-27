@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "haikuwa imesakinishwa",
   "uninstall.outcome.failed": "kuondoa KUMESHINDWA",
   "uninstall.reportDialogTemplate": "{report}\n\nFolda ya data ya programu itaondolewa kabisa, na programu yenyewe itafungwa. Mipangilio ya Windows itafunguka — bofya „Ondoa“ kwa „DNS Quorum Filter“ ili kukamilisha.",
+  "uninstall.wipeFailed": "Folda ya data ya DNS Quorum Filter haikuweza kuondolewa kabisa. Funga programu ikiwa bado inaendeshwa na ufute folda wewe mwenyewe: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLeseni: Apache-2.0\nKichujio cha kota cha DoH cha ndani — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: huduma haifikiki",
   "tooltip.restarting": "DNS Quorum Filter: huduma inaanzishwa upya…",

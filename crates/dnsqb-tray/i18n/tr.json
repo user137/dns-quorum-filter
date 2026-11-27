@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "yüklü değildi",
   "uninstall.outcome.failed": "kaldırma BAŞARISIZ",
   "uninstall.reportDialogTemplate": "{report}\n\nUygulamanın veri klasörü tamamen kaldırılacak ve uygulamanın kendisi kapanacak. Windows Ayarları açılacak — tamamlamak için „DNS Quorum Filter“ üzerinde „Kaldır“a tıklayın.",
+  "uninstall.wipeFailed": "DNS Quorum Filter veri klasörü tamamen kaldırılamadı. Uygulama hâlâ çalışıyorsa kapatın ve klasörü kendiniz silin: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLisans: Apache-2.0\nYerel DoH kota filtresi — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: hizmete ulaşılamıyor",
   "tooltip.restarting": "DNS Quorum Filter: hizmet yeniden başlatılıyor…",

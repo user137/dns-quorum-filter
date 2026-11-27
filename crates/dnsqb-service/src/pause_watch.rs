@@ -18,17 +18,18 @@
 //! bypass mode). See `DECISIONS.md` (2026-09-08, revising the 2026-09-07 T-185
 //! entry).
 //!
-//! **Stale flag on a bare launch.** `stop.flag` is cleared by the *watcher* on
-//! every startup (`lifecycle.rs`'s "entry-point clears on startup" rule), and
-//! in the real (MSIX) flow the watcher always starts the service, so the
-//! service never inherits a stale flag there. A **standalone `dnsqb-service`**
-//! launched without the watcher (a bare `cargo run -p dnsqb-service`) *can*
-//! inherit a `stop.flag` a prior session left behind — e.g. after a
-//! `QUIT_APP_ID` quit, which writes `stop.flag` + `quit.flag` and only the
-//! latter is cleared. The first poll below logs `filtering paused …` in that
-//! case, so it is visible in the log file rather than silent; clearing the
-//! flag is the watcher's job, not this task's (it must not clear a flag the
-//! user may have set on purpose).
+//! **T-303: `quit.flag` too.** The same poll stops the service when the tray's
+//! quit or full removal writes `quit.flag` — it no longer depends on the
+//! watcher reaching `/admin/shutdown`. Neither flag is cleared here.
+//!
+//! **Stale flags on a bare launch.** Both flags are cleared by a watcher that
+//! starts with no service running (a user launch), and in the real (MSIX) flow
+//! that watcher starts the service, so the service never inherits a stale flag
+//! there. A **standalone `dnsqb-service`** (a bare `cargo run -p
+//! dnsqb-service`) *can* inherit flags a prior quit left behind: a `quit.flag`
+//! makes it exit at once (logged), a `stop.flag` makes the first poll log
+//! `filtering paused …`. Clearing them is the watcher's job, not this task's
+//! (it must not clear a flag the user may have set on purpose).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -52,6 +53,11 @@ pub const PAUSE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 pub async fn run_pause_watcher<C: DohClient + Sync>(app_data: PathBuf, state: Arc<AppState<C>>) {
     let mut previous = state.filtering_paused_snapshot();
     loop {
+        if crate::lifecycle::quit_flag_is_set(&app_data) {
+            tracing::info!("quit.flag present - shutting down (T-303)");
+            state.request_shutdown();
+            return;
+        }
         let now = crate::lifecycle::stop_flag_is_set(&app_data);
         state.update_filtering_paused(now);
         if now != previous {

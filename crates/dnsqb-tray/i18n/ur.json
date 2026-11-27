@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "انسٹال نہیں تھا",
   "uninstall.outcome.failed": "ہٹانا ناکام ہو گیا",
   "uninstall.reportDialogTemplate": "{report}\n\nایپ کا ڈیٹا فولڈر مکمل طور پر ہٹا دیا جائے گا، اور ایپ خود بند ہو جائے گی۔ Windows کی سیٹنگز کھل جائیں گی — مکمل کرنے کے لیے «DNS Quorum Filter» پر «ان انسٹال کریں» پر کلک کریں۔",
+  "uninstall.wipeFailed": "DNS Quorum Filter کا ڈیٹا فولڈر مکمل طور پر حذف نہیں ہو سکا۔ اگر ایپ ابھی بھی چل رہی ہے تو اسے بند کریں اور فولڈر خود حذف کریں: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nلائسنس: Apache-2.0\nمقامی DoH کورم فلٹر — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: سروس دستیاب نہیں ہے",
   "tooltip.restarting": "DNS Quorum Filter: سروس دوبارہ شروع ہو رہی ہے…",

@@ -50,9 +50,10 @@ mod status;
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
-    set_quit_flag, set_reset_config_flag, set_retry_flag, set_stop_flag, stop_flag_is_set,
-    take_remove_all_flag, write_pid_file, AdminClient, AdminClientError, GuardError, InstanceGuard,
-    InstanceRole, RemoveAllTake, ResolverConfig,
+    read_pid_file, set_quit_flag, set_reset_config_flag, set_retry_flag, set_stop_flag,
+    stop_flag_is_set, take_remove_all_flag, verify_pid_alive, write_pid_file, AdminClient,
+    AdminClientError, GuardError, InstanceGuard, InstanceRole, PidCheck, RemoveAllTake,
+    ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -682,6 +683,13 @@ fn handle_menu_event(
     trust: &TrustState,
     locale: &str,
 ) {
+    // T-303: a full removal is under way. «Відновити», «Відновити нагляд» or
+    // «Спробувати ще раз» would start a service that recreates the secrets
+    // being deleted; nothing in this menu is useful any more.
+    if REMOVAL_IN_PROGRESS.load(Ordering::SeqCst) {
+        tracing::info!("menu click ignored: full removal in progress");
+        return;
+    }
     match menu_action_for(id) {
         MenuAction::OpenSettings => {
             browser::open_in_default_browser(&format!("https://127.0.0.1:{port}/admin/ui"));
@@ -957,14 +965,28 @@ static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 ///
 /// Not [`spawn_cert_action`]: the shutdown has to happen *after* the report
 /// dialog, and `spawn_cert_action` shows its dialog after the closure returns.
-/// Order: [`remove_all_local_state`] (cert + Credential Manager secrets, none
-/// of them files in app-data) → report dialog → `stop.flag` + `quit.flag`
-/// (the watcher stops `dnsqb-service` and exits on its next tick, exactly like
-/// [`QUIT_APP_ID`]) → spawn the detached wipe helper (it waits for every
-/// DNS-QF process to exit before deleting) → open Windows Settings →
-/// `QUIT_REQUESTED` so this tray exits too.
+/// Order (T-303): `stop.flag` + `quit.flag` (the service stops on them by
+/// itself and refuses to start again, the watcher exits on its next tick) →
+/// wait until both are gone → [`remove_all_local_state`] (cert + Credential
+/// Manager secrets) — so no running or restarted service can mint a secret
+/// after it was deleted → report dialog → spawn the detached wipe helper (it
+/// waits for every DNS-QF process to exit before deleting) → open Windows
+/// Settings → `QUIT_REQUESTED` so this tray exits too.
 fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
+    REMOVAL_IN_PROGRESS.store(true, Ordering::SeqCst);
     std::thread::spawn(move || {
+        if let Err(err) = set_stop_flag(&app_data) {
+            tracing::warn!("could not write stop.flag: {err}");
+        }
+        if let Err(err) = set_quit_flag(&app_data) {
+            tracing::warn!("could not write quit.flag: {err}");
+        }
+        if !wait_for_siblings_to_exit(&app_data, SIBLING_EXIT_WAIT) {
+            tracing::warn!(
+                "dnsqb-service or dnsqb-watcher still running after {SIBLING_EXIT_WAIT:?}; \
+                 removing local state anyway"
+            );
+        }
         let report = format_uninstall_report(&remove_all_local_state(Some(&app_data)), &locale);
         tracing::info!("remove-all-local-state finished:\n{report}");
         rfd::MessageDialog::new()
@@ -977,17 +999,45 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
             .set_level(rfd::MessageLevel::Info)
             .set_buttons(rfd::MessageButtons::Ok)
             .show();
-        if let Err(err) = set_stop_flag(&app_data) {
-            tracing::warn!("could not write stop.flag: {err}");
-        }
-        if let Err(err) = set_quit_flag(&app_data) {
-            tracing::warn!("could not write quit.flag: {err}");
-        }
-        self_uninstall::spawn_app_data_dir_wipe(&app_data);
+        self_uninstall::spawn_app_data_dir_wipe(&app_data, &locale);
         browser::open_windows_apps_settings();
         QUIT_REQUESTED.store(true, Ordering::SeqCst);
         wake_event_loop();
     });
+}
+
+/// Set for good once a full removal starts (T-303): the menu stops acting.
+static REMOVAL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// The service drains for up to 5 s after `quit.flag`, the watcher exits on
+/// its next 5 s tick; 15 s leaves room for a slow disk.
+const SIBLING_EXIT_WAIT: Duration = Duration::from_secs(15);
+
+/// Poll the service and watcher pid files until neither names a live process,
+/// or `budget` runs out. `true` = both gone.
+fn wait_for_siblings_to_exit(app_data: &Path, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        let alive = [InstanceRole::Service, InstanceRole::Watcher]
+            .into_iter()
+            .any(|role| sibling_is_alive(app_data, role));
+        if !alive {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// A missing or unreadable pid file reads as "not running": the process
+/// writes it right after taking its single-instance lock.
+fn sibling_is_alive(app_data: &Path, role: InstanceRole) -> bool {
+    matches!(
+        read_pid_file(app_data, role).map(|record| verify_pid_alive(record.pid, &record.exe_path)),
+        Ok(PidCheck::Alive)
+    )
 }
 
 /// Set while a remove-all confirm requested from `/admin/ui` is open, so a

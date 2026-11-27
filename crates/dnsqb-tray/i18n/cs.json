@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "nebylo nainstalováno",
   "uninstall.outcome.failed": "ODSTRANĚNÍ SE NEZDAŘILO",
   "uninstall.reportDialogTemplate": "{report}\n\nSložka dat aplikace bude zcela odstraněna a aplikace samotná se zavře. Otevře se Nastavení systému Windows — kliknutím na „Odinstalovat“ u „DNS Quorum Filter“ dokončete akci.",
+  "uninstall.wipeFailed": "Datovou složku DNS Quorum Filter se nepodařilo úplně odstranit. Pokud aplikace ještě běží, zavřete ji a složku odstraňte ručně: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicence: Apache-2.0\nMístní DoH kvorum filtr — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: služba je nedostupná",
   "tooltip.restarting": "DNS Quorum Filter: služba se restartuje…",

@@ -36,15 +36,16 @@ use std::time::Duration;
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_quit_flag, clear_stop_flag, ensure_sibling_running,
-    init_logging, read_pid_file, read_startup_failure, set_retry_flag, spawn_sibling,
-    take_retry_flag, verify_pid_alive, GuardError, InstanceGuard, InstanceRole, ResolverConfig,
+    init_logging, quit_flag_is_set, read_pid_file, read_startup_failure, set_retry_flag,
+    spawn_sibling, take_retry_flag, verify_pid_alive, GuardError, InstanceGuard, InstanceRole,
+    PidCheck, ResolverConfig,
 };
 
 #[cfg(windows)]
 use dnsqb_service::{
-    is_stale, quit_flag_is_set, read_heartbeat_file, read_watchdog_state, touch_heartbeat_file,
-    write_watchdog_state, AdminClient, ChannelObs, Direction, Effect, HeartbeatFile,
-    HeartbeatPipeClient, LoopDriver, PidCheck, WatchdogErrorLabel, WatchdogState, STATE_FILE_NAME,
+    is_stale, read_heartbeat_file, read_watchdog_state, touch_heartbeat_file, write_watchdog_state,
+    AdminClient, ChannelObs, Direction, Effect, HeartbeatFile, HeartbeatPipeClient, LoopDriver,
+    WatchdogErrorLabel, WatchdogState, STATE_FILE_NAME,
 };
 #[cfg(windows)]
 use std::time::SystemTime;
@@ -78,13 +79,26 @@ async fn main() {
         tracing::warn!("could not write the watcher pid file: {err}");
     }
 
-    // T-185: the entry-point process clears both lifecycle flags on startup —
-    // a fresh launch (tile / login) is a clean slate. The heartbeat loop below
-    // only *reads* `stop.flag`, never clears it there.
-    clear_stop_flag(&app_data);
-    clear_quit_flag(&app_data);
-
     let port = load_port(&app_data);
+
+    // T-185 / T-304: only a launch with no service running (tile, login) is a
+    // fresh start that clears both lifecycle flags. A watcher started while the
+    // service lives was respawned by it, or by the tray's «Відновити нагляд» —
+    // clearing `stop.flag` there silently lifted a pause, clearing `quit.flag`
+    // revived an app the user had just quit (T-303).
+    match startup_plan(service_is_alive(&app_data), quit_flag_is_set(&app_data)) {
+        StartupPlan::Fresh => {
+            clear_stop_flag(&app_data);
+            clear_quit_flag(&app_data);
+        }
+        StartupPlan::Resume => {
+            tracing::info!("dnsqb-service is already running - resuming supervision, flags kept");
+        }
+        StartupPlan::FinishQuit => {
+            tracing::info!("quit.flag present and the service still up - stopping it (T-303)");
+            stop_service_and_exit(&app_data, port, None).await;
+        }
+    }
 
     // T-150 / T-187: bring up any sibling that isn't already running — once, at
     // startup. **Tray first**: the tile launches this watcher, so spawning the
@@ -97,6 +111,62 @@ async fn main() {
     ensure_sibling_running(&app_data, InstanceRole::Service);
 
     run_watcher_to_service_watchdog(app_data, port).await;
+}
+
+/// What a starting watcher does with the lifecycle flags (T-303/T-304).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupPlan {
+    /// No service is running: a user launch. Clear both flags, start everything.
+    Fresh,
+    /// A service is running: this watcher replaces a dead one. Keep the flags.
+    Resume,
+    /// A service is running and the user asked to quit: stop it, start nothing.
+    FinishQuit,
+}
+
+fn startup_plan(service_alive: bool, quit_requested: bool) -> StartupPlan {
+    match (service_alive, quit_requested) {
+        (false, _) => StartupPlan::Fresh,
+        (true, false) => StartupPlan::Resume,
+        (true, true) => StartupPlan::FinishQuit,
+    }
+}
+
+/// Whether `service.pid` names a live `dnsqb-service` (PID and exe identity,
+/// so a recycled PID from a prior boot reads as not running).
+fn service_is_alive(app_data: &Path) -> bool {
+    matches!(
+        read_pid_file(app_data, InstanceRole::Service)
+            .map(|record| verify_pid_alive(record.pid, &record.exe_path)),
+        Ok(PidCheck::Alive)
+    )
+}
+
+/// Ask the service to stop, then exit. The flags stay on disk: the service
+/// also stops on `quit.flag` by itself (`pause_watch`) and refuses to start
+/// while it exists, so deleting it here could race that path. Only a
+/// [`StartupPlan::Fresh`] launch clears it.
+#[cfg(windows)]
+async fn stop_service_and_exit(app_data: &Path, port: u16, admin: Option<AdminClient>) -> ! {
+    let client = match admin {
+        Some(client) => Ok(client),
+        None => AdminClient::new(app_data, port),
+    };
+    match client {
+        Ok(client) => {
+            if let Err(err) = client.shutdown().await {
+                // The service may already be down; it also stops on quit.flag itself.
+                tracing::warn!("could not ask dnsqb-service to shut down: {err}");
+            }
+        }
+        Err(err) => tracing::warn!("no admin client to stop dnsqb-service: {err}"),
+    }
+    std::process::exit(0);
+}
+
+#[cfg(not(windows))]
+async fn stop_service_and_exit(_app_data: &Path, _port: u16, _admin: Option<()>) -> ! {
+    std::process::exit(0);
 }
 
 /// Takes the `watcher` single-instance lock. A second watcher racing the first
@@ -113,14 +183,21 @@ async fn main() {
 /// (T-185): the user relaunching the app cancels a quit that hasn't taken
 /// effect yet. It leaves `stop.flag` alone — a re-click to see the icon must
 /// not silently un-pause a deliberate pause.
+///
+/// T-303: while `quit.flag` is set the running watcher is already stopping
+/// the app and the service stops on the flag by itself within a second, so
+/// the click starts nothing; the next click after the drain is a fresh launch.
 fn acquire_watcher_guard(app_data: &Path) -> InstanceGuard {
     match acquire_instance_guard(app_data, InstanceRole::Watcher) {
         Ok(guard) => guard,
         Err(GuardError::AlreadyRunning(_)) => {
+            if quit_flag_is_set(app_data) {
+                tracing::info!("a quit is in progress - this launch starts nothing (T-303)");
+                std::process::exit(0);
+            }
             tracing::info!(
                 "a watcher is already running — ensuring the tray is up, then exiting (T-187)"
             );
-            clear_quit_flag(app_data);
             request_retry_if_gave_up(app_data);
             ensure_sibling_running(app_data, InstanceRole::Tray);
             std::process::exit(0);
@@ -292,11 +369,7 @@ async fn run_watcher_to_service_watchdog(app_data: std::path::PathBuf, port: u16
             tracing::info!(
                 "watchdog: quit.flag present — stopping the service and exiting (T-185)"
             );
-            if let Some(client) = admin.as_ref() {
-                let _ = client.shutdown().await;
-            }
-            clear_quit_flag(&app_data);
-            std::process::exit(0);
+            stop_service_and_exit(&app_data, port, admin.take()).await;
         }
 
         // Хвиля 13b / T-266: the user asked to retry (tray «Спробувати ще раз»
@@ -438,11 +511,25 @@ async fn run_watcher_to_service_watchdog(_app_data: std::path::PathBuf, _port: u
 #[cfg(all(test, windows))]
 mod tests {
     use super::{
-        observe, peer_heartbeat_path, pid_observation, tile_requests_retry, WATCHDOG_CHANNEL_FRESH,
+        observe, peer_heartbeat_path, pid_observation, startup_plan, tile_requests_retry,
+        StartupPlan, WATCHDOG_CHANNEL_FRESH,
     };
     use dnsqb_service::{HeartbeatFile, PidCheck, WatchdogState};
     use std::path::Path;
     use std::time::{Duration, SystemTime};
+
+    // T-303/T-304: the flags are cleared only when no service runs.
+    #[test]
+    fn startup_plan_clears_flags_only_on_a_launch_without_a_running_service() {
+        // Tile, login or reboot; a leftover quit.flag is from a finished quit.
+        assert_eq!(startup_plan(false, false), StartupPlan::Fresh);
+        assert_eq!(startup_plan(false, true), StartupPlan::Fresh);
+        // Respawned by the service or by «Відновити нагляд» - during a pause
+        // too: stop.flag must survive (T-304).
+        assert_eq!(startup_plan(true, false), StartupPlan::Resume);
+        // Respawned while a quit drains: finish the quit, start no tray (T-303).
+        assert_eq!(startup_plan(true, true), StartupPlan::FinishQuit);
+    }
 
     // T-266: a tile re-click restarts the service only from a fresh GaveUp.
     #[test]

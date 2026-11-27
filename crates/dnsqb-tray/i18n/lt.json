@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "nebuvo įdiegta",
   "uninstall.outcome.failed": "pašalinti NEPAVYKO",
   "uninstall.reportDialogTemplate": "{report}\n\nProgramos duomenų aplankas bus visiškai pašalintas, o pati programa užsidarys. Atsivers „Windows“ nustatymai — norėdami baigti, spustelėkite „Pašalinti“ ties „DNS Quorum Filter“.",
+  "uninstall.wipeFailed": "Nepavyko visiškai pašalinti DNS Quorum Filter duomenų aplanko. Jei programa vis dar veikia, uždarykite ją ir ištrinkite aplanką patys: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicencija: Apache-2.0\nVietinis DoH kvorumo filtras — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: paslauga nepasiekiama",
   "tooltip.restarting": "DNS Quorum Filter: paslauga paleidžiama iš naujo…",

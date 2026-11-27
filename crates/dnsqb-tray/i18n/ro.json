@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "nu era instalat",
   "uninstall.outcome.failed": "eliminarea a EȘUAT",
   "uninstall.reportDialogTemplate": "{report}\n\nFolderul de date al aplicației va fi eliminat complet, iar aplicația însăși se va închide. Setările Windows se vor deschide — faceți clic pe „Dezinstalare” pentru „DNS Quorum Filter” pentru a finaliza.",
+  "uninstall.wipeFailed": "Folderul de date DNS Quorum Filter nu a putut fi eliminat complet. Închideți aplicația dacă încă rulează și ștergeți manual folderul: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicență: Apache-2.0\nFiltru de cvorum DoH local — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: serviciul este inaccesibil",
   "tooltip.restarting": "DNS Quorum Filter: serviciul se repornește…",

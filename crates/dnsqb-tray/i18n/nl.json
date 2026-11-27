@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "was niet geïnstalleerd",
   "uninstall.outcome.failed": "verwijderen MISLUKT",
   "uninstall.reportDialogTemplate": "{report}\n\nDe gegevensmap van de app wordt volledig verwijderd, en de app zelf sluit. Windows-instellingen opent — klik op „Verwijderen“ bij „DNS Quorum Filter“ om te voltooien.",
+  "uninstall.wipeFailed": "De gegevensmap van DNS Quorum Filter kon niet volledig worden verwijderd. Sluit de app als die nog actief is en verwijder de map zelf: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicentie: Apache-2.0\nLokaal DoH-quorumfilter — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: service onbereikbaar",
   "tooltip.restarting": "DNS Quorum Filter: service wordt opnieuw gestart…",

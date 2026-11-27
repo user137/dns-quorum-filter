@@ -678,6 +678,14 @@ fn acquire_service_guard(app_data: Option<&Path>) -> Option<InstanceGuard> {
         tracing::warn!("%LOCALAPPDATA% is unset - starting without a single-instance guard");
         return None;
     };
+    // T-303: a service started while a quit or a full removal drains (the
+    // tray's «Відновити», a respawn) must not recreate the keyring secrets
+    // `remove_all_local_state` is deleting. Checked before the guard and before
+    // anything in `run` mints a key; a fresh launch clears the flag first.
+    if crate::lifecycle::quit_flag_is_set(dir) {
+        tracing::info!("quit.flag present - not starting (the app is quitting)");
+        std::process::exit(0);
+    }
     match acquire_instance_guard(dir, InstanceRole::Service) {
         Ok(guard) => {
             if let Err(err) = write_pid_file(dir, InstanceRole::Service) {

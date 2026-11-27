@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "לא היה מותקן",
   "uninstall.outcome.failed": "ההסרה נכשלה",
   "uninstall.reportDialogTemplate": "{report}\n\nתיקיית נתוני האפליקציה תוסר לחלוטין, והאפליקציה עצמה תיסגר. תיפתח מסך ההגדרות של Windows — לחצו על „הסר התקנה“ עבור „DNS Quorum Filter“ כדי לסיים.",
+  "uninstall.wipeFailed": "לא ניתן היה למחוק לגמרי את תיקיית הנתונים של DNS Quorum Filter. סגרו את האפליקציה אם היא עדיין פועלת ומחקו את התיקייה בעצמכם: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nרישיון: Apache-2.0\nמסנן קווורום DoH מקומי — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: השירות אינו זמין",
   "tooltip.restarting": "DNS Quorum Filter: השירות מופעל מחדש…",

@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "var inte installerat",
   "uninstall.outcome.failed": "borttagning MISSLYCKADES",
   "uninstall.reportDialogTemplate": "{report}\n\nAppens datamapp tas bort helt, och appen själv stängs. Windows-inställningar öppnas — klicka på „Avinstallera“ för „DNS Quorum Filter“ för att slutföra.",
+  "uninstall.wipeFailed": "Datamappen för DNS Quorum Filter kunde inte tas bort helt. Stäng appen om den fortfarande körs och ta bort mappen själv: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLicens: Apache-2.0\nLokalt DoH-kvorumfilter — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: tjänsten är otillgänglig",
   "tooltip.restarting": "DNS Quorum Filter: tjänsten startar om…",

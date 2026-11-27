@@ -43,6 +43,7 @@
   "uninstall.outcome.notPresent": "tidak terpasang",
   "uninstall.outcome.failed": "GAGAL menghapus",
   "uninstall.reportDialogTemplate": "{report}\n\nFolder data aplikasi akan dihapus sepenuhnya, dan aplikasi itu sendiri akan ditutup. Pengaturan Windows akan terbuka — klik „Copot pemasangan“ pada „DNS Quorum Filter“ untuk menyelesaikan.",
+  "uninstall.wipeFailed": "Folder data DNS Quorum Filter tidak dapat dihapus sepenuhnya. Tutup aplikasi jika masih berjalan dan hapus folder tersebut secara manual: {path}",
   "about.bodyTemplate": "dnsqb-tray {version}\nLisensi: Apache-2.0\nFilter kuorum DoH lokal — https://127.0.0.1:{port}/admin/ui",
   "tooltip.unreachable": "DNS Quorum Filter: layanan tidak dapat dijangkau",
   "tooltip.restarting": "DNS Quorum Filter: layanan sedang dimulai ulang…",
