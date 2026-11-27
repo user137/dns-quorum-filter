@@ -390,11 +390,10 @@ mod tests {
         );
     }
 
-    /// Win10 VM smoke 2026-11-27: Firefox ignores `translate="no"` and offers a
-    /// translation from the static `<html lang="uk">` it reads at load; the
-    /// real locale used to be applied only after the async dictionary fetch.
-    /// `main.js` is a blocking script, so a synchronous top-level call lands
-    /// before the browser's language detection.
+    /// `<html lang>` follows the chosen locale from the first synchronous run of
+    /// `main.js`, not only after the async dictionary fetch. Tried against
+    /// Firefox's translation offer (Win10 VM smoke 2026-11-27) and did not
+    /// stop it - the offer is T-302; this keeps `lang` honest meanwhile.
     #[test]
     fn document_language_is_set_before_the_dictionary_loads() {
         let first_call = MAIN_JS.find("\napplyDocumentLanguage();");
