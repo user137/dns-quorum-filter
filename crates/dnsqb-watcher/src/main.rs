@@ -72,18 +72,21 @@ async fn main() {
         }
     };
 
-    // T-303: «Повністю видалити» is under way - starting anything now would
-    // mint the secrets being deleted and keep the folder from being wiped.
-    if removal_in_progress(&app_data, std::time::SystemTime::now()) {
-        tracing::info!("removing.flag present - a full removal is under way, starting nothing");
-        std::process::exit(0);
-    }
-
     // Held for the whole process lifetime; the OS frees the handle on exit
     // (SPEC.md §7.1 #2). Mirrors `dnsqb-service`'s own `acquire_service_guard`.
     let _guard = acquire_watcher_guard(&app_data);
     if let Err(err) = dnsqb_service::write_pid_file(&app_data, InstanceRole::Watcher) {
         tracing::warn!("could not write the watcher pid file: {err}");
+    }
+
+    // T-303: «Повністю видалити» is under way - starting anything now would
+    // mint the secrets being deleted and keep the folder from being wiped.
+    // Checked after `watcher.pid` is written, like the service: the tray writes
+    // the flag *then* reads the pid files, so either this check sees the flag
+    // or the tray sees this process and waits for it.
+    if removal_in_progress(&app_data, std::time::SystemTime::now()) {
+        tracing::info!("removing.flag present - a full removal is under way, starting nothing");
+        std::process::exit(0);
     }
 
     let port = load_port(&app_data);

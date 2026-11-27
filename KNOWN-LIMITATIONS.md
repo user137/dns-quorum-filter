@@ -9,6 +9,10 @@ state" section: a finished task adds a bullet here only if it leaves a live limi
 the task's own narrative (rationale, advisor catches, verification notes) goes to
 TASKS-DONE.md, never here.
 
+- **After a failed «Повністю видалити» wipe the app will not start for up to 30 minutes (T-303)** —
+  `removing.flag` stays in the folder the wipe could not delete, and while it is younger than 30 min
+  the service and watcher exit at once (logged only in that folder). The wipe's own message box
+  tells the user to delete the folder by hand, which also removes the flag.
 - **Blocklist-bundle step is empty for a few seconds after start (ARCH-10, wave 15)** — the
   on-disk bundle is warm-loaded in `spawn_blocking` after the listener is up (6–7 s of one core
   for a full set, PERFORMANCE.md), and on first enable or a fresh install it stays empty for the
