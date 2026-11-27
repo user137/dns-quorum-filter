@@ -6,5 +6,11 @@
 # reject it, so a `x86_64-pc-windows-gnu` dev build is deliberately left alone.
 # RUSTFLAGS in the environment REPLACES (does not merge with) this, so the CI
 # `repro` job re-states /Brepro in its own RUSTFLAGS alongside --remap-path-prefix.
+#
+# crt-static: link the C runtime statically. Dynamic linking imports
+# VCRUNTIME140.dll, which is part of the Visual C++ Redistributable, not of
+# Windows — on a clean Windows 10 the packaged app failed to start ("VCRUNTIME140.dll
+# was not found", PakkoW10 smoke 2026-11-27). CI and dev boxes have the
+# Redistributable installed, so only a clean machine shows it.
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/Brepro"]
+rustflags = ["-C", "link-arg=/Brepro", "-C", "target-feature=+crt-static"]

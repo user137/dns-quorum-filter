@@ -142,6 +142,7 @@ jobs:
             "--remap-path-prefix=$env:GITHUB_WORKSPACE\build-b=src"
             "--remap-path-prefix=$cargoHome=cargo"
             "-Clink-arg=/Brepro"
+            "-Ctarget-feature=+crt-static"
           ) -join " "
           "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build in path A

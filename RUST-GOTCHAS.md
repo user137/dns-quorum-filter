@@ -665,3 +665,9 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   `writeln!` with an ignored error and `args_os()` — `cli_help::print_help_if_requested`, T-246.
   Racy to reproduce with `| Select -First 1`; deterministic with Python `os.pipe()` whose read end
   is closed before the spawn.
+- **The MSVC build linked the C runtime dynamically, and the packaged app did not start on a clean
+  Windows 10** ("VCRUNTIME140.dll was not found", PakkoW10, 2026-11-27). `VCRUNTIME140.dll` ships with
+  the Visual C++ Redistributable, not with Windows; CI runners, the WACK runner and dev boxes all have
+  it, so nothing caught it before. Fix: `-C target-feature=+crt-static` in `.cargo/config.toml` and in
+  every workflow step that sets `RUSTFLAGS` (the env var replaces the config). `release.yml` fails the
+  build if `dumpbin /dependents` shows a `vcruntime`/`msvcp`/`concrt` import.

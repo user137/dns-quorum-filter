@@ -47,11 +47,33 @@ jobs:
             "--remap-path-prefix=$env:GITHUB_WORKSPACE=src"
             "--remap-path-prefix=$cargoHome=cargo"
             "-Clink-arg=/Brepro"
+            "-Ctarget-feature=+crt-static"
           ) -join " "
           "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build release binaries
         run: cargo build --release --workspace --locked
+
+      # The binaries must not need the Visual C++ Redistributable: a clean Windows
+      # has only the UCRT (api-ms-win-crt-*), so a VCRUNTIME140/MSVCP140 import
+      # means the app does not start there (.cargo/config.toml, crt-static).
+      - name: No Visual C++ Redistributable imports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
+            Where-Object FullName -match 'Hostx64\\x64' | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe not found under $vs" }
+          $bad = 0
+          foreach ($name in 'dnsqb-service.exe', 'dnsqb-watcher.exe', 'dnsqb-tray.exe') {
+            $deps = & $dumpbin.FullName /dependents "target/release/$name"
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed on $name ($LASTEXITCODE)" }
+            $hits = @($deps | Select-String -Pattern '(?i)\b(vcruntime|msvcp|concrt)\d+.*\.dll')
+            if ($hits.Count -gt 0) { Write-Host "::error::$name imports $($hits.Line.Trim() -join ', ')"; $bad++ }
+            else { Write-Host "${name}: no Redistributable imports" }
+          }
+          if ($bad -gt 0) { exit 1 }
 
       # If a real code-signing certificate is ever supplied as the CODESIGN_PFX
       # secret (base64 .pfx) + CODESIGN_PASSWORD, it is used and every signtool
@@ -334,6 +356,7 @@ jobs:
             "--remap-path-prefix=$env:GITHUB_WORKSPACE\build-b=src"
             "--remap-path-prefix=$cargoHome=cargo"
             "-Clink-arg=/Brepro"
+            "-Ctarget-feature=+crt-static"
           ) -join " "
           "RUSTFLAGS=$flags" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Build in path A
