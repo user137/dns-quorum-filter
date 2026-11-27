@@ -411,6 +411,7 @@ html[dir="rtl"] .switch.is-partial .thumb { transform: translateX(-7.5px); }
    line it answers; empty (no margin) while consent is not given. */
 #consent-control:not(:empty) { margin: -0.4rem 0 1rem; }
 .consent-line { font-size: 12px; color: var(--text-muted); margin: 0; }
+.hero .consent-policy { margin-left: 0.8rem; font-size: 13px; }
 
 /* Browser-setup / onboarding card. */
 #browser-setup-body .setup-intro { font-size: 13px; margin: 0 0 0.5rem; }

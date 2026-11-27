@@ -793,6 +793,7 @@ function renderProtectionHero(state) {
     action.textContent = t("hero.grantConsentButton");
     action.addEventListener("click", () => grantConsentFromHero(action));
     box.appendChild(action);
+    box.appendChild(privacyPolicyLink());
   }
   protectionHero.appendChild(box);
 }
@@ -803,9 +804,24 @@ function renderProtectionHero(state) {
 // two-step confirm as the master switch. Rendered from the status frames, so
 // it skips identical frames (focus) and never rebuilds an open confirm.
 const consentControl = document.getElementById("consent-control");
+
+// The public privacy policy, in the page's language where one exists.
+function privacyPolicyLink() {
+  const link = document.createElement("a");
+  link.className = "consent-policy";
+  link.href = CURRENT_LOCALE === "uk"
+    ? "https://user137.github.io/dns-quorum-filter/uk/privacy.html"
+    : "https://user137.github.io/dns-quorum-filter/privacy.html";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = t("consent.privacyPolicyLink");
+  return link;
+}
 let consentConfirmOpen = false;
-// Latched until the next consent change: a withdrawal that did not reach the
-// disk is undone by the next restart, so it must stay said, not flash.
+// A grant that did not reach the disk (said once, until consent changes). An
+// unsaved withdrawal is not latched here: the service reports it in every
+// status frame (`consent_storage`), so a reload or a second tab
+// still says it.
 let consentNotSaved = null;
 let consentError = null;
 
@@ -826,21 +842,42 @@ function renderConsentControl(status) {
     return;
   }
   const given = status.domain_sharing_consent !== "not_given";
-  const signature = [given, consentNotSaved || "", consentError || "", CURRENT_LOCALE].join("|");
+  const unsaved = !given && status.consent_storage === "withdrawal_unsaved";
+  if (!given) {
+    consentNotSaved = null; // consent changed since that grant; the note is stale
+  }
+  const signature = [given, unsaved, consentNotSaved || "", consentError || "", CURRENT_LOCALE].join("|");
   if (consentControl.dataset.rendered === signature) {
     return;
   }
   consentControl.dataset.rendered = signature;
-  keepFocus(() => buildConsentControl(given));
+  keepFocus(() => buildConsentControl(given, unsaved));
 }
 
-function buildConsentControl(given) {
+async function withdrawConsent() {
+  try {
+    const status = await postConsent(false);
+    consentNotSaved = null;
+    consentError = null;
+    render(status);
+    // The row empties without consent; the hero's grant button takes focus.
+    focusIfPresent(protectionHero.querySelector(".hero-action"));
+  } catch (err) {
+    consentError = err.message;
+    if (lastStatus) {
+      renderConsentControl(lastStatus);
+    }
+  }
+}
+
+function buildConsentControl(given, unsaved) {
   consentControl.textContent = "";
-  if (consentNotSaved) {
+  const note = unsaved ? "consent.withdrawNotSaved" : consentNotSaved;
+  if (note) {
     const notice = document.createElement("div");
     notice.className = "notice warn";
     notice.setAttribute("role", "status");
-    notice.textContent = t(consentNotSaved);
+    notice.textContent = t(note);
     consentControl.appendChild(notice);
   }
   if (consentError) {
@@ -851,6 +888,20 @@ function buildConsentControl(given) {
     consentControl.appendChild(err);
   }
   if (!given) {
+    if (unsaved) {
+      // Already withdrawn live: saving again needs no confirm, and the only
+      // other button on the page (the hero's) would grant consent instead.
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "link-button";
+      retry.id = "consent-withdraw-retry";
+      retry.textContent = t("consent.withdrawButton");
+      retry.addEventListener("click", () => {
+        retry.disabled = true;
+        withdrawConsent();
+      });
+      consentControl.appendChild(retry);
+    }
     return;
   }
   const line = document.createElement("p");
@@ -863,6 +914,8 @@ function buildConsentControl(given) {
   withdraw.textContent = t("consent.withdrawButton");
   line.appendChild(document.createTextNode(" "));
   line.appendChild(withdraw);
+  line.appendChild(document.createTextNode(" · "));
+  line.appendChild(privacyPolicyLink());
   consentControl.appendChild(line);
 
   const confirm = document.createElement("div");
@@ -905,27 +958,17 @@ function buildConsentControl(given) {
   });
   // Same as every other two-step confirm: leaving it disarms it.
   confirm.addEventListener("focusout", (event) => {
+    if (!document.hasFocus()) {
+      return; // another window took focus; the confirm stays where it was
+    }
     if (!confirm.hidden && !confirm.contains(event.relatedTarget)) {
       close(false);
     }
   });
-  go.addEventListener("click", async () => {
+  go.addEventListener("click", () => {
     go.disabled = true;
-    try {
-      const status = await postConsent(false);
-      consentNotSaved = status.persisted ? null : "consent.withdrawNotSaved";
-      consentError = null;
-      close(false);
-      render(status);
-      // The row empties without consent; the hero's grant button takes focus.
-      focusIfPresent(protectionHero.querySelector(".hero-action"));
-    } catch (err) {
-      consentError = err.message;
-      close(false);
-      if (lastStatus) {
-        renderConsentControl(lastStatus);
-      }
-    }
+    close(false);
+    withdrawConsent();
   });
 }
 
@@ -938,9 +981,14 @@ async function grantConsentFromHero(button) {
     consentNotSaved = status.persisted ? null : "consent.grantNotSaved";
     consentError = null;
     render(status);
+    // The hero change is announced; keep focus off <body> when a next step exists.
+    focusIfPresent(protectionHero.querySelector(".hero-action"));
   } catch (_err) {
     button.disabled = false;
     button.textContent = t("hero.grantConsentFailedLabel");
+    if (heroAnnounce) {
+      heroAnnounce.textContent = t("hero.grantConsentFailedLabel");
+    }
   }
 }
 

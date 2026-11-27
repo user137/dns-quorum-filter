@@ -735,6 +735,7 @@ mod tests {
             network: dnsqb_service::NetworkStatusView::Online,
             paused: false,
             domain_sharing_consent: dnsqb_service::DomainSharingConsent::Given,
+            consent_storage: dnsqb_service::ConsentStorageView::Saved,
             baseline_endpoint: dnsqb_service::BaselineEndpointView::Primary,
             port: 8443,
             stats,

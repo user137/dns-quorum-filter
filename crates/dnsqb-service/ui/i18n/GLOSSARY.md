@@ -93,9 +93,15 @@ was wrong in places and every machine-translated locale inherited it; these are 
 - **"consent" is the legal-register word of each locale** (uk «згода», de «Einwilligung», fr
   «consentement») — the Store-policy opt-in, not a casual "OK". "Withdraw consent" uses that
   locale's usual GDPR verb (uk «відкликати»), never "cancel" or "turn off".
-- **The reference DNS keeps the UX-4 term** ("reference DNS", uk «довідковий DNS») in both the
-  `/admin/ui` hero and the tray wizard (`onboarding.consentDescriptionTemplate`).
+- **The reference DNS keeps the full UX-4 term** ("unfiltered reference DNS", uk «нефільтрований
+  довідковий DNS») at first mention in the `/admin/ui` hero and the tray wizard; a later mention in
+  the same text may shorten to "reference DNS".
 - The hero state says what the user sees — "Filtering is not on" — not "consent required".
+- **Say what refusing means and where to undo it** (UX review 2026-11-27): the wizard names the
+  outcome of «Ні» and that consent can be given later on the settings page; the confirm button
+  names the action ("Withdraw consent"), never a bare verb that a locale shares with "Cancel".
+- **No "name lookups"/"resolution" jargon** — say what the user sees: a browser set to use this
+  filter won't open sites.
 
 ## Terms that stay untranslated
 

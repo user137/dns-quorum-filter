@@ -54,7 +54,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 10;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 11;
 
 /// [`AdminStatusResponse::domain_sharing_consent`]'s serde default.
 const fn consent_absent_reads_as_granted() -> crate::config::DomainSharingConsent {
@@ -277,12 +277,19 @@ pub struct AdminStatusResponse {
     pub paused: bool,
     /// T-286 — whether the user agreed to send looked-up domains to the
     /// filtering providers and the baseline resolver
-    /// ([`crate::ResolverConfig::domain_sharing_consent`]). `NOT_GIVEN` means every
-    /// `DoH` query is answered `SERVFAIL` and no third party is contacted.
+    /// ([`crate::ResolverConfig::domain_sharing_consent`]). `not_given` means every
+    /// `DoH` query is answered `SERVFAIL` and no domain the user looks up
+    /// leaves the machine (background list/GeoIP downloads still run).
     /// Defaults to `given` when absent: a pre-T-286 service has no consent
     /// gate and already sends domains, so that is the honest reading.
     #[serde(default = "consent_absent_reads_as_granted")]
     pub domain_sharing_consent: crate::config::DomainSharingConsent,
+    /// T-286 (schema 11) — whether the live consent matches the file. The UI
+    /// keeps warning while a withdrawal is unsaved (a restart would bring
+    /// consent back) and offers to save it again. `#[serde(default)]` →
+    /// `saved`.
+    #[serde(default)]
+    pub consent_storage: ConsentStorageView,
     /// T-154 — which entry of the baseline failover chain is currently
     /// active. `PRIMARY` unless the primary baseline has been failed over.
     /// Diagnostic only — not part of the status indicator. `#[serde(default)]`
@@ -1118,6 +1125,17 @@ pub struct CctldBlockConfigUpdate {
     /// The ccTLD codes to block, in caller-supplied order (deduplicated
     /// server-side, first-seen order preserved).
     pub blocked_codes: Vec<String>,
+}
+
+/// T-286 — [`AdminStatusResponse::consent_storage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentStorageView {
+    /// `resolver_config.toml` holds the live consent.
+    #[default]
+    Saved,
+    /// Consent is withdrawn live, but the file still says `given`.
+    WithdrawalUnsaved,
 }
 
 /// `POST /admin/consent`'s body (T-286): grant (`true`) or withdraw

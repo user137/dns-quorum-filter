@@ -1253,10 +1253,12 @@ fn run_setup_wizard(
             rfd::MessageLevel::Info,
         ))
     });
+    // The description is set after the consent step: a declined consent
+    // changes what the user should (not) do with the browser next.
     let cert_dialog = steps.cert.then(|| {
         with_owner(confirm_dialog(
             &i18n::t(locale, "onboarding.title"),
-            &i18n::t(locale, "onboarding.description"),
+            "",
             rfd::MessageLevel::Info,
         ))
     });
@@ -1264,10 +1266,18 @@ fn run_setup_wizard(
     let trust = trust.clone();
     let locale = locale.to_string();
     std::thread::spawn(move || {
-        if let Some(dialog) = consent_dialog {
-            ask_for_consent(&app_data, port, dialog, &locale);
-        }
-        let proceed = cert_dialog.map(|dialog| dialog.show() == rfd::MessageDialogResult::Yes);
+        let consent = consent_dialog.map_or(ConsentStep::NotAsked, |dialog| {
+            ask_for_consent(&app_data, port, dialog, &locale)
+        });
+        let cert_key = if consent == ConsentStep::Declined {
+            "onboarding.descriptionNoConsent"
+        } else {
+            "onboarding.description"
+        };
+        let proceed = cert_dialog.map(|dialog| {
+            dialog.set_description(i18n::t(&locale, cert_key)).show()
+                == rfd::MessageDialogResult::Yes
+        });
         WIZARD_ACTIVE.store(false, Ordering::SeqCst);
         match proceed {
             None => return,
@@ -1315,6 +1325,18 @@ fn privacy_policy_url(locale: &str) -> &'static str {
     }
 }
 
+/// What the consent step ended with; only [`ConsentStep::Declined`] changes
+/// the certificate step's text (don't point the browser at the filter yet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConsentStep {
+    /// Not shown: not part of this run, service unreachable, or already given.
+    NotAsked,
+    /// The user said yes (whether or not it reached the disk).
+    Granted,
+    /// The user said no.
+    Declined,
+}
+
 /// Wizard step 1 (T-286): asks the service whether consent is still missing
 /// and who would see the domains, shows `dialog` with that list, and sends
 /// the answer. Runs on the wizard's own thread. Nothing is asked when the
@@ -1322,52 +1344,61 @@ fn privacy_policy_url(locale: &str) -> &'static str {
 /// saved) or consent is already given. `consent-offer.seen` is written on
 /// «Ні» and on a grant that reached the disk — never on a failure, so the
 /// next launch asks again.
-fn ask_for_consent(app_data: &Path, port: u16, dialog: rfd::MessageDialog, locale: &str) {
+fn ask_for_consent(
+    app_data: &Path,
+    port: u16,
+    dialog: rfd::MessageDialog,
+    locale: &str,
+) -> ConsentStep {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     else {
         tracing::error!("failed to start a runtime for the consent step");
-        return;
+        return ConsentStep::NotAsked;
     };
     let client = match AdminClient::new(app_data, port) {
         Ok(client) => client,
         Err(err) => {
             tracing::warn!("consent step skipped, no admin client: {err}");
-            return;
+            return ConsentStep::NotAsked;
         }
     };
     let status = match runtime.block_on(client.status()) {
         Ok(status) => status,
         Err(err) => {
             tracing::warn!("consent step skipped, service unreachable: {err}");
-            return;
+            return ConsentStep::NotAsked;
         }
     };
     if status.domain_sharing_consent.is_given() {
-        return;
+        return ConsentStep::NotAsked;
     }
     let names: Vec<&str> = status
         .active_providers
         .iter()
         .map(|provider| provider.display_name.as_str())
         .collect();
-    let providers = if names.is_empty() {
-        "—".to_string()
+    let providers_line = if names.is_empty() {
+        i18n::t(locale, "onboarding.consentNoProviders")
     } else {
-        names.join(", ")
+        i18n::t_args(
+            locale,
+            "onboarding.consentProvidersTemplate",
+            &[("providers", &names.join(", "))],
+        )
     };
     let description = i18n::t_args(
         locale,
         "onboarding.consentDescriptionTemplate",
         &[
-            ("providers", &providers),
+            ("providersLine", &providers_line),
             ("privacyUrl", privacy_policy_url(locale)),
         ],
     );
     if dialog.set_description(description).show() != rfd::MessageDialogResult::Yes {
         onboarding::mark_consent_offer_seen(app_data);
-        return;
+        return ConsentStep::Declined;
     }
     match runtime.block_on(client.set_consent(true)) {
         Ok(response) if response.persisted => onboarding::mark_consent_offer_seen(app_data),
@@ -1387,6 +1418,7 @@ fn ask_for_consent(app_data: &Path, port: u16, dialog: rfd::MessageDialog, local
                 .show();
         }
     }
+    ConsentStep::Granted
 }
 
 /// The one shape every "are you sure?" dialog below shares: [`dialog_title`]

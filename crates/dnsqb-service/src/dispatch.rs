@@ -26,14 +26,14 @@ use crate::admin::{
     AdminConfigUpdate, AdminErrorReason, AdminErrorResponse, AdminStats, AdminStatusResponse,
     BaselineEndpointView, BlocklistBundlesConfigUpdate, BlocklistBundlesStatusView,
     BlocklistSourceStatusView, CacheConfigUpdate, CacheConfigView, CctldBlockConfigUpdate,
-    CctldBlockStatusView, CertStatusResponse, CertTrustView, ConsentUpdate, DatabaseSource,
-    EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest, HealthGeoip,
-    HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse, MaxmindCredentialCheck,
-    MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView, OverrideAddRequest,
-    OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest, ProviderStatusView,
-    QueryLogDiskView, QueryLogPolicyUpdate, RatingFilterConfigUpdate, RatingFilterStatusView,
-    RemoveAllRequestOutcomeView, RemoveAllRequestResponse, WatchdogStatusView, ZoneListStatusView,
-    ADMIN_DTO_SCHEMA_VERSION,
+    CctldBlockStatusView, CertStatusResponse, CertTrustView, ConsentStorageView, ConsentUpdate,
+    DatabaseSource, EncryptedPersistenceView, GeoipCountriesResponse, GeoipCountryRequest,
+    HealthGeoip, HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse,
+    MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView,
+    OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
+    ProviderStatusView, QueryLogDiskView, QueryLogPolicyUpdate, RatingFilterConfigUpdate,
+    RatingFilterStatusView, RemoveAllRequestOutcomeView, RemoveAllRequestResponse,
+    WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
 };
 use crate::admin_ui;
 use crate::admission::ConnectionGate;
@@ -331,6 +331,10 @@ pub struct RuntimeSettings {
     /// T-286 — [`crate::ResolverConfig::domain_sharing_consent`]: `NotGiven`
     /// answers every `DoH` query `SERVFAIL` before the pipeline runs.
     pub domain_sharing_consent: DomainSharingConsent,
+    /// T-286 — a withdrawal is live but `resolver_config.toml` still says
+    /// `given` (its save failed). Cleared by the next successful save; while
+    /// set, `/admin/reset` keeps the withdrawal instead of re-reading it.
+    pub consent_withdrawal_unsaved: bool,
 }
 
 /// The admin-mutable resolver settings handed to [`AppState::new`] (T-72/T-73)
@@ -1121,6 +1125,7 @@ impl<C: DohClient + Sync> AppState<C> {
                 serve_baseline_when_filters_unreachable: runtime
                     .serve_baseline_when_filters_unreachable,
                 domain_sharing_consent: runtime.domain_sharing_consent,
+                consent_withdrawal_unsaved: false,
             }),
             providers: RwLock::new(Arc::new(runtime.providers)),
             cache: RwLock::new(Arc::new(cache)),
@@ -1729,7 +1734,11 @@ impl<C: DohClient + Sync> AppState<C> {
             return false;
         };
         match self.live_resolver_config().save(&paths.config) {
-            Ok(()) => true,
+            Ok(()) => {
+                // The file now holds the live consent, whatever it is.
+                self.runtime.write().consent_withdrawal_unsaved = false;
+                true
+            }
             Err(err) => {
                 tracing::warn!("failed to persist {what} to disk: {err}");
                 false
@@ -2018,6 +2027,11 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         network,
         paused,
         domain_sharing_consent: settings.domain_sharing_consent,
+        consent_storage: if settings.consent_withdrawal_unsaved {
+            ConsentStorageView::WithdrawalUnsaved
+        } else {
+            ConsentStorageView::Saved
+        },
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -2115,6 +2129,11 @@ fn apply_admin_config<C: DohClient + Sync>(
         network,
         paused,
         domain_sharing_consent: settings.domain_sharing_consent,
+        consent_storage: if settings.consent_withdrawal_unsaved {
+            ConsentStorageView::WithdrawalUnsaved
+        } else {
+            ConsentStorageView::Saved
+        },
         baseline_endpoint: BaselineEndpointView::from_active_index(
             state.baseline.read().active_index(),
         ),
@@ -2398,13 +2417,21 @@ fn apply_admin_reset<C: DohClient + Sync>(
             state.persist.port
         );
     }
+    let keep_unsaved_withdrawal = state.runtime.read().consent_withdrawal_unsaved;
     *state.runtime.write() = RuntimeSettings {
         timeout: TimeoutConfig {
             mode: config.timeout_mode,
             duration: Duration::from_millis(config.timeout_ms.into()),
         },
         serve_baseline_when_filters_unreachable: config.serve_baseline_when_filters_unreachable,
-        domain_sharing_consent: config.domain_sharing_consent,
+        // A withdrawal that never reached the disk must not be undone by
+        // re-reading the file that still says `given`.
+        domain_sharing_consent: if keep_unsaved_withdrawal {
+            DomainSharingConsent::NotGiven
+        } else {
+            config.domain_sharing_consent
+        },
+        consent_withdrawal_unsaved: keep_unsaved_withdrawal,
     };
     // T-72/T-73: reset reloads the `[[providers]]` list too — without this a
     // hand-edited provider list would only take effect at the next process
@@ -3133,7 +3160,12 @@ fn apply_consent_change<C: DohClient + Sync>(
         let persist_guard = state.persist_lock.lock();
         state.runtime.write().domain_sharing_consent =
             DomainSharingConsent::from_granted(update.granted);
-        state.persist_live_config(&persist_guard, "a consent change")
+        let persisted = state.persist_live_config(&persist_guard, "a consent change");
+        // Without an app-data dir a restart reads the default (`not_given`),
+        // so an unsaved withdrawal there is not undone by anything.
+        state.runtime.write().consent_withdrawal_unsaved =
+            !update.granted && !persisted && state.persist.paths.is_some();
+        persisted
     };
     admin_status(state, persisted)
 }
@@ -9384,9 +9416,75 @@ pub(crate) mod tests {
         assert!(!status.persisted);
         assert!(!status.domain_sharing_consent.is_given());
         assert_eq!(
+            status.consent_storage,
+            crate::admin::ConsentStorageView::WithdrawalUnsaved
+        );
+        assert_eq!(
             response_code_of(&state, RecordType::A).await,
             ResponseCode::ServFail
         );
+    }
+
+    // Happy path, the other direction: a withdrawal lands on disk as
+    // `not_given` and leaves nothing flagged as unsaved.
+    #[tokio::test]
+    async fn a_withdrawal_is_written_to_disk_and_clears_the_unsaved_flag() {
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            persist_at(path.clone(), dir.path().join("overrides.toml")),
+        );
+        state.runtime.write().consent_withdrawal_unsaved = true;
+        let status = decode_status(
+            consent_post(Arc::clone(&state), &serde_json::json!({ "granted": false })).await,
+        )
+        .await;
+        assert!(status.persisted);
+        assert_eq!(
+            status.consent_storage,
+            crate::admin::ConsentStorageView::Saved
+        );
+        match ResolverConfig::load(&path) {
+            Ok(loaded) => assert!(!loaded.domain_sharing_consent.is_given()),
+            Err(err) => panic!("the saved file must load back: {err}"),
+        }
+    }
+
+    // Interaction: `/admin/reset` re-reads a file that still says `given`
+    // after a withdrawal failed to save — it must keep the withdrawal.
+    #[tokio::test]
+    async fn reset_does_not_undo_a_withdrawal_that_was_never_saved() {
+        let _store_guard = store_test_guard();
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("must be able to create a temp dir");
+        };
+        let config_path = dir.path().join("resolver_config.toml");
+        let overrides_path = dir.path().join("overrides.toml");
+        if let Err(err) = std::fs::write(
+            &config_path,
+            "port = 8443\ndomain_sharing_consent = \"given\"\n",
+        ) {
+            panic!("must be able to write the fixture config: {err}");
+        }
+        if let Err(err) = std::fs::write(&overrides_path, "") {
+            panic!("must be able to write the fixture overrides file: {err}");
+        }
+        let state = state_with_persist(no_op_client(), persist_at(config_path, overrides_path));
+        {
+            let mut runtime = state.runtime.write();
+            runtime.domain_sharing_consent = crate::config::DomainSharingConsent::NotGiven;
+            runtime.consent_withdrawal_unsaved = true;
+        }
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!state.domain_sharing_consent_snapshot());
+        assert!(state.runtime.read().consent_withdrawal_unsaved);
     }
 
     // Misuse: a malformed or extended body is a 400 and changes nothing; a

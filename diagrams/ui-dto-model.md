@@ -199,6 +199,7 @@ classDiagram
         +NetworkStatusView network
         +bool paused
         +DomainSharingConsent domain_sharing_consent
+        +ConsentStorageView consent_storage
         +BaselineEndpointView baseline_endpoint
         +u16 port
         +AdminStats stats

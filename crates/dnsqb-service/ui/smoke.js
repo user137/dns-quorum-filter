@@ -167,7 +167,7 @@ const calls = [
   ["renderProtectionHero", `renderProtectionHero(heroPresentation("PROTECTED", {blocked: 3}))`],
   ["renderProtectionHeroCert", `renderProtectionHero(heroPresentation("CERT_NOT_TRUSTED", {blocked: 0}))`],
   ["renderProtectionHeroConsent", `renderProtectionHero(heroPresentation("CONSENT_REQUIRED", {blocked: 0}))`],
-  ["renderConsentControl", `consentControl.dataset.rendered = ""; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "given" }))}); consentNotSaved = "consent.withdrawNotSaved"; consentError = "x"; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))}); consentNotSaved = "consent.grantNotSaved"; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))}); consentNotSaved = null; consentError = null`],
+  ["renderConsentControl", `consentControl.dataset.rendered = ""; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "given" }))}); consentError = "x"; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given", consent_storage: "withdrawal_unsaved" }))}); consentNotSaved = "consent.grantNotSaved"; renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))}); consentNotSaved = null; consentError = null`],
   ["renderProtectionHeroDegraded", `renderProtectionHero(heroPresentation("FILTERS_DEGRADED", {blocked: 0}))`],
   ["renderLastQuery", `renderLastQuery(null); renderLastQuery(Date.now() - 20e3); renderLastQuery(Date.now() - 7 * 60e3); renderLastQuery(Date.now() - 5 * 3600e3); renderLastQuery(Date.now() - 3 * 86400e3)`],
   ["renderStartupTask", `renderStartupTask("DISABLED"); renderStartupTask("DISABLED_BY_POLICY"); renderStartupTask("ENABLED")`],
@@ -345,6 +345,10 @@ for (const [fn, data] of xssCalls) {
     if (withdraws() !== before + 1) { failures++; console.log("[consent] no withdraw button while consent is given"); }
     vm.runInContext(`renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given" }))})`, ctx);
     if (withdraws() !== before + 1) { failures++; console.log("[consent] withdraw button shown without consent"); }
+    const retries = () => created.filter((r) => r.props.id === "consent-withdraw-retry").length;
+    const r0 = retries();
+    vm.runInContext(`renderConsentControl(${JSON.stringify(status({ domain_sharing_consent: "not_given", consent_storage: "withdrawal_unsaved" }))})`, ctx);
+    if (retries() !== r0 + 1) { failures++; console.log("[consent] no retry for an unsaved withdrawal"); }
   }
 
   // UX-3: the setup card folds once a browser has queried, stays folded when
