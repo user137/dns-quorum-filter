@@ -2190,6 +2190,27 @@ impl AdminClient {
         response.json().await.map_err(AdminClientError::Request)
     }
 
+    /// Asks the service to make sure the local certificate is trusted
+    /// (`POST /admin/install-cert`, T-188). Already trusted → no `certutil`
+    /// dialog; the service just refreshes its cached trust state, which is
+    /// what the tray needs after installing the certificate itself.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable, the
+    /// install failed (`5xx`), or the response doesn't decode.
+    pub async fn install_cert(&self) -> Result<InstallCertResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/install-cert", self.base_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
     /// Grants or withdraws consent to send domains to the providers (T-286,
     /// `POST /admin/consent`). Check `persisted` in the result: a withdrawal
     /// that did not reach the disk is undone by the next restart.

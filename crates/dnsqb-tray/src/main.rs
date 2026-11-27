@@ -696,15 +696,17 @@ fn handle_menu_event(
         MenuAction::InstallCert => {
             if confirm_install_cert(locale) {
                 let cert_path = app_data.join("cert.pem");
+                let app_data_owned = app_data.to_path_buf();
                 let locale = locale.to_string();
                 spawn_cert_action(
                     "install",
                     dialog_title(&i18n::t(&locale, "menu.installCert")),
                     locale.clone(),
                     trust,
-                    move || {
-                        ensure_installed(&cert_path)
-                            .map(|outcome| trust_store_outcome_text(outcome, &locale))
+                    move || -> Result<String, dnsqb_service::TrustStoreError> {
+                        let outcome = ensure_installed(&cert_path)?;
+                        refresh_service_cert_trust(&app_data_owned, port);
+                        Ok(trust_store_outcome_text(outcome, &locale))
                     },
                 );
             }
@@ -1306,11 +1308,33 @@ fn run_setup_wizard(
                 // Reached only on a successful install — a failure bails on the
                 // `?` above with the marker still unwritten.
                 onboarding::mark_onboarding_seen(&app_data);
+                refresh_service_cert_trust(&app_data, port);
                 browser::open_in_default_browser(&url);
                 Ok(trust_store_outcome_text(outcome, &locale))
             },
         );
     });
+}
+
+/// The service learns about a certificate the tray installed only on its
+/// next 60 s trust poll, so the settings page opened right after the wizard
+/// read "Certificate not installed" for up to a minute (Win10 VM smoke
+/// 2026-11-27). `/admin/install-cert` on an already-trusted certificate shows
+/// no dialog and refreshes the service's cached state at once. Best effort:
+/// on failure the poll still catches up.
+fn refresh_service_cert_trust(app_data: &Path, port: u16) {
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    else {
+        tracing::warn!("no runtime to refresh the service's certificate state");
+        return;
+    };
+    let result =
+        AdminClient::new(app_data, port).and_then(|client| runtime.block_on(client.install_cert()));
+    if let Err(err) = result {
+        tracing::warn!("service certificate state not refreshed: {err}");
+    }
 }
 
 /// The "Майстер налаштування" menu item: every step. The consent step
