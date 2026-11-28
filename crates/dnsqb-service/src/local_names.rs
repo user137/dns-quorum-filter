@@ -23,6 +23,15 @@ pub(crate) enum LocalAnswer {
     NoData,
 }
 
+/// A local answer and the zone it comes from: how many trailing labels of
+/// the queried name make the zone, `None` for a single-label name (no zone
+/// of ours — its parent is the root).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LocalReply {
+    pub(crate) answer: LocalAnswer,
+    pub(crate) zone_labels: Option<u8>,
+}
+
 /// Special-use domains answered NXDOMAIN at every level, apex included.
 const NXDOMAIN_ZONES: [&str; 4] = [
     "invalid",   // RFC 6761 §6.4
@@ -33,28 +42,40 @@ const NXDOMAIN_ZONES: [&str; 4] = [
 
 /// The local answer for `name` (ASCII, any case, root dot optional) and
 /// `qtype`, or `None` when the query goes on to the pipeline.
-pub(crate) fn local_answer(name: &str, qtype: RecordType) -> Option<LocalAnswer> {
+pub(crate) fn local_answer(name: &str, qtype: RecordType) -> Option<LocalReply> {
     let name = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
     if name.is_empty() {
         return None;
     }
+    let in_zone = |answer, zone: &str| LocalReply {
+        answer,
+        zone_labels: Some(label_count(zone)),
+    };
     if is_at_or_below(&name, "localhost") {
-        return Some(LocalAnswer::Loopback);
+        return Some(in_zone(LocalAnswer::Loopback, "localhost"));
     }
-    if NXDOMAIN_ZONES
+    if let Some(zone) = NXDOMAIN_ZONES
         .iter()
-        .any(|zone| is_at_or_below(&name, zone))
+        .find(|zone| is_at_or_below(&name, zone))
     {
-        return Some(LocalAnswer::NxDomain);
+        return Some(in_zone(LocalAnswer::NxDomain, zone));
     }
-    if let Some(answer) = reverse_zone_answer(&name) {
-        return Some(answer);
+    if let Some(reply) = reverse_zone_answer(&name) {
+        return Some(reply);
     }
     let address_shaped = matches!(
         qtype,
         RecordType::A | RecordType::AAAA | RecordType::HTTPS | RecordType::SVCB
     );
-    (!name.contains('.') && address_shaped && !is_icann_tld(&name)).then_some(LocalAnswer::NxDomain)
+    (!name.contains('.') && address_shaped && !is_icann_tld(&name)).then_some(LocalReply {
+        answer: LocalAnswer::NxDomain,
+        zone_labels: None,
+    })
+}
+
+/// Labels in one of this module's zone names (short constants).
+fn label_count(zone: &str) -> u8 {
+    u8::try_from(zone.split('.').count()).unwrap_or(u8::MAX)
 }
 
 /// `name` is `zone` or a name below it.
@@ -65,7 +86,7 @@ fn is_at_or_below(name: &str, zone: &str) -> bool {
 
 /// RFC 6303 §4 (plus RFC 7793's `100.64/10`): the answer for a name in a
 /// locally served reverse zone — NODATA at the zone apex, NXDOMAIN below.
-fn reverse_zone_answer(name: &str) -> Option<LocalAnswer> {
+fn reverse_zone_answer(name: &str) -> Option<LocalReply> {
     let (labels, zone_len) = if let Some(rest) = name.strip_suffix(".in-addr.arpa") {
         let octets: Vec<&str> = rest.rsplit('.').collect();
         (octets.len(), private_v4_zone_len(&octets)?)
@@ -74,11 +95,17 @@ fn reverse_zone_answer(name: &str) -> Option<LocalAnswer> {
         let nibbles: Vec<&str> = rest.rsplit('.').collect();
         (nibbles.len(), private_v6_zone_len(&nibbles)?)
     };
-    match labels.cmp(&zone_len) {
-        std::cmp::Ordering::Less => None,
-        std::cmp::Ordering::Equal => Some(LocalAnswer::NoData),
-        std::cmp::Ordering::Greater => Some(LocalAnswer::NxDomain),
-    }
+    let answer = match labels.cmp(&zone_len) {
+        std::cmp::Ordering::Less => return None,
+        std::cmp::Ordering::Equal => LocalAnswer::NoData,
+        std::cmp::Ordering::Greater => LocalAnswer::NxDomain,
+    };
+    // Plus the two labels of `in-addr.arpa` / `ip6.arpa`; zones are ≤ 34.
+    let zone_labels = u8::try_from(zone_len.saturating_add(2)).ok()?;
+    Some(LocalReply {
+        answer,
+        zone_labels: Some(zone_labels),
+    })
 }
 
 /// The label count of the RFC 6303 zone the leading `octets` (most
@@ -120,11 +147,31 @@ fn private_v6_zone_len(nibbles: &[&str]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{local_answer, LocalAnswer};
+    use super::{local_answer, LocalAnswer, LocalReply};
     use hickory_proto::rr::RecordType;
 
     fn answer(name: &str) -> Option<LocalAnswer> {
-        local_answer(name, RecordType::A)
+        local_answer(name, RecordType::A).map(|reply| reply.answer)
+    }
+
+    fn zone(name: &str) -> Option<u8> {
+        local_answer(name, RecordType::A).and_then(|reply| reply.zone_labels)
+    }
+
+    #[test]
+    fn each_local_answer_names_its_zone() {
+        assert_eq!(zone("app.localhost"), Some(1));
+        assert_eq!(zone("router.home.arpa."), Some(2));
+        assert_eq!(zone("1.1.168.192.in-addr.arpa"), Some(4));
+        assert_eq!(zone("1.0.0.10.in-addr.arpa"), Some(3));
+        assert_eq!(zone("1.0.0.0.d.f.ip6.arpa"), Some(4));
+        assert_eq!(
+            local_answer("printer", RecordType::A),
+            Some(LocalReply {
+                answer: LocalAnswer::NxDomain,
+                zone_labels: None
+            })
+        );
     }
 
     #[test]
@@ -133,7 +180,7 @@ mod tests {
             assert_eq!(answer(name), Some(LocalAnswer::Loopback), "{name}");
         }
         assert_eq!(
-            local_answer("localhost", RecordType::MX),
+            local_answer("localhost", RecordType::MX).map(|r| r.answer),
             Some(LocalAnswer::Loopback)
         );
     }
@@ -151,7 +198,7 @@ mod tests {
         ] {
             assert_eq!(answer(name), Some(LocalAnswer::NxDomain), "{name}");
             assert_eq!(
-                local_answer(name, RecordType::TXT),
+                local_answer(name, RecordType::TXT).map(|r| r.answer),
                 Some(LocalAnswer::NxDomain),
                 "{name}"
             );
@@ -271,7 +318,7 @@ mod tests {
             RecordType::SVCB,
         ] {
             assert_eq!(
-                local_answer("printer", qtype),
+                local_answer("printer", qtype).map(|r| r.answer),
                 Some(LocalAnswer::NxDomain),
                 "{qtype}"
             );

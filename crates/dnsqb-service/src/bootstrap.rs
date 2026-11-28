@@ -6,6 +6,11 @@
 //! that mode nothing here calls the OS resolver: the baseline hosts come from
 //! [`PINNED_BASELINE`], every other host from a `DoH` A/AAAA lookup sent to a
 //! pinned baseline. With the listener off, the OS resolver is used as before.
+//! Bootstrap answers are cached and looked up in a detached task: `reqwest`'s
+//! 500 ms connect timeout also covers name resolution, so a lookup that ran
+//! inside it would be cut short on a slow or blackholed first baseline and
+//! never finish. Local-only names (`localhost`, `.local`, …) are answered
+//! here in that mode, never sent to a public resolver.
 //! For the `DoH` client, a non-built-in host is then left with its public
 //! addresses only (the T-72 SSRF check, applied after resolution) — except
 //! a proxy host named in the environment, which the operator chose. The
@@ -19,9 +24,12 @@ use crate::upstream::{
 };
 use hickory_proto::op::{Message, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, RecordType};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::Instant;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -127,40 +135,62 @@ impl std::fmt::Display for InvalidHostName {
 
 impl std::error::Error for InvalidHostName {}
 
-/// The proxy variables `reqwest` reads (its system-proxy default).
-const PROXY_VARS: [&str; 6] = [
-    "HTTPS_PROXY",
-    "https_proxy",
-    "ALL_PROXY",
-    "all_proxy",
-    "HTTP_PROXY",
-    "http_proxy",
-];
+/// A local-only name (RFC 6761 and friends, [`crate::local_names`]) asked
+/// for in bootstrap mode; it never goes to a public resolver.
+#[derive(Debug)]
+struct LocalOnlyName;
 
-/// The host names of the proxies in `values`, lowercased, without the root
-/// dot. A value that does not parse as a URL is skipped: `reqwest` cannot use
-/// it either, so no request goes there.
-fn proxy_hosts_from(values: impl IntoIterator<Item = String>) -> Vec<String> {
-    values
-        .into_iter()
-        .filter_map(|value| {
-            let value = value.trim();
-            let url = url::Url::parse(value)
-                .ok()
-                .filter(url::Url::has_host)
-                // `host:port` with no scheme, as `reqwest` also accepts.
-                .or_else(|| {
-                    (!value.contains("://"))
-                        .then(|| url::Url::parse(&format!("http://{value}")).ok())
-                        .flatten()
-                })?;
-            match url.host()? {
-                url::Host::Domain(host) => Some(host.trim_end_matches('.').to_ascii_lowercase()),
-                // An IP literal never reaches a resolver.
-                url::Host::Ipv4(_) | url::Host::Ipv6(_) => None,
-            }
-        })
-        .collect()
+impl std::fmt::Display for LocalOnlyName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a local-only name is not looked up through a public resolver")
+    }
+}
+
+impl std::error::Error for LocalOnlyName {}
+
+/// The proxy host `reqwest` uses for an `https://` request — the only kind
+/// our clients send — as hyper-util 0.1.20 (`Matcher::from_env`) picks it:
+/// the first set of `HTTPS_PROXY`/`https_proxy`, or if that does not parse,
+/// the first set of `ALL_PROXY`/`all_proxy`; none at all under CGI
+/// (`REQUEST_METHOD` set). Lowercased, without the root dot; `None` also for
+/// an IP literal, which never reaches a resolver. `HTTP_PROXY` is not read:
+/// it applies to `http://` requests only.
+fn env_proxy_host(is_cgi: bool, var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    if is_cgi {
+        return None;
+    }
+    let first = |names: [&str; 2]| names.into_iter().find_map(&var);
+    let used = first(["HTTPS_PROXY", "https_proxy"])
+        .and_then(|value| proxy_uri_host(&value))
+        .or_else(|| first(["ALL_PROXY", "all_proxy"]).and_then(|value| proxy_uri_host(&value)));
+    match used? {
+        ProxyHost::Name(host) => Some(host),
+        ProxyHost::IpLiteral => None,
+    }
+}
+
+/// The host of a proxy URI hyper-util accepts.
+enum ProxyHost {
+    Name(String),
+    IpLiteral,
+}
+
+/// `None` when hyper-util would not use `value` as a proxy.
+fn proxy_uri_host(value: &str) -> Option<ProxyHost> {
+    let uri = value.parse::<http::Uri>().ok()?;
+    if let Some(scheme) = uri.scheme_str() {
+        let known = ["http", "https", "socks4", "socks4a", "socks5", "socks5h"];
+        if !known.iter().any(|k| k.eq_ignore_ascii_case(scheme)) {
+            return None;
+        }
+    }
+    let host = uri.authority()?.host();
+    if host.starts_with('[') || host.parse::<IpAddr>().is_ok() {
+        return Some(ProxyHost::IpLiteral);
+    }
+    Some(ProxyHost::Name(
+        host.trim_end_matches('.').to_ascii_lowercase(),
+    ))
 }
 
 /// The bootstrap client's resolver: [`PINNED_BASELINE`] and nothing else, so
@@ -244,16 +274,59 @@ pub(crate) enum Destinations {
     Any,
 }
 
+/// How long a bootstrap answer is used without asking again.
+const BOOTSTRAP_FRESH_FOR: Duration = Duration::from_secs(300);
+/// How long a stale answer is still served while a refresh runs.
+const BOOTSTRAP_STALE_FOR: Duration = Duration::from_hours(24);
+/// Deadline of one detached lookup (every baseline in turn).
+const BOOTSTRAP_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Hosts cached, and lookups in flight, each at most this many: the hosts
+/// are the presets, the custom providers and our own constant hosts.
+const BOOTSTRAP_CACHE_CAP: usize = 64;
+
+/// A lookup in flight: `None` until it finishes; the error carries no detail
+/// (it is never shown — waiters report [`BootstrapUnavailable`]).
+type Pending = tokio::sync::watch::Receiver<Option<Result<Vec<SocketAddr>, ()>>>;
+
+struct Cached {
+    addrs: Vec<SocketAddr>,
+    at: Instant,
+}
+
+/// Bootstrap answers and the lookups in flight, keyed by lowercase host.
+#[derive(Default)]
+struct BootstrapCache {
+    entries: HashMap<String, Cached>,
+    pending: HashMap<String, Pending>,
+}
+
+impl BootstrapCache {
+    fn store(&mut self, host: String, addrs: Vec<SocketAddr>, at: Instant) {
+        if self.entries.len() >= BOOTSTRAP_CACHE_CAP && !self.entries.contains_key(&host) {
+            let oldest = self
+                .entries
+                .iter()
+                .min_by_key(|(_, cached)| cached.at)
+                .map(|(host, _)| host.clone());
+            if let Some(oldest) = oldest {
+                self.entries.remove(&oldest);
+            }
+        }
+        self.entries.insert(host, Cached { addrs, at });
+    }
+}
+
 /// The resolver of every outbound client (see the module doc). `C` is the
 /// bootstrap `DoH` client; only tests replace it.
 pub(crate) struct OutboundResolver<C = ReqwestDohClient> {
     mode: ResolverMode,
     destinations: Destinations,
     bootstrap: Arc<C>,
-    /// Proxy hosts from the environment at construction, resolved
-    /// unfiltered: the operator chose them, and a proxy on this machine or
-    /// the LAN is the usual case.
+    /// The environment's proxy host at construction, resolved unfiltered:
+    /// the operator chose it, and a proxy on this machine or the LAN is the
+    /// usual case.
     proxy_hosts: Vec<String>,
+    cache: Arc<parking_lot::Mutex<BootstrapCache>>,
 }
 
 impl OutboundResolver {
@@ -265,14 +338,15 @@ impl OutboundResolver {
         destinations: Destinations,
     ) -> Result<Self, reqwest::Error> {
         let bootstrap = ReqwestDohClient::bootstrap(Arc::new(PinnedOnlyResolver))?;
+        let is_cgi = std::env::var_os("REQUEST_METHOD").is_some();
         // A variable that is unset or not Unicode is no proxy for `reqwest`
         // either.
-        let proxies = PROXY_VARS.iter().filter_map(|var| std::env::var(var).ok());
+        let proxy = env_proxy_host(is_cgi, |var| std::env::var(var).ok());
         Ok(Self::with_bootstrap(
             mode,
             destinations,
             Arc::new(bootstrap),
-            proxy_hosts_from(proxies),
+            proxy.into_iter().collect(),
         ))
     }
 }
@@ -289,11 +363,12 @@ impl<C> OutboundResolver<C> {
             destinations,
             bootstrap,
             proxy_hosts,
+            cache: Arc::default(),
         }
     }
 
     /// Hosts whose addresses are used as resolved: built-in presets, the
-    /// pinned baselines and the environment's proxies.
+    /// pinned baselines and the environment's proxy.
     fn is_trusted(&self, host: &str) -> bool {
         let bare = host.trim_end_matches('.');
         is_builtin_host(host)
@@ -305,16 +380,117 @@ impl<C> OutboundResolver<C> {
     }
 }
 
+/// Bootstrap mode, a host that is not pinned: a local-only name is answered
+/// here, anything else from the cache or a detached lookup.
+async fn bootstrap_lookup<C: DohClient + Send + Sync + 'static>(
+    bootstrap: Arc<C>,
+    cache: Arc<parking_lot::Mutex<BootstrapCache>>,
+    host: String,
+) -> Result<Vec<SocketAddr>, BoxError> {
+    match crate::local_names::local_answer(&host, RecordType::A).map(|reply| reply.answer) {
+        Some(crate::local_names::LocalAnswer::Loopback) => {
+            return Ok(vec![
+                SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+                SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 0),
+            ]);
+        }
+        Some(
+            crate::local_names::LocalAnswer::NxDomain | crate::local_names::LocalAnswer::NoData,
+        ) => {
+            return Err(Box::new(LocalOnlyName));
+        }
+        None => {}
+    }
+    let key = host.trim_end_matches('.').to_ascii_lowercase();
+    let mut pending = {
+        let mut guard = cache.lock();
+        let now = Instant::now();
+        let cached = guard.entries.get(&key).map(|cached| {
+            (
+                cached.addrs.clone(),
+                now.saturating_duration_since(cached.at),
+            )
+        });
+        match cached {
+            Some((addrs, age)) if age < BOOTSTRAP_FRESH_FOR => return Ok(addrs),
+            Some((addrs, age)) if age < BOOTSTRAP_STALE_FOR => {
+                // A refresh that can't start (cap reached) is retried by the
+                // next caller; the stale answer serves meanwhile.
+                let _ = start_lookup(&mut guard, &cache, &bootstrap, key);
+                return Ok(addrs);
+            }
+            _ => match start_lookup(&mut guard, &cache, &bootstrap, key) {
+                Some(pending) => pending,
+                None => return Err(Box::new(BootstrapUnavailable)),
+            },
+        }
+    };
+    let done = pending
+        .wait_for(Option::is_some)
+        .await
+        .map_err(|_| Box::new(BootstrapUnavailable) as BoxError)?;
+    match done.as_ref() {
+        Some(Ok(addrs)) => Ok(addrs.clone()),
+        Some(Err(())) | None => Err(Box::new(BootstrapUnavailable)),
+    }
+}
+
+/// Joins the lookup of `key` in flight, or starts one in a detached task that
+/// outlives a caller cut short by a connect timeout and fills the cache.
+/// `None` when [`BOOTSTRAP_CACHE_CAP`] lookups are already in flight.
+fn start_lookup<C: DohClient + Send + Sync + 'static>(
+    guard: &mut BootstrapCache,
+    cache: &Arc<parking_lot::Mutex<BootstrapCache>>,
+    bootstrap: &Arc<C>,
+    key: String,
+) -> Option<Pending> {
+    if let Some(pending) = guard.pending.get(&key) {
+        return Some(pending.clone());
+    }
+    if guard.pending.len() >= BOOTSTRAP_CACHE_CAP {
+        return None;
+    }
+    let (done, pending) = tokio::sync::watch::channel(None);
+    guard.pending.insert(key.clone(), pending.clone());
+    let cache = Arc::clone(cache);
+    let bootstrap = Arc::clone(bootstrap);
+    tokio::spawn(async move {
+        let found = tokio::time::timeout(
+            BOOTSTRAP_LOOKUP_TIMEOUT,
+            lookup_via_baseline(bootstrap.as_ref(), &key),
+        )
+        .await;
+        let result = match found {
+            Ok(Ok(addrs)) => Ok(addrs),
+            Ok(Err(_)) | Err(_) => Err(()),
+        };
+        {
+            let mut guard = cache.lock();
+            guard.pending.remove(&key);
+            if let Ok(addrs) = &result {
+                if !addrs.is_empty() {
+                    guard.store(key, addrs.clone(), Instant::now());
+                }
+            }
+        }
+        // `send_replace` never fails: a lookup every caller gave up on still
+        // lands in the cache above.
+        done.send_replace(Some(result));
+    });
+    Some(pending)
+}
+
 impl<C: DohClient + Send + Sync + 'static> reqwest::dns::Resolve for OutboundResolver<C> {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_owned();
         let bootstrap_mode = self.mode.is_bootstrap();
         let trusted = self.destinations == Destinations::Any || self.is_trusted(&host);
         let bootstrap = Arc::clone(&self.bootstrap);
+        let cache = Arc::clone(&self.cache);
         Box::pin(async move {
             let found: Vec<SocketAddr> = match (bootstrap_mode, pinned_addrs(&host)) {
                 (true, Some(addrs)) => addrs,
-                (true, None) => lookup_via_baseline(bootstrap.as_ref(), &host).await?,
+                (true, None) => bootstrap_lookup(bootstrap, cache, host).await?,
                 (false, _) => tokio::net::lookup_host((host.as_str(), 0)).await?.collect(),
             };
             let addrs = if trusted {
@@ -342,8 +518,8 @@ fn baseline_hosts() -> impl Iterator<Item = &'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        answer_ips, baseline_hosts, lookup_via_baseline, pinned_addrs, proxy_hosts_from,
-        Destinations, OutboundResolver, ResolverMode, PINNED_BASELINE,
+        answer_ips, baseline_hosts, env_proxy_host, lookup_via_baseline, pinned_addrs,
+        Destinations, OutboundResolver, ResolverMode, BOOTSTRAP_FRESH_FOR, PINNED_BASELINE,
     };
     use crate::upstream::{DohClient, UpstreamError};
     use hickory_proto::op::{Message, ResponseCode};
@@ -429,6 +605,8 @@ mod tests {
         failing: Vec<&'static str>,
         asked: Mutex<Vec<String>>,
         v4: Ipv4Addr,
+        /// How long each answer takes (paused-time tests).
+        delay: std::time::Duration,
     }
 
     impl ScriptedBaselines {
@@ -437,6 +615,14 @@ mod tests {
                 failing: vec![],
                 asked: Mutex::new(Vec::new()),
                 v4,
+                delay: std::time::Duration::ZERO,
+            }
+        }
+
+        fn slow(delay: std::time::Duration) -> Self {
+            Self {
+                delay,
+                ..Self::answering(PUBLIC)
             }
         }
 
@@ -458,7 +644,12 @@ mod tests {
             url: &str,
             query: &Message,
         ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> + Send {
-            std::future::ready(Ok(self.answer_for(url, query)))
+            let answer = self.answer_for(url, query);
+            let delay = self.delay;
+            async move {
+                tokio::time::sleep(delay).await;
+                Ok(answer)
+            }
         }
     }
 
@@ -585,11 +776,10 @@ mod tests {
         let mode = ResolverMode::default();
         mode.set_bootstrap(true);
         let (resolver, baselines) = scripted(&mode, PUBLIC, &[]);
-        let addrs: Vec<_> = match resolver.resolve(name("localhost")).await {
+        let addrs: Vec<_> = match resolver.resolve(name("custom.example")).await {
             Ok(addrs) => addrs.collect(),
             Err(err) => panic!("bootstrap lookup: {err}"),
         };
-        // The baseline's answer, not the OS's loopback one.
         assert_eq!(addrs, vec![std::net::SocketAddr::new(PUBLIC.into(), 0)]);
         assert_eq!(
             baselines.asked().first().map(String::as_str),
@@ -615,12 +805,110 @@ mod tests {
     #[tokio::test]
     async fn the_lookup_path_follows_the_mode_live() {
         let mode = ResolverMode::default();
-        let (resolver, _) = scripted(&mode, PUBLIC, &[]);
-        assert!(resolver.resolve(name("localhost")).await.is_err());
+        let (resolver, baselines) = scripted(&mode, PUBLIC, &[]);
+        assert!(resolver.resolve(name("custom.example")).await.is_err());
+        assert!(baselines.asked().is_empty());
         mode.set_bootstrap(true);
-        assert!(resolver.resolve(name("localhost")).await.is_ok());
-        mode.set_bootstrap(false);
-        assert!(resolver.resolve(name("localhost")).await.is_err());
+        assert!(resolver.resolve(name("custom.example")).await.is_ok());
+        assert!(!baselines.asked().is_empty());
+    }
+
+    // In bootstrap mode `localhost` is answered here and the other local-only
+    // names are refused — none of them reaches a public resolver.
+    #[tokio::test]
+    async fn on_local_only_names_never_reach_a_baseline() {
+        let mode = ResolverMode::default();
+        mode.set_bootstrap(true);
+        let baselines = Arc::new(ScriptedBaselines::answering(PUBLIC));
+        let resolver = OutboundResolver::with_bootstrap(
+            mode,
+            Destinations::Any,
+            Arc::clone(&baselines),
+            Vec::new(),
+        );
+        let addrs: Vec<_> = match resolver.resolve(name("localhost")).await {
+            Ok(addrs) => addrs.collect(),
+            Err(err) => panic!("localhost: {err}"),
+        };
+        assert!(!addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()));
+        for host in ["printer.local", "router.home.arpa", "intranet"] {
+            assert!(resolver.resolve(name(host)).await.is_err(), "{host}");
+        }
+        assert!(baselines.asked().is_empty());
+    }
+
+    // reqwest's connect timeout (500 ms) also covers resolution: a caller cut
+    // short must not cancel the lookup — it finishes and fills the cache.
+    #[tokio::test(start_paused = true)]
+    async fn a_lookup_outlives_a_caller_cut_short_and_is_cached() {
+        let mode = ResolverMode::default();
+        mode.set_bootstrap(true);
+        let baselines = Arc::new(ScriptedBaselines::slow(std::time::Duration::from_secs(2)));
+        let resolver = OutboundResolver::with_bootstrap(
+            mode,
+            Destinations::PublicOnly,
+            Arc::clone(&baselines),
+            Vec::new(),
+        );
+        let cut_short = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            resolver.resolve(name("slow.example")),
+        )
+        .await;
+        assert!(cut_short.is_err(), "the first caller times out");
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let asked = baselines.asked().len();
+        let again = tokio::time::timeout(
+            std::time::Duration::from_millis(1),
+            resolver.resolve(name("slow.example")),
+        )
+        .await;
+        assert!(matches!(again, Ok(Ok(_))), "served from the cache");
+        assert_eq!(baselines.asked().len(), asked, "no second lookup");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn concurrent_callers_share_one_lookup() {
+        let mode = ResolverMode::default();
+        mode.set_bootstrap(true);
+        let baselines = Arc::new(ScriptedBaselines::slow(std::time::Duration::from_secs(1)));
+        let resolver = OutboundResolver::with_bootstrap(
+            mode,
+            Destinations::PublicOnly,
+            Arc::clone(&baselines),
+            Vec::new(),
+        );
+        let (a, b) = tokio::join!(
+            resolver.resolve(name("shared.example")),
+            resolver.resolve(name("shared.example"))
+        );
+        assert!(a.is_ok() && b.is_ok());
+        // One A and one AAAA query to the first baseline.
+        assert_eq!(baselines.asked().len(), 2);
+    }
+
+    // A stale answer is served at once while a refresh runs behind it.
+    #[tokio::test(start_paused = true)]
+    async fn a_stale_answer_is_served_while_it_refreshes() {
+        let mode = ResolverMode::default();
+        mode.set_bootstrap(true);
+        let baselines = Arc::new(ScriptedBaselines::slow(std::time::Duration::from_secs(1)));
+        let resolver = OutboundResolver::with_bootstrap(
+            mode,
+            Destinations::PublicOnly,
+            Arc::clone(&baselines),
+            Vec::new(),
+        );
+        assert!(resolver.resolve(name("stale.example")).await.is_ok());
+        tokio::time::advance(BOOTSTRAP_FRESH_FOR + std::time::Duration::from_secs(1)).await;
+        let stale = tokio::time::timeout(
+            std::time::Duration::from_millis(1),
+            resolver.resolve(name("stale.example")),
+        )
+        .await;
+        assert!(matches!(stale, Ok(Ok(_))), "stale served without waiting");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert_eq!(baselines.asked().len(), 4, "one refresh ran");
     }
 
     // A proxy on this machine (`localhost:8888`) is the operator's choice,
@@ -667,21 +955,74 @@ mod tests {
         );
     }
 
+    fn proxy_of(vars: &[(&str, &str)]) -> Option<String> {
+        env_proxy_host(false, |name| {
+            vars.iter()
+                .find(|(var, _)| *var == name)
+                .map(|(_, value)| (*value).to_owned())
+        })
+    }
+
     #[test]
-    fn proxy_hosts_are_read_from_urls_and_bare_host_ports() {
-        let hosts = proxy_hosts_from(
-            [
-                "http://Proxy.Corp.:3128",
-                "socks5://user:pw@socks.lan:1080",
-                "localhost:8888",
-                " http://127.0.0.1:8080 ",
-                "http://[::1]:8080",
-                "",
-                "http://",
-                "::not a url::",
-            ]
-            .map(String::from),
+    fn the_proxy_host_is_the_one_reqwest_uses_for_https() {
+        assert_eq!(
+            proxy_of(&[("HTTPS_PROXY", "http://Proxy.Corp.:3128")]).as_deref(),
+            Some("proxy.corp")
         );
-        assert_eq!(hosts, vec!["proxy.corp", "socks.lan", "localhost"]);
+        assert_eq!(
+            proxy_of(&[("ALL_PROXY", "socks5://user:pw@socks.lan:1080")]).as_deref(),
+            Some("socks.lan")
+        );
+        // HTTPS wins over ALL; the upper-case name wins over the lower-case.
+        assert_eq!(
+            proxy_of(&[
+                ("ALL_PROXY", "http://all.lan"),
+                ("https_proxy", "http://https.lan")
+            ])
+            .as_deref(),
+            Some("https.lan")
+        );
+        assert_eq!(
+            proxy_of(&[
+                ("HTTPS_PROXY", "http://upper.lan"),
+                ("https_proxy", "http://lower.lan")
+            ])
+            .as_deref(),
+            Some("upper.lan")
+        );
+        // An unusable HTTPS value falls back to ALL, as hyper-util does.
+        assert_eq!(
+            proxy_of(&[("HTTPS_PROXY", ""), ("ALL_PROXY", "http://all.lan")]).as_deref(),
+            Some("all.lan")
+        );
+        assert_eq!(
+            proxy_of(&[
+                ("HTTPS_PROXY", "ftp://x.lan"),
+                ("ALL_PROXY", "http://all.lan")
+            ])
+            .as_deref(),
+            Some("all.lan")
+        );
+    }
+
+    // Misuse: variables reqwest ignores for https never make a host trusted.
+    #[test]
+    fn hosts_reqwest_would_not_use_are_not_trusted() {
+        assert_eq!(proxy_of(&[("HTTP_PROXY", "http://gw.corp:3128")]), None);
+        assert_eq!(proxy_of(&[("HTTPS_PROXY", "http://127.0.0.1:8080")]), None);
+        assert_eq!(proxy_of(&[("HTTPS_PROXY", "http://[::1]:8080")]), None);
+        // An IP literal in HTTPS is used by reqwest, so ALL is not.
+        assert_eq!(
+            proxy_of(&[
+                ("HTTPS_PROXY", "http://10.0.0.1:3128"),
+                ("ALL_PROXY", "http://all.lan")
+            ]),
+            None
+        );
+        assert_eq!(
+            env_proxy_host(true, |_| Some("http://proxy.corp".to_owned())),
+            None,
+            "CGI: reqwest ignores the variables"
+        );
     }
 }

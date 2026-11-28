@@ -3,10 +3,10 @@
 //! response format, SPEC.md §3.2, T-26; query prechecks and the OPT echo,
 //! T-305).
 
-use crate::local_names::{local_answer, LocalAnswer};
+use crate::local_names::{local_answer, LocalAnswer, LocalReply};
 use hickory_proto::op::{Edns, Message, MessageType, Metadata, OpCode, Query, ResponseCode};
-use hickory_proto::rr::rdata::{A, AAAA, HINFO};
-use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
+use hickory_proto::rr::rdata::{A, AAAA, HINFO, SOA};
+use hickory_proto::rr::{DNSClass, Name, RData, Record, RecordType};
 use hickory_proto::ProtoError;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -68,13 +68,17 @@ pub fn upstream_query(query: &Message) -> Message {
 /// RFC 1035 §4.1.1: the fixed header length.
 const HEADER_LEN: usize = 12;
 
+/// RFC 1035 §4.1.2: the smallest question — the root name (1 byte), QTYPE
+/// and QCLASS (2 each).
+const MIN_QUESTION_LEN: usize = 5;
+
 /// What [`precheck_raw`] decided from the header bytes alone (T-305 batch
 /// 3a), before any decoding.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RawPrecheck {
-    /// A QUERY with one question: decode it.
+    /// Decode it; [`precheck_query`] decides the rest.
     Decode,
-    /// Answered from the header alone (NOTIMP, FORMERR), wire bytes.
+    /// FORMERR from the header alone, wire bytes.
     Reply(Vec<u8>),
     /// Shorter than a header, or QR=1: nothing to answer.
     Drop,
@@ -82,9 +86,10 @@ pub enum RawPrecheck {
 
 /// Header-only checks that run before `hickory-proto` decodes a message:
 /// its decoder reserves one question slot per QDCOUNT up front, so a
-/// 12-byte packet claiming 65535 questions would allocate megabytes. Opcode
-/// other than QUERY → NOTIMP, QDCOUNT other than one → FORMERR (RFC 9619),
-/// both without sections. [`precheck_query`] still runs after decoding.
+/// 12-byte packet claiming 65535 questions would allocate megabytes. Only a
+/// QDCOUNT the bytes can't hold is answered here (FORMERR, no sections, no
+/// OPT); every other message decodes, so [`precheck_query`] builds the
+/// reply with OPT, CD and BADVERS as RFC 6891 asks.
 #[must_use]
 pub fn precheck_raw(wire: &[u8]) -> RawPrecheck {
     let Some(header) = wire.first_chunk::<HEADER_LEN>() else {
@@ -93,10 +98,9 @@ pub fn precheck_raw(wire: &[u8]) -> RawPrecheck {
     if header[2] & 0x80 != 0 {
         return RawPrecheck::Drop;
     }
-    if header[2] & 0x78 != 0 {
-        return RawPrecheck::Reply(reply_from_header(header, ResponseCode::NotImp));
-    }
-    if u16::from_be_bytes([header[4], header[5]]) != 1 {
+    let questions = usize::from(u16::from_be_bytes([header[4], header[5]]));
+    let room = wire.len().saturating_sub(HEADER_LEN);
+    if questions.saturating_mul(MIN_QUESTION_LEN) > room {
         return RawPrecheck::Reply(reply_from_header(header, ResponseCode::FormErr));
     }
     RawPrecheck::Decode
@@ -111,17 +115,18 @@ pub fn formerr_for_undecodable(wire: &[u8]) -> Option<Vec<u8>> {
     (header[2] & 0x80 == 0).then(|| reply_from_header(header, ResponseCode::FormErr))
 }
 
-/// A header-only response: the query's ID, opcode and RD, QR and RA set,
-/// `code` (a basic RCODE, ≤ 15), every count zero.
+/// A header-only response: the query's ID, opcode, RD and CD (RFC 4035
+/// §3.2.2), QR and RA set, `code` (a basic RCODE, ≤ 15), every count zero.
 fn reply_from_header(header: &[u8; HEADER_LEN], code: ResponseCode) -> Vec<u8> {
     // Byte 2: QR | opcode (0x78) | AA | TC | RD (0x01). Byte 3: RA | Z | AD
-    // | CD | RCODE (0x0f).
+    // | CD (0x10) | RCODE (0x0f).
     let opcode_and_rd = header[2] & 0x79;
+    let cd = header[3] & 0x10;
     let mut reply = vec![0u8; HEADER_LEN];
     reply[0] = header[0];
     reply[1] = header[1];
     reply[2] = 0x80 | opcode_and_rd;
-    reply[3] = 0x80 | (code.low() & 0x0f);
+    reply[3] = 0x80 | cd | (code.low() & 0x0f);
     reply
 }
 
@@ -182,8 +187,8 @@ pub fn precheck_query(query: &Message) -> QueryPrecheck {
             QueryPrecheck::Reply(response)
         }
         qtype => local_answer(&question.name().to_ascii(), qtype)
-            .map_or(QueryPrecheck::Resolve, |answer| {
-                QueryPrecheck::Reply(local_response(query, question, answer))
+            .map_or(QueryPrecheck::Resolve, |local| {
+                QueryPrecheck::Reply(local_response(query, question, local))
             }),
     }
 }
@@ -191,8 +196,48 @@ pub fn precheck_query(query: &Message) -> QueryPrecheck {
 /// RFC 6761 §6.3: TTL of the synthesized `localhost` addresses.
 const LOCALHOST_TTL: u32 = 3600;
 
-/// The reply to a name answered here ([`crate::local_names`]).
-fn local_response(query: &Message, question: &Query, answer: LocalAnswer) -> Message {
+/// RFC 6303 §3: the SOA of a locally served zone (`@ 10800 IN SOA @
+/// nobody.invalid. 1 3600 1200 604800 10800`), so a negative answer can be
+/// cached (RFC 2308 §5).
+const LOCAL_ZONE_SOA_TTL: u32 = 10_800;
+
+/// The reply to a name answered here ([`crate::local_names`]). An answer
+/// from one of our zones is authoritative and, when it has no records,
+/// carries that zone's SOA; a single-label name has no zone of ours.
+fn local_response(query: &Message, question: &Query, local: LocalReply) -> Message {
+    let mut response = local_answer_response(query, question, local.answer);
+    if let Some(labels) = local.zone_labels {
+        response.metadata.authoritative = true;
+        if response.answers.is_empty() {
+            response
+                .authorities
+                .push(local_zone_soa(question.name(), labels));
+        }
+    }
+    response
+}
+
+/// The synthetic SOA of the zone made of the last `labels` labels of `name`.
+fn local_zone_soa(name: &Name, labels: u8) -> Record {
+    let zone = name.trim_to(usize::from(labels));
+    // A fixed valid name: the root fallback is never taken.
+    let rname = Name::from_ascii("nobody.invalid.").unwrap_or_else(|_| Name::root());
+    Record::from_rdata(
+        zone.clone(),
+        LOCAL_ZONE_SOA_TTL,
+        RData::SOA(SOA::new(
+            zone,
+            rname,
+            1,
+            3600,
+            1200,
+            604_800,
+            LOCAL_ZONE_SOA_TTL,
+        )),
+    )
+}
+
+fn local_answer_response(query: &Message, question: &Query, answer: LocalAnswer) -> Message {
     match answer {
         LocalAnswer::NxDomain => build_error_response(query, ResponseCode::NXDomain),
         LocalAnswer::NoData => response_shell(query),
@@ -377,32 +422,45 @@ mod tests {
     }
 
     #[test]
-    fn a_question_count_other_than_one_is_formerr_without_decoding() {
-        for qd in [0u16, 2, 65535] {
-            // RD set (0x01); the bytes after the header are absent, so a
-            // decode would fail — the reply never needs one.
-            let super::RawPrecheck::Reply(bytes) = super::precheck_raw(&header(0x01, 0, qd)) else {
+    fn a_question_count_the_bytes_cannot_hold_is_formerr_without_decoding() {
+        for qd in [1u16, 2, 65535] {
+            // RD and CD set; no bytes after the header, so a decode would
+            // fail — the reply never needs one.
+            let super::RawPrecheck::Reply(bytes) = super::precheck_raw(&header(0x01, 0x10, qd))
+            else {
                 panic!("QDCOUNT {qd} must be answered");
             };
             let reply = decoded(&bytes);
             assert_eq!(reply.metadata.id, 0xabcd);
-            assert_eq!(reply.metadata.message_type, MessageType::Response);
             assert_eq!(reply.metadata.response_code, ResponseCode::FormErr);
             assert!(reply.metadata.recursion_desired);
             assert!(reply.metadata.recursion_available);
+            assert!(reply.metadata.checking_disabled);
             assert!(reply.queries.is_empty() && reply.edns.is_none());
         }
+        // Boundary: one byte short of room for two minimal questions.
+        let mut wire = header(0, 0, 2);
+        wire.extend_from_slice(&[0; 9]);
+        assert!(matches!(
+            super::precheck_raw(&wire),
+            super::RawPrecheck::Reply(_)
+        ));
+        wire.push(0);
+        assert_eq!(super::precheck_raw(&wire), super::RawPrecheck::Decode);
     }
 
+    // A count the bytes can hold decodes, so the decoded-path reply keeps
+    // the client's OPT (RFC 6891 §6.1.1) — no header-only shortcut.
     #[test]
-    fn a_non_query_opcode_is_notimp_from_the_header() {
-        // Opcode 4 (NOTIFY) with no question — legal for it, still not ours.
-        let super::RawPrecheck::Reply(bytes) = super::precheck_raw(&header(4 << 3, 0, 0)) else {
-            panic!("NOTIFY must be answered");
-        };
-        let reply = decoded(&bytes);
-        assert_eq!(reply.metadata.response_code, ResponseCode::NotImp);
-        assert_eq!(reply.metadata.op_code, hickory_proto::op::OpCode::Notify);
+    fn a_header_only_query_without_questions_decodes() {
+        assert_eq!(
+            super::precheck_raw(&header(4 << 3, 0, 0)),
+            super::RawPrecheck::Decode
+        );
+        assert_eq!(
+            super::precheck_raw(&header(0, 0, 0)),
+            super::RawPrecheck::Decode
+        );
     }
 
     #[test]
@@ -443,7 +501,7 @@ mod tests {
                 let bytes = match super::precheck_raw(&wire) {
                     super::RawPrecheck::Reply(bytes) => bytes,
                     super::RawPrecheck::Drop => continue,
-                    super::RawPrecheck::Decode => panic!("QDCOUNT 7 never decodes"),
+                    super::RawPrecheck::Decode => panic!("7 questions never fit in 0 bytes"),
                 };
                 let reply = decoded(&bytes);
                 assert_eq!(reply.metadata.id, 0xabcd);

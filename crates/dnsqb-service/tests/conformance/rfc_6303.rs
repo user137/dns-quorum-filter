@@ -39,3 +39,24 @@ fn public_reverse_lookups_go_out() {
     assert!(local_reply("1.1.1.1.in-addr.arpa.", RecordType::PTR).is_none());
     assert!(local_reply("9.9.15.172.in-addr.arpa.", RecordType::PTR).is_none());
 }
+
+// RFC 6303 §3 / RFC 2308 §5: a negative answer is authoritative and carries
+// the zone's SOA, so the asking client can cache it.
+#[test]
+fn a_local_negative_answer_carries_the_zone_soa() {
+    use hickory_proto::rr::RData;
+    let reply = local_reply("5.1.168.192.in-addr.arpa.", RecordType::PTR).expect("local");
+    assert!(reply.metadata.authoritative);
+    let Some(soa) = reply.authorities.first() else {
+        panic!("no SOA in the authority section");
+    };
+    assert_eq!(soa.name.to_ascii(), "168.192.in-addr.arpa.");
+    let RData::SOA(data) = &soa.data else {
+        panic!("not an SOA");
+    };
+    assert_eq!(data.minimum, 10_800);
+    let single = local_reply("printer.", RecordType::A).expect("local");
+    assert!(!single.metadata.authoritative && single.authorities.is_empty());
+    let loopback = local_reply("localhost.", RecordType::A).expect("local");
+    assert!(loopback.metadata.authoritative && loopback.authorities.is_empty());
+}

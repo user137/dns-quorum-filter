@@ -76,11 +76,10 @@ mod tests {
         })
     }
 
-    /// Answers every A lookup with 127.0.0.2 — loopback, but not the
-    /// address the test listener is bound to.
-    struct OtherLoopback;
+    /// Answers every A lookup with 127.0.0.1, where the test listener is.
+    struct LoopbackAnswer;
 
-    impl crate::upstream::DohClient for OtherLoopback {
+    impl crate::upstream::DohClient for LoopbackAnswer {
         fn query(
             &self,
             _url: &str,
@@ -99,17 +98,17 @@ mod tests {
                 answer.answers.push(Record::from_rdata(
                     hickory_proto::rr::Name::root(),
                     60,
-                    RData::A(A(std::net::Ipv4Addr::new(127, 0, 0, 2))),
+                    RData::A(A(std::net::Ipv4Addr::LOCALHOST)),
                 ));
             }
             std::future::ready(Ok(answer))
         }
     }
 
-    // Wiring: in bootstrap mode `localhost` is looked up through the
-    // baselines (here: 127.0.0.2), not the OS (127.0.0.1, where the
-    // listener is). Without `dns_resolver` the listener would see the
-    // connection.
+    // Wiring: in bootstrap mode a host is looked up through the baselines
+    // (here: 127.0.0.1, where the listener is). The OS can't resolve the
+    // reserved `.example` name, so without `dns_resolver` the listener would
+    // see no connection.
     #[tokio::test]
     async fn the_public_client_resolves_through_the_outbound_resolver() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -134,7 +133,7 @@ mod tests {
         let resolver = super::OutboundResolver::with_bootstrap(
             mode,
             super::Destinations::Any,
-            std::sync::Arc::new(OtherLoopback),
+            std::sync::Arc::new(LoopbackAnswer),
             Vec::new(),
         );
         let client = match super::with_resolver(std::sync::Arc::new(resolver)) {
@@ -142,11 +141,14 @@ mod tests {
             Err(err) => panic!("client: {err}"),
         };
         let request = client
-            .get(format!("https://localhost:{port}/"))
+            .get(format!("https://wiring-test.example:{port}/"))
             .timeout(std::time::Duration::from_secs(5))
             .send();
         assert!(request.await.is_err());
-        assert_eq!(hits.load(Ordering::SeqCst), 0, "the OS answer was used");
+        assert!(
+            hits.load(Ordering::SeqCst) >= 1,
+            "the baseline answer was not used"
+        );
     }
 
     #[test]

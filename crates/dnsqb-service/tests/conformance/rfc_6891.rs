@@ -118,3 +118,21 @@ fn badvers_takes_precedence_over_the_question_checks() {
     };
     assert_eq!(reply.metadata.response_code, ResponseCode::BADVERS);
 }
+
+// The same through the wire: a header with no question and an OPT of
+// version 1 decodes (the raw check only stops counts the bytes can't hold),
+// so BADVERS — not a header-only FORMERR without OPT — answers it.
+#[test]
+fn badvers_wins_on_the_wire_path_too() {
+    use dnsqb_service::{precheck_raw, RawPrecheck};
+    let mut query = query_with_edns(1, false);
+    query.queries.clear();
+    let bytes = encode_wire_message(&query).expect("encode");
+    assert_eq!(precheck_raw(&bytes), RawPrecheck::Decode);
+    let decoded = decode_wire_message(&bytes).expect("decode");
+    let QueryPrecheck::Reply(reply) = precheck_query(&decoded) else {
+        panic!("must be answered locally");
+    };
+    assert_eq!(reply.metadata.response_code, ResponseCode::BADVERS);
+    assert!(reply.edns.is_some(), "RFC 6891 §6.1.1: OPT in, OPT out");
+}

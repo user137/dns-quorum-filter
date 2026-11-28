@@ -133,16 +133,18 @@ TASKS-DONE.md, never here.
   drops the same address classes from a custom host's lookup, follows no redirect and sends no
   plain `http`. Still accepted: CGNAT `100.64/10`, `0/8` beyond `0.0.0.0`, broadcast, NAT64
   (deliberately — a public path on IPv6-only networks). Built-in preset/baseline hosts resolve
-  unfiltered, and so does a proxy host named in `HTTPS_PROXY`/`ALL_PROXY`/`HTTP_PROXY` (the
-  operator's choice); a request through such a proxy is resolved by the proxy, outside this check.
+  unfiltered, and so does the proxy host `reqwest` uses for `https://` (first of `HTTPS_PROXY`,
+  then `ALL_PROXY`; the operator's choice); a request through it is resolved by the proxy, outside
+  this check.
   Only these environment variables count: `reqwest` is built without `system-proxy`, so a proxy
   set only in Windows settings is not used at all (requests go direct).
 - **Bootstrap addresses are hard-coded (T-305 batch 3a)** — with the plain-DNS listener on, the
   baseline hosts are reached only at `PINNED_BASELINE`'s addresses (from the providers' docs,
   2026-11-28); a retired address is lost silently until `examples/bootstrap_probe` (release
   checklist) catches it. The IPv6 entries were not probed from the dev network (no IPv6 route).
-  A custom provider host that only resolves inside a corporate/split-horizon DNS cannot be looked
-  up in that mode — the bootstrap lookup goes to the public baselines.
+  A custom provider or proxy host that only resolves inside a corporate/split-horizon DNS cannot
+  be looked up in that mode — the bootstrap lookup goes to the public baselines (`localhost` and
+  IP literals work). Its answers are kept 5 min (stale up to 24 h while refreshing), not per TTL.
 - **`GET /admin/log?voter=<id>` for a *removed custom* provider is a 400 (T-72/T-73)** —
   `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
   so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's
