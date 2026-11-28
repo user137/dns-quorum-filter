@@ -9171,3 +9171,10 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   процеси завершились. DoH: OPT у відповіді лише на запит з OPT (payload 1232, DO копіюється), ANY → HINFO, порожнє
   питання → FORMERR, NXDOMAIN зберігається при повторі з кешу. Edge працює через фільтр з новими відповідями; Firefox на
   VM не перевірявся.
+
+- [x] T-305 батч 2 (2026-11-28) — DoH-клієнт: `PublicOnlyResolver` (системний lookup, для хоста власного провайдера
+  відкидає loopback/private/link-local, IPv4-mapped; якщо нічого не лишилось — помилка без імені хоста; NAT64 лишається;
+  вбудовані пресети й baseline — без фільтра), `redirect(none)` + `https_only` (T-308(1)). Класифікатор IP спільний із
+  `validate_provider_url`. `http_client::public_https_client()` (`https_only`) — єдина фабрика для GeoIP/top-N/
+  blocklist/reachability/MaxMind; тест-сканер не пускає інші `reqwest::Client` у продакшн-код. Закріплені bootstrap-IP
+  і `bootstrap_probe` — у батчі 3 (потрібні лише коли ОС дивиться на наш порт 53). Не перевірено на VM.

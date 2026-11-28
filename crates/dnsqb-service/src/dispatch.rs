@@ -3448,7 +3448,7 @@ where
             // status-poll hot path the "don't rebuild a TLS client 30x/min"
             // concern (T-149) was about. Talks to the public
             // `download.maxmind.com`, so no cert pinning.
-            let check = match reqwest::Client::builder().build() {
+            let check = match crate::http_client::public_https_client() {
                 Ok(client) => credential_check(
                     &check_maxmind_credentials(&client, &request.account_id, &request.license_key)
                         .await,

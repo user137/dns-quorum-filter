@@ -127,12 +127,13 @@ TASKS-DONE.md, never here.
   an all-disabled `&[ProviderEntry]` it returns a cacheable baseline ALLOW indistinguishable from a
   filtered one. The one shipped caller (`pipeline::handle_query`) gates this out via
   `ProviderEntry::any_enabled`.
-- **Custom provider URL SSRF check is literal-host only (T-72)** — `validate_provider_url` rejects
-  a non-`https` scheme and a loopback/private/link-local *literal IP* host (since T-271 also one
-  wrapped in an IPv4-mapped/-compatible IPv6 literal, and RFC 6761 `localhost` names; CGNAT
-  `100.64/10`, `0/8`, broadcast and NAT64 are still accepted), but a hostname that
-  *resolves* to such an address at request time is not caught (resolve-then-pin is a bigger
-  mechanism). Stated gap.
+- **Custom provider SSRF check: CGNAT and a few ranges still pass (T-72, T-305 batch 2)** —
+  `validate_provider_url` rejects a non-`https` scheme and a loopback/private/link-local literal
+  host (also IPv4-mapped/-compatible IPv6 and RFC 6761 `localhost`); the `DoH` client's resolver
+  drops the same address classes from a custom host's lookup, follows no redirect and sends no
+  plain `http`. Still accepted: CGNAT `100.64/10`, `0/8` beyond `0.0.0.0`, broadcast, NAT64
+  (deliberately — a public path on IPv6-only networks). Built-in preset/baseline hosts resolve
+  unfiltered.
 - **`GET /admin/log?voter=<id>` for a *removed custom* provider is a 400 (T-72/T-73)** —
   `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
   so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's

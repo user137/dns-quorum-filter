@@ -559,8 +559,10 @@ sinkhole-набір для malware). Резолюція — через `Signal::
 **Лише Quad9/AdGuard/CleanBrowsing live-звірені** (Quad9/AdGuard — DECISIONS.md 2026-08-25;
 CleanBrowsing — T-171/T-174 через `examples/phase1_metrics.rs`); решта — з опублікованої
 поведінки провайдера. SSRF: `validate_provider_url`
-відхиляє не-`https` і **літеральний** loopback/private/link-local хост; хостнейм, що
-*резолвиться* у такий IP — не ловиться (заявлена прогалина). Дефолтний активний набір
+відхиляє не-`https` і **літеральний** loopback/private/link-local хост; з T-305 (батч 2)
+резолвер DoH-клієнта відкидає такі адреси й у відповіді на хостнейм власного провайдера
+(якщо публічних не лишилось — запит падає), а DoH-клієнт не йде за редиректами й не говорить
+`http`. Хости вбудованих пресетів і baseline резолвляться без фільтра — це наші константи. Дефолтний активний набір
 (`DEFAULT_PROVIDER_IDS`) — `quad9` + `cloudflare-malware` + `adguard`: два Security-tier
 voter'и §3.4 плюс AdGuard для реклами (**рішення T-170, DECISIONS.md 2026-09-05** —
 раніше було `quad9` + `adguard`; SPEC-й "лише Security" це база, AdGuard додано свідомо).

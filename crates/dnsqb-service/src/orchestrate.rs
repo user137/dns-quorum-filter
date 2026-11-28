@@ -487,7 +487,7 @@ fn spawn_public_http_tasks(
     geoip_path: Option<PathBuf>,
     app_data: Option<PathBuf>,
 ) {
-    match (geoip_path, reqwest::Client::builder().build()) {
+    match (geoip_path, crate::http_client::public_https_client()) {
         (Some(path), Ok(client)) => {
             tokio::spawn(run_geoip_updater(client, path, Arc::clone(state)));
         }
@@ -498,7 +498,7 @@ fn spawn_public_http_tasks(
             tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
         }
     }
-    match (app_data.clone(), reqwest::Client::builder().build()) {
+    match (app_data.clone(), crate::http_client::public_https_client()) {
         (Some(dir), Ok(client)) => {
             tokio::spawn(run_topn_updater(client, dir, Arc::clone(state)));
         }
@@ -511,7 +511,7 @@ fn spawn_public_http_tasks(
             );
         }
     }
-    match reqwest::Client::builder().build() {
+    match crate::http_client::public_https_client() {
         Ok(client) => {
             tokio::spawn(run_reachability_prober(client, Arc::clone(state)));
         }
@@ -519,7 +519,7 @@ fn spawn_public_http_tasks(
             tracing::error!("failed to build the reachability probe HTTP client: {err}");
         }
     }
-    match (app_data, reqwest::Client::builder().build()) {
+    match (app_data, crate::http_client::public_https_client()) {
         (Some(dir), Ok(client)) => {
             tokio::spawn(run_blocklist_updater(client, dir, Arc::clone(state)));
         }

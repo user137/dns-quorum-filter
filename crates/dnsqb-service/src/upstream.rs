@@ -10,7 +10,8 @@ use hickory_proto::op::Message;
 use hickory_proto::ProtoError;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// SPEC.md §3.6 (T-31): idle HTTP/2 connections to an upstream are dropped
@@ -492,25 +493,7 @@ pub fn validate_provider_url(url: &str) -> Result<(), ProviderUrlError> {
                 .is_some_and(|tld| tld.eq_ignore_ascii_case("localhost"))
         }
         Some(url::Host::Ipv4(ip)) => is_non_public_v4(ip),
-        Some(url::Host::Ipv6(ip)) => {
-            // `Ipv6Addr::is_unique_local`/`is_unicast_link_local` are unstable;
-            // check the documented prefixes directly. fc00::/7 (ULA),
-            // fe80::/10 (link-local), ::ffff:0:0/96 (IPv4-mapped) and the
-            // deprecated ::/96 IPv4-compatible form, both of which carry an
-            // IPv4 address that must pass the same IPv4 checks.
-            let seg = ip.segments();
-            let ula = (seg[0] & 0xfe00) == 0xfc00;
-            let link_local = (seg[0] & 0xffc0) == 0xfe80;
-            let [.., a, b, c, d] = ip.octets();
-            let wrapped_v4 = ip
-                .to_ipv4_mapped()
-                .or_else(|| (seg[..6] == [0; 6]).then(|| Ipv4Addr::new(a, b, c, d)));
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || ula
-                || link_local
-                || wrapped_v4.is_some_and(is_non_public_v4)
-        }
+        Some(url::Host::Ipv6(ip)) => is_non_public_v6(ip),
     };
     if non_public {
         Err(ProviderUrlError::NonPublicHost)
@@ -524,6 +507,103 @@ pub fn validate_provider_url(url: &str) -> Result<(), ProviderUrlError> {
 /// as non-public here.
 fn is_non_public_v4(ip: Ipv4Addr) -> bool {
     ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
+}
+
+/// `Ipv6Addr::is_unique_local`/`is_unicast_link_local` are unstable; check
+/// the documented prefixes directly. `fc00::/7` (ULA), `fe80::/10` (link-local),
+/// `::ffff:0:0/96` (IPv4-mapped) and the deprecated `::/96` IPv4-compatible form,
+/// both of which carry an IPv4 address that must pass the same IPv4 checks.
+fn is_non_public_v6(ip: Ipv6Addr) -> bool {
+    let seg = ip.segments();
+    let ula = (seg[0] & 0xfe00) == 0xfc00;
+    let link_local = (seg[0] & 0xffc0) == 0xfe80;
+    let [.., a, b, c, d] = ip.octets();
+    let wrapped_v4 = ip
+        .to_ipv4_mapped()
+        .or_else(|| (seg[..6] == [0; 6]).then(|| Ipv4Addr::new(a, b, c, d)));
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || ula
+        || link_local
+        || wrapped_v4.is_some_and(is_non_public_v4)
+}
+
+/// The same classification [`validate_provider_url`] applies to a literal
+/// host, applied to a resolved address.
+fn is_non_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_non_public_v4(v4),
+        IpAddr::V6(v6) => is_non_public_v6(v6),
+    }
+}
+
+/// The resolved addresses a custom provider may be contacted on: the public
+/// ones, in the order the system resolver returned them.
+fn public_addrs(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+    addrs
+        .into_iter()
+        .filter(|addr| !is_non_public_ip(addr.ip()))
+        .collect()
+}
+
+/// The host of an `https://host/path` URL, as written in the built-in tables.
+fn https_url_host(url: &str) -> Option<&str> {
+    url.strip_prefix("https://")?.split('/').next()
+}
+
+/// A built-in preset's or a baseline's host. Their addresses come from the
+/// system resolver as is: they are this project's own constants, not
+/// operator input.
+fn is_builtin_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    BUILTIN_PRESETS
+        .iter()
+        .map(|&(_, _, url, ..)| url)
+        .chain(crate::baseline_selector::BASELINE_CHAIN)
+        .filter_map(https_url_host)
+        .any(|builtin| builtin.eq_ignore_ascii_case(host))
+}
+
+/// A custom provider's host resolved only to loopback/private/link-local
+/// addresses. Carries no host name: service logs never name a domain.
+#[derive(Debug)]
+struct NoPublicAddress;
+
+impl std::fmt::Display for NoPublicAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the DoH provider host resolved to no public address")
+    }
+}
+
+impl std::error::Error for NoPublicAddress {}
+
+/// The `DoH` client's resolver (T-305 batch 2): the system lookup, then a
+/// custom provider's non-public addresses are dropped, so a host name cannot
+/// point a request at this machine or the LAN — the resolve-time half of the
+/// T-72 SSRF check. Built-in hosts pass unfiltered.
+#[derive(Debug)]
+struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            let found: Vec<SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let addrs = if is_builtin_host(&host) {
+                found
+            } else {
+                let public = public_addrs(found);
+                if public.is_empty() {
+                    return Err(
+                        Box::new(NoPublicAddress) as Box<dyn std::error::Error + Send + Sync>
+                    );
+                }
+                public
+            };
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
 }
 
 /// The baseline (non-filtering) resolver's `DoH` endpoint (SPEC.md §3.4) —
@@ -698,7 +778,22 @@ impl ReqwestDohClient {
     ///
     /// Returns `Err` if the underlying TLS backend fails to initialize.
     pub fn new() -> Result<Self, reqwest::Error> {
+        Self::build(true)
+    }
+
+    /// Plain `http://` loopback test servers (T-262 detail tests).
+    #[cfg(test)]
+    fn allowing_plain_http() -> Result<Self, reqwest::Error> {
+        Self::build(false)
+    }
+
+    /// No redirects and HTTPS only (T-308(1)): a provider's redirect would
+    /// otherwise reach a URL `validate_provider_url` never saw.
+    fn build(https_only: bool) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .https_only(https_only)
+            .dns_resolver(Arc::new(PublicOnlyResolver))
             .pool_idle_timeout(UPSTREAM_POOL_IDLE_TIMEOUT)
             .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
             .http2_keep_alive_interval(UPSTREAM_KEEP_ALIVE_INTERVAL)
@@ -1111,7 +1206,7 @@ mod tests {
     }
 
     async fn t262_detail(url: &str) -> (&'static str, Option<u16>) {
-        let client = match ReqwestDohClient::new() {
+        let client = match ReqwestDohClient::allowing_plain_http() {
             Ok(client) => client,
             Err(err) => panic!("client construction: {err}"),
         };
@@ -1178,6 +1273,178 @@ mod tests {
     async fn http_detail_names_a_connection_closed_before_any_response() {
         let url = t262_canned_server(b"").await;
         assert_eq!(t262_detail(&url).await, ("incomplete_message", None));
+    }
+
+    // --- T-305 batch 2: resolver filter, no redirects, HTTPS only ---
+
+    fn sock(ip: &str) -> std::net::SocketAddr {
+        match ip.parse::<IpAddr>() {
+            Ok(ip) => std::net::SocketAddr::new(ip, 443),
+            Err(err) => panic!("valid fixture address {ip}: {err}"),
+        }
+    }
+
+    #[test]
+    fn public_addrs_keeps_public_addresses_in_resolver_order() {
+        let input = [sock("2606:4700::1111"), sock("9.9.9.9"), sock("1.1.1.1")];
+        assert_eq!(super::public_addrs(input), input.to_vec());
+    }
+
+    #[test]
+    fn public_addrs_drops_every_non_public_address() {
+        let non_public = [
+            "127.0.0.1",
+            "127.9.9.9",
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "169.254.1.1",
+            "0.0.0.0",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:192.168.0.1",
+            "::10.0.0.1",
+        ];
+        let input: Vec<_> = non_public.iter().map(|ip| sock(ip)).collect();
+        assert!(super::public_addrs(input).is_empty());
+        // Mixed: only the public one survives.
+        let mixed = [sock("127.0.0.1"), sock("8.8.8.8"), sock("fe80::1")];
+        assert_eq!(super::public_addrs(mixed), vec![sock("8.8.8.8")]);
+    }
+
+    // Consistent with `validate_provider_url`'s literal check: NAT64 is a
+    // public path on an IPv6-only network, not a local one.
+    #[test]
+    fn public_addrs_keeps_a_nat64_address() {
+        let nat64 = sock("64:ff9b::909:909");
+        assert_eq!(super::public_addrs([nat64]), vec![nat64]);
+    }
+
+    #[test]
+    fn every_builtin_url_has_a_host_the_resolver_recognises() {
+        let urls = super::BUILTIN_PRESETS
+            .iter()
+            .map(|&(_, _, url, ..)| url)
+            .chain(crate::baseline_selector::BASELINE_CHAIN);
+        for url in urls {
+            let parsed = match url::Url::parse(url) {
+                Ok(parsed) => parsed,
+                Err(err) => panic!("builtin url {url}: {err}"),
+            };
+            assert_eq!(super::https_url_host(url), parsed.host_str(), "{url}");
+            assert_eq!(parsed.port(), None, "{url}");
+            let Some(host) = parsed.host_str() else {
+                panic!("builtin url without a host: {url}");
+            };
+            assert!(super::is_builtin_host(host), "{url}");
+        }
+    }
+
+    #[test]
+    fn builtin_host_match_is_exact_but_case_and_root_dot_insensitive() {
+        assert!(super::is_builtin_host("DNS.Quad9.net."));
+        assert!(!super::is_builtin_host("dns.quad9.net.example.com"));
+        assert!(!super::is_builtin_host("evil-dns.quad9.net"));
+        assert!(!super::is_builtin_host("quad9.net"));
+        assert!(!super::is_builtin_host(""));
+    }
+
+    // RFC 6761: `localhost` resolves to loopback on every OS, offline too.
+    #[tokio::test]
+    async fn the_resolver_refuses_a_custom_host_that_resolves_to_loopback() {
+        use reqwest::dns::Resolve;
+        let name = match "localhost".parse::<reqwest::dns::Name>() {
+            Ok(name) => name,
+            Err(err) => panic!("valid name: {err}"),
+        };
+        let Err(err) = super::PublicOnlyResolver.resolve(name).await else {
+            panic!("a loopback-only custom host must not resolve");
+        };
+        assert!(
+            err.downcast_ref::<super::NoPublicAddress>().is_some(),
+            "{err}"
+        );
+        assert!(!err.to_string().contains("localhost"), "{err}");
+    }
+
+    /// A loopback HTTP server that counts accepted connections and answers
+    /// each with `reply`.
+    async fn counting_server(
+        reply: &'static [u8],
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) => panic!("bind loopback: {err}"),
+        };
+        let addr = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(err) => panic!("local_addr: {err}"),
+        };
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&hits);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                // Request bytes are irrelevant; a short read is fine.
+                let _ = stream.read(&mut buf).await;
+                // Best effort: the client side observes whatever arrives.
+                let _ = stream.write_all(reply).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        (format!("http://{addr}/dns-query"), hits)
+    }
+
+    // T-308(1): a redirect is never followed — the target would be a URL
+    // `validate_provider_url` never checked.
+    #[tokio::test]
+    async fn the_doh_client_does_not_follow_a_redirect() {
+        use std::sync::atomic::Ordering;
+        let (target, target_hits) =
+            counting_server(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .await;
+        let redirect: &'static str = Box::leak(
+            format!(
+                "HTTP/1.1 302 Found\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+            )
+            .into_boxed_str(),
+        );
+        let (origin, _) = counting_server(redirect.as_bytes()).await;
+        let client = match ReqwestDohClient::allowing_plain_http() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        assert!(client.query(&origin, &t262_query()).await.is_err());
+        assert_eq!(
+            target_hits.load(Ordering::SeqCst),
+            0,
+            "redirect was followed"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_production_doh_client_never_sends_plain_http() {
+        use std::sync::atomic::Ordering;
+        let (url, hits) =
+            counting_server(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .await;
+        let client = match ReqwestDohClient::new() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        assert!(client.query(&url, &t262_query()).await.is_err());
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "a plain-http request was sent"
+        );
     }
 
     #[tokio::test]
