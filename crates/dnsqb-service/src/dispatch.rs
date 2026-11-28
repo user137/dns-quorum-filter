@@ -1849,22 +1849,31 @@ impl<C: DohClient + Sync> AppState<C> {
     /// (dropping its tasks closes the sockets), then leave bootstrap mode.
     /// A failed bind keeps `enabled` (and bootstrap mode): the next start or
     /// toggle tries again, and `DoH` is unaffected.
-    pub(crate) fn apply_plain_dns(&self, enabled: bool) {
+    ///
+    /// Returns the tasks of a listener this call stopped. Dropping them only
+    /// *requests* the abort — the sockets close when the runtime drops the
+    /// futures — so a caller that answers a user (the route) awaits
+    /// `shutdown()` first: an immediate re-enable then finds port 53 free.
+    #[must_use = "await shutdown() before answering, or drop to close later"]
+    pub(crate) fn apply_plain_dns(&self, enabled: bool) -> Option<tokio::task::JoinSet<()>> {
         let mut runtime = self.plain_dns.lock();
         runtime.enabled = enabled;
         if !enabled {
-            runtime.listener = PlainDnsListener::Off;
+            let stopped = match std::mem::replace(&mut runtime.listener, PlainDnsListener::Off) {
+                PlainDnsListener::Listening { tasks, .. } => Some(tasks),
+                PlainDnsListener::Off | PlainDnsListener::BindFailed(_) => None,
+            };
             self.resolver_mode.set_bootstrap(false);
-            return;
+            return stopped;
         }
         if matches!(runtime.listener, PlainDnsListener::Listening { .. }) {
-            return;
+            return None;
         }
         self.resolver_mode.set_bootstrap(true);
         let Some(resolve) = self.plain_dns_resolve.get() else {
             tracing::warn!("plain DNS: no resolver installed, not listening");
             runtime.listener = PlainDnsListener::BindFailed(crate::plain_dns::BindFailure::Other);
-            return;
+            return None;
         };
         runtime.listener = match crate::plain_dns::bind(runtime.port) {
             Ok(sockets) => {
@@ -1878,13 +1887,11 @@ impl<C: DohClient + Sync> AppState<C> {
                     .filter_map(|entry| crate::upstream::https_url_host(&entry.spec.doh_url))
                     .collect();
                 self.client.prewarm(&hosts);
-                PlainDnsListener::Listening {
-                    _tasks: tasks,
-                    addrs,
-                }
+                PlainDnsListener::Listening { tasks, addrs }
             }
             Err(failure) => PlainDnsListener::BindFailed(failure),
         };
+        None
     }
 
     /// T-305 batch 3b — the resolve function the plain-DNS listener calls:
@@ -2205,9 +2212,9 @@ struct PlainDnsRuntime {
 
 enum PlainDnsListener {
     Off,
-    /// Dropping `_tasks` stops the listener and closes its sockets.
+    /// Dropping `tasks` stops the listener and closes its sockets.
     Listening {
-        _tasks: tokio::task::JoinSet<()>,
+        tasks: tokio::task::JoinSet<()>,
         addrs: Vec<std::net::SocketAddr>,
     },
     BindFailed(crate::plain_dns::BindFailure),
@@ -2655,8 +2662,9 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // restart (the same completeness gap `overrides`/`cache`/`geoip_countries`
     // above already close).
     state.update_providers(config.providers);
-    // T-305 batch 3b: a hand-edited `[plain_dns]` takes effect too.
-    state.apply_plain_dns(config.plain_dns.enabled);
+    // T-305 batch 3b: a hand-edited `[plain_dns]` takes effect too. A
+    // stopped listener's sockets close as the runtime drops its tasks.
+    drop(state.apply_plain_dns(config.plain_dns.enabled));
     *state.overrides.write() = Arc::new(OverridesState {
         lists: overrides,
         invalid,
@@ -3375,13 +3383,14 @@ where
 fn apply_plain_dns_change<C: DohClient + Sync>(
     state: &AppState<C>,
     update: PlainDnsConfigUpdate,
-) -> AdminStatusResponse {
-    let persisted = {
+) -> (AdminStatusResponse, Option<tokio::task::JoinSet<()>>) {
+    let (persisted, stopped) = {
         let persist_guard = state.persist_lock.lock();
-        state.apply_plain_dns(update.enabled);
-        state.persist_live_config(&persist_guard, "an admin plain-dns change")
+        let stopped = state.apply_plain_dns(update.enabled);
+        let persisted = state.persist_live_config(&persist_guard, "an admin plain-dns change");
+        (persisted, stopped)
     };
-    admin_status(state, persisted)
+    (admin_status(state, persisted), stopped)
 }
 
 /// `POST /admin/plain-dns` (T-305 batch 3b) — same CSRF gate and body cap
@@ -3406,7 +3415,13 @@ where
     let Ok(update) = serde_json::from_slice::<PlainDnsConfigUpdate>(&collected.to_bytes()) else {
         return bad_request(AdminErrorReason::MalformedBody);
     };
-    json_response(&apply_plain_dns_change(state, update))
+    let (status, stopped) = apply_plain_dns_change(state, update);
+    // Answer only once the old sockets are closed, so a switch back on
+    // right after finds the port free.
+    if let Some(mut tasks) = stopped {
+        tasks.shutdown().await;
+    }
+    json_response(&status)
 }
 
 /// Applies a consent change (T-286) under `persist_lock`: live-apply, then
@@ -6735,7 +6750,7 @@ pub(crate) mod tests {
                 "plain-dns",
                 |s| {
                     let update = crate::admin::PlainDnsConfigUpdate { enabled: true };
-                    assert!(super::apply_plain_dns_change(s, update).persisted);
+                    assert!(super::apply_plain_dns_change(s, update).0.persisted);
                 },
                 |c| c.plain_dns.enabled,
             ),
@@ -9764,7 +9779,7 @@ pub(crate) mod tests {
             },
         ));
         state.install_plain_dns_resolver();
-        state.apply_plain_dns(true);
+        assert!(state.apply_plain_dns(true).is_none());
         let seen = state
             .client
             .hosts
@@ -9773,7 +9788,7 @@ pub(crate) mod tests {
             .unwrap_or_default();
         assert_eq!(seen, expected);
         // Already listening: no second warm-up.
-        state.apply_plain_dns(true);
+        assert!(state.apply_plain_dns(true).is_none());
         let again = state
             .client
             .hosts
@@ -9842,6 +9857,27 @@ pub(crate) mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(state.plain_dns_addrs().is_empty());
         assert!(!state.resolver_mode().is_bootstrap());
+    }
+
+    // Interaction: off → on right away on the *same* fixed port (as the
+    // real 53 is) — the old sockets must be closed by the time `off` returns.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn plain_dns_rebinds_the_same_port_right_after_off() {
+        let state = plain_dns_state();
+        plain_dns_post(Arc::clone(&state), true).await;
+        let Some(port) = state
+            .plain_dns_addrs()
+            .first()
+            .map(std::net::SocketAddr::port)
+        else {
+            panic!("must listen");
+        };
+        state.set_plain_dns_port(port);
+        for _ in 0..20 {
+            plain_dns_post(Arc::clone(&state), false).await;
+            let on = plain_dns_post(Arc::clone(&state), true).await;
+            assert_eq!(on.plain_dns.state, PlainDnsStateView::Listening, "{on:?}");
+        }
     }
 
     // Interaction: on → on is a no-op (same addresses), off → on binds again.

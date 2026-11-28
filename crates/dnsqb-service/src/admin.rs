@@ -595,7 +595,8 @@ pub enum PlainDnsStateView {
 pub enum PlainDnsBindFailureView {
     /// Another program holds port 53.
     PortInUse,
-    /// The OS refused the port (reserved or excluded).
+    /// The OS refused the bind (Windows WSAEACCES: an excluded port range,
+    /// or a socket another program holds exclusively).
     PermissionDenied,
     /// Any other failure.
     Other,

@@ -275,7 +275,8 @@ pub async fn run() {
     // T-305 batch 3b: a failed bind is a status (`BIND_FAILED`), never a
     // startup failure — `DoH` keeps working.
     state.install_plain_dns_resolver();
-    state.apply_plain_dns(resolver_config.plain_dns.enabled);
+    // Nothing is listening yet, so nothing can be stopped here.
+    drop(state.apply_plain_dns(resolver_config.plain_dns.enabled));
     state.install_query_log_disk(query_log_disk);
     spawn_query_log_persister(&state, app_data.is_some());
     spawn_cache_persister(&state, cache_flusher);
