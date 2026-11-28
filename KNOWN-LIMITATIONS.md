@@ -145,6 +145,8 @@ TASKS-DONE.md, never here.
   A custom provider or proxy host that only resolves inside a corporate/split-horizon DNS cannot
   be looked up in that mode — the bootstrap lookup goes to the public baselines (`localhost` and
   IP literals work). Its answers are kept 5 min (stale up to 24 h while refreshing), not per TTL.
+  The bootstrap chain always starts at Cloudflare (it ignores the baseline selector's sticky
+  failover), so a blocked Cloudflare costs each refresh up to 3 s before Quad9 answers.
 - **`GET /admin/log?voter=<id>` for a *removed custom* provider is a 400 (T-72/T-73)** —
   `serve_admin_log` validates the facet against currently-configured ids ∪ every built-in preset,
   so a toggled-off preset stays filterable but a since-removed custom id does not; that voter's

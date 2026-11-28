@@ -237,6 +237,11 @@ fn answer_ips(response: &Message) -> Option<Vec<IpAddr>> {
     }
 }
 
+/// How long one baseline gets for its A+AAAA pair before the next is tried:
+/// the bootstrap client has only a connect timeout, so a baseline that
+/// accepts TCP and then stalls would otherwise hold the whole lookup.
+const BASELINE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// A and AAAA for `host` through the baselines in [`BASELINE_CHAIN`] order;
 /// the first baseline that answers either query wins.
 async fn lookup_via_baseline<C: DohClient>(
@@ -247,7 +252,12 @@ async fn lookup_via_baseline<C: DohClient>(
     let a = lookup_query(name.clone(), RecordType::A);
     let aaaa = lookup_query(name, RecordType::AAAA);
     for url in BASELINE_CHAIN {
-        let (v4, v6) = tokio::join!(client.query(url, &a), client.query(url, &aaaa));
+        let attempt = tokio::time::timeout(BASELINE_ATTEMPT_TIMEOUT, async {
+            tokio::join!(client.query(url, &a), client.query(url, &aaaa))
+        });
+        let Ok((v4, v6)) = attempt.await else {
+            continue;
+        };
         let v4 = v4.ok().as_ref().and_then(answer_ips);
         let v6 = v6.ok().as_ref().and_then(answer_ips);
         if v4.is_none() && v6.is_none() {
@@ -607,6 +617,8 @@ mod tests {
         v4: Ipv4Addr,
         /// How long each answer takes (paused-time tests).
         delay: std::time::Duration,
+        /// Baselines that accept the query and never answer.
+        hanging: Vec<&'static str>,
     }
 
     impl ScriptedBaselines {
@@ -616,6 +628,7 @@ mod tests {
                 asked: Mutex::new(Vec::new()),
                 v4,
                 delay: std::time::Duration::ZERO,
+                hanging: vec![],
             }
         }
 
@@ -646,7 +659,11 @@ mod tests {
         ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> + Send {
             let answer = self.answer_for(url, query);
             let delay = self.delay;
+            let hangs = self.hanging.contains(&url);
             async move {
+                if hangs {
+                    std::future::pending::<()>().await;
+                }
                 tokio::time::sleep(delay).await;
                 Ok(answer)
             }
@@ -683,6 +700,28 @@ mod tests {
         let asked = client.asked();
         assert!(asked.contains(&crate::baseline_selector::BASELINE_CHAIN[1].to_owned()));
         assert!(!asked.contains(&crate::baseline_selector::BASELINE_CHAIN[2].to_owned()));
+    }
+
+    // A first baseline that takes the query and stalls (TLS or HTTP held
+    // open) gets its own deadline; the next one answers.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_baseline_falls_through_to_the_next() {
+        let client = ScriptedBaselines {
+            hanging: vec![crate::baseline_selector::BASELINE_CHAIN[0]],
+            ..ScriptedBaselines::answering(PUBLIC)
+        };
+        let found = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            lookup_via_baseline(&client, "example.org"),
+        )
+        .await;
+        assert!(
+            matches!(found, Ok(Ok(ref addrs)) if addrs.len() == 1),
+            "{found:?}"
+        );
+        assert!(client
+            .asked()
+            .contains(&crate::baseline_selector::BASELINE_CHAIN[1].to_owned()));
     }
 
     #[tokio::test]
@@ -925,6 +964,21 @@ mod tests {
         assert!(!addrs.is_empty());
     }
 
+    // Bootstrap mode, the trusted proxy `localhost`: answered locally and
+    // kept although the `DoH` client keeps public addresses only.
+    #[tokio::test]
+    async fn on_a_trusted_localhost_proxy_keeps_its_loopback_address() {
+        let mode = ResolverMode::default();
+        mode.set_bootstrap(true);
+        let (resolver, baselines) = scripted(&mode, PUBLIC, &["localhost"]);
+        let addrs: Vec<_> = match resolver.resolve(name("localhost")).await {
+            Ok(addrs) => addrs.collect(),
+            Err(err) => panic!("proxy host: {err}"),
+        };
+        assert!(!addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()));
+        assert!(baselines.asked().is_empty());
+    }
+
     // The non-`DoH` clients reach only our own constant hosts: an internal
     // answer (a proxy, a captive portal) is used, not refused.
     #[tokio::test]
@@ -972,6 +1026,11 @@ mod tests {
         assert_eq!(
             proxy_of(&[("ALL_PROXY", "socks5://user:pw@socks.lan:1080")]).as_deref(),
             Some("socks.lan")
+        );
+        // No scheme: hyper-util assumes http.
+        assert_eq!(
+            proxy_of(&[("HTTPS_PROXY", "localhost:8888")]).as_deref(),
+            Some("localhost")
         );
         // HTTPS wins over ALL; the upper-case name wins over the lower-case.
         assert_eq!(
