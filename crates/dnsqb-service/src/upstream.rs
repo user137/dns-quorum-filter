@@ -3,6 +3,7 @@
 //! runtime-configured list of [`ProviderSpec`]s (built-in §3.4 presets or a
 //! user-added custom `https` endpoint), not a fixed 2-variant enum.
 
+use crate::bootstrap::{OutboundResolver, ResolverMode};
 use crate::wire::{decode_wire_message, encode_wire_message};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -516,7 +517,10 @@ fn is_non_public_v4(ip: Ipv4Addr) -> bool {
 fn is_non_public_v6(ip: Ipv6Addr) -> bool {
     let seg = ip.segments();
     let ula = (seg[0] & 0xfe00) == 0xfc00;
-    let link_local = (seg[0] & 0xffc0) == 0xfe80;
+    // fe80::/10 link-local, plus the deprecated fec0::/10 site-local.
+    let link_local = (seg[0] & 0xffc0) == 0xfe80 || (seg[0] & 0xffc0) == 0xfec0;
+    // 64:ff9b:1::/48 is NAT64 for local use (RFC 8215); 64:ff9b::/96 stays public.
+    let local_nat64 = seg[..3] == [0x64, 0xff9b, 1];
     let [.., a, b, c, d] = ip.octets();
     let wrapped_v4 = ip
         .to_ipv4_mapped()
@@ -525,6 +529,7 @@ fn is_non_public_v6(ip: Ipv6Addr) -> bool {
         || ip.is_unspecified()
         || ula
         || link_local
+        || local_nat64
         || wrapped_v4.is_some_and(is_non_public_v4)
 }
 
@@ -539,7 +544,7 @@ fn is_non_public_ip(ip: IpAddr) -> bool {
 
 /// The resolved addresses a custom provider may be contacted on: the public
 /// ones, in the order the system resolver returned them.
-fn public_addrs(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
+pub(crate) fn public_addrs(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> {
     addrs
         .into_iter()
         .filter(|addr| !is_non_public_ip(addr.ip()))
@@ -547,14 +552,14 @@ fn public_addrs(addrs: impl IntoIterator<Item = SocketAddr>) -> Vec<SocketAddr> 
 }
 
 /// The host of an `https://host/path` URL, as written in the built-in tables.
-fn https_url_host(url: &str) -> Option<&str> {
+pub(crate) fn https_url_host(url: &str) -> Option<&str> {
     url.strip_prefix("https://")?.split('/').next()
 }
 
 /// A built-in preset's or a baseline's host. Their addresses come from the
 /// system resolver as is: they are this project's own constants, not
 /// operator input.
-fn is_builtin_host(host: &str) -> bool {
+pub(crate) fn is_builtin_host(host: &str) -> bool {
     let host = host.trim_end_matches('.');
     BUILTIN_PRESETS
         .iter()
@@ -579,7 +584,7 @@ fn has_cause<T: std::error::Error + 'static>(err: &(dyn std::error::Error + 'sta
 /// A custom provider's host resolved only to loopback/private/link-local
 /// addresses. Carries no host name: service logs never name a domain.
 #[derive(Debug)]
-struct NoPublicAddress;
+pub(crate) struct NoPublicAddress;
 
 impl std::fmt::Display for NoPublicAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -588,35 +593,6 @@ impl std::fmt::Display for NoPublicAddress {
 }
 
 impl std::error::Error for NoPublicAddress {}
-
-/// The `DoH` client's resolver (T-305 batch 2): the system lookup, then a
-/// custom provider's non-public addresses are dropped, so a host name cannot
-/// point a request at this machine or the LAN — the resolve-time half of the
-/// T-72 SSRF check. Built-in hosts pass unfiltered.
-#[derive(Debug)]
-struct PublicOnlyResolver;
-
-impl reqwest::dns::Resolve for PublicOnlyResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        let host = name.as_str().to_owned();
-        Box::pin(async move {
-            let found: Vec<SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-            let addrs = if is_builtin_host(&host) {
-                found
-            } else {
-                let public = public_addrs(found);
-                if public.is_empty() {
-                    return Err(
-                        Box::new(NoPublicAddress) as Box<dyn std::error::Error + Send + Sync>
-                    );
-                }
-                public
-            };
-            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
-        })
-    }
-}
 
 /// The baseline (non-filtering) resolver's `DoH` endpoint (SPEC.md §3.4) —
 /// used to disambiguate Quad9's NXDOMAIN from genuine non-existence (T-23)
@@ -666,6 +642,10 @@ pub enum UpstreamError {
     /// (DECISIONS.md 2026-08-25, T-20).
     #[error("decoding upstream response failed")]
     Decode(#[source] ProtoError),
+    /// The upstream answered with a redirect (3xx), which is never followed
+    /// (T-308(1)). Carries the status code only.
+    #[error("upstream answered with a redirect")]
+    Redirect(u16),
 }
 
 impl UpstreamError {
@@ -677,6 +657,9 @@ impl UpstreamError {
     /// for the non-HTTP variants.
     #[must_use]
     pub fn http_detail(&self) -> (&'static str, Option<u16>) {
+        if let Self::Redirect(status) = self {
+            return ("status_3xx", Some(*status));
+        }
         let Self::Http(err) = self else {
             return ("none", None);
         };
@@ -774,6 +757,7 @@ impl std::fmt::Debug for UpstreamError {
             Self::Encode(_) => "Encode",
             Self::Http(_) => "Http",
             Self::Decode(_) => "Decode",
+            Self::Redirect(_) => "Redirect",
         };
         write!(f, "UpstreamError::{variant}")
     }
@@ -795,22 +779,54 @@ impl ReqwestDohClient {
     ///
     /// Returns `Err` if the underlying TLS backend fails to initialize.
     pub fn new() -> Result<Self, reqwest::Error> {
-        Self::build(true)
+        Self::with_mode(&ResolverMode::default())
     }
 
-    /// Plain `http://` loopback test servers (T-262 detail tests).
+    /// [`Self::new`] whose lookups follow `mode` (T-305 batch 3a): the OS
+    /// resolver, or the bootstrap path while the plain-DNS listener is on.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the underlying TLS backend fails to initialize.
+    pub fn with_mode(mode: &ResolverMode) -> Result<Self, reqwest::Error> {
+        let resolver = OutboundResolver::new(mode.clone())?;
+        Self::build(true, true, Arc::new(resolver))
+    }
+
+    /// The bootstrap client of [`OutboundResolver`]: `resolver` alone decides
+    /// where it connects, so it goes direct, never through a proxy.
+    pub(crate) fn bootstrap(
+        resolver: Arc<dyn reqwest::dns::Resolve>,
+    ) -> Result<Self, reqwest::Error> {
+        Self::build(true, false, resolver)
+    }
+
+    /// Plain `http://` loopback test servers (T-262 detail tests); never
+    /// through a proxy, so a proxy variable on the test machine changes
+    /// nothing.
     #[cfg(test)]
     fn allowing_plain_http() -> Result<Self, reqwest::Error> {
-        Self::build(false)
+        let resolver = OutboundResolver::new(ResolverMode::default())?;
+        Self::build(false, false, Arc::new(resolver))
     }
 
     /// No redirects and HTTPS only (T-308(1)): a provider's redirect would
     /// otherwise reach a URL `validate_provider_url` never saw.
-    fn build(https_only: bool) -> Result<Self, reqwest::Error> {
-        let http = reqwest::Client::builder()
+    fn build(
+        https_only: bool,
+        use_env_proxy: bool,
+        resolver: Arc<dyn reqwest::dns::Resolve>,
+    ) -> Result<Self, reqwest::Error> {
+        let builder = reqwest::Client::builder();
+        let builder = if use_env_proxy {
+            builder
+        } else {
+            builder.no_proxy()
+        };
+        let http = builder
             .redirect(reqwest::redirect::Policy::none())
             .https_only(https_only)
-            .dns_resolver(Arc::new(PublicOnlyResolver))
+            .dns_resolver(resolver)
             .pool_idle_timeout(UPSTREAM_POOL_IDLE_TIMEOUT)
             .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
             .http2_keep_alive_interval(UPSTREAM_KEEP_ALIVE_INTERVAL)
@@ -831,7 +847,11 @@ impl DohClient for ReqwestDohClient {
             .header(reqwest::header::ACCEPT, "application/dns-message")
             .send()
             .await
-            .map_err(UpstreamError::Http)?
+            .map_err(UpstreamError::Http)?;
+        if response.status().is_redirection() {
+            return Err(UpstreamError::Redirect(response.status().as_u16()));
+        }
+        let response = response
             .error_for_status()
             .map_err(UpstreamError::Http)?
             .bytes()
@@ -1348,6 +1368,8 @@ mod tests {
             "::ffff:127.0.0.1",
             "::ffff:192.168.0.1",
             "::10.0.0.1",
+            "fec0::1",
+            "64:ff9b:1::a00:1",
         ];
         let input: Vec<_> = non_public.iter().map(|ip| sock(ip)).collect();
         assert!(super::public_addrs(input).is_empty());
@@ -1391,24 +1413,6 @@ mod tests {
         assert!(!super::is_builtin_host("evil-dns.quad9.net"));
         assert!(!super::is_builtin_host("quad9.net"));
         assert!(!super::is_builtin_host(""));
-    }
-
-    // RFC 6761: `localhost` resolves to loopback on every OS, offline too.
-    #[tokio::test]
-    async fn the_resolver_refuses_a_custom_host_that_resolves_to_loopback() {
-        use reqwest::dns::Resolve;
-        let name = match "localhost".parse::<reqwest::dns::Name>() {
-            Ok(name) => name,
-            Err(err) => panic!("valid name: {err}"),
-        };
-        let Err(err) = super::PublicOnlyResolver.resolve(name).await else {
-            panic!("a loopback-only custom host must not resolve");
-        };
-        assert!(
-            err.downcast_ref::<super::NoPublicAddress>().is_some(),
-            "{err}"
-        );
-        assert!(!err.to_string().contains("localhost"), "{err}");
     }
 
     /// A loopback HTTP server that counts accepted connections and answers
@@ -1461,7 +1465,13 @@ mod tests {
             Ok(client) => client,
             Err(err) => panic!("client construction: {err}"),
         };
-        assert!(client.query(&origin, &t262_query()).await.is_err());
+        match client.query(&origin, &t262_query()).await {
+            Err(err @ UpstreamError::Redirect(302)) => {
+                assert_eq!(err.http_detail(), ("status_3xx", Some(302)));
+            }
+            Err(other) => panic!("expected UpstreamError::Redirect(302), got {other:?}"),
+            Ok(_) => panic!("a redirect must not decode as an answer"),
+        }
         assert_eq!(
             target_hits.load(Ordering::SeqCst),
             0,

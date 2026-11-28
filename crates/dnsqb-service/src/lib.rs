@@ -125,6 +125,7 @@ mod admission;
 mod baseline_selector;
 mod blocklist_download;
 mod blocklist_updater;
+mod bootstrap;
 mod cache;
 mod cache_persist;
 mod cache_persist_dto;
@@ -187,6 +188,7 @@ pub use admin::{
 };
 pub use admission::ConnectionGate;
 pub use baseline_selector::BASELINE_CHAIN;
+pub use bootstrap::{ResolverMode, PINNED_BASELINE};
 pub use cache::{Cache, CacheConfig};
 pub use cert::generate_self_signed_cert;
 pub use cert_rotation::rotate_certificate;

@@ -40,6 +40,7 @@ use crate::admission::ConnectionGate;
 use crate::baseline_selector::BaselineSelector;
 use crate::blocklist_download::BLOCKLIST_SOURCES;
 use crate::blocklist_updater::BlocklistBundleState;
+use crate::bootstrap::ResolverMode;
 use crate::cache::{Cache, CacheConfig, CacheConfigError, CacheEntry, CacheKey};
 use crate::change_bus::{ChangeBus, Topic};
 use crate::config::DomainSharingConsent;
@@ -357,6 +358,9 @@ pub struct RuntimeInit {
     pub domain_sharing_consent: DomainSharingConsent,
     /// The configured voter list, in order.
     pub providers: Vec<ProviderEntry>,
+    /// T-305 batch 3a — the lookup mode shared with every outbound client
+    /// (the `DoH` client is built from the same handle).
+    pub resolver_mode: ResolverMode,
 }
 
 impl Default for RuntimeInit {
@@ -366,6 +370,7 @@ impl Default for RuntimeInit {
             serve_baseline_when_filters_unreachable: false,
             domain_sharing_consent: DomainSharingConsent::NotGiven,
             providers: ProviderEntry::default_active_set(),
+            resolver_mode: ResolverMode::default(),
         }
     }
 }
@@ -1010,6 +1015,8 @@ pub struct AppState<C: DohClient + Sync> {
     /// needs is internal to the gate (around its `Semaphore`), not a second
     /// wrapper here.
     gate: ConnectionGate,
+    /// T-305 batch 3a — see [`RuntimeInit::resolver_mode`].
+    resolver_mode: ResolverMode,
     /// T-277 — per-topic change versions behind `GET /admin/events`. Bumped
     /// centrally in [`serve`] after every accepted write route
     /// ([`route_topics`]) and by the setters of state that changes without a
@@ -1152,6 +1159,7 @@ impl<C: DohClient + Sync> AppState<C> {
                 consent_withdrawal_unsaved: false,
             }),
             providers: RwLock::new(Arc::new(runtime.providers)),
+            resolver_mode: runtime.resolver_mode,
             cache: RwLock::new(Arc::new(cache)),
             geoip: RwLock::new(Arc::new(geoip.database)),
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
@@ -1794,6 +1802,11 @@ impl<C: DohClient + Sync> AppState<C> {
     #[must_use]
     pub fn connection_gate(&self) -> &ConnectionGate {
         &self.gate
+    }
+
+    /// T-305 batch 3a — the lookup mode every outbound client follows.
+    pub(crate) fn resolver_mode(&self) -> &ResolverMode {
+        &self.resolver_mode
     }
 
     /// T-277 — the change-version bus the `/admin/events` stream subscribes to.
@@ -3448,7 +3461,7 @@ where
             // status-poll hot path the "don't rebuild a TLS client 30x/min"
             // concern (T-149) was about. Talks to the public
             // `download.maxmind.com`, so no cert pinning.
-            let check = match crate::http_client::public_https_client() {
+            let check = match crate::http_client::public_https_client(state.resolver_mode()) {
                 Ok(client) => credential_check(
                     &check_maxmind_credentials(&client, &request.account_id, &request.license_key)
                         .await,

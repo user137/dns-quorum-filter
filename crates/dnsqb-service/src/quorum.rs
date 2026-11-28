@@ -584,7 +584,7 @@ enum Slot {
 fn error_kind(err: &UpstreamError) -> &'static str {
     match err {
         UpstreamError::Encode(_) => "encode",
-        UpstreamError::Http(_) => "http",
+        UpstreamError::Http(_) | UpstreamError::Redirect(_) => "http",
         UpstreamError::Decode(_) => "decode",
     }
 }

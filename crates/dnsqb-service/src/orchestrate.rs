@@ -38,6 +38,7 @@
 //! side.
 
 use crate::blocklist_updater::run_blocklist_updater;
+use crate::bootstrap::ResolverMode;
 use crate::cache::Cache;
 use crate::cache_persist::{load_persisted_cache, run_cache_persister, CacheInit};
 use crate::cert_watch::run_cert_trust_watch;
@@ -163,13 +164,10 @@ pub async fn run() {
         }
     };
 
-    let client = match ReqwestDohClient::new() {
-        Ok(client) => client,
-        Err(err) => {
-            tracing::error!("failed to build the upstream DoH client: {err}");
-            fail_startup(app_data.as_deref(), StartupFailure::UpstreamClientFailed);
-        }
-    };
+    // T-305 batch 3a: one lookup-mode handle for the DoH client and every
+    // other outbound client, so the plain-DNS route flips them together.
+    let resolver_mode = ResolverMode::default();
+    let client = build_doh_client(app_data.as_deref(), &resolver_mode);
 
     let (overrides, invalid_overrides) = load_overrides(app_data.as_deref());
 
@@ -182,6 +180,7 @@ pub async fn run() {
         serve_baseline_when_filters_unreachable: resolver_config
             .serve_baseline_when_filters_unreachable,
         domain_sharing_consent: resolver_config.domain_sharing_consent,
+        resolver_mode,
     };
     // T-52/T-149: the admin channel persists a config change back to
     // whichever path it was loaded from - see `build_persist_target`'s own
@@ -487,7 +486,10 @@ fn spawn_public_http_tasks(
     geoip_path: Option<PathBuf>,
     app_data: Option<PathBuf>,
 ) {
-    match (geoip_path, crate::http_client::public_https_client()) {
+    match (
+        geoip_path,
+        crate::http_client::public_https_client(state.resolver_mode()),
+    ) {
         (Some(path), Ok(client)) => {
             tokio::spawn(run_geoip_updater(client, path, Arc::clone(state)));
         }
@@ -498,7 +500,10 @@ fn spawn_public_http_tasks(
             tracing::warn!("no app-data directory available, GeoIP database updates are disabled");
         }
     }
-    match (app_data.clone(), crate::http_client::public_https_client()) {
+    match (
+        app_data.clone(),
+        crate::http_client::public_https_client(state.resolver_mode()),
+    ) {
         (Some(dir), Ok(client)) => {
             tokio::spawn(run_topn_updater(client, dir, Arc::clone(state)));
         }
@@ -511,7 +516,7 @@ fn spawn_public_http_tasks(
             );
         }
     }
-    match crate::http_client::public_https_client() {
+    match crate::http_client::public_https_client(state.resolver_mode()) {
         Ok(client) => {
             tokio::spawn(run_reachability_prober(client, Arc::clone(state)));
         }
@@ -519,7 +524,10 @@ fn spawn_public_http_tasks(
             tracing::error!("failed to build the reachability probe HTTP client: {err}");
         }
     }
-    match (app_data, crate::http_client::public_https_client()) {
+    match (
+        app_data,
+        crate::http_client::public_https_client(state.resolver_mode()),
+    ) {
         (Some(dir), Ok(client)) => {
             tokio::spawn(run_blocklist_updater(client, dir, Arc::clone(state)));
         }
@@ -730,6 +738,17 @@ fn acquire_service_guard(app_data: Option<&Path>) -> Option<InstanceGuard> {
 /// failure a restart cannot fix; the tray shows the reason and the one
 /// action. A failed write is only logged - the watchdog then falls back to
 /// its pre-13b behaviour (restarts until `GaveUp`).
+/// The upstream `DoH` client; a failure ends startup.
+fn build_doh_client(app_data: Option<&Path>, mode: &ResolverMode) -> ReqwestDohClient {
+    match ReqwestDohClient::with_mode(mode) {
+        Ok(client) => client,
+        Err(err) => {
+            tracing::error!("failed to build the upstream DoH client: {err}");
+            fail_startup(app_data, StartupFailure::UpstreamClientFailed);
+        }
+    }
+}
+
 fn fail_startup(app_data: Option<&Path>, reason: StartupFailure) -> ! {
     if let Some(dir) = app_data {
         if let Err(err) = startup_failure::write(dir, reason) {

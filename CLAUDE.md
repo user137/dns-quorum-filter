@@ -74,8 +74,9 @@ Modules under `crates/dnsqb-service/src/`:
 | `reachability` | T-152: `MARKERS` (3 independent `generate_204`-class — Google/Cloudflare/Apple); `verdict_from_probe_results` (raw Offline iff all fail), private `OfflineDebounce` — publishes `Offline` only after `OFFLINE_CONFIRM_CYCLES`=3 consecutive all-fail cycles (entry hysteresis; recovery not debounced), `next_probe_delay(previous, raw)` (idle 60s only when both Online, else recheck 3s); `probe_cycle` — steady Online hits one marker round-robin, escalates to the other two on failure (ARCH-20); `run_reachability_prober` (own `reqwest::Client`, publishes `NetworkReachability` on `AppState`, **also** drives `baseline_selector` via one real `DoH` sentinel probe per raw-Online cycle — a continuous heartbeat to the active baseline, acknowledged in the module-doc privacy note). Not wired into `/health` or watchdog channels |
 | `cache` | `moka` per-entry-TTL cache; `CacheConfig`, `clamp_ttl`, `chain_cache_ttl`, `is_cacheable`, `invalidate_matching`, `clear`; T-97 added `snapshot()` (sync `moka::future::Cache::iter()`, best-effort) / `restore()` and `CacheKey::domain()`/`qtype()` accessors for `cache.enc` |
 | `overrides` | allowlist/blocklist `load`/`save`/`decision`/`conflicts`; suffix-wildcard match; `InvalidEntry` (domain-redacting) |
-| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host; T-305 batch 2: `PublicOnlyResolver` drops the same classes from a custom host's lookup, `ReqwestDohClient` has no redirects + `https_only`) / `is_valid_provider_id`; T-175 `SinkholeNet` (`IpAddr`+prefix, `v4()`/`v6()`, no `Default`, `contains` = XOR+`leading_zeros`) + `SINKHOLE_NETS` + `sinkhole_nets_for(id)` (builtin-only); `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
-| `http_client` | T-305 batch 2: `public_https_client()` (`https_only`) — the only place other production code builds a `reqwest::Client` (a source-scan test enforces it; `upstream`/`admin` are the exceptions) |
+| `upstream` | `ProviderSpec` / `ProviderEntry` / `Category` / `BlockSignature` + `BUILTIN_PRESETS` table (§3.4, T-72/T-73) + `builtin_preset` / `all_builtin_presets` / `validate_provider_url` (SSRF: `https` + non-loopback/private/link-local literal host; T-305: `bootstrap::OutboundResolver` drops the same classes from a custom host's lookup, `ReqwestDohClient` has no redirects (`UpstreamError::Redirect`) + `https_only`) / `is_valid_provider_id`; T-175 `SinkholeNet` (`IpAddr`+prefix, `v4()`/`v6()`, no `Default`, `contains` = XOR+`leading_zeros`) + `SINKHOLE_NETS` + `sinkhole_nets_for(id)` (builtin-only); `DohClient` trait + `ReqwestDohClient` (per-upstream HTTP/2 keep-alive + `connect_timeout` 500ms — T-154(a), restores multi-A failover for a blackholed address) |
+| `http_client` | T-305 batch 2: `public_https_client(&ResolverMode)` (`https_only`, `OutboundResolver`) — the only place other production code builds a `reqwest::Client` (a source-scan test enforces it; `upstream`/`admin` are the exceptions) |
+| `bootstrap` | T-305 batch 3a: `OutboundResolver` behind every outbound client. `ResolverMode` (shared `AtomicBool` on `AppState`/`RuntimeInit`) off → OS lookup; on (plain-DNS listener up, the OS may point at us) → baselines from `PINNED_BASELINE`, other hosts via a `DoH` A/AAAA lookup to a pinned baseline (bootstrap client: pinned-only resolver, no proxy). Then non-public addresses are dropped unless the host is built-in, pinned or an env proxy host. `examples/bootstrap_probe` re-checks the table |
 | `timeout` | `TimeoutMode` (fail-open / fail-closed / degraded); `query_with_timeout` |
 | `wire` | `precheck_query` (T-305: QR drop, BADVERS, NOTIMP, FORMERR, REFUSED, ANY→HINFO — before consent); own OPT echoed in every response; DoH wire codec; block (`0.0.0.0`/`::`) / NODATA / NXDOMAIN / SERVFAIL / direct-answer construction; AD-bit passthrough |
 | `query_log` | in-memory ring buffer (`parking_lot::RwLock`); `LogEntry`, `DecisionSource` (9 producible, all 9 the DTO declares: +`BaselineFallback` T-155 — the one whose `voters` is **not** empty; +`RatingFilter` T-124; +`BlocklistBundle` Батч 7.4; +`CctldBlock` Фаза 5, T-116), `LogFilter` search, `clear`; `restore`. T-291: `LogRetention` (24h/3d/7d/30d → 10k–100k cap), live `set_retention`, monotonic `seq` cursor (`search(.., before_seq)`), `inspect` (status stats without cloning) |
@@ -384,6 +385,9 @@ Vetting rows are in `SECURITY.md`; the license allowlist and `[graph] targets =
   doctest depends on a transitive dep's constructor API. `--lib --bins` does **not** run doctests
   — run `cargo test --workspace --doc --locked` before a push that touches a `pub` re-export's
   doc comment.
+- `cargo run --example bootstrap_probe` — T-305 recalibrator (live, not CI): each `PINNED_BASELINE`
+  address must answer `DoH` for its host over TLS, and every preset must answer in bootstrap mode.
+  **Run before a release.**
 - `cargo run --example sinkhole_probe` — T-175 recalibrator (live, not CI): each sinkhole-preset
   canary must still resolve inside its `SINKHOLE_NETS` prefix (A + AAAA), the provider's own site
   must not; non-zero exit if a prefix looks stale. **Run before a release** — a hard-coded prefix
@@ -437,16 +441,7 @@ Security tab. Read them with `gh api repos/user137/dns-quorum-filter/code-scanni
 no `gh auth refresh` needed (verified 2026-09-01). Triage every finding in the same pass, same bar
 as a clippy or audit finding.
 
-First scan (`3703fe3`, 2026-09-01) surfaced 17 pre-existing findings, none introduced by T-101;
-all resolved in **T-165** (`0` open now): the one real one (`examples/phase1_metrics.rs`
-`danger_accept_invalid_certs(true)`) fixed by pinning `cert.pem`; 14× `rust/cleartext-logging`
-fixed by restructuring `#[cfg(test)]` catch-all `other => panic!("{other:?}")` arms; 2×
-(`trust_store.rs` 497/501, an assert printing a public cert thumbprint) dismissed via API as
-`used in tests`. **T-146** added 6 more `used in tests` dismissals — `rust/hard-coded-cryptographic-value`
-(critical) on fixed test keys in `#[cfg(test)]` modules: 2 in `encrypted_file.rs` (`const KEY = [7u8;32]`,
-`let wrong = [8u8;32]`) and 4 in `log_persist.rs` (`let key = [3|5|9u8;32]` in the round-trip / overwrite
-/ corrupt-file tests). A deterministic AEAD round-trip / wrong-key test needs a fixed key and it
-never reaches production (real key = `key_store::load_or_create_persistence_key`).
+Past `used in tests` dismissals (fixed test keys, a public cert thumbprint): TASKS-DONE.md T-165/T-146.
 
 **Check the actual CI run after every push — local-green is not CI-green**, especially for
 OS-permission/environment-dependent code. `gh run list --branch main --limit 5`; `gh run watch
