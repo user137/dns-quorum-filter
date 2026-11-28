@@ -9211,3 +9211,10 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   bootstrap-режим. reqwest без `system-proxy` — проксі з налаштувань Windows не використовується (KNOWN-LIMITATIONS).
   `is_icann_tld` — останній label кожного ICANN-правила (`*.ck`) і IDN у `xn--` (`рф`). Рядок RFC 6891: відповіді лише
   із заголовка без OPT.
+
+- [x] T-305 батч 3a — VM (2026-11-28, PakkoW10, release.yml 46152559188 на `7002280`, test-signed MSIX, чисте
+  встановлення → майстер згоди й сертифіката): RA=1 у всіх відповідях; QDCOUNT=2 і 65535 лише заголовком → 200 FORMERR
+  (12 байт), 11 байт → 400, NOTIFY → NOTIMP; `localhost`/`app.localhost` → 127.0.0.1/::1; `.local`, `home.arpa`,
+  `.onion`, однослівне `printer`, PTR 192.168 → NXDOMAIN локально й не в журналі; `com` A і `com` DS (з RRSIG, DO)
+  ідуть назовні; A з EDNS+DO — власний OPT 1232; GeoIP оновлено через новий `public_https_client`; hero PROTECTED,
+  мережа ONLINE.
