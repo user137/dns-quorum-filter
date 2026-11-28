@@ -138,10 +138,9 @@ TASKS-DONE.md, never here.
   this check.
   Only these environment variables count: `reqwest` is built without `system-proxy`, so a proxy
   set only in Windows settings is not used at all (requests go direct).
-- **Port 53 can be taken over by a process of the same user (T-305 batch 3b)** — the plain-DNS
-  sockets do not set `SO_EXCLUSIVEADDRUSE` (no safe API for it); on Windows another account cannot
-  bind over them, the same account can (it could also just stop the service). VM check pending.
-  No `/admin/ui` card yet (batch 3c) — the listener is switched by the route or the config file.
+- **Plain DNS has no `/admin/ui` card yet (T-305 batch 3b)** — the listener is switched by
+  `POST /admin/plain-dns` or the config file until batch 3c. (Port takeover was checked on the VM
+  and does not happen — DECISIONS.md 2026-11-28.)
 - **Bootstrap addresses are hard-coded (T-305 batch 3a)** — with the plain-DNS listener on, the
   baseline hosts are reached only at `PINNED_BASELINE`'s addresses (from the providers' docs,
   2026-11-28); a retired address is lost silently until `examples/bootstrap_probe` (release
