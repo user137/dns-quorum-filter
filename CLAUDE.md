@@ -586,8 +586,8 @@ OpenSSL dependency).
 ## Architecture (from SPEC.md)
 
 Two long-running processes:
-- **`dnsqb-service`** — the DoH server + quorum resolver. Listens **only** on `127.0.0.1`, never
-  `0.0.0.0`. Fixed, configurable port (no silent fallback to another port on conflict).
+- **`dnsqb-service`** — the DoH (+ opt-in port-53, T-305) server + quorum resolver. Desktop: loopback
+  only; LAN only in the server edition with a mandatory ACL (DECISIONS.md 2026-11-28). No port fallback.
 - **`dnsqb-watcher`** — minimal watchdog process, mutual-heartbeat with the service over 3
   independent channels (IPC socket, shared heartbeat file, HTTP `/health`), majority/unanimous
   voting to avoid a false-positive restart loop (SPEC.md §7).

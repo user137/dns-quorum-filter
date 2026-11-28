@@ -121,7 +121,14 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
 
 ## Hard constraints (see SPEC.md §"Наскрізні вимоги" for the full list)
 
-- Listens only on `127.0.0.1` — never `0.0.0.0`, no network listener beyond loopback.
+- Desktop edition listens only on loopback (`127.0.0.1`, and `::1` for plain DNS on port 53, T-305) — never
+  `0.0.0.0`. A network bind exists only in the server edition (enabled by a command-line flag, never by a config
+  field), and only with a mandatory source ACL of private prefixes, dropped silently on deny, per-source rate
+  limits, ANY/AXFR refused — never an open resolver (amplification). `/admin/*` stays loopback-only on servers
+  too, behind server-mode admin authentication: the CLI authenticates by OS identity (Unix socket / named pipe),
+  the browser by an app-own argon2id password with a `Host`/`Origin` check — never the OS account password
+  (DECISIONS.md 2026-11-28). This separates admins from other local accounts only; root/SYSTEM and code running
+  as the service account stay all-powerful.
 - `#![forbid(unsafe_code)]` in every crate where possible; any `unsafe` needs an explicit
   justification comment.
 - Domain names live only in the in-memory ring buffer by default; disk persistence of the query log
