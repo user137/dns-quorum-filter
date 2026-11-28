@@ -5,6 +5,15 @@ item lives in `SPEC.md` — this file tracks the current state, `SPEC.md` explai
 
 ## Threat model (summary — see SPEC.md §"Наскрізні вимоги", §2, §8.1 for full reasoning)
 
+- **Other accounts on the same PC (security review 2026-11-28).** Windows loopback is shared by every
+  logged-on account, and the desktop admin channel has no authentication beyond the `application/json`
+  gate (which stops browsers, not native clients). Another account can read the query log, change the
+  filter, or stop the service. The desktop edition therefore assumes a single-user PC (stated on the
+  privacy page); a per-install admin token is T-307. Separately, the cert staging copy in the shared
+  `%SystemRoot%\Temp` gets a random 128-bit name and is created with `create_new`, so another account
+  can't pre-create it and swap in its own CA; a thumbprint re-check afterwards only confirms our cert
+  landed.
+
 - **Local DoH cert compromise** — the largest single attack surface in the project. Mitigated by
   using a single self-signed leaf certificate on `127.0.0.1` (never a local CA): a compromised
   private key spoofs localhost only, not arbitrary domains. See SPEC.md §2. **Current storage

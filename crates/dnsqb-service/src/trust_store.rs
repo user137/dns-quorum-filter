@@ -150,6 +150,14 @@ pub enum TrustStoreError {
     /// `certutil.exe` itself failing to start.
     #[error("could not write a temporary certificate copy for certutil to install: {0}")]
     TempCopy(#[source] std::io::Error),
+    /// The OS random generator failed while naming the temporary copy.
+    #[error("could not generate a random name for the temporary certificate copy")]
+    Rng,
+    /// `certutil -addstore` reported success, but the current `cert.pem` is
+    /// still not trusted afterwards — whatever certutil installed was not
+    /// this certificate.
+    #[error("certutil reported success, but the current certificate is still not trusted")]
+    NotTrustedAfterInstall,
     /// `certutil -delstore` ran but reported failure for a reason other than
     /// "not found" (a genuine "not found" is not an error — see
     /// [`uninstall`]).
@@ -405,15 +413,42 @@ pub fn is_trusted(cert_path: &Path) -> Result<bool, TrustStoreError> {
 /// [`local_cert_thumbprint`]'s doc comment describes the bug living in;
 /// `%SystemRoot%\Temp` is a shared, per-machine folder no per-package
 /// redirection touches, confirmed empirically 2026-09-12 (`certutil -dump` a
-/// copy placed there succeeded). Named by `thumbprint` — content-addressed,
-/// so it's unique per real certificate and not guessable ahead of computing
-/// it; the file holds a public certificate (no private key material, that
-/// stays in `key_store`), so the property this heads off is a stale/
-/// substituted file, not disclosure.
-fn addstore_temp_path(system_root: &Path, thumbprint: &str) -> PathBuf {
+/// copy placed there succeeded).
+///
+/// The folder is shared by every account on the machine, so the name is a
+/// fresh random `nonce` and the caller creates the file with `create_new`
+/// (security review 2026-11-28): a name derived from the certificate (it was
+/// its thumbprint) can be computed by anyone who completes a TLS handshake
+/// with the service, pre-created with a permissive ACL and rewritten with a
+/// foreign CA between our write and certutil's read.
+fn addstore_temp_path(system_root: &Path, nonce: &str) -> PathBuf {
     system_root
         .join("Temp")
-        .join(format!("dnsqb-cert-{thumbprint}.pem"))
+        .join(format!("dnsqb-cert-{nonce}.pem"))
+}
+
+/// 128 random bits as lowercase hex, for [`addstore_temp_path`].
+fn random_temp_nonce() -> Result<String, TrustStoreError> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|_| TrustStoreError::Rng)?;
+    Ok(bytes
+        .iter()
+        .flat_map(|b| [HEX[usize::from(b >> 4)], HEX[usize::from(b & 0x0f)]])
+        .map(char::from)
+        .collect())
+}
+
+/// Writes `pem` to a file that must not exist yet, so a file someone else
+/// planted under that name is never reused.
+fn write_new_file(path: &Path, pem: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(pem)?;
+    file.sync_all()
 }
 
 /// Ensures the certificate currently at `cert_path` is trusted in
@@ -453,12 +488,11 @@ pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStor
         );
     }
 
-    let thumbprint = local_cert_thumbprint(cert_path)?;
     let pem = std::fs::read(cert_path).map_err(|_| TrustStoreError::LocalThumbprint {
         path: cert_path.to_path_buf(),
     })?;
-    let temp_path = addstore_temp_path(&system_root_dir()?, &thumbprint);
-    std::fs::write(&temp_path, &pem).map_err(TrustStoreError::TempCopy)?;
+    let temp_path = addstore_temp_path(&system_root_dir()?, &random_temp_nonce()?);
+    write_new_file(&temp_path, &pem).map_err(TrustStoreError::TempCopy)?;
 
     let certutil = certutil_path()?;
     let output = certutil_command(&certutil)
@@ -479,10 +513,16 @@ pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStor
     // ACL/permission problem worth surfacing to the caller.
     let _ = std::fs::remove_file(&temp_path);
 
-    if output.status.success() {
+    if !output.status.success() {
+        return Err(TrustStoreError::InstallFailed(output.status.code()));
+    }
+    // Success only counts once the store holds *this* certificate's
+    // thumbprint. This confirms the install; what prevents a swapped copy is
+    // the random name plus `create_new` above.
+    if trusted_state(cert_path)?.0 {
         Ok(TrustStoreOutcome::Installed)
     } else {
-        Err(TrustStoreError::InstallFailed(output.status.code()))
+        Err(TrustStoreError::NotTrustedAfterInstall)
     }
 }
 
@@ -559,8 +599,8 @@ where
 mod tests {
     use super::{
         addstore_temp_path, certutil_command, certutil_path, classify_confirmed_lookup,
-        confirmed_thumbprints_for_common_name, is_trusted, local_cert_thumbprint, uninstall_loop,
-        MAX_MATCHING_ENTRIES,
+        confirmed_thumbprints_for_common_name, is_trusted, local_cert_thumbprint,
+        random_temp_nonce, uninstall_loop, write_new_file, MAX_MATCHING_ENTRIES,
     };
     use std::os::windows::process::ExitStatusExt;
     use std::path::Path;
@@ -639,14 +679,39 @@ mod tests {
     }
 
     #[test]
-    fn addstore_temp_path_is_content_addressed_under_system_root_temp() {
+    fn addstore_temp_path_is_under_system_root_temp() {
         let path = addstore_temp_path(Path::new(r"C:\Windows"), "abc123");
         assert_eq!(path, Path::new(r"C:\Windows\Temp\dnsqb-cert-abc123.pem"));
-        // Two different certificates (different thumbprints) must never
-        // collide on the same temp path — the whole point of naming by
-        // content, not a fixed name.
-        let other = addstore_temp_path(Path::new(r"C:\Windows"), "def456");
-        assert_ne!(path, other);
+    }
+
+    // Security review 2026-11-28: the name must not be computable from the
+    // certificate, or another account can pre-create the file.
+    #[test]
+    fn temp_nonce_is_random_128_bit_hex() {
+        let a = random_temp_nonce().unwrap_or_else(|err| panic!("rng: {err}"));
+        let b = random_temp_nonce().unwrap_or_else(|err| panic!("rng: {err}"));
+        assert_eq!(a.len(), 32);
+        assert!(a
+            .bytes()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert_ne!(a, b);
+    }
+
+    // A file someone else created under the chosen name is never reused.
+    #[test]
+    fn write_new_file_refuses_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap_or_else(|err| panic!("tempdir: {err}"));
+        let path = dir.path().join("planted.pem");
+        std::fs::write(&path, b"planted").unwrap_or_else(|err| panic!("plant: {err}"));
+        let err = write_new_file(&path, b"ours").err();
+        assert_eq!(
+            err.map(|e| e.kind()),
+            Some(std::io::ErrorKind::AlreadyExists)
+        );
+        assert_eq!(std::fs::read(&path).ok().as_deref(), Some(&b"planted"[..]));
+        let fresh = dir.path().join("fresh.pem");
+        write_new_file(&fresh, b"ours").unwrap_or_else(|err| panic!("write: {err}"));
+        assert_eq!(std::fs::read(&fresh).ok().as_deref(), Some(&b"ours"[..]));
     }
 
     #[test]

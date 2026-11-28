@@ -21,6 +21,10 @@ concurrency:
 # is how the previous text-only "don't re-grow it" rule died. If this fails, the
 # fix is moving the new prose to its owner file (see CLAUDE.md's own "Maintaining
 # this section" note and "Documentation map"), not raising CLAUDE_MD_MAX_CHARS.
+# Least privilege for GITHUB_TOKEN (security review 2026-11-28): no job writes to the repo.
+permissions:
+  contents: read
+
 env:
   CLAUDE_MD_MAX_CHARS: 140000
 

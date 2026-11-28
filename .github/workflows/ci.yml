@@ -15,6 +15,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege for GITHUB_TOKEN (security review 2026-11-28): no job writes to the repo.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

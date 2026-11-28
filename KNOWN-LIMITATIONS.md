@@ -9,6 +9,9 @@ state" section: a finished task adds a bullet here only if it leaves a live limi
 the task's own narrative (rationale, advisor catches, verification notes) goes to
 TASKS-DONE.md, never here.
 
+- **Other Windows accounts on the same PC can use the admin channel (T-307)** — loopback is shared by
+  every logged-on account and `/admin/*` has no authentication, so another account can read the query
+  log or change and stop filtering. Stated on the privacy page as a single-user-PC assumption.
 - **After a failed «Повністю видалити» wipe the app will not start for up to 30 minutes (T-303)** —
   `removing.flag` stays in the folder the wipe could not delete (the helper removes it last, only once
   nothing else is left), and while it is younger than 30 min

@@ -18,6 +18,10 @@ concurrency:
 # (CRLF: 196,205 LF bytes + 1,557 lines = ~197,762) plus ~6 % headroom,
 # deliberately tight. If this fails, the fix is moving finished tasks to
 # TASKS-DONE.md, not raising TASKS_MD_MAX_BYTES.
+# Least privilege for GITHUB_TOKEN (security review 2026-11-28): no job writes to the repo.
+permissions:
+  contents: read
+
 env:
   TASKS_MD_MAX_BYTES: 210000
 

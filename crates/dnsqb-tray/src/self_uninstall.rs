@@ -219,7 +219,7 @@ fn build_wipe_script_for(dir: &Path, localappdata: &Path, failure_text: &str) ->
 /// message box would open behind Settings (the T-269 class).
 const POPUP_STYLE: u32 = 0x30 | 0x1000;
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
 /// Creation flags for the wipe helper. `CREATE_NO_WINDOW`, never

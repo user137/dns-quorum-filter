@@ -50,9 +50,10 @@ mod status;
 
 use dnsqb_service::{
     acquire_instance_guard, app_data_dir, clear_stop_flag, ensure_sibling_running, init_logging,
-    set_quit_flag, set_removing_flag, set_reset_config_flag, set_retry_flag, set_stop_flag,
-    sibling_is_alive, stop_flag_is_set, take_remove_all_flag, write_pid_file, AdminClient,
-    AdminClientError, GuardError, InstanceGuard, InstanceRole, RemoveAllTake, ResolverConfig,
+    read_pid_file, resolve_sibling_path, set_quit_flag, set_removing_flag, set_reset_config_flag,
+    set_retry_flag, set_stop_flag, sibling_is_alive, stop_flag_is_set, take_remove_all_flag,
+    verify_pid_alive, write_pid_file, AdminClient, AdminClientError, GuardError, InstanceGuard,
+    InstanceRole, PidCheck, PidFile, RemoveAllTake, ResolverConfig,
 };
 use dnsqb_service::{
     ensure_installed, remove_all_local_state, rotate_certificate,
@@ -1006,8 +1007,15 @@ fn spawn_remove_all_and_quit(app_data: PathBuf, locale: String) {
         if !wait_for_siblings_to_exit(&app_data, SIBLING_EXIT_WAIT) {
             tracing::warn!(
                 "dnsqb-service or dnsqb-watcher still running after {SIBLING_EXIT_WAIT:?}; \
-                 removing local state anyway"
+                 stopping them by PID"
             );
+            force_stop_siblings(&app_data);
+            if !wait_for_siblings_to_exit(&app_data, FORCED_EXIT_WAIT) {
+                tracing::warn!(
+                    "dnsqb-service or dnsqb-watcher survived a forced stop; removing local \
+                     state anyway"
+                );
+            }
         }
         let removed = {
             let _trust_store = TRUST_STORE_LOCK.lock();
@@ -1045,6 +1053,67 @@ static REMOVAL_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// The service drains for up to 5 s after `quit.flag`, the watcher exits on
 /// its next 5 s tick; 15 s leaves room for a slow disk.
 const SIBLING_EXIT_WAIT: Duration = Duration::from_secs(15);
+
+/// After [`force_stop_siblings`] the OS ends the process almost at once.
+const FORCED_EXIT_WAIT: Duration = Duration::from_secs(5);
+
+/// The PID to force-stop: only one whose live process is the sibling binary
+/// next to this tray, never a recycled PID or whatever exe the pid file names.
+fn force_stop_target(record: Option<&PidFile>, check: Option<PidCheck>) -> Option<u32> {
+    match (record, check) {
+        (Some(record), Some(PidCheck::Alive)) => Some(record.pid),
+        _ => None,
+    }
+}
+
+/// Security review 2026-11-28: a service that outlived the graceful wait can
+/// still answer `POST /admin/install-cert` — in its own process, outside
+/// [`TRUST_STORE_LOCK`] — and re-trust the certificate after the sweep. Stop
+/// both siblings by PID (`taskkill /F`, absolute path), watcher first so it
+/// cannot respawn the service (which `removing.flag` blocks anyway).
+///
+/// `/T` (whole tree) for the service only: the likeliest reason it outlives
+/// the wait is an in-flight `certutil -addstore` blocked on Windows' "install
+/// this root?" prompt, and killing just the service would leave that prompt
+/// up. Never `/T` for the watcher — it usually launched this tray, so a tree
+/// kill would end the removal midway.
+fn force_stop_siblings(app_data: &Path) {
+    use std::os::windows::process::CommandExt as _;
+    let current_exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(err) => {
+            tracing::warn!("cannot force-stop siblings: current exe unknown: {err}");
+            return;
+        }
+    };
+    for role in [InstanceRole::Watcher, InstanceRole::Service] {
+        let Ok(expected) = resolve_sibling_path(&current_exe, role) else {
+            continue;
+        };
+        // A missing or unreadable pid file means nothing to stop: each
+        // process writes it right after taking its single-instance lock.
+        let record = read_pid_file(app_data, role).ok();
+        let check = record
+            .as_ref()
+            .map(|record| verify_pid_alive(record.pid, &expected));
+        let Some(pid) = force_stop_target(record.as_ref(), check) else {
+            continue;
+        };
+        let mut taskkill = std::process::Command::new(browser::system32_exe("taskkill.exe"));
+        taskkill.args(["/PID", &pid.to_string(), "/F"]);
+        if matches!(role, InstanceRole::Service) {
+            taskkill.arg("/T");
+        }
+        match taskkill
+            .creation_flags(self_uninstall::CREATE_NO_WINDOW)
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => tracing::warn!("taskkill of {role:?} exited with {status}"),
+            Err(err) => tracing::warn!("could not run taskkill for {role:?}: {err}"),
+        }
+    }
+}
 
 /// Poll the service and watcher pid files until neither names a live process,
 /// or `budget` runs out. `true` = both gone.
@@ -1741,10 +1810,31 @@ fn confirm_quit(locale: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        about_dialog_text, configured_port, format_uninstall_report, menu_action_for,
-        trust_store_outcome_text, MenuAction,
+        about_dialog_text, configured_port, force_stop_target, format_uninstall_report,
+        menu_action_for, trust_store_outcome_text, MenuAction,
     };
     use dnsqb_service::{ArtifactOutcome, ResolverConfig, TrustStoreOutcome, UninstallReport};
+
+    // Security review 2026-11-28: only a verified live sibling is killed.
+    #[test]
+    fn force_stop_targets_only_a_verified_live_sibling() {
+        let record = dnsqb_service::PidFile {
+            pid: 4242,
+            exe_path: std::path::PathBuf::from(r"C:\x\dnsqb-service.exe"),
+            started_at: std::time::SystemTime::UNIX_EPOCH,
+        };
+        assert_eq!(
+            force_stop_target(Some(&record), Some(dnsqb_service::PidCheck::Alive)),
+            Some(4242)
+        );
+        for check in [
+            dnsqb_service::PidCheck::Gone,
+            dnsqb_service::PidCheck::IdentityMismatch,
+        ] {
+            assert_eq!(force_stop_target(Some(&record), Some(check)), None);
+        }
+        assert_eq!(force_stop_target(None, None), None);
+    }
 
     // Хвиля 13b: the tray must come up on a broken config - it is the only
     // place the cause and «Скинути налаштування» can be shown.

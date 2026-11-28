@@ -49,7 +49,7 @@ pub fn open_windows_apps_settings() {
 /// conventional `C:\Windows` only if `SystemRoot` itself is unset — the same
 /// tolerance a bare environment-variable read needs on any real Windows
 /// install, never a PATH search.
-fn system32_exe(exe: &str) -> PathBuf {
+pub(crate) fn system32_exe(exe: &str) -> PathBuf {
     let system_root =
         std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".to_string().into());
     PathBuf::from(system_root).join("System32").join(exe)

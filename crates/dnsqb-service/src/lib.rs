@@ -225,14 +225,14 @@ pub use watchdog::heartbeat_file::{
 };
 pub use watchdog::instance::{
     acquire as acquire_instance_guard, read_pid_file, write_pid_file, GuardError, InstanceGuard,
-    Role as InstanceRole,
+    PidFile, Role as InstanceRole,
 };
 pub use watchdog::launcher::{ensure_sibling_running, sibling_is_alive};
 pub use watchdog::loop_driver::{ChannelObs, Direction, Effect, LoopDriver};
 pub use watchdog::pid_check::{verify_pid_alive, PidCheck};
 #[cfg(windows)]
 pub use watchdog::pipe::HeartbeatPipeClient;
-pub use watchdog::spawn::spawn_sibling;
+pub use watchdog::spawn::{resolve_sibling_path, spawn_sibling};
 pub use watchdog::state::{
     read as read_watchdog_state, write as write_watchdog_state, WatchdogErrorLabel, WatchdogState,
     WatchdogStateFile, WatchdogTarget, STATE_FILE_NAME, STATE_SCHEMA_VERSION,
