@@ -105,7 +105,8 @@ fn a_query_with_two_opt_records_does_not_decode() {
     bytes.extend_from_slice(&[0, 0, 41, 0x04, 0xD0, 0, 0, 0, 0, 0, 0]);
     let arcount = u16::from_be_bytes([bytes[10], bytes[11]]) + 1;
     bytes[10..12].copy_from_slice(&arcount.to_be_bytes());
-    assert!(decode_wire_message(&bytes).is_err());
+    let err = decode_wire_message(&bytes).expect_err("two OPT records must not decode");
+    assert!(err.to_string().contains("more than one EDNS"), "{err}");
 }
 
 #[test]

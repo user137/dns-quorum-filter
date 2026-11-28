@@ -1882,6 +1882,7 @@ install; T-99 / T-134 проти auto-прописування DoH — конф�
 | RFC | Назва | Вимога до проєкту | Розділ спека |
 |-----|-------|--------------------|--------------|
 | RFC 1035 | Domain Names — Implementation and Specification | Базовий wire format, структура запиту/відповіді — фундамент, на якому стоїть `hickory-dns` | 1, 3 |
+| RFC 1035 §4.1.1/§3.2.4, RFC 5936 | Header flags, classes, zone transfer | T-305: QR=1 → відкинути (DoH 400); opcode ≠ QUERY → NOTIMP; клас ≠ IN → REFUSED; AXFR/IXFR → REFUSED — локально, до згоди | 1 |
 | RFC 2181 | Clarifications to the DNS Specification | TTL всередині одного RRset мають збігатися; якщо ні — мінімальний | 4.1 |
 | RFC 2308 | Negative Caching of DNS Queries (DNS NCACHE) | TTL негативного кешування (NXDOMAIN/NODATA) — з поля MINIMUM у SOA, не довільна цифра; кешований NXDOMAIN віддається як NXDOMAIN, не NODATA (T-305 — важливо для пошукових суфіксів ОС) | 3.1, 4.1 |
 | RFC 5891 | Internationalized Domain Names in Applications (IDNA2008): Protocol | IDN → punycode нормалізація override-списків і ключа кешу, версія узгоджена з `hickory-dns` | 5 |
