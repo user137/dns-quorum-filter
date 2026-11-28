@@ -3,7 +3,7 @@
 //! runtime-configured list of [`ProviderSpec`]s (built-in §3.4 presets or a
 //! user-added custom `https` endpoint), not a fixed 2-variant enum.
 
-use crate::bootstrap::{OutboundResolver, ResolverMode};
+use crate::bootstrap::{Destinations, OutboundResolver, ResolverMode};
 use crate::wire::{decode_wire_message, encode_wire_message, upstream_query};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -789,7 +789,7 @@ impl ReqwestDohClient {
     ///
     /// Returns `Err` if the underlying TLS backend fails to initialize.
     pub fn with_mode(mode: &ResolverMode) -> Result<Self, reqwest::Error> {
-        let resolver = OutboundResolver::new(mode.clone())?;
+        let resolver = OutboundResolver::new(mode.clone(), Destinations::PublicOnly)?;
         Self::build(true, true, Arc::new(resolver))
     }
 
@@ -806,7 +806,7 @@ impl ReqwestDohClient {
     /// nothing.
     #[cfg(test)]
     fn allowing_plain_http() -> Result<Self, reqwest::Error> {
-        let resolver = OutboundResolver::new(ResolverMode::default())?;
+        let resolver = OutboundResolver::new(ResolverMode::default(), Destinations::PublicOnly)?;
         Self::build(false, false, Arc::new(resolver))
     }
 

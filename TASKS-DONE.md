@@ -9204,3 +9204,10 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   `onion`, `home.arpa` → NXDOMAIN; приватні reverse-зони RFC 6303 + `100.64/10` (RFC 7793) → NXDOMAIN, апекс — NODATA;
   однослівні A/AAAA/HTTPS/SVCB → NXDOMAIN, крім ICANN-TLD (`public_suffix::is_icann_tld`, `LazyLock`). У
   `precheck_query`, тобто до згоди, без апстрімів і журналу, і для DoH. Conformance `rfc_6761.rs`, `rfc_6303.rs`.
+
+- [x] T-305 батч 3a, закриваючий advisor (2026-11-28) — фільтр непублічних адрес лише для DoH-клієнта
+  (`Destinations::PublicOnly`); `public_https_client` — `Any` (інакше мережа з внутрішнім проксі/порталом для маркерів
+  досяжності давала б Offline → SERVFAIL на все); bootstrap-маршрутизація лишається в обох, тест проводки переписано на
+  bootstrap-режим. reqwest без `system-proxy` — проксі з налаштувань Windows не використовується (KNOWN-LIMITATIONS).
+  `is_icann_tld` — останній label кожного ICANN-правила (`*.ck`) і IDN у `xn--` (`рф`). Рядок RFC 6891: відповіді лише
+  із заголовка без OPT.

@@ -3,7 +3,7 @@
 //! [`crate::admin::AdminClient`] (loopback admin channel, pinned cert). A
 //! test keeps every other production `reqwest::Client` construction out.
 
-use crate::bootstrap::{OutboundResolver, ResolverMode};
+use crate::bootstrap::{Destinations, OutboundResolver, ResolverMode};
 
 /// Client for the fixed public HTTPS endpoints: `GeoIP`, top-N and
 /// blocklist downloads, reachability markers and the `MaxMind` key check.
@@ -11,16 +11,23 @@ use crate::bootstrap::{OutboundResolver, ResolverMode};
 /// Lookups follow `mode` (T-305 batch 3a): with the plain-DNS listener on,
 /// the OS resolver may point back at this service, so the bootstrap path is
 /// used instead — or a reachability marker would be answered by our own
-/// offline SERVFAIL and never recover.
+/// offline SERVFAIL and never recover. Addresses are used as resolved
+/// ([`Destinations::Any`]): these hosts are our own constants.
 ///
 /// # Errors
 ///
 /// The TLS backend failed to initialise.
 pub(crate) fn public_https_client(mode: &ResolverMode) -> Result<reqwest::Client, reqwest::Error> {
-    let resolver = OutboundResolver::new(mode.clone())?;
+    let resolver = OutboundResolver::new(mode.clone(), Destinations::Any)?;
+    with_resolver(std::sync::Arc::new(resolver))
+}
+
+fn with_resolver(
+    resolver: std::sync::Arc<dyn reqwest::dns::Resolve>,
+) -> Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder()
         .https_only(true)
-        .dns_resolver(std::sync::Arc::new(resolver))
+        .dns_resolver(resolver)
         .build()
 }
 
@@ -69,11 +76,42 @@ mod tests {
         })
     }
 
-    // `localhost` is a host name, so the lookup goes through the resolver;
-    // it resolves to loopback only and is refused before any connection.
-    // Without `dns_resolver` the listener would see the TLS handshake.
+    /// Answers every A lookup with 127.0.0.2 — loopback, but not the
+    /// address the test listener is bound to.
+    struct OtherLoopback;
+
+    impl crate::upstream::DohClient for OtherLoopback {
+        fn query(
+            &self,
+            _url: &str,
+            query: &hickory_proto::op::Message,
+        ) -> impl std::future::Future<
+            Output = Result<hickory_proto::op::Message, crate::upstream::UpstreamError>,
+        > + Send {
+            use hickory_proto::rr::{rdata::A, RData, Record, RecordType};
+            let mut answer = hickory_proto::op::Message::query();
+            if query
+                .queries
+                .first()
+                .map(hickory_proto::op::Query::query_type)
+                == Some(RecordType::A)
+            {
+                answer.answers.push(Record::from_rdata(
+                    hickory_proto::rr::Name::root(),
+                    60,
+                    RData::A(A(std::net::Ipv4Addr::new(127, 0, 0, 2))),
+                ));
+            }
+            std::future::ready(Ok(answer))
+        }
+    }
+
+    // Wiring: in bootstrap mode `localhost` is looked up through the
+    // baselines (here: 127.0.0.2), not the OS (127.0.0.1, where the
+    // listener is). Without `dns_resolver` the listener would see the
+    // connection.
     #[tokio::test]
-    async fn the_public_client_never_connects_to_a_host_resolving_to_loopback() {
+    async fn the_public_client_resolves_through_the_outbound_resolver() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
             Ok(listener) => listener,
@@ -91,25 +129,24 @@ mod tests {
                 drop(stream);
             }
         });
-        let client = match super::public_https_client(&super::ResolverMode::default()) {
+        let mode = super::ResolverMode::default();
+        mode.set_bootstrap(true);
+        let resolver = super::OutboundResolver::with_bootstrap(
+            mode,
+            super::Destinations::Any,
+            std::sync::Arc::new(OtherLoopback),
+            Vec::new(),
+        );
+        let client = match super::with_resolver(std::sync::Arc::new(resolver)) {
             Ok(client) => client,
             Err(err) => panic!("client: {err}"),
         };
-        let Err(err) = client
+        let request = client
             .get(format!("https://localhost:{port}/"))
-            .send()
-            .await
-        else {
-            panic!("the request must fail");
-        };
-        let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&err);
-        let mut refused = false;
-        while let Some(current) = cause {
-            refused |= current.is::<crate::upstream::NoPublicAddress>();
-            cause = current.source();
-        }
-        assert!(refused, "{err:?}");
-        assert_eq!(hits.load(Ordering::SeqCst), 0, "connected to loopback");
+            .timeout(std::time::Duration::from_secs(5))
+            .send();
+        assert!(request.await.is_err());
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "the OS answer was used");
     }
 
     #[test]

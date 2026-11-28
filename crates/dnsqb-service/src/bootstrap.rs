@@ -6,9 +6,12 @@
 //! that mode nothing here calls the OS resolver: the baseline hosts come from
 //! [`PINNED_BASELINE`], every other host from a `DoH` A/AAAA lookup sent to a
 //! pinned baseline. With the listener off, the OS resolver is used as before.
-//! Either way a non-built-in host is left with its public addresses only
-//! (the T-72 SSRF check, applied after resolution) — except a proxy host
-//! named in the environment, which the operator chose.
+//! For the `DoH` client, a non-built-in host is then left with its public
+//! addresses only (the T-72 SSRF check, applied after resolution) — except
+//! a proxy host named in the environment, which the operator chose. The
+//! other outbound clients reach only hosts this code names, so they take
+//! addresses as resolved ([`Destinations::Any`]): a network whose DNS maps
+//! a reachability marker to an internal proxy must not read as offline.
 
 use crate::baseline_selector::BASELINE_CHAIN;
 use crate::upstream::{
@@ -230,10 +233,22 @@ async fn lookup_via_baseline<C: DohClient>(
     Err(Box::new(BootstrapUnavailable))
 }
 
+/// Which resolved addresses a client may connect to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Destinations {
+    /// Public addresses only, unless the host is built-in, pinned or an
+    /// environment proxy — the `DoH` client, whose custom hosts the user
+    /// typed.
+    PublicOnly,
+    /// Every address — clients whose hosts are constants in this code.
+    Any,
+}
+
 /// The resolver of every outbound client (see the module doc). `C` is the
 /// bootstrap `DoH` client; only tests replace it.
 pub(crate) struct OutboundResolver<C = ReqwestDohClient> {
     mode: ResolverMode,
+    destinations: Destinations,
     bootstrap: Arc<C>,
     /// Proxy hosts from the environment at construction, resolved
     /// unfiltered: the operator chose them, and a proxy on this machine or
@@ -245,13 +260,17 @@ impl OutboundResolver {
     /// # Errors
     ///
     /// The bootstrap client's TLS backend failed to initialise.
-    pub(crate) fn new(mode: ResolverMode) -> Result<Self, reqwest::Error> {
+    pub(crate) fn new(
+        mode: ResolverMode,
+        destinations: Destinations,
+    ) -> Result<Self, reqwest::Error> {
         let bootstrap = ReqwestDohClient::bootstrap(Arc::new(PinnedOnlyResolver))?;
         // A variable that is unset or not Unicode is no proxy for `reqwest`
         // either.
         let proxies = PROXY_VARS.iter().filter_map(|var| std::env::var(var).ok());
         Ok(Self::with_bootstrap(
             mode,
+            destinations,
             Arc::new(bootstrap),
             proxy_hosts_from(proxies),
         ))
@@ -259,9 +278,15 @@ impl OutboundResolver {
 }
 
 impl<C> OutboundResolver<C> {
-    fn with_bootstrap(mode: ResolverMode, bootstrap: Arc<C>, proxy_hosts: Vec<String>) -> Self {
+    pub(crate) fn with_bootstrap(
+        mode: ResolverMode,
+        destinations: Destinations,
+        bootstrap: Arc<C>,
+        proxy_hosts: Vec<String>,
+    ) -> Self {
         Self {
             mode,
+            destinations,
             bootstrap,
             proxy_hosts,
         }
@@ -284,7 +309,7 @@ impl<C: DohClient + Send + Sync + 'static> reqwest::dns::Resolve for OutboundRes
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_owned();
         let bootstrap_mode = self.mode.is_bootstrap();
-        let trusted = self.is_trusted(&host);
+        let trusted = self.destinations == Destinations::Any || self.is_trusted(&host);
         let bootstrap = Arc::clone(&self.bootstrap);
         Box::pin(async move {
             let found: Vec<SocketAddr> = match (bootstrap_mode, pinned_addrs(&host)) {
@@ -318,7 +343,7 @@ fn baseline_hosts() -> impl Iterator<Item = &'static str> {
 mod tests {
     use super::{
         answer_ips, baseline_hosts, lookup_via_baseline, pinned_addrs, proxy_hosts_from,
-        OutboundResolver, ResolverMode, PINNED_BASELINE,
+        Destinations, OutboundResolver, ResolverMode, PINNED_BASELINE,
     };
     use crate::upstream::{DohClient, UpstreamError};
     use hickory_proto::op::{Message, ResponseCode};
@@ -493,7 +518,7 @@ mod tests {
     #[tokio::test]
     async fn bootstrap_mode_answers_a_baseline_host_from_the_table() {
         let mode = ResolverMode::default();
-        let resolver = match OutboundResolver::new(mode.clone()) {
+        let resolver = match OutboundResolver::new(mode.clone(), Destinations::PublicOnly) {
             Ok(resolver) => resolver,
             Err(err) => panic!("resolver: {err}"),
         };
@@ -523,8 +548,12 @@ mod tests {
     ) -> (OutboundResolver<ScriptedBaselines>, Arc<ScriptedBaselines>) {
         let baselines = Arc::new(ScriptedBaselines::answering(v4));
         let proxies = proxies.iter().map(|p| (*p).to_owned()).collect();
-        let resolver =
-            OutboundResolver::with_bootstrap(mode.clone(), Arc::clone(&baselines), proxies);
+        let resolver = OutboundResolver::with_bootstrap(
+            mode.clone(),
+            Destinations::PublicOnly,
+            Arc::clone(&baselines),
+            proxies,
+        );
         (resolver, baselines)
     }
 
@@ -606,6 +635,36 @@ mod tests {
         };
         assert!(addrs.iter().all(|a| a.ip().is_loopback()));
         assert!(!addrs.is_empty());
+    }
+
+    // The non-`DoH` clients reach only our own constant hosts: an internal
+    // answer (a proxy, a captive portal) is used, not refused.
+    #[tokio::test]
+    async fn any_destinations_keep_a_private_answer() {
+        let mode = ResolverMode::default();
+        let resolver = OutboundResolver::with_bootstrap(
+            mode.clone(),
+            Destinations::Any,
+            Arc::new(ScriptedBaselines::answering(Ipv4Addr::new(10, 0, 0, 1))),
+            Vec::new(),
+        );
+        let addrs: Vec<_> = match resolver.resolve(name("localhost")).await {
+            Ok(addrs) => addrs.collect(),
+            Err(err) => panic!("OS answer kept: {err}"),
+        };
+        assert!(!addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()));
+        mode.set_bootstrap(true);
+        let addrs: Vec<_> = match resolver.resolve(name("marker.example")).await {
+            Ok(addrs) => addrs.collect(),
+            Err(err) => panic!("bootstrap answer kept: {err}"),
+        };
+        assert_eq!(
+            addrs,
+            vec![std::net::SocketAddr::new(
+                Ipv4Addr::new(10, 0, 0, 1).into(),
+                0
+            )]
+        );
     }
 
     #[test]

@@ -165,15 +165,28 @@ impl Psl {
     }
 }
 
-/// Whether `label` (lowercase, one label) is an ICANN top-level domain in
-/// the bundled list. The set is built on first use and kept: it is read per
-/// query by [`crate::local_names`], too often to re-parse the list.
+/// Whether `label` (lowercase ASCII, one label, `xn--` form for an IDN) is
+/// an ICANN top-level domain in the bundled list: the last label of any
+/// ICANN rule, so a TLD listed only as `*.ck` counts, and a Unicode TLD
+/// (`рф`) is matched by its ASCII form. The set is built on first use and
+/// kept: it is read per query by [`crate::local_names`].
 pub(crate) fn is_icann_tld(label: &str) -> bool {
     static TLDS: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(|| {
         Psl::parse(PSL_DAT)
             .icann_rules
-            .into_iter()
-            .filter(|rule| !rule.contains('.'))
+            .iter()
+            .filter_map(|rule| rule.rsplit('.').next())
+            .filter_map(|tld| {
+                if tld.is_ascii() {
+                    return Some(tld.to_owned());
+                }
+                // A Unicode label the IDNA mapping rejects can't be queried
+                // in ASCII form either, so it has nothing to match.
+                match url::Host::parse(tld) {
+                    Ok(url::Host::Domain(ascii)) => Some(ascii),
+                    _ => None,
+                }
+            })
             .collect()
     });
     TLDS.contains(label)

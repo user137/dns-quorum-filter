@@ -135,6 +135,8 @@ TASKS-DONE.md, never here.
   (deliberately — a public path on IPv6-only networks). Built-in preset/baseline hosts resolve
   unfiltered, and so does a proxy host named in `HTTPS_PROXY`/`ALL_PROXY`/`HTTP_PROXY` (the
   operator's choice); a request through such a proxy is resolved by the proxy, outside this check.
+  Only these environment variables count: `reqwest` is built without `system-proxy`, so a proxy
+  set only in Windows settings is not used at all (requests go direct).
 - **Bootstrap addresses are hard-coded (T-305 batch 3a)** — with the plain-DNS listener on, the
   baseline hosts are reached only at `PINNED_BASELINE`'s addresses (from the providers' docs,
   2026-11-28); a retired address is lost silently until `examples/bootstrap_probe` (release

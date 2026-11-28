@@ -278,6 +278,9 @@ mod tests {
             assert_eq!(local_answer("com", qtype), None, "{qtype}");
             assert_eq!(local_answer("UA.", qtype), None, "{qtype}");
         }
+        // A TLD listed only by a wildcard rule, and an IDN TLD in ASCII.
+        assert_eq!(local_answer("ck", RecordType::A), None);
+        assert_eq!(local_answer("xn--p1ai", RecordType::A), None);
         // Other types go out: a single-label MX/TXT/DS can be real.
         assert_eq!(local_answer("printer", RecordType::MX), None);
         assert_eq!(local_answer("com", RecordType::DS), None);
