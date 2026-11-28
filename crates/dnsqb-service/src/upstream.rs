@@ -564,6 +564,18 @@ fn is_builtin_host(host: &str) -> bool {
         .any(|builtin| builtin.eq_ignore_ascii_case(host))
 }
 
+/// Whether `T` appears anywhere in `err`'s source chain.
+fn has_cause<T: std::error::Error + 'static>(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut cause = Some(err);
+    while let Some(current) = cause {
+        if current.is::<T>() {
+            return true;
+        }
+        cause = current.source();
+    }
+    false
+}
+
 /// A custom provider's host resolved only to loopback/private/link-local
 /// addresses. Carries no host name: service logs never name a domain.
 #[derive(Debug)]
@@ -677,6 +689,11 @@ impl UpstreamError {
                 "status_other"
             };
             return (label, Some(status.as_u16()));
+        }
+        // T-305 batch 2: a custom host refused by `PublicOnlyResolver` would
+        // otherwise read as an ordinary connect failure.
+        if has_cause::<NoPublicAddress>(err) {
+            return ("no_public_address", None);
         }
         if err.is_connect() {
             let label = if err.is_timeout() {
@@ -1168,6 +1185,29 @@ mod tests {
         }
     }
 
+    // T-305 batch 2 release check: every built-in preset and baseline URL
+    // still answers the production client (no redirects, HTTPS only, the
+    // filtering resolver). One query per URL.
+    #[tokio::test]
+    #[ignore = "live network calls to every built-in DoH endpoint - run before a release"]
+    async fn every_builtin_doh_url_answers_the_production_client() {
+        let client = match ReqwestDohClient::new() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        let urls = super::BUILTIN_PRESETS
+            .iter()
+            .map(|&(_, _, url, ..)| url)
+            .chain(crate::baseline_selector::BASELINE_CHAIN);
+        let mut failed = Vec::new();
+        for url in urls {
+            if let Err(err) = client.query(url, &t262_query()).await {
+                failed.push(format!("{url}: {:?}", err.http_detail()));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:#?}");
+    }
+
     fn t262_query() -> Message {
         let mut question = Query::new();
         match Name::from_str("example.com.") {
@@ -1444,6 +1484,35 @@ mod tests {
             hits.load(Ordering::SeqCst),
             0,
             "a plain-http request was sent"
+        );
+    }
+
+    // End to end through the client: `localhost` is a host name, so the
+    // request goes through the resolver (an IP literal would skip it). It
+    // resolves to loopback only, so no connection is made and the error names
+    // the reason. Without the resolver the server would see a connection.
+    #[tokio::test]
+    async fn the_doh_client_never_connects_to_a_custom_host_resolving_to_loopback() {
+        use std::sync::atomic::Ordering;
+        let (url, hits) =
+            counting_server(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .await;
+        let url = url.replace("127.0.0.1", "localhost");
+        let client = match ReqwestDohClient::allowing_plain_http() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        match client.query(&url, &t262_query()).await {
+            Err(err @ UpstreamError::Http(_)) => {
+                assert_eq!(err.http_detail(), ("no_public_address", None));
+            }
+            Err(other) => panic!("expected UpstreamError::Http, got {other:?}"),
+            Ok(_) => panic!("the request must fail"),
+        }
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "connected to a loopback address"
         );
     }
 
