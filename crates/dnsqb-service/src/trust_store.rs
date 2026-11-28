@@ -416,19 +416,19 @@ pub fn is_trusted(cert_path: &Path) -> Result<bool, TrustStoreError> {
 /// copy placed there succeeded).
 ///
 /// The folder is shared by every account on the machine, so the name is a
-/// fresh random `nonce` and the caller creates the file with `create_new`
+/// fresh random `file_id` and the caller creates the file with `create_new`
 /// (security review 2026-11-28): a name derived from the certificate (it was
 /// its thumbprint) can be computed by anyone who completes a TLS handshake
 /// with the service, pre-created with a permissive ACL and rewritten with a
 /// foreign CA between our write and certutil's read.
-fn addstore_temp_path(system_root: &Path, nonce: &str) -> PathBuf {
+fn addstore_temp_path(system_root: &Path, file_id: &str) -> PathBuf {
     system_root
         .join("Temp")
-        .join(format!("dnsqb-cert-{nonce}.pem"))
+        .join(format!("dnsqb-cert-{file_id}.pem"))
 }
 
 /// 128 random bits as lowercase hex, for [`addstore_temp_path`].
-fn random_temp_nonce() -> Result<String, TrustStoreError> {
+fn random_file_id() -> Result<String, TrustStoreError> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| TrustStoreError::Rng)?;
@@ -491,7 +491,7 @@ pub fn ensure_installed(cert_path: &Path) -> Result<TrustStoreOutcome, TrustStor
     let pem = std::fs::read(cert_path).map_err(|_| TrustStoreError::LocalThumbprint {
         path: cert_path.to_path_buf(),
     })?;
-    let temp_path = addstore_temp_path(&system_root_dir()?, &random_temp_nonce()?);
+    let temp_path = addstore_temp_path(&system_root_dir()?, &random_file_id()?);
     write_new_file(&temp_path, &pem).map_err(TrustStoreError::TempCopy)?;
 
     let certutil = certutil_path()?;
@@ -599,8 +599,8 @@ where
 mod tests {
     use super::{
         addstore_temp_path, certutil_command, certutil_path, classify_confirmed_lookup,
-        confirmed_thumbprints_for_common_name, is_trusted, local_cert_thumbprint,
-        random_temp_nonce, uninstall_loop, write_new_file, MAX_MATCHING_ENTRIES,
+        confirmed_thumbprints_for_common_name, is_trusted, local_cert_thumbprint, random_file_id,
+        uninstall_loop, write_new_file, MAX_MATCHING_ENTRIES,
     };
     use std::os::windows::process::ExitStatusExt;
     use std::path::Path;
@@ -687,9 +687,9 @@ mod tests {
     // Security review 2026-11-28: the name must not be computable from the
     // certificate, or another account can pre-create the file.
     #[test]
-    fn temp_nonce_is_random_128_bit_hex() {
-        let a = random_temp_nonce().unwrap_or_else(|err| panic!("rng: {err}"));
-        let b = random_temp_nonce().unwrap_or_else(|err| panic!("rng: {err}"));
+    fn temp_file_id_is_random_128_bit_hex() {
+        let a = random_file_id().unwrap_or_else(|err| panic!("rng: {err}"));
+        let b = random_file_id().unwrap_or_else(|err| panic!("rng: {err}"));
         assert_eq!(a.len(), 32);
         assert!(a
             .bytes()
