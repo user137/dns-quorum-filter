@@ -161,6 +161,7 @@ mod persist_dto;
 mod personal_zone_persist;
 mod personal_zone_stats;
 mod pipeline;
+mod plain_dns;
 mod public_suffix;
 mod query_log;
 mod quorum;
@@ -184,7 +185,8 @@ pub use admin::{
     AdminClient, AdminClientError, AdminConfigUpdate, AdminStats, AdminStatusResponse,
     BaselineEndpointView, BlocklistBundlesStatusView, BlocklistSourceStatusView,
     CctldBlockStatusView, ConsentStorageView, EncryptedPersistenceView, HeroStateView,
-    NetworkStatusView, ProviderStatusView, QueryLogDiskView, RatingFilterStatusView,
+    NetworkStatusView, PlainDnsBindFailureView, PlainDnsConfigUpdate, PlainDnsStateView,
+    PlainDnsStatusView, ProviderStatusView, QueryLogDiskView, RatingFilterStatusView,
     StartupTaskView, ADMIN_DTO_SCHEMA_VERSION,
 };
 pub use admission::ConnectionGate;
@@ -194,7 +196,9 @@ pub use cache::{Cache, CacheConfig};
 pub use cert::generate_self_signed_cert;
 pub use cert_rotation::rotate_certificate;
 pub use cli_help::{print_help_if_requested, Binary as CliHelpBinary};
-pub use config::{DomainSharingConsent, LimitsConfig, RatingFilterConfig, ResolverConfig};
+pub use config::{
+    DomainSharingConsent, LimitsConfig, PlainDnsConfig, RatingFilterConfig, ResolverConfig,
+};
 pub use dispatch::{
     serve, AppState, CacheState, GeoipInit, GeoipState, OverridesState, PersistTarget, RuntimeInit,
 };

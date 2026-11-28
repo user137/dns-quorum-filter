@@ -31,6 +31,7 @@ use crate::admin::{
     HealthGeoip, HealthResponse, InstallCertResponse, LogEntryView, LogQueryResponse,
     MaxmindCredentialCheck, MaxmindCredentialsRequest, MaxmindCredentialsView, NetworkStatusView,
     OverrideAddRequest, OverrideDomainView, OverrideListsResponse, OverrideRemoveRequest,
+    PlainDnsBindFailureView, PlainDnsConfigUpdate, PlainDnsStateView, PlainDnsStatusView,
     ProviderStatusView, QueryLogDiskView, QueryLogPolicyUpdate, RatingFilterConfigUpdate,
     RatingFilterStatusView, RemoveAllRequestOutcomeView, RemoveAllRequestResponse,
     WatchdogStatusView, ZoneListStatusView, ADMIN_DTO_SCHEMA_VERSION,
@@ -132,6 +133,7 @@ const ADMIN_GEOIP_MAXMIND_CLEAR_PATH: &str = "/admin/geoip/maxmind/clear";
 const ADMIN_RATING_FILTER_PATH: &str = "/admin/rating-filter";
 const ADMIN_BLOCKLIST_BUNDLES_PATH: &str = "/admin/blocklist-bundles";
 const ADMIN_CCTLD_BLOCK_PATH: &str = "/admin/cctld-block";
+const ADMIN_PLAIN_DNS_PATH: &str = "/admin/plain-dns";
 const ADMIN_CONSENT_PATH: &str = "/admin/consent";
 const ADMIN_QUERY_LOG_POLICY_PATH: &str = "/admin/query-log-policy";
 const ADMIN_PROVIDERS_PATH: &str = "/admin/providers";
@@ -182,6 +184,7 @@ const ROUTES: &[(&str, &[Method])] = &[
     (ADMIN_RATING_FILTER_PATH, &[Method::POST]),
     (ADMIN_BLOCKLIST_BUNDLES_PATH, &[Method::POST]),
     (ADMIN_CCTLD_BLOCK_PATH, &[Method::POST]),
+    (ADMIN_PLAIN_DNS_PATH, &[Method::POST]),
     (ADMIN_CONSENT_PATH, &[Method::POST]),
     (ADMIN_QUERY_LOG_POLICY_PATH, &[Method::POST]),
     (ADMIN_PROVIDERS_PATH, &[Method::GET]),
@@ -361,6 +364,9 @@ pub struct RuntimeInit {
     /// T-305 batch 3a — the lookup mode shared with every outbound client
     /// (the `DoH` client is built from the same handle).
     pub resolver_mode: ResolverMode,
+    /// T-305 batch 3b — the port the plain-DNS listener binds when enabled
+    /// (53; tests use 0).
+    pub plain_dns_port: u16,
 }
 
 impl Default for RuntimeInit {
@@ -371,6 +377,7 @@ impl Default for RuntimeInit {
             domain_sharing_consent: DomainSharingConsent::NotGiven,
             providers: ProviderEntry::default_active_set(),
             resolver_mode: ResolverMode::default(),
+            plain_dns_port: crate::plain_dns::PLAIN_DNS_PORT,
         }
     }
 }
@@ -1025,6 +1032,14 @@ pub struct AppState<C: DohClient + Sync> {
     gate: ConnectionGate,
     /// T-305 batch 3a — see [`RuntimeInit::resolver_mode`].
     resolver_mode: ResolverMode,
+    /// T-305 batch 3b — the plain-DNS listener. Lock order: `persist_lock`
+    /// → this; never held across an `.await` (bind and spawn are sync).
+    plain_dns: parking_lot::Mutex<PlainDnsRuntime>,
+    /// T-305 batch 3b — how the listener resolves a query; set once by
+    /// [`AppState::install_plain_dns_resolver`] after the state is in its
+    /// `Arc`. Unset (tests that don't need it): enabling fails as `OTHER`.
+    plain_dns_resolve: std::sync::OnceLock<crate::plain_dns::Resolve>,
+    plain_dns_counters: Arc<crate::plain_dns::Counters>,
     /// T-277 — per-topic change versions behind `GET /admin/events`. Bumped
     /// centrally in [`serve`] after every accepted write route
     /// ([`route_topics`]) and by the setters of state that changes without a
@@ -1168,6 +1183,13 @@ impl<C: DohClient + Sync> AppState<C> {
             }),
             providers: RwLock::new(Arc::new(runtime.providers)),
             resolver_mode: runtime.resolver_mode,
+            plain_dns: parking_lot::Mutex::new(PlainDnsRuntime {
+                enabled: false,
+                port: runtime.plain_dns_port,
+                listener: PlainDnsListener::Off,
+            }),
+            plain_dns_resolve: std::sync::OnceLock::new(),
+            plain_dns_counters: Arc::default(),
             cache: RwLock::new(Arc::new(cache)),
             geoip: RwLock::new(Arc::new(geoip.database)),
             geoip_countries: RwLock::new(Arc::new(geoip.blocked_countries)),
@@ -1756,6 +1778,9 @@ impl<C: DohClient + Sync> AppState<C> {
             cctld_block: CctldBlockConfig {
                 blocked_codes: (*self.cctld_block_snapshot()).clone(),
             },
+            plain_dns: crate::config::PlainDnsConfig {
+                enabled: self.plain_dns_enabled(),
+            },
         }
     }
 
@@ -1815,6 +1840,91 @@ impl<C: DohClient + Sync> AppState<C> {
     /// T-305 batch 3a — the lookup mode every outbound client follows.
     pub(crate) fn resolver_mode(&self) -> &ResolverMode {
         &self.resolver_mode
+    }
+
+    /// T-305 batch 3b — turns the plain-DNS listener on or off, live. The
+    /// caller holds `persist_lock` when it persists afterwards. Order keeps
+    /// the outbound clients off the OS resolver whenever the OS might point
+    /// here: on → bootstrap mode first, then bind; off → stop the listener
+    /// (dropping its tasks closes the sockets), then leave bootstrap mode.
+    /// A failed bind keeps `enabled` (and bootstrap mode): the next start or
+    /// toggle tries again, and `DoH` is unaffected.
+    pub(crate) fn apply_plain_dns(&self, enabled: bool) {
+        let mut runtime = self.plain_dns.lock();
+        runtime.enabled = enabled;
+        if !enabled {
+            runtime.listener = PlainDnsListener::Off;
+            self.resolver_mode.set_bootstrap(false);
+            return;
+        }
+        if matches!(runtime.listener, PlainDnsListener::Listening { .. }) {
+            return;
+        }
+        self.resolver_mode.set_bootstrap(true);
+        let Some(resolve) = self.plain_dns_resolve.get() else {
+            tracing::warn!("plain DNS: no resolver installed, not listening");
+            runtime.listener = PlainDnsListener::BindFailed(crate::plain_dns::BindFailure::Other);
+            return;
+        };
+        runtime.listener = match crate::plain_dns::bind(runtime.port) {
+            Ok(sockets) => {
+                let addrs = sockets.local_addrs();
+                let tasks = crate::plain_dns::spawn(sockets, resolve, &self.plain_dns_counters);
+                tracing::info!("plain DNS: listening on {} address(es)", addrs.len());
+                let providers = Arc::clone(&self.providers.read());
+                let hosts: Vec<&str> = providers
+                    .iter()
+                    .filter(|entry| entry.enabled)
+                    .filter_map(|entry| crate::upstream::https_url_host(&entry.spec.doh_url))
+                    .collect();
+                self.client.prewarm(&hosts);
+                PlainDnsListener::Listening {
+                    _tasks: tasks,
+                    addrs,
+                }
+            }
+            Err(failure) => PlainDnsListener::BindFailed(failure),
+        };
+    }
+
+    /// T-305 batch 3b — the resolve function the plain-DNS listener calls:
+    /// [`resolve_message`] on this state, through a `Weak` so the listener
+    /// (owned by this state) never keeps it alive. Call once, after the
+    /// state is in its `Arc`; a second call keeps the first.
+    pub(crate) fn install_plain_dns_resolver(self: &Arc<Self>)
+    where
+        C: Send + 'static,
+    {
+        let weak = Arc::downgrade(self);
+        let resolve: crate::plain_dns::Resolve = Arc::new(move |query: Message| {
+            let weak = weak.clone();
+            Box::pin(async move {
+                let state = weak.upgrade()?;
+                resolve_message(&query, &state).await
+            })
+        });
+        // Already installed: the first resolver stays, it is the same one.
+        let _ = self.plain_dns_resolve.set(resolve);
+    }
+
+    /// T-305 batch 3b — tests bind port 0, never the real 53.
+    #[cfg(test)]
+    pub(crate) fn set_plain_dns_port(&self, port: u16) {
+        self.plain_dns.lock().port = port;
+    }
+
+    /// T-305 batch 3b — the addresses the plain-DNS listener is bound to
+    /// (empty unless listening).
+    #[cfg(test)]
+    pub(crate) fn plain_dns_addrs(&self) -> Vec<std::net::SocketAddr> {
+        match &self.plain_dns.lock().listener {
+            PlainDnsListener::Listening { addrs, .. } => addrs.clone(),
+            PlainDnsListener::Off | PlainDnsListener::BindFailed(_) => Vec::new(),
+        }
+    }
+
+    fn plain_dns_enabled(&self) -> bool {
+        self.plain_dns.lock().enabled
     }
 
     /// T-277 — the change-version bus the `/admin/events` stream subscribes to.
@@ -2051,6 +2161,58 @@ fn cctld_block_status_view<C: DohClient + Sync>(state: &AppState<C>) -> CctldBlo
     }
 }
 
+/// T-305 batch 3b — [`PlainDnsStatusView`] from the live listener.
+fn plain_dns_status_view<C: DohClient + Sync>(state: &AppState<C>) -> PlainDnsStatusView {
+    use crate::plain_dns::BindFailure;
+    let runtime = state.plain_dns.lock();
+    let (listener_state, bind_failure) = match &runtime.listener {
+        PlainDnsListener::Off => (PlainDnsStateView::Off, None),
+        PlainDnsListener::Listening { .. } => (PlainDnsStateView::Listening, None),
+        PlainDnsListener::BindFailed(failure) => (
+            PlainDnsStateView::BindFailed,
+            Some(match *failure {
+                BindFailure::PortInUse => PlainDnsBindFailureView::PortInUse,
+                BindFailure::PermissionDenied => PlainDnsBindFailureView::PermissionDenied,
+                BindFailure::Other => PlainDnsBindFailureView::Other,
+            }),
+        ),
+    };
+    PlainDnsStatusView {
+        enabled: runtime.enabled,
+        state: listener_state,
+        bind_failure,
+        udp_dropped: state
+            .plain_dns_counters
+            .udp_dropped
+            .load(std::sync::atomic::Ordering::Relaxed),
+        listening_on: match &runtime.listener {
+            PlainDnsListener::Listening { addrs, .. } => {
+                addrs.iter().map(ToString::to_string).collect()
+            }
+            PlainDnsListener::Off | PlainDnsListener::BindFailed(_) => Vec::new(),
+        },
+    }
+}
+
+/// T-305 batch 3b — the plain-DNS listener's live state on [`AppState`].
+struct PlainDnsRuntime {
+    /// `[plain_dns] enabled` as last applied (persisted from here).
+    enabled: bool,
+    /// The port bound when enabled.
+    port: u16,
+    listener: PlainDnsListener,
+}
+
+enum PlainDnsListener {
+    Off,
+    /// Dropping `_tasks` stops the listener and closes its sockets.
+    Listening {
+        _tasks: tokio::task::JoinSet<()>,
+        addrs: Vec<std::net::SocketAddr>,
+    },
+    BindFailed(crate::plain_dns::BindFailure),
+}
+
 /// Builds the current [`AdminStatusResponse`] from `state` — shared by
 /// `GET /admin/status` and the response [`apply_admin_config`] echoes back
 /// after a `POST /admin/config`. `persisted` is the caller's to state
@@ -2101,6 +2263,7 @@ fn admin_status<C: DohClient + Sync>(state: &AppState<C>, persisted: bool) -> Ad
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
+        plain_dns: plain_dns_status_view(state),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         startup_task: crate::startup_task::read_startup_task(),
     }
@@ -2203,6 +2366,7 @@ fn apply_admin_config<C: DohClient + Sync>(
         rating_filter: rating_filter_status_view(state),
         blocklist_bundles: blocklist_bundles_status_view(state),
         cctld_block: cctld_block_status_view(state),
+        plain_dns: plain_dns_status_view(state),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         startup_task: crate::startup_task::read_startup_task(),
     }
@@ -2491,6 +2655,8 @@ fn apply_admin_reset<C: DohClient + Sync>(
     // restart (the same completeness gap `overrides`/`cache`/`geoip_countries`
     // above already close).
     state.update_providers(config.providers);
+    // T-305 batch 3b: a hand-edited `[plain_dns]` takes effect too.
+    state.apply_plain_dns(config.plain_dns.enabled);
     *state.overrides.write() = Arc::new(OverridesState {
         lists: overrides,
         invalid,
@@ -3199,6 +3365,48 @@ where
         Ok(response) => json_response(&response),
         Err(err) => bad_request(config_rejection_reason(&err)),
     }
+}
+
+/// Applies a `[plain_dns]` change (T-305 batch 3b) under `persist_lock`:
+/// bind or unbind live ([`AppState::apply_plain_dns`]), then persist. An
+/// `enabled: true` whose bind failed is persisted on purpose — the same as a
+/// start with that config: `BIND_FAILED` in the status, the next start or
+/// toggle tries again.
+fn apply_plain_dns_change<C: DohClient + Sync>(
+    state: &AppState<C>,
+    update: PlainDnsConfigUpdate,
+) -> AdminStatusResponse {
+    let persisted = {
+        let persist_guard = state.persist_lock.lock();
+        state.apply_plain_dns(update.enabled);
+        state.persist_live_config(&persist_guard, "an admin plain-dns change")
+    };
+    admin_status(state, persisted)
+}
+
+/// `POST /admin/plain-dns` (T-305 batch 3b) — same CSRF gate and body cap
+/// as [`serve_admin_cctld_block`].
+async fn serve_admin_plain_dns<C, B>(req: Request<B>, state: &AppState<C>) -> Response<Full<Bytes>>
+where
+    C: DohClient + Sync,
+    B: Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok());
+    if !content_type_is_json(content_type) {
+        return status_response(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+    let limited = Limited::new(req.into_body(), MAX_ADMIN_BODY_SIZE);
+    let Ok(collected) = limited.collect().await else {
+        return bad_request(AdminErrorReason::MalformedBody);
+    };
+    let Ok(update) = serde_json::from_slice::<PlainDnsConfigUpdate>(&collected.to_bytes()) else {
+        return bad_request(AdminErrorReason::MalformedBody);
+    };
+    json_response(&apply_plain_dns_change(state, update))
 }
 
 /// Applies a consent change (T-286) under `persist_lock`: live-apply, then
@@ -4405,6 +4613,7 @@ where
         ADMIN_RATING_FILTER_PATH => serve_admin_rating_filter(req, &state).await,
         ADMIN_BLOCKLIST_BUNDLES_PATH => serve_admin_blocklist_bundles(req, &state).await,
         ADMIN_CCTLD_BLOCK_PATH => serve_admin_cctld_block(req, &state).await,
+        ADMIN_PLAIN_DNS_PATH => serve_admin_plain_dns(req, &state).await,
         ADMIN_CONSENT_PATH => serve_admin_consent(req, &state).await,
         ADMIN_QUERY_LOG_POLICY_PATH => serve_admin_query_log_policy(req, &state).await,
         ADMIN_PROVIDERS_PATH => serve_admin_providers(&state),
@@ -4488,7 +4697,9 @@ where
 /// fails a new `POST` route until it is listed here or deliberately exempted.
 fn route_topics(path: &str) -> Option<&'static [Topic]> {
     match path {
-        ADMIN_CONFIG_PATH | ADMIN_INSTALL_CERT_PATH | ADMIN_CONSENT_PATH => Some(&[Topic::Status]),
+        ADMIN_CONFIG_PATH | ADMIN_INSTALL_CERT_PATH | ADMIN_CONSENT_PATH | ADMIN_PLAIN_DNS_PATH => {
+            Some(&[Topic::Status])
+        }
         ADMIN_RESET_PATH => Some(&Topic::ALL),
         ADMIN_OVERRIDES_ADD_PATH | ADMIN_OVERRIDES_REMOVE_PATH => Some(&[Topic::Overrides]),
         ADMIN_CACHE_CONFIG_APPLY_PATH => Some(&[Topic::CacheConfig]),
@@ -6453,7 +6664,7 @@ pub(crate) mod tests {
         fn(&ResolverConfig) -> bool,
     );
 
-    fn config_writers() -> [ConfigWriter; 7] {
+    fn config_writers() -> [ConfigWriter; 8] {
         [
             (
                 "config",
@@ -6519,6 +6730,14 @@ pub(crate) mod tests {
                     assert!(super::apply_cctld_block_change(s, &update).is_ok());
                 },
                 |c| c.cctld_block.blocked_codes == ["ru"],
+            ),
+            (
+                "plain-dns",
+                |s| {
+                    let update = crate::admin::PlainDnsConfigUpdate { enabled: true };
+                    assert!(super::apply_plain_dns_change(s, update).persisted);
+                },
+                |c| c.plain_dns.enabled,
             ),
             (
                 "providers",
@@ -6662,6 +6881,7 @@ pub(crate) mod tests {
             cctld_block: crate::config::CctldBlockConfig {
                 blocked_codes: vec!["ru".to_string()],
             },
+            plain_dns: crate::config::PlainDnsConfig { enabled: true },
         };
         if let Err(err) = on_disk.save(&path) {
             panic!("must be able to save the fixture config: {err}");
@@ -9348,6 +9568,367 @@ pub(crate) mod tests {
         }
     }
 
+    // --- T-305 batch 3b: POST /admin/plain-dns ---
+
+    use crate::admin::{PlainDnsBindFailureView, PlainDnsStateView};
+    use crate::wire::{decode_wire_message, encode_wire_message};
+
+    async fn plain_dns_post(
+        state: Arc<AppState<MockClient>>,
+        enabled: bool,
+    ) -> AdminStatusResponse {
+        let body = serde_json::json!({ "enabled": enabled });
+        let response = match serve(admin_post_json("/admin/plain-dns", &body), state).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body_bytes(response).await;
+        match serde_json::from_slice::<AdminStatusResponse>(&bytes) {
+            Ok(status) => status,
+            Err(err) => panic!("response must decode as AdminStatusResponse: {err}"),
+        }
+    }
+
+    fn plain_query(name: &str, id: u16) -> Vec<u8> {
+        let mut query = Message::query();
+        query.metadata.id = id;
+        query.metadata.recursion_desired = true;
+        let Ok(name) = Name::from_str(name) else {
+            panic!("fixture name");
+        };
+        query.add_query(Query::query(name, RecordType::A));
+        match encode_wire_message(&query) {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("encode: {err}"),
+        }
+    }
+
+    async fn udp_ask(addr: std::net::SocketAddr, wire: &[u8]) -> Message {
+        let client = match tokio::net::UdpSocket::bind("127.0.0.1:0").await {
+            Ok(client) => client,
+            Err(err) => panic!("client bind: {err}"),
+        };
+        if let Err(err) = client.send_to(wire, addr).await {
+            panic!("send: {err}");
+        }
+        let mut buf = [0u8; 1500];
+        let received =
+            tokio::time::timeout(std::time::Duration::from_secs(5), client.recv(&mut buf)).await;
+        let Ok(Ok(len)) = received else {
+            panic!("no UDP answer");
+        };
+        match decode_wire_message(buf.get(..len).unwrap_or_default()) {
+            Ok(message) => message,
+            Err(err) => panic!("decode: {err}"),
+        }
+    }
+
+    async fn tcp_ask(addr: std::net::SocketAddr, wire: &[u8]) -> Message {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = match tokio::net::TcpStream::connect(addr).await {
+            Ok(stream) => stream,
+            Err(err) => panic!("connect: {err}"),
+        };
+        let Ok(len) = u16::try_from(wire.len()) else {
+            panic!("fixture fits");
+        };
+        let mut framed = len.to_be_bytes().to_vec();
+        framed.extend_from_slice(wire);
+        if let Err(err) = stream.write_all(&framed).await {
+            panic!("write: {err}");
+        }
+        let mut len = [0u8; 2];
+        if let Err(err) = stream.read_exact(&mut len).await {
+            panic!("read length: {err}");
+        }
+        let mut body = vec![0u8; usize::from(u16::from_be_bytes(len))];
+        if let Err(err) = stream.read_exact(&mut body).await {
+            panic!("read body: {err}");
+        }
+        match decode_wire_message(&body) {
+            Ok(message) => message,
+            Err(err) => panic!("decode: {err}"),
+        }
+    }
+
+    fn plain_dns_state() -> Arc<AppState<MockClient>> {
+        let state = state_with(no_op_client());
+        state.set_plain_dns_port(0);
+        state.install_plain_dns_resolver();
+        state
+    }
+
+    // Happy path, end to end: on → both transports answer through the real
+    // pipeline (a local name, so no provider is needed) and outbound lookups
+    // leave the OS resolver; off → the listener is gone and the mode is back.
+    #[tokio::test]
+    async fn plain_dns_route_listens_answers_and_stops() {
+        let state = plain_dns_state();
+        let on = plain_dns_post(Arc::clone(&state), true).await;
+        assert!(on.plain_dns.enabled);
+        assert_eq!(on.plain_dns.state, PlainDnsStateView::Listening);
+        assert!(!on.plain_dns.listening_on.is_empty());
+        assert!(state.resolver_mode().is_bootstrap());
+        let Some(addr) = state
+            .plain_dns_addrs()
+            .into_iter()
+            .find(std::net::SocketAddr::is_ipv4)
+        else {
+            panic!("127.0.0.1 must be bound");
+        };
+        let udp = udp_ask(addr, &plain_query("localhost.", 7)).await;
+        assert_eq!(udp.metadata.id, 7);
+        assert_eq!(udp.answers.len(), 1);
+        let tcp = tcp_ask(addr, &plain_query("app.localhost.", 8)).await;
+        assert_eq!(tcp.metadata.id, 8);
+        assert_eq!(tcp.answers.len(), 1);
+
+        let off = plain_dns_post(Arc::clone(&state), false).await;
+        assert!(!off.plain_dns.enabled);
+        assert_eq!(off.plain_dns.state, PlainDnsStateView::Off);
+        assert!(off.plain_dns.listening_on.is_empty());
+        assert!(!state.resolver_mode().is_bootstrap());
+        assert!(state.plain_dns_addrs().is_empty());
+    }
+
+    /// Records the hosts [`DohClient::prewarm`] was asked for.
+    #[derive(Default)]
+    struct PrewarmRecorder {
+        hosts: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl DohClient for PrewarmRecorder {
+        fn query(
+            &self,
+            _url: &str,
+            query: &Message,
+        ) -> impl std::future::Future<Output = Result<Message, UpstreamError>> + Send {
+            std::future::ready(Ok(query.clone()))
+        }
+
+        fn prewarm(&self, hosts: &[&str]) {
+            if let Ok(mut seen) = self.hosts.lock() {
+                seen.extend(hosts.iter().map(|host| (*host).to_owned()));
+            }
+        }
+    }
+
+    // Going live warms the bootstrap cache with each enabled voter's host —
+    // and only those (a disabled voter is not looked up).
+    #[tokio::test]
+    async fn listening_prewarms_the_enabled_voter_hosts() {
+        let mut providers = crate::upstream::ProviderEntry::default_active_set();
+        if let Some(first) = providers.first_mut() {
+            first.enabled = false;
+        }
+        let expected: Vec<String> = providers
+            .iter()
+            .filter(|entry| entry.enabled)
+            .filter_map(|entry| crate::upstream::https_url_host(&entry.spec.doh_url))
+            .map(str::to_owned)
+            .collect();
+        assert!(!expected.is_empty());
+        let state = Arc::new(AppState::new(
+            PrewarmRecorder::default(),
+            OverridesState {
+                lists: OverrideLists::empty(),
+                invalid: Vec::new(),
+            },
+            RuntimeInit {
+                providers,
+                plain_dns_port: 0,
+                ..consented_runtime()
+            },
+            CacheState {
+                cache: Cache::new(&CacheConfig::default()),
+                config: CacheConfig::default(),
+            },
+            GeoipInit {
+                database: GeoipState::default(),
+                blocked_countries: Vec::new(),
+                source: GeoipSource::DbIpLite,
+                rating_filter_config: RatingFilterConfig::default(),
+                rating_filter_zone: ZoneLists::default(),
+                system_region: None,
+            },
+            QueryLog::default(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                query_log_retention: LogRetention::Day,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: None,
+            },
+        ));
+        state.install_plain_dns_resolver();
+        state.apply_plain_dns(true);
+        let seen = state
+            .client
+            .hosts
+            .lock()
+            .map(|h| h.clone())
+            .unwrap_or_default();
+        assert_eq!(seen, expected);
+        // Already listening: no second warm-up.
+        state.apply_plain_dns(true);
+        let again = state
+            .client
+            .hosts
+            .lock()
+            .map(|h| h.len())
+            .unwrap_or_default();
+        assert_eq!(again, expected.len());
+    }
+
+    // Persistence + interaction with /admin/reset: `enabled` lands in
+    // resolver_config.toml, a reset re-reads it and keeps listening; a
+    // hand-edit to `enabled = false` followed by a reset stops the listener
+    // and leaves bootstrap mode.
+    #[tokio::test]
+    async fn plain_dns_persists_and_admin_reset_follows_the_file() {
+        let _store_guard = store_test_guard();
+        let Ok(dir) = tempfile::tempdir() else {
+            panic!("temp dir");
+        };
+        let path = dir.path().join("resolver_config.toml");
+        let state = state_with_persist(
+            no_op_client(),
+            PersistTarget {
+                port: 8443,
+                persist_query_log: false,
+                query_log_retention: LogRetention::Day,
+                persist_cache: false,
+                rating_filter: RatingFilterConfig::default(),
+                limits: LimitsConfig::default(),
+                paths: Some(PersistPaths {
+                    config: path.clone(),
+                    overrides: dir.path().join("overrides.toml"),
+                }),
+            },
+        );
+        state.set_plain_dns_port(0);
+        state.install_plain_dns_resolver();
+
+        let on = plain_dns_post(Arc::clone(&state), true).await;
+        assert!(on.persisted);
+        let loaded = match ResolverConfig::load(&path) {
+            Ok(loaded) => loaded,
+            Err(err) => panic!("saved file must load: {err}"),
+        };
+        assert!(loaded.plain_dns.enabled);
+
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!state.plain_dns_addrs().is_empty());
+        assert!(state.resolver_mode().is_bootstrap());
+
+        let off = ResolverConfig {
+            plain_dns: crate::config::PlainDnsConfig { enabled: false },
+            ..loaded
+        };
+        if let Err(err) = off.save(&path) {
+            panic!("save: {err}");
+        }
+        let response = match serve(admin_reset_request(), Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(state.plain_dns_addrs().is_empty());
+        assert!(!state.resolver_mode().is_bootstrap());
+    }
+
+    // Interaction: on → on is a no-op (same addresses), off → on binds again.
+    #[tokio::test]
+    async fn plain_dns_route_toggles_repeatedly() {
+        let state = plain_dns_state();
+        plain_dns_post(Arc::clone(&state), true).await;
+        let first = state.plain_dns_addrs();
+        plain_dns_post(Arc::clone(&state), true).await;
+        assert_eq!(state.plain_dns_addrs(), first);
+        plain_dns_post(Arc::clone(&state), false).await;
+        let again = plain_dns_post(Arc::clone(&state), true).await;
+        assert_eq!(again.plain_dns.state, PlainDnsStateView::Listening);
+    }
+
+    // Error path: a taken port is BIND_FAILED/PORT_IN_USE, still `enabled`
+    // (the next start retries), and DoH keeps answering.
+    #[tokio::test]
+    async fn a_taken_plain_dns_port_is_bind_failed_and_doh_still_answers() {
+        let taken = match std::net::UdpSocket::bind("127.0.0.1:0") {
+            Ok(socket) => socket,
+            Err(err) => panic!("bind: {err}"),
+        };
+        let port = match taken.local_addr() {
+            Ok(addr) => addr.port(),
+            Err(err) => panic!("local_addr: {err}"),
+        };
+        let state = plain_dns_state();
+        state.set_plain_dns_port(port);
+        let status = plain_dns_post(Arc::clone(&state), true).await;
+        assert!(status.plain_dns.enabled);
+        assert_eq!(status.plain_dns.state, PlainDnsStateView::BindFailed);
+        assert_eq!(
+            status.plain_dns.bind_failure,
+            Some(PlainDnsBindFailureView::PortInUse)
+        );
+        let doh = resolve_doh_request(&plain_query("localhost.", 9), &state).await;
+        assert!(doh.is_ok(), "DoH must keep answering");
+    }
+
+    // Without an installed resolver (every other test state) enabling binds
+    // nothing — the fuzz property can't open a port.
+    #[tokio::test]
+    async fn without_a_resolver_enabling_binds_nothing() {
+        let state = state_with(no_op_client());
+        state.set_plain_dns_port(0);
+        let status = plain_dns_post(Arc::clone(&state), true).await;
+        assert_eq!(status.plain_dns.state, PlainDnsStateView::BindFailed);
+        assert!(state.plain_dns_addrs().is_empty());
+    }
+
+    // Misuse: a body that isn't `{ "enabled": bool }` is 400, and a missing
+    // JSON content type never reaches the handler.
+    #[tokio::test]
+    async fn plain_dns_route_rejects_a_malformed_body_or_content_type() {
+        let state = plain_dns_state();
+        for body in [
+            serde_json::json!({ "enabled": "yes" }),
+            serde_json::json!({}),
+            serde_json::json!(null),
+        ] {
+            let response = match serve(
+                admin_post_json("/admin/plain-dns", &body),
+                Arc::clone(&state),
+            )
+            .await
+            {
+                Ok(response) => response,
+                Err(err) => match err {},
+            };
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
+        }
+        let Ok(req) = Request::builder()
+            .method(Method::POST)
+            .uri("/admin/plain-dns")
+            .body(Full::new(Bytes::from_static(b"{\"enabled\":true}")))
+        else {
+            panic!("fixture request must build");
+        };
+        let response = match serve(req, Arc::clone(&state)).await {
+            Ok(response) => response,
+            Err(err) => match err {},
+        };
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert!(state.plain_dns_addrs().is_empty());
+    }
+
     // Happy path via the real HTTP route: a full-replace list round-trips
     // through the status response, normalized to lowercase.
     #[tokio::test]
@@ -11071,6 +11652,7 @@ pub(crate) mod tests {
         ("/admin/rating-filter", &[Method::POST]),
         ("/admin/blocklist-bundles", &[Method::POST]),
         ("/admin/cctld-block", &[Method::POST]),
+        ("/admin/plain-dns", &[Method::POST]),
         ("/admin/consent", &[Method::POST]),
         ("/admin/query-log-policy", &[Method::POST]),
         ("/admin/providers", &[Method::GET]),

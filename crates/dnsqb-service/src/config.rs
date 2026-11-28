@@ -563,6 +563,16 @@ pub(crate) fn validate_blocklist_bundle_sources(
     Ok(out)
 }
 
+/// The `[plain_dns]` table (T-305 batch 3b): plain DNS (UDP + TCP) on
+/// `127.0.0.1:53` and `[::1]:53`, besides `DoH`. Default off. The addresses
+/// and the port are constants, never config — the desktop app never listens
+/// beyond loopback (SECURITY.md).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlainDnsConfig {
+    /// Whether the listeners run.
+    pub enabled: bool,
+}
+
 /// The `[cctld_block]` table (T-115, SPEC.md §5.2) — pipeline step 3, block
 /// by the query domain's own ccTLD suffix. No `enabled` flag, unlike
 /// [`RatingFilterConfig`]/[`BlocklistBundlesConfig`] — an empty
@@ -739,6 +749,10 @@ pub struct ResolverConfig {
     /// `AppState::live_resolver_config` (ARCH-09), never a stale
     /// `PersistTarget` echo.
     pub cctld_block: CctldBlockConfig,
+    /// T-305 batch 3b — `[plain_dns]`. Default off; admin route
+    /// `POST /admin/plain-dns`; persisted live via
+    /// `AppState::live_resolver_config` (ARCH-09), never `PersistTarget`.
+    pub plain_dns: PlainDnsConfig,
 }
 
 impl Default for ResolverConfig {
@@ -761,6 +775,7 @@ impl Default for ResolverConfig {
             personal_zone: PersonalZoneConfig::default(),
             blocklist_bundles: BlocklistBundlesConfig::default(),
             cctld_block: CctldBlockConfig::default(),
+            plain_dns: PlainDnsConfig::default(),
         }
     }
 }
@@ -901,6 +916,9 @@ impl ResolverConfig {
             cctld_block: CctldBlockConfig {
                 blocked_codes: cctld_block_codes,
             },
+            plain_dns: PlainDnsConfig {
+                enabled: file.plain_dns.enabled,
+            },
         })
     }
 
@@ -965,6 +983,9 @@ impl ResolverConfig {
             },
             cctld_block: CctldBlockConfigFile {
                 blocked_codes: self.cctld_block.blocked_codes.clone(),
+            },
+            plain_dns: PlainDnsConfigFile {
+                enabled: self.plain_dns.enabled,
             },
             limits: LimitsConfigFile {
                 max_concurrent_connections: self.limits.max_concurrent_connections,
@@ -1147,6 +1168,8 @@ struct ResolverConfigFile {
     blocklist_bundles: BlocklistBundlesConfigFile,
     /// Фаза 5, T-115 — see [`ResolverConfig::cctld_block`].
     cctld_block: CctldBlockConfigFile,
+    /// T-305 batch 3b — see [`ResolverConfig::plain_dns`].
+    plain_dns: PlainDnsConfigFile,
     /// T-169 — see [`ResolverConfig::limits`].
     limits: LimitsConfigFile,
 }
@@ -1245,6 +1268,7 @@ impl Default for ResolverConfigFile {
             cctld_block: CctldBlockConfigFile {
                 blocked_codes: defaults.cctld_block.blocked_codes,
             },
+            plain_dns: PlainDnsConfigFile::default(),
             limits: LimitsConfigFile::default(),
         }
     }
@@ -1314,6 +1338,13 @@ struct RatingFilterConfigFile {
 struct BlocklistBundlesConfigFile {
     enabled: bool,
     sources: Option<Vec<String>>,
+}
+
+/// TOML-facing shape for [`PlainDnsConfig`] (T-305 batch 3b).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct PlainDnsConfigFile {
+    enabled: bool,
 }
 
 /// TOML-facing shape for [`CctldBlockConfig`] (T-115) — same "graceful
@@ -1454,6 +1485,7 @@ mod tests {
                 personal_zone: PersonalZoneConfig::default(),
                 blocklist_bundles: BlocklistBundlesConfig::default(),
                 cctld_block: CctldBlockConfig::default(),
+                plain_dns: crate::config::PlainDnsConfig::default(),
             }
         );
     }
@@ -1743,6 +1775,7 @@ mod tests {
             cctld_block: CctldBlockConfig {
                 blocked_codes: vec!["ru".to_string(), "cn".to_string()],
             },
+            plain_dns: crate::config::PlainDnsConfig { enabled: true },
         };
         if let Err(err) = config.save(&path) {
             panic!("must be able to save: {err}");

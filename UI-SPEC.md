@@ -188,6 +188,12 @@ Tauri-команд, посилання на мокап. **Дизайн-ріше�
 | Джерела — per-джерело чекбокси | `Option<Vec<String>>` (`BlocklistBundlesStatusView.sources`/`available_sources`/`loaded`) | §5, T-218 | згорнутий `<details class="bl-sources">`, згруповано «Реклама й трекери»/«Безпека й загрози» (клієнтський статичний каталог, не кворум-категорії); `hagezi-nrd`/`hagezi-dga` — один рядок, один чекбокс, перемикає обидва id разом; статус рядка «оновлено N год тому» — з `loaded[].last_updated`, перераховується 30-с таймером сторінки (T-281: між добовими оновленнями push не надходить) | клік → `POST` з явним `sources`-масивом (перетворює `null` на `Some(ids)`); невідомий id (поза статичним каталогом) → власний рядок «невідоме джерело», не зникає мовчки | Ф7 ✅ |
 | Стан «нічого не обрано» | — | KNOWN-LIMITATIONS.md | `notice warn`, текст залежить від `active` (застарілий набір і далі блокує **або** фільтрація не діє) | лише читання — три взаємовиключні гілки опису, не дві (Fork B rating-filter'а сюди буквально не копіюється) | Ф7 ✅ |
 
+**T-305 батч 3b (2026-11-28, бекенд лише):** `AdminStatusResponse.plain_dns: PlainDnsStatusView
+{ enabled, state: OFF|LISTENING|BIND_FAILED, bind_failure: PORT_IN_USE|PERMISSION_DENIED|OTHER|null,
+udp_dropped: u64, listening_on: Vec<String> }` (`serde(default)`, `ADMIN_DTO_SCHEMA_VERSION` 12) +
+`POST /admin/plain-dns` (`PlainDnsConfigUpdate { enabled }`). Картка й hero `PLAIN_DNS_BIND_FAILED` —
+батч 3c.
+
 **Фаза 5, Батч 5.1 (2026-09-19, бекенд лише — "backend before UI"):** `AdminStatusResponse.
 cctld_block: CctldBlockStatusView { blocked_codes: Vec<String> }` + `POST /admin/cctld-block`
 (`CctldBlockConfigUpdate { blocked_codes }`, повна заміна, немає окремого `enabled` — порожній

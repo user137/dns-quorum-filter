@@ -166,7 +166,10 @@ pub async fn run() {
 
     // T-305 batch 3a: one lookup-mode handle for the DoH client and every
     // other outbound client, so the plain-DNS route flips them together.
+    // Set from the config before any client exists: with `[plain_dns]` on,
+    // the OS may already point at our port 53 (T-305 batch 3b).
     let resolver_mode = ResolverMode::default();
+    resolver_mode.set_bootstrap(resolver_config.plain_dns.enabled);
     let client = build_doh_client(app_data.as_deref(), &resolver_mode);
 
     let (overrides, invalid_overrides) = load_overrides(app_data.as_deref());
@@ -181,6 +184,7 @@ pub async fn run() {
             .serve_baseline_when_filters_unreachable,
         domain_sharing_consent: resolver_config.domain_sharing_consent,
         resolver_mode,
+        plain_dns_port: crate::plain_dns::PLAIN_DNS_PORT,
     };
     // T-52/T-149: the admin channel persists a config change back to
     // whichever path it was loaded from - see `build_persist_target`'s own
@@ -268,6 +272,10 @@ pub async fn run() {
     // field's own doc), so this call is what actually observes a
     // hand-edited `resolver_config.toml` value until an `/admin/reset`.
     state.update_cctld_block(resolver_config.cctld_block.blocked_codes.clone());
+    // T-305 batch 3b: a failed bind is a status (`BIND_FAILED`), never a
+    // startup failure — `DoH` keeps working.
+    state.install_plain_dns_resolver();
+    state.apply_plain_dns(resolver_config.plain_dns.enabled);
     state.install_query_log_disk(query_log_disk);
     spawn_query_log_persister(&state, app_data.is_some());
     spawn_cache_persister(&state, cache_flusher);

@@ -54,7 +54,7 @@ use std::time::SystemTime;
 /// every other cross-process contract in the repo already follows
 /// (`watchdog::frame::FRAME_VERSION`, `watchdog::state::STATE_SCHEMA_VERSION`,
 /// `persist_dto::PersistedFileV1`, `encrypted_file`'s header byte).
-pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 11;
+pub const ADMIN_DTO_SCHEMA_VERSION: u32 = 12;
 
 /// [`AdminStatusResponse::domain_sharing_consent`]'s serde default.
 const fn consent_absent_reads_as_granted() -> crate::config::DomainSharingConsent {
@@ -356,6 +356,10 @@ pub struct AdminStatusResponse {
     /// blocked codes".
     #[serde(default)]
     pub cctld_block: CctldBlockStatusView,
+    /// T-305 batch 3b — the plain-DNS listener. `#[serde(default)]`: safe
+    /// zero is "off".
+    #[serde(default)]
+    pub plain_dns: PlainDnsStatusView,
     /// T-204 (finding 3-B) — the `/admin/ui` protection-hero state, computed
     /// server-side by [`compute_hero_state`] so its priority ladder is
     /// Rust-tested. `main.js` renders it; it does not re-derive the ordering.
@@ -550,6 +554,59 @@ pub struct CctldBlockStatusView {
     /// deduplicated) exactly as `crate::config::validate_cctld_codes` returns
     /// them.
     pub blocked_codes: Vec<String>,
+}
+
+/// T-305 batch 3b — [`AdminStatusResponse::plain_dns`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PlainDnsStatusView {
+    /// `[plain_dns] enabled` as configured (persisted even when the bind
+    /// failed, so the next start tries again).
+    pub enabled: bool,
+    /// What the listener is doing now.
+    pub state: PlainDnsStateView,
+    /// Why the bind failed; `None` unless `state` is `BIND_FAILED`.
+    #[serde(default)]
+    pub bind_failure: Option<PlainDnsBindFailureView>,
+    /// UDP queries dropped since start because too many were in flight.
+    #[serde(default)]
+    pub udp_dropped: u64,
+    /// The addresses listened on (`127.0.0.1:53`, and `[::1]:53` where IPv6
+    /// is on); empty unless `LISTENING`.
+    #[serde(default)]
+    pub listening_on: Vec<String>,
+}
+
+/// T-305 batch 3b — the plain-DNS listener state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PlainDnsStateView {
+    /// Not listening (disabled).
+    #[default]
+    Off,
+    /// Listening on `127.0.0.1:53` (and `[::1]:53` where IPv6 is on).
+    Listening,
+    /// Enabled, but the port could not be bound; `DoH` is unaffected.
+    BindFailed,
+}
+
+/// T-305 batch 3b — why the plain-DNS bind failed (closed set, no OS text).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PlainDnsBindFailureView {
+    /// Another program holds port 53.
+    PortInUse,
+    /// The OS refused the port (reserved or excluded).
+    PermissionDenied,
+    /// Any other failure.
+    Other,
+}
+
+/// `POST /admin/plain-dns`'s body (T-305 batch 3b) — a full replace of the
+/// `[plain_dns]` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlainDnsConfigUpdate {
+    /// Whether the plain-DNS listener runs.
+    pub enabled: bool,
 }
 
 /// The `/admin/ui` protection-hero state, computed **on the server** (T-204,
@@ -2303,6 +2360,28 @@ impl AdminClient {
             .client
             .post(format!("{}/admin/cctld-block", self.base_url))
             .json(&CctldBlockConfigUpdate { blocked_codes })
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(AdminClientError::Request)?;
+        response.json().await.map_err(AdminClientError::Request)
+    }
+
+    /// `POST /admin/plain-dns` (T-305 batch 3b) — turns the plain-DNS
+    /// listener on or off.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminClientError::Request`] if the service isn't reachable or the
+    /// response doesn't decode.
+    pub async fn set_plain_dns(
+        &self,
+        enabled: bool,
+    ) -> Result<AdminStatusResponse, AdminClientError> {
+        let response = self
+            .client
+            .post(format!("{}/admin/plain-dns", self.base_url))
+            .json(&PlainDnsConfigUpdate { enabled })
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)

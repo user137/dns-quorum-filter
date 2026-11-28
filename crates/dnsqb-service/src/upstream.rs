@@ -610,6 +610,12 @@ pub trait DohClient {
         url: &str,
         query: &Message,
     ) -> impl Future<Output = Result<Message, UpstreamError>> + Send;
+
+    /// T-305 batch 3b: start looking up `hosts` now, so their first query
+    /// after the plain-DNS listener comes up does not pay for a cold
+    /// bootstrap lookup inside the connect timeout. Default: nothing (mock
+    /// clients have no resolver).
+    fn prewarm(&self, _hosts: &[&str]) {}
 }
 
 /// Errors from a single upstream `DoH` round-trip.
@@ -766,6 +772,8 @@ impl std::fmt::Debug for UpstreamError {
 /// [`DohClient`] backed by a real `reqwest::Client` (T-24).
 pub struct ReqwestDohClient {
     http: reqwest::Client,
+    /// The same resolver `http` uses, kept for [`DohClient::prewarm`].
+    resolver: Arc<dyn reqwest::dns::Resolve>,
 }
 
 impl ReqwestDohClient {
@@ -826,18 +834,30 @@ impl ReqwestDohClient {
         let http = builder
             .redirect(reqwest::redirect::Policy::none())
             .https_only(https_only)
-            .dns_resolver(resolver)
+            .dns_resolver(Arc::clone(&resolver))
             .pool_idle_timeout(UPSTREAM_POOL_IDLE_TIMEOUT)
             .connect_timeout(UPSTREAM_CONNECT_TIMEOUT)
             .http2_keep_alive_interval(UPSTREAM_KEEP_ALIVE_INTERVAL)
             .http2_keep_alive_timeout(UPSTREAM_KEEP_ALIVE_TIMEOUT)
             .http2_keep_alive_while_idle(true)
             .build()?;
-        Ok(Self { http })
+        Ok(Self { http, resolver })
     }
 }
 
 impl DohClient for ReqwestDohClient {
+    fn prewarm(&self, hosts: &[&str]) {
+        for host in hosts {
+            let Ok(name) = host.parse::<reqwest::dns::Name>() else {
+                continue;
+            };
+            let lookup = self.resolver.resolve(name);
+            // The answer lands in the resolver's own cache; a failure here
+            // is retried by the first real query.
+            tokio::spawn(async move { drop(lookup.await) });
+        }
+    }
+
     async fn query(&self, url: &str, query: &Message) -> Result<Message, UpstreamError> {
         let bytes = encode_wire_message(&upstream_query(query)).map_err(UpstreamError::Encode)?;
         let request_url = doh_get_url(url, &bytes);

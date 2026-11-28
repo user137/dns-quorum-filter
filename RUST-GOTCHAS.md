@@ -671,6 +671,16 @@ re-deriving), never narrative that belongs in `TASKS-DONE.md`/`DECISIONS.md` ins
   it, so nothing caught it before. Fix: `-C target-feature=+crt-static` in `.cargo/config.toml` and in
   every workflow step that sets `RUSTFLAGS` (the env var replaces the config). `release.yml` fails the
   build if `dumpbin /dependents` shows a `vcruntime`/`msvcp`/`concrt` import.
+- **A Windows UDP `recv_from` error is about one datagram, not the socket** (T-305 batch 3b):
+  WSAECONNRESET 10054 (an ICMP port-unreachable for an earlier `send_to`) and WSAEMSGSIZE 10040 (a
+  datagram larger than the buffer) come back from `recv_from`; a loop that ends on `Err` lets any
+  client that stops listening kill the listener. `plain_dns::serve_udp` skips them and backs off
+  50 ms on anything else.
+- **Port 0 for a UDP+TCP pair fails on Windows ~5% of the time, and retrying port 0 does not help**
+  (T-305 batch 3b, dev box 2026-11-28): Hyper-V/WSL exclude ranges of 100 ports per protocol
+  (`netsh int ipv4 show excludedportrange protocol=udp|tcp`), and ephemeral ports are handed out
+  in sequence, so the TCP bind on the UDP socket's port hits 10013 sixteen times in a row.
+  `plain_dns::bind_one` picks a random port in 49152..65535 per attempt instead.
 - **A `powershell.exe` spawned with `DETACHED_PROCESS` exits without running its command on Windows 10**
   (PakkoW10, 2026-11-27) — packaged or not, with or without `-WindowStyle Hidden`; `CREATE_NO_WINDOW`
   (± `CREATE_BREAKAWAY_FROM_JOB`) runs it. "Remove everything" therefore never wiped the data folder on

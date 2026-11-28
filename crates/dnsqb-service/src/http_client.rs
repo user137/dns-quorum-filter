@@ -204,4 +204,43 @@ mod tests {
             "use http_client::public_https_client: {offenders:?}"
         );
     }
+
+    /// T-305 batch 3b: with the plain-DNS listener on, the OS resolver may
+    /// point back at this service, so production code asks it only through
+    /// `bootstrap::OutboundResolver` (which knows the mode).
+    #[test]
+    fn only_the_bootstrap_resolver_asks_the_os_resolver() {
+        const OS_LOOKUPS: [&str; 3] = ["lookup_host(", "to_socket_addrs(", "ToSocketAddrs"];
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rust_files(&src, &mut files);
+        let mut offenders = Vec::new();
+        for file in files {
+            let name = file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            if name == "bootstrap.rs" {
+                continue;
+            }
+            let text = match std::fs::read_to_string(&file) {
+                Ok(text) => text,
+                Err(err) => panic!("read {}: {err}", file.display()),
+            };
+            let production = text
+                .split(
+                    "
+mod tests {",
+                )
+                .next()
+                .unwrap_or_default();
+            if OS_LOOKUPS.iter().any(|c| production.contains(c)) {
+                offenders.push(file.display().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "resolve through bootstrap::OutboundResolver: {offenders:?}"
+        );
+    }
 }
