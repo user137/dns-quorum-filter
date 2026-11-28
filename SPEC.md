@@ -521,11 +521,11 @@ DECISIONS.md), не лише маркетинговими сторінками �
   зробити цю /24 грубішою — вибір зводився до "як є" проти "не впроваджувати". Рішення
   користувача: per-domain geolocation-експозиція рівня міста всім авторитативним серверам
   не варта нішевого geo-точного preset-у. Наслідок — **ECS лишається навмисно не-ціллю**
-  (не прогалина). Стан на 2026-08-31, звірено читанням коду (не забезпечено тестом): жоден
-  шлях не конструює ECS-опцію — `quorum::resolve` передає `Message` клієнта апстрімам без
-  змін, а `attach_edns` (єдиний хелпер, що пише OPT) не має продакшн-виклику. Якщо
-  `attach_edns` колись підключать до апстрім-шляху (напр. заради RFC 6891 payload-size),
-  цей інваріант треба перевірити наново. Повний запис і байти проби — TASKS-DONE.md T-164.
+  (не прогалина). З T-305 (батч 3a) це забезпечено тестом: апстрім отримує не `Message`
+  клієнта, а `wire::upstream_query` — питання, прапорці RD/CD/AD і власний OPT лише з DO
+  (ID 0, RFC 8484 §4.1), тож ні ми, ні клієнт не можемо передати провайдеру ECS-опцію
+  (conformance `default_upstream_gets_no_ecs_option`). Повний запис і байти проби —
+  TASKS-DONE.md T-164.
 
 **Реалізація, T-72/T-73 (2026-08-31, plan+advisor, backend-коміт + окремий UI-коміт).**
 `quorum` більше не хардкодить два провайдери: voter-набір — рантайм-список
@@ -1892,14 +1892,14 @@ install; T-99 / T-134 проти auto-прописування DoH — конф�
 | RFC 2308 | Negative Caching of DNS Queries (DNS NCACHE) | TTL негативного кешування (NXDOMAIN/NODATA) — з поля MINIMUM у SOA, не довільна цифра; кешований NXDOMAIN віддається як NXDOMAIN, не NODATA (T-305 — важливо для пошукових суфіксів ОС) | 3.1, 4.1 |
 | RFC 5891 | Internationalized Domain Names in Applications (IDNA2008): Protocol | IDN → punycode нормалізація override-списків і ключа кешу, версія узгоджена з `hickory-dns` | 5 |
 | RFC 6891 | Extension Mechanisms for DNS (EDNS(0)) | Розширений формат запиту/відповіді, розмір UDP-пакета | 3.4 |
-| RFC 7871 | Client Subnet in DNS Queries (EDNS Client Subnet) | **Навмисно не-ціль** (T-164 відхилено 2026-08-31): жоден шлях у коді не конструює ECS-опцію (звірено читанням, не тестом). §3.4 "Розглянуті й відхилені провайдери" | 3.4 |
+| RFC 7871 | Client Subnet in DNS Queries (EDNS Client Subnet) | **Навмисно не-ціль** (T-164 відхилено 2026-08-31): апстрім-запит будується заново без опцій клієнта (T-305 батч 3a, тест). §3.4 "Розглянуті й відхилені провайдери" | 3.4 |
 | RFC 8484 | DNS Queries over HTTPS (DoH) | Формат запиту/відповіді локального DoH-сервера і з'єднань до апстрімів | 1, 3 |
 | RFC 8767 | Serving Stale Data to Improve DNS Resiliency | `stale-if-error`-стратегія поверх `fail-open` | 3.3, 4.1 |
 | RFC 1035 §4.2.1/§4.2.2 | UDP and TCP usage | Порт 53 (T-305): без EDNS UDP-відповідь ≤ 512 байт; TCP — 2-байтовий префікс довжини | 1 |
 | RFC 7766 | DNS Transport over TCP — Implementation Requirements | Порт 53: TCP обов'язковий, TC-біт → повтор по TCP, конвеєр і відповіді не по порядку, тайм-аути з'єднання | 1 |
-| RFC 6891 §6/§7 | EDNS(0): OPT record, responder behaviour | Запит з OPT → відповідь з власним OPT (і для DoH; опції апстріму не передаються, DO копіюється); >1 OPT → DoH 400, звичайний DNS FORMERR; версія > 0 → BADVERS; розмір UDP 512…1232 | 1, 3.4 |
+| RFC 6891 §6/§7 | EDNS(0): OPT record, responder behaviour | Запит з OPT → відповідь з власним OPT (і для DoH; опції апстріму не передаються, DO копіюється); апстріму — теж власний OPT лише з DO; розширений RCODE (> 15) клієнту без OPT → SERVFAIL; >1 OPT → DoH 400, звичайний DNS FORMERR; версія > 0 → BADVERS; розмір UDP 512…1232 | 1, 3.4 |
 | RFC 8482 | Minimal-Sized Responses to DNS Queries That Have QTYPE=ANY | Порт 53: ANY → мінімальна відповідь, не проксі на baseline (ампліфікація) | 1 |
-| RFC 9619 | In the DNS, QDCOUNT Is (Usually) One | QDCOUNT ≠ 1 → FORMERR, не проксі | 1, 3 |
+| RFC 9619 | In the DNS, QDCOUNT Is (Usually) One | QDCOUNT ≠ 1 → FORMERR, не проксі; перевіряється в сирому заголовку до декодування (декодер резервує місце під кожне питання), opcode ≠ QUERY → NOTIMP так само; RA=1 у всіх відповідях | 1, 3 |
 | RFC 6761 | Special-Use Domain Names | `localhost` → loopback, `invalid` → NXDOMAIN, локально, без апстрімів | 1 |
 | RFC 6762 | Multicast DNS | `.local` → NXDOMAIN локально (ОС резолвить через mDNS), без апстрімів | 1 |
 | RFC 6303 | Locally Served DNS Zones | Приватні reverse-зони → NXDOMAIN локально, без апстрімів | 1 |

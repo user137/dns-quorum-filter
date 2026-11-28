@@ -56,3 +56,18 @@ fn a_query_with_exactly_one_question_goes_on_to_the_pipeline() {
     query.add_query(question("example.com."));
     assert!(matches!(precheck_query(&query), QueryPrecheck::Resolve));
 }
+
+// T-305 batch 3a: a header claiming 65535 questions is answered from the
+// header alone — never decoded (the decoder would reserve a slot for each).
+#[test]
+fn a_header_with_many_questions_gets_formerr_without_decoding() {
+    use dnsqb_service::{decode_wire_message, precheck_raw, RawPrecheck};
+    let header = [0x0b, 0xad, 0x01, 0x00, 0xff, 0xff, 0, 0, 0, 0, 0, 0];
+    let RawPrecheck::Reply(bytes) = precheck_raw(&header) else {
+        panic!("QDCOUNT 65535 must be answered from the header");
+    };
+    let reply = decode_wire_message(&bytes).expect("the reply decodes");
+    assert_eq!(reply.metadata.id, 0x0bad);
+    assert_eq!(reply.metadata.response_code, ResponseCode::FormErr);
+    assert!(reply.queries.is_empty());
+}

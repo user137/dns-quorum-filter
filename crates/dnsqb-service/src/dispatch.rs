@@ -593,13 +593,18 @@ impl PersistPaths {
 ///
 /// # Errors
 ///
-/// Returns `Err` if `wire_bytes` doesn't decode as a DNS message, or if
-/// (practically unreachable) the resolved response somehow fails to
-/// re-encode.
+/// Returns `Err` if `wire_bytes` is not a query header or doesn't decode as
+/// a DNS message (HTTP 400, RFC 8484 §4.2.1), or if (practically
+/// unreachable) the resolved response somehow fails to re-encode.
 pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     wire_bytes: &[u8],
     state: &AppState<C>,
 ) -> Result<Vec<u8>, ProtoError> {
+    match crate::wire::precheck_raw(wire_bytes) {
+        crate::wire::RawPrecheck::Drop => return Err(ProtoError::from("not a DNS query")),
+        crate::wire::RawPrecheck::Reply(bytes) => return Ok(bytes),
+        crate::wire::RawPrecheck::Decode => {}
+    }
     let query = decode_wire_message(wire_bytes)?;
     match resolve_message(&query, state).await {
         Some(response) => encode_wire_message(&response),
@@ -766,8 +771,11 @@ pub(crate) async fn resolve_message<C: DohClient + Sync>(
                 // `Geoip`/`BaselineFallback` are not a clean quorum ALLOW)
                 // must never feed the learner. By reference, before
                 // `meta.domain` moves into `LogEntry` below — no extra
-                // allocation on an already-tracked domain.
+                // allocation on an already-tracked domain. NXDOMAIN is an
+                // ALLOW too, but not a visit (T-305 batch 3a: the OS search
+                // suffixes would flood the zone with names that don't exist).
                 if matches!(meta.decision, Decision::Allowed)
+                    && message.metadata.response_code == hickory_proto::op::ResponseCode::NoError
                     && matches!(
                         meta.decision_source,
                         DecisionSource::Quorum | DecisionSource::Cache
@@ -5023,6 +5031,69 @@ pub(crate) mod tests {
             .query_log
             .snapshot(std::time::SystemTime::now())
             .is_empty());
+    }
+
+    // T-305 batch 3a: the OS appends search suffixes, so names that don't
+    // exist would otherwise flood the personal zone. NXDOMAIN is an ALLOW
+    // but not a visit; a NoError answer still is.
+    #[tokio::test]
+    async fn an_nxdomain_answer_is_not_a_personal_zone_visit() {
+        let mut nxdomain = Message::query();
+        nxdomain.metadata.response_code = ResponseCode::NXDomain;
+        let client = MockClient {
+            baseline: MockResponse::Instant(nxdomain.clone()),
+            quorum: MockResponse::Instant(nxdomain),
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+        state.update_personal_zone_config(crate::config::PersonalZoneConfig {
+            enabled: true,
+            ..crate::config::PersonalZoneConfig::default()
+        });
+        let wire = query_bytes("missing.example.", RecordType::A);
+        if let Err(err) = resolve_doh_request(&wire, &state).await {
+            panic!("NXDOMAIN is an answer: {err}");
+        }
+        assert_eq!(state.personal_zone_stats.read().tracked_domain_count(), 0);
+
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+        state.update_personal_zone_config(crate::config::PersonalZoneConfig {
+            enabled: true,
+            ..crate::config::PersonalZoneConfig::default()
+        });
+        let wire = query_bytes("present.example.", RecordType::A);
+        if let Err(err) = resolve_doh_request(&wire, &state).await {
+            panic!("must resolve: {err}");
+        }
+        assert_eq!(state.personal_zone_stats.read().tracked_domain_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_doh_header_claiming_many_questions_is_formerr_before_decoding() {
+        let client = MockClient {
+            baseline: MockResponse::Panic,
+            quorum: MockResponse::Panic,
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+        let header = [0x12, 0x34, 0x01, 0, 0xff, 0xff, 0, 0, 0, 0, 0, 0];
+        let response_bytes = match resolve_doh_request(&header, &state).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("FORMERR is an answer: {err}"),
+        };
+        let Ok(decoded) = crate::wire::decode_wire_message(&response_bytes) else {
+            panic!("response must decode");
+        };
+        assert_eq!(decoded.metadata.id, 0x1234);
+        assert_eq!(decoded.metadata.response_code, ResponseCode::FormErr);
+        assert!(resolve_doh_request(&header[..11], &state).await.is_err());
+        assert_eq!(state.client.calls.load(Ordering::SeqCst), 0);
     }
 
     // T-149: catches a broken/missing decrement (e.g. a `fetch_add` paired

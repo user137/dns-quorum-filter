@@ -9192,3 +9192,10 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   проксі; `UpstreamError::Redirect` (мітка `status_3xx`, error kind `http`); сканер ловить `default(` і пробіли;
   класифікатор + `fec0::/10`, `64:ff9b:1::/48`. `examples/bootstrap_probe`: усі IPv4 закріплені адреси відповідають,
   IPv6 не перевірено (немає маршруту на dev-боксі). Режим ще ніхто не вмикає — маршрут у 3b.
+
+- [x] T-305 батч 3a-2 (2026-11-28) — з opus-рев'ю батчу 1: `wire::precheck_raw` — QDCOUNT ≠ 1 → FORMERR і opcode ≠
+  QUERY → NOTIMP із сирого заголовка до `decode` (hickory 0.26.3 робить `Vec::with_capacity(qdcount)`), і для DoH;
+  `formerr_for_undecodable` для 3b; RA=1 у `response_shell`; `wire::upstream_query` — апстрім бачить лише питання,
+  RD/CD/AD і власний OPT (DO), ID 0 (RFC 8484 §4.1); розширений RCODE клієнту без OPT → SERVFAIL; NXDOMAIN не
+  рахується візитом особистої зони. RFC 7871-рядок тепер має справжній тест. Живі: пресети й baseline відповідають
+  (крім CleanBrowsing — недосяжний з dev-мережі, як і раніше).

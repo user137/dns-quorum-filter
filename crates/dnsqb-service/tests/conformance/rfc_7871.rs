@@ -8,16 +8,12 @@
 //! client's real public /24 to every authoritative server with no option
 //! supplied by us, and a resolver on `127.0.0.1` cannot make that /24
 //! coarser. ECS therefore stays a deliberate non-target. This is verified
-//! by reading, not enforced by a test: as of 2026-08-31 no code path
-//! constructs an ECS option — `quorum::resolve` forwards the client
-//! `Message` to every upstream unmodified, and `attach_edns` (the only
-//! OPT-writing helper) has no production caller. If `attach_edns` is ever
-//! wired into the upstream path, re-check that invariant.
+//! by `default_upstream_gets_no_ecs_option` below: since T-305 batch 3a
+//! every upstream query is `upstream_query`'s rebuild — the question, the
+//! RD/CD/AD flags and our own OPT (DO only) — so neither we nor the client
+//! can put a Subnet option in front of a provider.
 //! Full record: SPEC.md §3.4 "Розглянуті й відхилені провайдери",
 //! TASKS-DONE.md T-164.
-//!
-//! These two fns stay `#[ignore]`d and assertion-free — kept only so the
-//! conformance module list still names this RFC row.
 
 #[test]
 #[ignore = "T-164 rejected 2026-08-31 — ECS is a deliberate non-target, no surface to test"]
@@ -26,8 +22,31 @@ fn ecs_variant_upstream_gets_a_subnet_option() {
 }
 
 #[test]
-#[ignore = "T-164 rejected 2026-08-31 — ECS is a deliberate non-target, no surface to test"]
 fn default_upstream_gets_no_ecs_option() {
-    // Intentionally empty: as of 2026-08-31 no code path constructs a Subnet
-    // option (verified by reading quorum::resolve, not enforced here).
+    use dnsqb_service::upstream_query;
+    use hickory_proto::op::{Edns, Message, Query};
+    use hickory_proto::rr::rdata::opt::{ClientSubnet, EdnsOption};
+    use hickory_proto::rr::{Name, RecordType};
+    use std::str::FromStr;
+
+    let mut query = Message::query();
+    query.add_query(Query::query(
+        Name::from_str("example.com.").expect("valid fixture name"),
+        RecordType::A,
+    ));
+    let mut edns = Edns::new();
+    let subnet = "198.51.100.0/24"
+        .parse::<ClientSubnet>()
+        .expect("valid subnet fixture");
+    edns.options_mut().insert(EdnsOption::Subnet(subnet));
+    query.set_edns(edns);
+
+    let upstream = upstream_query(&query);
+    let opt = upstream
+        .edns
+        .expect("a client OPT gets our own OPT upstream");
+    assert!(
+        opt.options().as_ref().is_empty(),
+        "a client option reached the upstream query"
+    );
 }

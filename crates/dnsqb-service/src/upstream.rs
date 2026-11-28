@@ -4,7 +4,7 @@
 //! user-added custom `https` endpoint), not a fixed 2-variant enum.
 
 use crate::bootstrap::{OutboundResolver, ResolverMode};
-use crate::wire::{decode_wire_message, encode_wire_message};
+use crate::wire::{decode_wire_message, encode_wire_message, upstream_query};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use hickory_proto::op::Message;
@@ -839,7 +839,7 @@ impl ReqwestDohClient {
 
 impl DohClient for ReqwestDohClient {
     async fn query(&self, url: &str, query: &Message) -> Result<Message, UpstreamError> {
-        let bytes = encode_wire_message(query).map_err(UpstreamError::Encode)?;
+        let bytes = encode_wire_message(&upstream_query(query)).map_err(UpstreamError::Encode)?;
         let request_url = doh_get_url(url, &bytes);
         let response = self
             .http
@@ -1477,6 +1477,79 @@ mod tests {
             0,
             "redirect was followed"
         );
+    }
+
+    // T-305 batch 3a: what goes on the wire is `wire::upstream_query`, not
+    // the client's message — ID 0, the client's ECS option gone.
+    #[tokio::test]
+    async fn the_doh_client_sends_the_sanitised_query() {
+        use base64::Engine as _;
+        use hickory_proto::rr::rdata::opt::{ClientSubnet, EdnsOption};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(err) => panic!("bind loopback: {err}"),
+        };
+        let addr = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(err) => panic!("local_addr: {err}"),
+        };
+        let server = tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return String::new();
+            };
+            let mut buf = vec![0u8; 8192];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            // Best effort: the client only needs the connection to end.
+            let _ = stream
+                .write_all(b"HTTP/1.1 500 x\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .await;
+            String::from_utf8_lossy(buf.get(..n).unwrap_or_default()).into_owned()
+        });
+
+        let mut query = t262_query();
+        query.metadata.id = 0x4242;
+        let mut edns = hickory_proto::op::Edns::new();
+        let subnet = match "198.51.100.0/24".parse::<ClientSubnet>() {
+            Ok(subnet) => subnet,
+            Err(err) => panic!("subnet fixture: {err:?}"),
+        };
+        edns.options_mut().insert(EdnsOption::Subnet(subnet));
+        query.set_edns(edns);
+        let client = match ReqwestDohClient::allowing_plain_http() {
+            Ok(client) => client,
+            Err(err) => panic!("client construction: {err}"),
+        };
+        assert!(client
+            .query(&format!("http://{addr}/dns-query"), &query)
+            .await
+            .is_err());
+
+        let head = match server.await {
+            Ok(head) => head,
+            Err(err) => panic!("server task: {err}"),
+        };
+        let Some(encoded) = head
+            .split("dns=")
+            .nth(1)
+            .and_then(|rest| rest.split([' ', '&']).next())
+        else {
+            panic!("no dns= parameter in {head:?}");
+        };
+        let bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded) {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("dns= is base64url: {err}"),
+        };
+        let sent = match Message::from_vec(&bytes) {
+            Ok(sent) => sent,
+            Err(err) => panic!("sent query decodes: {err}"),
+        };
+        assert_eq!(sent.metadata.id, 0);
+        assert_eq!(sent.queries, query.queries);
+        let Some(opt) = sent.edns else {
+            panic!("the client's OPT becomes our own OPT");
+        };
+        assert!(opt.options().as_ref().is_empty(), "client option forwarded");
     }
 
     #[tokio::test]

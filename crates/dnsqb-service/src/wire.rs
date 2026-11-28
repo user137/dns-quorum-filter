@@ -43,6 +43,87 @@ pub fn attach_edns(query: &mut Message) {
     query.set_edns(edns);
 }
 
+/// The query an upstream receives for `query` (T-305 batch 3a): the question
+/// and the RD/CD/AD flags, nothing else. ID 0 (RFC 8484 §4.1), no answer,
+/// authority or additional records, and — when the client sent OPT — our own
+/// OPT with only the DO bit copied, so no client option (ECS, cookie,
+/// padding, NSID) reaches a provider.
+#[must_use]
+pub fn upstream_query(query: &Message) -> Message {
+    let mut upstream = Message::new(0, MessageType::Query, query.metadata.op_code);
+    upstream.metadata.recursion_desired = query.metadata.recursion_desired;
+    upstream.metadata.checking_disabled = query.metadata.checking_disabled;
+    upstream.metadata.authentic_data = query.metadata.authentic_data;
+    upstream.queries.clone_from(&query.queries);
+    if let Some(query_edns) = &query.edns {
+        let mut edns = Edns::new();
+        edns.set_max_payload(EDNS_UDP_PAYLOAD_SIZE);
+        edns.set_dnssec_ok(query_edns.flags().dnssec_ok);
+        upstream.set_edns(edns);
+    }
+    upstream
+}
+
+/// RFC 1035 §4.1.1: the fixed header length.
+const HEADER_LEN: usize = 12;
+
+/// What [`precheck_raw`] decided from the header bytes alone (T-305 batch
+/// 3a), before any decoding.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RawPrecheck {
+    /// A QUERY with one question: decode it.
+    Decode,
+    /// Answered from the header alone (NOTIMP, FORMERR), wire bytes.
+    Reply(Vec<u8>),
+    /// Shorter than a header, or QR=1: nothing to answer.
+    Drop,
+}
+
+/// Header-only checks that run before `hickory-proto` decodes a message:
+/// its decoder reserves one question slot per QDCOUNT up front, so a
+/// 12-byte packet claiming 65535 questions would allocate megabytes. Opcode
+/// other than QUERY → NOTIMP, QDCOUNT other than one → FORMERR (RFC 9619),
+/// both without sections. [`precheck_query`] still runs after decoding.
+#[must_use]
+pub fn precheck_raw(wire: &[u8]) -> RawPrecheck {
+    let Some(header) = wire.first_chunk::<HEADER_LEN>() else {
+        return RawPrecheck::Drop;
+    };
+    if header[2] & 0x80 != 0 {
+        return RawPrecheck::Drop;
+    }
+    if header[2] & 0x78 != 0 {
+        return RawPrecheck::Reply(reply_from_header(header, ResponseCode::NotImp));
+    }
+    if u16::from_be_bytes([header[4], header[5]]) != 1 {
+        return RawPrecheck::Reply(reply_from_header(header, ResponseCode::FormErr));
+    }
+    RawPrecheck::Decode
+}
+
+/// FORMERR for a message that does not decode, built from its header (for
+/// the plain-DNS transport, which has no HTTP 400). `None` if `wire` is
+/// shorter than a header or is itself a response.
+#[must_use]
+pub fn formerr_for_undecodable(wire: &[u8]) -> Option<Vec<u8>> {
+    let header = wire.first_chunk::<HEADER_LEN>()?;
+    (header[2] & 0x80 == 0).then(|| reply_from_header(header, ResponseCode::FormErr))
+}
+
+/// A header-only response: the query's ID, opcode and RD, QR and RA set,
+/// `code` (a basic RCODE, ≤ 15), every count zero.
+fn reply_from_header(header: &[u8; HEADER_LEN], code: ResponseCode) -> Vec<u8> {
+    // Byte 2: QR | opcode (0x78) | AA | TC | RD (0x01). Byte 3: RA | Z | AD
+    // | CD | RCODE (0x0f).
+    let opcode_and_rd = header[2] & 0x79;
+    let mut reply = vec![0u8; HEADER_LEN];
+    reply[0] = header[0];
+    reply[1] = header[1];
+    reply[2] = 0x80 | opcode_and_rd;
+    reply[3] = 0x80 | (code.low() & 0x0f);
+    reply
+}
+
 /// RFC 8482 §4.2: TTL of the synthesized HINFO answer to `ANY`.
 const ANY_HINFO_TTL: u32 = 3600;
 
@@ -121,6 +202,8 @@ fn response_shell(query: &Message) -> Message {
         query.metadata.op_code,
     );
     response.metadata = Metadata::response_from_request(&query.metadata);
+    // We are a recursive service to the client (dig warns without RA).
+    response.metadata.recursion_available = true;
     response.queries.clone_from(&query.queries);
     if let Some(query_edns) = &query.edns {
         let mut edns = Edns::new();
@@ -139,7 +222,14 @@ fn response_shell(query: &Message) -> Message {
 pub fn forward_response(query: &Message, upstream_response: &Message) -> Message {
     let mut response = response_shell(query);
     response.metadata.authentic_data = upstream_response.metadata.authentic_data;
-    response.metadata.response_code = upstream_response.metadata.response_code;
+    let code = upstream_response.metadata.response_code;
+    // RFC 6891 §6.1.3: an extended RCODE (> 15) needs OPT to be expressed;
+    // a client that sent none would read only its low 4 bits.
+    response.metadata.response_code = if query.edns.is_none() && code.high() != 0 {
+        ResponseCode::ServFail
+    } else {
+        code
+    };
     response.answers.clone_from(&upstream_response.answers);
     response
         .authorities
@@ -231,6 +321,187 @@ mod tests {
     use hickory_proto::rr::{Name, RData, Record};
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::str::FromStr;
+
+    // --- T-305 batch 3a: header-only prechecks, upstream query, RA ---
+
+    /// A 12-byte header: `id` 0xabcd, `flags2`/`flags3`, QDCOUNT `qd`.
+    fn header(flags2: u8, flags3: u8, qd: u16) -> Vec<u8> {
+        let [qd_hi, qd_lo] = qd.to_be_bytes();
+        vec![0xab, 0xcd, flags2, flags3, qd_hi, qd_lo, 0, 0, 0, 0, 0, 0]
+    }
+
+    fn decoded(bytes: &[u8]) -> Message {
+        match decode_wire_message(bytes) {
+            Ok(message) => message,
+            Err(err) => panic!("header-only reply must decode: {err}"),
+        }
+    }
+
+    #[test]
+    fn a_single_question_query_header_goes_on_to_decoding() {
+        let Ok(bytes) = encode_wire_message(&query_of_type(RecordType::A)) else {
+            panic!("fixture must encode");
+        };
+        assert_eq!(super::precheck_raw(&bytes), super::RawPrecheck::Decode);
+    }
+
+    #[test]
+    fn a_question_count_other_than_one_is_formerr_without_decoding() {
+        for qd in [0u16, 2, 65535] {
+            // RD set (0x01); the bytes after the header are absent, so a
+            // decode would fail — the reply never needs one.
+            let super::RawPrecheck::Reply(bytes) = super::precheck_raw(&header(0x01, 0, qd)) else {
+                panic!("QDCOUNT {qd} must be answered");
+            };
+            let reply = decoded(&bytes);
+            assert_eq!(reply.metadata.id, 0xabcd);
+            assert_eq!(reply.metadata.message_type, MessageType::Response);
+            assert_eq!(reply.metadata.response_code, ResponseCode::FormErr);
+            assert!(reply.metadata.recursion_desired);
+            assert!(reply.metadata.recursion_available);
+            assert!(reply.queries.is_empty() && reply.edns.is_none());
+        }
+    }
+
+    #[test]
+    fn a_non_query_opcode_is_notimp_from_the_header() {
+        // Opcode 4 (NOTIFY) with no question — legal for it, still not ours.
+        let super::RawPrecheck::Reply(bytes) = super::precheck_raw(&header(4 << 3, 0, 0)) else {
+            panic!("NOTIFY must be answered");
+        };
+        let reply = decoded(&bytes);
+        assert_eq!(reply.metadata.response_code, ResponseCode::NotImp);
+        assert_eq!(reply.metadata.op_code, hickory_proto::op::OpCode::Notify);
+    }
+
+    #[test]
+    fn a_short_packet_or_a_response_header_is_dropped() {
+        assert_eq!(super::precheck_raw(&[]), super::RawPrecheck::Drop);
+        assert_eq!(
+            super::precheck_raw(&header(0, 0, 1)[..11]),
+            super::RawPrecheck::Drop
+        );
+        assert_eq!(
+            super::precheck_raw(&header(0x80, 0, 0)),
+            super::RawPrecheck::Drop
+        );
+        assert_eq!(super::formerr_for_undecodable(&header(0x80, 0, 1)), None);
+        assert_eq!(super::formerr_for_undecodable(&[0u8; 11]), None);
+    }
+
+    #[test]
+    fn an_undecodable_query_gets_formerr_from_its_header() {
+        let mut garbage = header(0x01, 0, 1);
+        garbage.extend_from_slice(&[0xff; 7]);
+        assert!(decode_wire_message(&garbage).is_err());
+        let Some(bytes) = super::formerr_for_undecodable(&garbage) else {
+            panic!("a query header must get FORMERR");
+        };
+        let reply = decoded(&bytes);
+        assert_eq!(reply.metadata.id, 0xabcd);
+        assert_eq!(reply.metadata.response_code, ResponseCode::FormErr);
+    }
+
+    // Misuse: whatever the flag bytes say, the header-only reply is a
+    // well-formed response with the same ID and no sections.
+    #[test]
+    fn every_header_only_reply_decodes_as_a_response() {
+        for flags2 in 0..=u8::MAX {
+            for flags3 in [0u8, 0x0f, 0xf0, 0xff] {
+                let wire = header(flags2, flags3, 7);
+                let bytes = match super::precheck_raw(&wire) {
+                    super::RawPrecheck::Reply(bytes) => bytes,
+                    super::RawPrecheck::Drop => continue,
+                    super::RawPrecheck::Decode => panic!("QDCOUNT 7 never decodes"),
+                };
+                let reply = decoded(&bytes);
+                assert_eq!(reply.metadata.id, 0xabcd);
+                assert_eq!(reply.metadata.message_type, MessageType::Response);
+                assert!(reply.queries.is_empty() && reply.answers.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn every_built_response_advertises_recursion() {
+        let query = query_of_type(RecordType::A);
+        assert!(build_servfail_response(&query).metadata.recursion_available);
+        assert!(
+            build_block_response(&query, 60)
+                .metadata
+                .recursion_available
+        );
+    }
+
+    #[test]
+    fn the_upstream_query_carries_the_question_and_our_own_opt_only() {
+        use hickory_proto::rr::rdata::opt::{ClientSubnet, EdnsOption};
+        let mut query = query_of_type(RecordType::A);
+        query.metadata.id = 0x1234;
+        query.metadata.checking_disabled = true;
+        query.metadata.recursion_desired = true;
+        let mut edns = hickory_proto::op::Edns::new();
+        edns.set_max_payload(4096);
+        edns.set_dnssec_ok(true);
+        let subnet = match "198.51.100.0/24".parse::<ClientSubnet>() {
+            Ok(subnet) => subnet,
+            Err(err) => panic!("subnet fixture: {err:?}"),
+        };
+        edns.options_mut().insert(EdnsOption::Subnet(subnet));
+        query.set_edns(edns);
+        query.additionals.push(Record::from_rdata(
+            Name::root(),
+            0,
+            RData::A(A(Ipv4Addr::LOCALHOST)),
+        ));
+
+        let upstream = super::upstream_query(&query);
+        assert_eq!(upstream.metadata.id, 0);
+        assert_eq!(upstream.queries, query.queries);
+        assert!(upstream.metadata.recursion_desired);
+        assert!(upstream.metadata.checking_disabled);
+        assert!(upstream.additionals.is_empty() && upstream.answers.is_empty());
+        let Some(opt) = &upstream.edns else {
+            panic!("a client OPT gets our own OPT upstream");
+        };
+        assert!(opt.flags().dnssec_ok);
+        assert_eq!(opt.max_payload(), super::EDNS_UDP_PAYLOAD_SIZE);
+        assert!(
+            opt.options().as_ref().is_empty(),
+            "no client option forwarded"
+        );
+
+        query.edns = None;
+        assert!(super::upstream_query(&query).edns.is_none());
+    }
+
+    #[test]
+    fn an_extended_rcode_reaches_a_client_without_opt_as_servfail() {
+        let query = query_of_type(RecordType::A);
+        let mut upstream = query_of_type(RecordType::A);
+        upstream.metadata.response_code = ResponseCode::BADCOOKIE;
+        assert_eq!(
+            super::forward_response(&query, &upstream)
+                .metadata
+                .response_code,
+            ResponseCode::ServFail
+        );
+        let mut with_opt = query.clone();
+        with_opt.set_edns(hickory_proto::op::Edns::new());
+        assert_eq!(
+            super::forward_response(&with_opt, &upstream)
+                .metadata
+                .response_code,
+            ResponseCode::BADCOOKIE
+        );
+        upstream.metadata.response_code = ResponseCode::NXDomain;
+        assert_eq!(
+            super::forward_response(&query, &upstream)
+                .metadata
+                .response_code,
+            ResponseCode::NXDomain
+        );
+    }
 
     fn query_of_type(qtype: RecordType) -> Message {
         let mut question = Query::new();
