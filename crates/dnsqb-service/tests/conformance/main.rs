@@ -10,6 +10,8 @@ mod rfc_2181;
 mod rfc_2308;
 mod rfc_4033_4035;
 mod rfc_5891;
+mod rfc_6303;
+mod rfc_6761;
 mod rfc_6891;
 mod rfc_7871;
 mod rfc_8482;

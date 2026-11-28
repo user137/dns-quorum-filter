@@ -5074,6 +5074,45 @@ pub(crate) mod tests {
         assert_eq!(state.personal_zone_stats.read().tracked_domain_count(), 1);
     }
 
+    // T-305 batch 3a: local names are answered before consent and the
+    // pipeline — nothing reaches a provider or the log, consent or not.
+    #[tokio::test]
+    async fn local_names_are_answered_without_a_provider_or_a_log_entry() {
+        let client = MockClient {
+            baseline: MockResponse::Panic,
+            quorum: MockResponse::Panic,
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+        state.runtime.write().domain_sharing_consent =
+            crate::config::DomainSharingConsent::NotGiven;
+        for (name, qtype, code) in [
+            ("localhost.", RecordType::A, ResponseCode::NoError),
+            ("printer.local.", RecordType::A, ResponseCode::NXDomain),
+            ("printer.", RecordType::AAAA, ResponseCode::NXDomain),
+            (
+                "1.1.168.192.in-addr.arpa.",
+                RecordType::PTR,
+                ResponseCode::NXDomain,
+            ),
+        ] {
+            let wire = query_bytes(name, qtype);
+            let response_bytes = match resolve_doh_request(&wire, &state).await {
+                Ok(bytes) => bytes,
+                Err(err) => panic!("{name}: {err}"),
+            };
+            let Ok(decoded) = crate::wire::decode_wire_message(&response_bytes) else {
+                panic!("{name}: response must decode");
+            };
+            assert_eq!(decoded.metadata.response_code, code, "{name}");
+        }
+        assert_eq!(state.client.calls.load(Ordering::SeqCst), 0);
+        assert!(state
+            .query_log
+            .snapshot(std::time::SystemTime::now())
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn a_doh_header_claiming_many_questions_is_formerr_before_decoding() {
         let client = MockClient {

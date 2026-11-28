@@ -165,6 +165,20 @@ impl Psl {
     }
 }
 
+/// Whether `label` (lowercase, one label) is an ICANN top-level domain in
+/// the bundled list. The set is built on first use and kept: it is read per
+/// query by [`crate::local_names`], too often to re-parse the list.
+pub(crate) fn is_icann_tld(label: &str) -> bool {
+    static TLDS: std::sync::LazyLock<HashSet<String>> = std::sync::LazyLock::new(|| {
+        Psl::parse(PSL_DAT)
+            .icann_rules
+            .into_iter()
+            .filter(|rule| !rule.contains('.'))
+            .collect()
+    });
+    TLDS.contains(label)
+}
+
 /// Public-suffix length (label count) → registrable domain: the public
 /// suffix plus one label to its left. `None` when `host` has no label beyond
 /// the public suffix.

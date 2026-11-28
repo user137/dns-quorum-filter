@@ -3,7 +3,8 @@
 //! response format, SPEC.md §3.2, T-26; query prechecks and the OPT echo,
 //! T-305).
 
-use hickory_proto::op::{Edns, Message, MessageType, Metadata, OpCode, ResponseCode};
+use crate::local_names::{local_answer, LocalAnswer};
+use hickory_proto::op::{Edns, Message, MessageType, Metadata, OpCode, Query, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, HINFO};
 use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
 use hickory_proto::ProtoError;
@@ -180,7 +181,37 @@ pub fn precheck_query(query: &Message) -> QueryPrecheck {
             ));
             QueryPrecheck::Reply(response)
         }
-        _ => QueryPrecheck::Resolve,
+        qtype => local_answer(&question.name().to_ascii(), qtype)
+            .map_or(QueryPrecheck::Resolve, |answer| {
+                QueryPrecheck::Reply(local_response(query, question, answer))
+            }),
+    }
+}
+
+/// RFC 6761 §6.3: TTL of the synthesized `localhost` addresses.
+const LOCALHOST_TTL: u32 = 3600;
+
+/// The reply to a name answered here ([`crate::local_names`]).
+fn local_response(query: &Message, question: &Query, answer: LocalAnswer) -> Message {
+    match answer {
+        LocalAnswer::NxDomain => build_error_response(query, ResponseCode::NXDomain),
+        LocalAnswer::NoData => response_shell(query),
+        LocalAnswer::Loopback => {
+            let mut response = response_shell(query);
+            let data = match question.query_type() {
+                RecordType::A => Some(RData::A(A(Ipv4Addr::LOCALHOST))),
+                RecordType::AAAA => Some(RData::AAAA(AAAA(Ipv6Addr::LOCALHOST))),
+                _ => None,
+            };
+            if let Some(data) = data {
+                response.answers.push(Record::from_rdata(
+                    question.name().clone(),
+                    LOCALHOST_TTL,
+                    data,
+                ));
+            }
+            response
+        }
     }
 }
 

@@ -9199,3 +9199,8 @@ TASKS.md); переклади 35 локалей — машинні, без на�
   RD/CD/AD і власний OPT (DO), ID 0 (RFC 8484 §4.1); розширений RCODE клієнту без OPT → SERVFAIL; NXDOMAIN не
   рахується візитом особистої зони. RFC 7871-рядок тепер має справжній тест. Живі: пресети й baseline відповідають
   (крім CleanBrowsing — недосяжний з dev-мережі, як і раніше).
+
+- [x] T-305 батч 3a-3 (2026-11-28) — `local_names`: `localhost` → 127.0.0.1/::1 (інші типи NODATA); `invalid`, `local`,
+  `onion`, `home.arpa` → NXDOMAIN; приватні reverse-зони RFC 6303 + `100.64/10` (RFC 7793) → NXDOMAIN, апекс — NODATA;
+  однослівні A/AAAA/HTTPS/SVCB → NXDOMAIN, крім ICANN-TLD (`public_suffix::is_icann_tld`, `LazyLock`). У
+  `precheck_query`, тобто до згоди, без апстрімів і журналу, і для DoH. Conformance `rfc_6761.rs`, `rfc_6303.rs`.

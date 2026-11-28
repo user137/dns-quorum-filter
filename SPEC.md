@@ -1900,10 +1900,11 @@ install; T-99 / T-134 проти auto-прописування DoH — конф�
 | RFC 6891 §6/§7 | EDNS(0): OPT record, responder behaviour | Запит з OPT → відповідь з власним OPT (і для DoH; опції апстріму не передаються, DO копіюється); апстріму — теж власний OPT лише з DO; розширений RCODE (> 15) клієнту без OPT → SERVFAIL; >1 OPT → DoH 400, звичайний DNS FORMERR; версія > 0 → BADVERS; розмір UDP 512…1232 | 1, 3.4 |
 | RFC 8482 | Minimal-Sized Responses to DNS Queries That Have QTYPE=ANY | Порт 53: ANY → мінімальна відповідь, не проксі на baseline (ампліфікація) | 1 |
 | RFC 9619 | In the DNS, QDCOUNT Is (Usually) One | QDCOUNT ≠ 1 → FORMERR, не проксі; перевіряється в сирому заголовку до декодування (декодер резервує місце під кожне питання), opcode ≠ QUERY → NOTIMP так само; RA=1 у всіх відповідях | 1, 3 |
-| RFC 6761 | Special-Use Domain Names | `localhost` → loopback, `invalid` → NXDOMAIN, локально, без апстрімів | 1 |
+| RFC 6761 | Special-Use Domain Names | `localhost` → loopback (A/AAAA; інші типи NODATA), `invalid` → NXDOMAIN, локально, до згоди, без апстрімів і журналу (`local_names`, і для DoH); однослівне ім'я A/AAAA/HTTPS/SVCB → NXDOMAIN, крім ICANN-TLD з вбудованого PSL; корінь і `com. DS` проходять | 1 |
 | RFC 6762 | Multicast DNS | `.local` → NXDOMAIN локально (ОС резолвить через mDNS), без апстрімів | 1 |
-| RFC 6303 | Locally Served DNS Zones | Приватні reverse-зони → NXDOMAIN локально, без апстрімів | 1 |
-| RFC 8375 | Special-Use Domain 'home.arpa.' | `home.arpa` — локально, без апстрімів | 1 |
+| RFC 7686 | The ".onion" Special-Use Domain Name | `.onion` → NXDOMAIN локально, без апстрімів | 1 |
+| RFC 6303 | Locally Served DNS Zones | Приватні reverse-зони (+ `100.64/10`, RFC 7793) → NXDOMAIN локально, апекс зони — NODATA, без апстрімів | 1 |
+| RFC 8375 | Special-Use Domain 'home.arpa.' | `home.arpa` → NXDOMAIN локально, без апстрімів (форвардер локальних імен — батч 4) | 1 |
 | RFC 5452 | Measures for Making DNS More Resilient against Forged Answers | Форвардер локальних імен (T-305, опційний): випадкові ID і порт джерела | 1 |
 | RFC 9460 | Service Binding and Parameter Specification via the DNS (SVCB, HTTPS RRs) | Чому HTTPS/SVCB-записи проксіюються повз quorum-логіку без OR (щоб не зламати ECH) | 3 |
 | RFC 4033–4035 | DNSSEC (Introduction, Resource Records, Protocol) | Quad9 Filtered валідує DNSSEC — якщо застосунок передає AD-біт клієнту, має зберігати коректність цього сигналу, не підробляти | 3.4 |

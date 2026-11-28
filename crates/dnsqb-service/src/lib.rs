@@ -148,6 +148,7 @@ mod install_region;
 mod key_store;
 mod lifecycle;
 mod listener;
+mod local_names;
 mod local_state;
 mod log_persist;
 mod log_throttle;
