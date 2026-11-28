@@ -1,10 +1,11 @@
 //! DNS wire-format decode/encode and response construction (RFC 1035, T-21;
 //! RFC 6891 EDNS(0), T-7; RFC 4033-4035 AD-bit passthrough, T-12; block
-//! response format, SPEC.md §3.2, T-26).
+//! response format, SPEC.md §3.2, T-26; query prechecks and the OPT echo,
+//! T-305).
 
-use hickory_proto::op::{Edns, Message, MessageType, Metadata, ResponseCode};
-use hickory_proto::rr::rdata::{A, AAAA};
-use hickory_proto::rr::{RData, Record, RecordType};
+use hickory_proto::op::{Edns, Message, MessageType, Metadata, OpCode, ResponseCode};
+use hickory_proto::rr::rdata::{A, AAAA, HINFO};
+use hickory_proto::rr::{DNSClass, RData, Record, RecordType};
 use hickory_proto::ProtoError;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -42,6 +43,73 @@ pub fn attach_edns(query: &mut Message) {
     query.set_edns(edns);
 }
 
+/// RFC 8482 §4.2: TTL of the synthesized HINFO answer to `ANY`.
+const ANY_HINFO_TTL: u32 = 3600;
+
+/// What [`precheck_query`] decided for one decoded query (T-305).
+#[derive(Debug)]
+pub enum QueryPrecheck {
+    /// A response, not a query (QR=1): never answered, so two resolvers can't
+    /// reflect messages at each other. `DoH` answers HTTP 400.
+    Drop,
+    /// Answered locally; nothing leaves the machine and nothing is logged.
+    Reply(Message),
+    /// An ordinary query: on to consent and the pipeline.
+    Resolve,
+}
+
+/// Transport-independent checks every decoded query passes before consent and
+/// the pipeline (T-305; SPEC.md RFC table). Order, first match wins: QR=1 →
+/// drop; EDNS version > 0 → BADVERS (RFC 6891 §6.1.3); opcode other than
+/// QUERY → NOTIMP; question count other than one → FORMERR (RFC 9619); class
+/// other than IN → REFUSED; AXFR/IXFR → REFUSED; ANY → one synthesized HINFO
+/// (RFC 8482). None of them reach a third party, so they sit before the
+/// consent gate.
+#[must_use]
+pub fn precheck_query(query: &Message) -> QueryPrecheck {
+    if query.metadata.message_type == MessageType::Response {
+        return QueryPrecheck::Drop;
+    }
+    if query.edns.as_ref().is_some_and(|edns| edns.version() > 0) {
+        return QueryPrecheck::Reply(build_error_response(query, ResponseCode::BADVERS));
+    }
+    if query.metadata.op_code != OpCode::Query {
+        return QueryPrecheck::Reply(build_error_response(query, ResponseCode::NotImp));
+    }
+    let [question] = query.queries.as_slice() else {
+        return QueryPrecheck::Reply(build_error_response(query, ResponseCode::FormErr));
+    };
+    if question.query_class() != DNSClass::IN {
+        return QueryPrecheck::Reply(build_error_response(query, ResponseCode::Refused));
+    }
+    match question.query_type() {
+        RecordType::AXFR | RecordType::IXFR => {
+            QueryPrecheck::Reply(build_error_response(query, ResponseCode::Refused))
+        }
+        RecordType::ANY => {
+            let mut response = response_shell(query);
+            response.answers.push(Record::from_rdata(
+                question.name().clone(),
+                ANY_HINFO_TTL,
+                RData::HINFO(HINFO::new("RFC8482".to_owned(), String::new())),
+            ));
+            QueryPrecheck::Reply(response)
+        }
+        _ => QueryPrecheck::Resolve,
+    }
+}
+
+/// A local refusal or error with `code` and no records.
+fn build_error_response(query: &Message, code: ResponseCode) -> Message {
+    let mut response = response_shell(query);
+    response.metadata.response_code = code;
+    response
+}
+
+/// Every response is built on this. RFC 6891 §6.1.1: a query with OPT gets a
+/// response with OPT — our own, built fresh (version 0, our payload size, the
+/// DO bit copied per RFC 3225 §3), never an upstream's, so no upstream option
+/// (cookie, padding, NSID, ECS) reaches the client.
 fn response_shell(query: &Message) -> Message {
     let mut response = Message::new(
         query.metadata.id,
@@ -50,6 +118,12 @@ fn response_shell(query: &Message) -> Message {
     );
     response.metadata = Metadata::response_from_request(&query.metadata);
     response.queries.clone_from(&query.queries);
+    if let Some(query_edns) = &query.edns {
+        let mut edns = Edns::new();
+        edns.set_max_payload(EDNS_UDP_PAYLOAD_SIZE);
+        edns.set_dnssec_ok(query_edns.flags().dnssec_ok);
+        response.set_edns(edns);
+    }
     response
 }
 
@@ -118,9 +192,8 @@ pub fn build_servfail_response(query: &Message) -> Message {
 /// an upstream `Message` — used to reconstruct a response from a cached
 /// `cache::Verdict::Allow` (no upstream `Message` survives a cache
 /// round-trip, only the IPs and a TTL already baked into `records`). An
-/// empty `records` produces a NODATA-shaped answer (`NoError`, no answers) —
-/// this is also how a cached genuine NXDOMAIN replays (SPEC.md §4: the cache
-/// doesn't preserve `response_code`, a deliberate, documented tradeoff).
+/// empty `records` produces a NODATA-shaped answer (`NoError`, no answers);
+/// a cached NXDOMAIN replays through [`build_nxdomain_response`] instead.
 /// Never sets the AD bit, same principle as [`build_block_response`]: a
 /// reconstructed answer isn't authenticated data either.
 #[must_use]
@@ -128,6 +201,17 @@ pub fn build_answer_response(query: &Message, records: Vec<Record>) -> Message {
     let mut response = response_shell(query);
     response.metadata.authentic_data = false;
     response.answers = records;
+    response
+}
+
+/// A cached NXDOMAIN replayed (T-305, RFC 2308): no records, no AD bit — a
+/// reconstructed answer isn't authenticated data. Carries no SOA, so a client
+/// doesn't cache it negatively itself.
+#[must_use]
+pub fn build_nxdomain_response(query: &Message) -> Message {
+    let mut response = response_shell(query);
+    response.metadata.authentic_data = false;
+    response.metadata.response_code = ResponseCode::NXDomain;
     response
 }
 

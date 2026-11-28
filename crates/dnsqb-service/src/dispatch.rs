@@ -74,10 +74,14 @@ use crate::watchdog::heartbeat_file::is_stale;
 use crate::watchdog::state::{
     read as read_watchdog_state, WatchdogState, STATE_FILE_NAME, WATCHDOG_STATE_STALE_AFTER,
 };
-use crate::wire::{build_servfail_response, decode_wire_message, encode_wire_message};
+use crate::wire::{
+    build_servfail_response, decode_wire_message, encode_wire_message, precheck_query,
+    QueryPrecheck,
+};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use bytes::Bytes;
+use hickory_proto::op::Message;
 use hickory_proto::rr::RecordType;
 use hickory_proto::ProtoError;
 use http::{header, Method, Request, Response, StatusCode};
@@ -578,15 +582,9 @@ impl PersistPaths {
     }
 }
 
-/// Decode `wire_bytes`, run it through the pipeline, and encode whatever
-/// comes back. `PipelineOutcome::ProxyToSingleUpstream` (T-25 — non-A/AAAA
-/// types) is handled here, not left to the caller: this is the one place
-/// that actually has an upstream `client` to proxy through.
-///
-/// Takes `&AppState<C>` rather than its seven fields as separate parameters
-/// (T-147 added the seventh, `query_log`, tripping `clippy::too_many_arguments`)
-/// — every one of those fields already lives in `state`, and this function
-/// only ever runs against the shared per-service state `serve` already holds.
+/// Decode `wire_bytes`, run it through [`resolve_message`], and encode
+/// whatever comes back — the `DoH` transport's wrapper (T-305: plain DNS on
+/// port 53 shares [`resolve_message`], not this).
 ///
 /// # Errors
 ///
@@ -598,6 +596,32 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     state: &AppState<C>,
 ) -> Result<Vec<u8>, ProtoError> {
     let query = decode_wire_message(wire_bytes)?;
+    match resolve_message(&query, state).await {
+        Some(response) => encode_wire_message(&response),
+        None => Err(ProtoError::from("a DNS response is not a query")),
+    }
+}
+
+/// Run one decoded query through the pipeline, transport-independent (T-305).
+/// `PipelineOutcome::ProxyToSingleUpstream` (T-25 — non-A/AAAA types) is
+/// handled here, not left to the caller: this is the one place that actually
+/// has an upstream `client` to proxy through.
+///
+/// Takes `&AppState<C>` rather than its seven fields as separate parameters
+/// (T-147 added the seventh, `query_log`, tripping `clippy::too_many_arguments`)
+/// — every one of those fields already lives in `state`, and this function
+/// only ever runs against the shared per-service state `serve` already holds.
+///
+/// `None` = [`QueryPrecheck::Drop`]: the transport sends nothing back.
+pub(crate) async fn resolve_message<C: DohClient + Sync>(
+    query: &Message,
+    state: &AppState<C>,
+) -> Option<Message> {
+    match precheck_query(query) {
+        QueryPrecheck::Drop => return None,
+        QueryPrecheck::Reply(response) => return Some(response),
+        QueryPrecheck::Resolve => {}
+    }
     // Counted only once the request is a real DNS query - a malformed
     // request never enters resolution, so it's never "in flight" in the
     // sense the tray tooltip/admin dashboard means (T-149). RAII, not a
@@ -617,7 +641,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
     // Not logged — nothing was decided, and a domain looked up before consent
     // is better not kept at all.
     if !settings.domain_sharing_consent.is_given() {
-        return encode_wire_message(&build_servfail_response(&query));
+        return Some(build_servfail_response(query));
     }
     // Same snapshot discipline as `settings` above, but `OverridesState`
     // isn't `Copy` (Vec-backed) - `Arc::clone` bumps a refcount under the
@@ -705,7 +729,7 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         cctld_block: &cctld_block,
     };
     let response = match handle_query(
-        &query,
+        query,
         &state.client,
         &overrides_state.lists,
         &providers,
@@ -767,11 +791,11 @@ pub(crate) async fn resolve_doh_request<C: DohClient + Sync>(
         // decision_source values describe a proxy pass-through (T-147, named
         // gap, not silently dropped).
         (PipelineOutcome::ProxyToSingleUpstream, _) => {
-            proxy_to_single_upstream(&state.client, &query, &settings.timeout, baseline.current())
+            proxy_to_single_upstream(&state.client, query, &settings.timeout, baseline.current())
                 .await
         }
     };
-    encode_wire_message(&response)
+    Some(response)
 }
 
 /// Everything one connection's worth of [`serve`] calls need — one instance
@@ -4943,6 +4967,49 @@ pub(crate) mod tests {
             panic!("response must decode");
         };
         assert_eq!(decoded.metadata.response_code, ResponseCode::NoError);
+    }
+
+    // T-305 batch 1: the prechecks run before consent and the pipeline, so
+    // a local reply or a drop never reaches an upstream or the log.
+    #[tokio::test]
+    async fn resolve_doh_request_answers_prechecks_locally() {
+        let ip = Ipv4Addr::new(1, 1, 1, 1);
+        let client = MockClient {
+            baseline: MockResponse::Instant(allow_message_with_ip(ip)),
+            quorum: MockResponse::Instant(allow_message_with_ip(ip)),
+            calls: AtomicU32::new(0),
+        };
+        let state = state_with(client);
+
+        let Ok(mut query) =
+            crate::wire::decode_wire_message(&query_bytes("example.com.", RecordType::A))
+        else {
+            panic!("fixture must decode");
+        };
+        query.queries.clear();
+        let Ok(no_question) = crate::wire::encode_wire_message(&query) else {
+            panic!("fixture must encode");
+        };
+        let response_bytes = match resolve_doh_request(&no_question, &state).await {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("FORMERR is an answer, not an error: {err}"),
+        };
+        let Ok(decoded) = crate::wire::decode_wire_message(&response_bytes) else {
+            panic!("response must decode");
+        };
+        assert_eq!(decoded.metadata.response_code, ResponseCode::FormErr);
+
+        query.metadata.message_type = hickory_proto::op::MessageType::Response;
+        let Ok(a_response) = crate::wire::encode_wire_message(&query) else {
+            panic!("fixture must encode");
+        };
+        assert!(resolve_doh_request(&a_response, &state).await.is_err());
+
+        assert_eq!(state.client.calls.load(Ordering::SeqCst), 0);
+        assert!(state
+            .query_log
+            .snapshot(std::time::SystemTime::now())
+            .is_empty());
     }
 
     // T-149: catches a broken/missing decrement (e.g. a `fetch_add` paired

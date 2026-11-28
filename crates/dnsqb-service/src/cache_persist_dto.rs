@@ -63,7 +63,7 @@ pub(crate) struct PersistedCacheEntry {
     pub verdict: PCacheVerdict,
 }
 
-/// Mirror of [`Verdict`]. [`to_json`] only ever emits `Allow`; `Block` stays
+/// Mirror of [`Verdict`] minus `NxDomain`. [`to_json`] only ever emits `Allow`; `Block` stays
 /// representable so a future policy change needs no format bump (module docs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -74,12 +74,14 @@ pub(crate) enum PCacheVerdict {
     Allow(Vec<IpAddr>),
 }
 
-impl From<&Verdict> for PCacheVerdict {
-    fn from(v: &Verdict) -> Self {
-        match v {
-            Verdict::Block => PCacheVerdict::Block,
-            Verdict::Allow(ips) => PCacheVerdict::Allow(ips.clone()),
-        }
+/// The persisted form of `v`, or `None` for [`Verdict::NxDomain`], which is
+/// never written: a new on-disk variant would make an older build orphan the
+/// whole file after a downgrade.
+fn persisted_verdict(v: &Verdict) -> Option<PCacheVerdict> {
+    match v {
+        Verdict::Block => Some(PCacheVerdict::Block),
+        Verdict::Allow(ips) => Some(PCacheVerdict::Allow(ips.clone())),
+        Verdict::NxDomain => None,
     }
 }
 
@@ -105,6 +107,7 @@ fn to_persisted(
     if matches!(entry.verdict, Verdict::Block) || !entry.is_fresh(now_mono) {
         return None;
     }
+    let verdict = persisted_verdict(&entry.verdict)?;
     let remaining = entry.expires_at.saturating_duration_since(now_mono);
     let expiry_wall = now_wall.checked_add(remaining)?;
     let expiry_millis = u64::try_from(
@@ -118,7 +121,7 @@ fn to_persisted(
         domain: key.domain().to_owned(),
         qtype: key.qtype().into(),
         expiry_millis,
-        verdict: PCacheVerdict::from(&entry.verdict),
+        verdict,
     })
 }
 
@@ -250,6 +253,36 @@ mod tests {
             (
                 key("blocked.example", RecordType::A),
                 CacheEntry::new(Verdict::Block, Duration::from_secs(600)),
+            ),
+            (
+                key("allowed.example", RecordType::A),
+                CacheEntry::new(allow([9, 9, 9, 9]), Duration::from_secs(600)),
+            ),
+        ];
+
+        let json = match to_json(&snapshot, now_wall, now_mono) {
+            Ok(bytes) => bytes,
+            Err(err) => panic!("serialize: {err}"),
+        };
+        let back = match from_json(&json, now_wall) {
+            Ok(v) => v,
+            Err(err) => panic!("deserialize: {err}"),
+        };
+
+        assert_eq!(back.len(), 1, "only the Allow entry is persisted");
+        assert_eq!(back[0].0.domain(), "allowed.example");
+    }
+
+    // T-305 batch 1: an NXDOMAIN entry is never written, so `cache.enc` keeps
+    // the shape an older build can read after a downgrade.
+    #[test]
+    fn an_nxdomain_verdict_is_dropped_at_snapshot() {
+        let now_wall = SystemTime::now();
+        let now_mono = Instant::now();
+        let snapshot = vec![
+            (
+                key("missing.example", RecordType::A),
+                CacheEntry::new(Verdict::NxDomain, Duration::from_secs(600)),
             ),
             (
                 key("allowed.example", RecordType::A),

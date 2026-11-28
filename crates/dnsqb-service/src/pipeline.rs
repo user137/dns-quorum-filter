@@ -52,7 +52,9 @@ use crate::rating_filter::ZoneLists;
 use crate::reachability::NetworkReachability;
 use crate::timeout::{query_with_timeout, TimeoutConfig, VoterOutcome};
 use crate::upstream::{DohClient, ProviderEntry};
-use crate::wire::{build_answer_response, build_block_response, build_servfail_response};
+use crate::wire::{
+    build_answer_response, build_block_response, build_nxdomain_response, build_servfail_response,
+};
 use hickory_proto::op::{Message, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA, SOA};
 use hickory_proto::rr::{RData, Record, RecordType};
@@ -532,7 +534,7 @@ fn cache_hit_response_with_meta(
     // necessarily the same one `blocking_country` matched below.
     let resolved_ip_country = match &entry.verdict {
         Verdict::Allow(ips) => geoip::resolved_ip_country(geoip.reader, ips),
-        Verdict::Block => None,
+        Verdict::NxDomain | Verdict::Block => None,
     };
     if let Verdict::Allow(ips) = &entry.verdict {
         if let Some(country) = geoip::blocking_country(geoip.reader, geoip.blocked_countries, ips) {
@@ -555,7 +557,7 @@ fn cache_hit_response_with_meta(
     }
     let decision = match entry.verdict {
         Verdict::Block => Decision::Blocked,
-        Verdict::Allow(_) => Decision::Allowed,
+        Verdict::Allow(_) | Verdict::NxDomain => Decision::Allowed,
     };
     let meta = QueryLogMeta {
         domain,
@@ -1139,10 +1141,12 @@ async fn handle_allow(
             None => Duration::ZERO,
         };
         if is_cacheable(ttl) {
-            cache
-                .cache
-                .insert(key, CacheEntry::new(Verdict::Allow(Vec::new()), ttl))
-                .await;
+            let verdict = if message.metadata.response_code == ResponseCode::NXDomain {
+                Verdict::NxDomain
+            } else {
+                Verdict::Allow(Vec::new())
+            };
+            cache.cache.insert(key, CacheEntry::new(verdict, ttl)).await;
         }
     } else {
         let ips = extract_ips(&message.answers);
@@ -1245,6 +1249,7 @@ fn response_from_cache_entry(query: &Message, entry: &CacheEntry, now: Instant) 
     let remaining_ttl = duration_to_ttl_secs(entry.expires_at.saturating_duration_since(now));
     match &entry.verdict {
         Verdict::Block => build_block_response(query, remaining_ttl),
+        Verdict::NxDomain => build_nxdomain_response(query),
         Verdict::Allow(ips) => {
             let Some(question) = query.queries.first() else {
                 return build_answer_response(query, Vec::new());
@@ -1259,8 +1264,7 @@ fn response_from_cache_entry(query: &Message, entry: &CacheEntry, now: Instant) 
                     Record::from_rdata(question.name().clone(), remaining_ttl, rdata)
                 })
                 .collect();
-            // An empty `ips` (genuine NXDOMAIN/NODATA on the fresh path,
-            // SPEC.md §4's documented cache-hit compromise) naturally
+            // An empty `ips` (a genuine NODATA on the fresh path) naturally
             // produces an empty `records` here - no separate branch needed,
             // `build_answer_response` is already NODATA-shaped for that.
             build_answer_response(query, records)
@@ -2458,6 +2462,10 @@ mod tests {
             panic!("expected the negative answer to be cached");
         };
         assert_eq!(cached.ttl, Duration::from_secs(120));
+        // T-305 batch 1 (RFC 2308): the cache remembers it was NXDOMAIN, not
+        // just "no records" — an OS search-suffix walk treats the two
+        // differently.
+        assert!(matches!(cached.verdict, Verdict::NxDomain));
 
         let (outcome, _meta) = handle_query(
             &query_for("example.com.", RecordType::A),
@@ -2484,7 +2492,11 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(outcome, PipelineOutcome::Response(_)));
+        let PipelineOutcome::Response(replayed) = outcome else {
+            panic!("expected a Response");
+        };
+        assert_eq!(replayed.metadata.response_code, ResponseCode::NXDomain);
+        assert!(replayed.answers.is_empty());
         assert_eq!(
             client.calls.load(Ordering::SeqCst),
             calls_after_miss,
@@ -2533,7 +2545,7 @@ mod tests {
             panic!("expected a Response");
         };
         // Fresh path forwards the real upstream response verbatim, genuine
-        // NXDOMAIN included - only the cache-hit replay collapses to NODATA.
+        // NXDOMAIN included.
         assert_eq!(
             fresh_response.metadata.response_code,
             ResponseCode::NXDomain

@@ -239,7 +239,8 @@ pub use watchdog::state::{
     WATCHDOG_STATE_STALE_AFTER,
 };
 pub use wire::{
-    attach_edns, decode_wire_message, encode_wire_message, forward_response, EDNS_UDP_PAYLOAD_SIZE,
+    attach_edns, decode_wire_message, encode_wire_message, forward_response, precheck_query,
+    QueryPrecheck, EDNS_UDP_PAYLOAD_SIZE,
 };
 
 use hickory_proto::rr::rdata::SOA;

@@ -55,8 +55,14 @@ impl CacheKey {
 /// (HTTPS/SVCB etc., SPEC.md §3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
-    /// Domain resolved; the IPs a fresh quorum answer carried.
+    /// Domain resolved; the IPs a fresh quorum answer carried. Empty = NODATA
+    /// (the name exists, no records of this type).
     Allow(Vec<IpAddr>),
+    /// The name does not exist (T-305, RFC 2308): replayed as NXDOMAIN, not
+    /// NODATA — an OS search-suffix walk treats the two differently. Never
+    /// written to `cache.enc` (`cache_persist_dto`), so an older build reading
+    /// the file needs no new variant.
+    NxDomain,
     /// At least one provider's block signature matched.
     Block,
 }

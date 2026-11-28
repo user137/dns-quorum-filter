@@ -972,13 +972,12 @@ struct CacheEntry {
   доведення cancellation-safety заради вигоди, якої на цьому масштабі нема —
   переоткрити лише за multi-user сценарію (знахідка 3-C, PERFORMANCE.md
   «No request coalescing»).
-- **`Verdict::Allow` не зберігає `response_code`** — на кеш-хіті з порожнім
-  списком IP (genuine NXDOMAIN/NODATA, не блок) відповідь клієнту завжди
-  NODATA-вигляду (`NoError`, порожні answers), ніколи буквальний NXDOMAIN.
-  Свідомий, задокументований компроміс точності при повторному читанні з
-  кешу (T-39): свіжий, некешований шлях лишається точним і форвардить
-  genuine NXDOMAIN як є — узгоджується з духом 3.2 (менше приводів для
-  DoH-fallback браузера, не більше).
+- **Кешований NXDOMAIN віддається як NXDOMAIN** (T-305, батч 1; раніше —
+  компроміс T-39: будь-яка порожня відповідь з кешу ставала NODATA). Окремий
+  вердикт `Verdict::NxDomain`; порожній `Verdict::Allow` лишається NODATA.
+  Причина зміни — порт 53: ОС перебирає пошукові суфікси і по-різному діє на
+  NXDOMAIN і NODATA. Відповідь із кешу без SOA, тож клієнт сам її негативно не
+  кешує. У `cache.enc` NXDOMAIN не пишеться (старіша збірка прочитає файл).
 
 #### 4.1. Нюанси RFC, які легко пропустити при наївній імплементації
 
@@ -1892,7 +1891,7 @@ install; T-99 / T-134 проти auto-прописування DoH — конф�
 | RFC 8767 | Serving Stale Data to Improve DNS Resiliency | `stale-if-error`-стратегія поверх `fail-open` | 3.3, 4.1 |
 | RFC 1035 §4.2.1/§4.2.2 | UDP and TCP usage | Порт 53 (T-305): без EDNS UDP-відповідь ≤ 512 байт; TCP — 2-байтовий префікс довжини | 1 |
 | RFC 7766 | DNS Transport over TCP — Implementation Requirements | Порт 53: TCP обов'язковий, TC-біт → повтор по TCP, конвеєр і відповіді не по порядку, тайм-аути з'єднання | 1 |
-| RFC 6891 §6/§7 | EDNS(0): OPT record, responder behaviour | Запит з OPT → відповідь з OPT (і для DoH); >1 OPT → FORMERR; версія > 0 → BADVERS; розмір UDP 512…1232 | 1, 3.4 |
+| RFC 6891 §6/§7 | EDNS(0): OPT record, responder behaviour | Запит з OPT → відповідь з власним OPT (і для DoH; опції апстріму не передаються, DO копіюється); >1 OPT → DoH 400, звичайний DNS FORMERR; версія > 0 → BADVERS; розмір UDP 512…1232 | 1, 3.4 |
 | RFC 8482 | Minimal-Sized Responses to DNS Queries That Have QTYPE=ANY | Порт 53: ANY → мінімальна відповідь, не проксі на baseline (ампліфікація) | 1 |
 | RFC 9619 | In the DNS, QDCOUNT Is (Usually) One | QDCOUNT ≠ 1 → FORMERR, не проксі | 1, 3 |
 | RFC 6761 | Special-Use Domain Names | `localhost` → loopback, `invalid` → NXDOMAIN, локально, без апстрімів | 1 |
