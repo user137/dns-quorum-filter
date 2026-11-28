@@ -1127,7 +1127,11 @@ async fn handle_allow(
     // for a genuine NXDOMAIN/NODATA, which has no IPs to look up.
     let mut resolved_ip_country = None;
 
-    if message.answers.is_empty() {
+    // An NXDOMAIN after a CNAME chain (RFC 6604) has answers but is still a
+    // negative answer - cached as NXDOMAIN under the SOA TTL, not as an empty
+    // Allow under the CNAME's TTL.
+    let is_nxdomain = message.metadata.response_code == ResponseCode::NXDomain;
+    if message.answers.is_empty() || is_nxdomain {
         // Genuine NXDOMAIN/NODATA (not a block - quorum already ruled that
         // out). RFC 2308 negative-caching TTL comes from the authority
         // section's SOA MINIMUM, not the same clamp source as a positive
@@ -1141,7 +1145,7 @@ async fn handle_allow(
             None => Duration::ZERO,
         };
         if is_cacheable(ttl) {
-            let verdict = if message.metadata.response_code == ResponseCode::NXDomain {
+            let verdict = if is_nxdomain {
                 Verdict::NxDomain
             } else {
                 Verdict::Allow(Vec::new())
@@ -1176,9 +1180,8 @@ async fn handle_allow(
     // including a genuine NXDOMAIN. SPEC.md §3.2 forbids only a
     // *synthesized* BLOCK-NXDOMAIN, not forwarding a real one (this is the
     // same `forward_response` the ordinary quorum-Allow path already uses).
-    // Cache-hit replay is the one place that collapses NXDOMAIN into
-    // NODATA-shaped (`response_from_cache_entry` below) - a deliberate,
-    // documented difference between the two paths, not an inconsistency.
+    // A cache-hit replay keeps the NXDOMAIN rcode (`Verdict::NxDomain`, T-305)
+    // but not the CNAME chain or the SOA.
     AllowResult::Answer {
         response: crate::wire::forward_response(query, &message),
         resolved_ip_country,
@@ -2502,6 +2505,91 @@ mod tests {
             calls_after_miss,
             "negative TTL from SOA must be enough to cache the entry"
         );
+    }
+
+    // RFC 6604: an NXDOMAIN at the end of a CNAME chain carries the chain in
+    // the answer section. It is still a negative answer — cached as NXDOMAIN
+    // with the SOA's negative TTL, not as an empty Allow under the CNAME's TTL.
+    #[tokio::test]
+    async fn nxdomain_after_a_cname_chain_is_cached_as_nxdomain_with_the_soa_ttl() {
+        let overrides = OverrideLists::empty();
+        let cache = Cache::new(&cache_config());
+        let mut response = nxdomain_message_with_soa(120);
+        let Ok(owner) = Name::from_str("example.com.") else {
+            panic!("valid fixture name");
+        };
+        let Ok(target) = Name::from_str("gone.example.net.") else {
+            panic!("valid fixture name");
+        };
+        response.answers.push(Record::from_rdata(
+            owner,
+            3600,
+            RData::CNAME(hickory_proto::rr::rdata::CNAME(target)),
+        ));
+        let client = MockClient {
+            quad9: MockResponse::Instant(response.clone()),
+            adguard: MockResponse::Instant(response.clone()),
+            baseline: MockResponse::Instant(response),
+            calls: AtomicU32::new(0),
+        };
+        let upstream = UpstreamContext {
+            blocklist_bundles: None,
+            cctld_block: &[],
+            timeout: &timeout_config(),
+            baseline_url: BASELINE_URL,
+            serve_baseline_fallback: false,
+            reachability: crate::reachability::NetworkReachability::Online,
+            filtering_paused: false,
+            rating_filter: None,
+        };
+        let geoip = GeoipFilter {
+            reader: None,
+            blocked_countries: &[],
+        };
+        let cache_ctx = CacheContext {
+            cache: &cache,
+            config: &cache_config(),
+        };
+        let query = query_for("example.com.", RecordType::A);
+
+        let (first, _meta) = handle_query(
+            &query,
+            &client,
+            &overrides,
+            &default_voters(),
+            &cache_ctx,
+            &upstream,
+            &geoip,
+        )
+        .await;
+        let PipelineOutcome::Response(first) = first else {
+            panic!("expected a Response");
+        };
+        assert_eq!(first.metadata.response_code, ResponseCode::NXDomain);
+
+        let Ok(key) = CacheKey::new("example.com", RecordType::A) else {
+            panic!("valid domain");
+        };
+        let Some(cached) = cache.get(&key).await else {
+            panic!("expected the negative answer to be cached");
+        };
+        assert!(matches!(cached.verdict, Verdict::NxDomain));
+        assert_eq!(cached.ttl, Duration::from_secs(120));
+
+        let (replay, _meta) = handle_query(
+            &query,
+            &client,
+            &overrides,
+            &default_voters(),
+            &cache_ctx,
+            &upstream,
+            &geoip,
+        )
+        .await;
+        let PipelineOutcome::Response(replay) = replay else {
+            panic!("expected a Response");
+        };
+        assert_eq!(replay.metadata.response_code, ResponseCode::NXDomain);
     }
 
     #[tokio::test]

@@ -37,6 +37,20 @@ fn a_query_with_two_questions_is_formerr() {
 }
 
 #[test]
+fn the_formerr_reply_does_not_echo_the_questions() {
+    let mut query = Message::query();
+    query.add_query(question("example.com."));
+    query.add_query(question("example.org."));
+    let QueryPrecheck::Reply(reply) = precheck_query(&query) else {
+        panic!("expected a local reply");
+    };
+    assert!(
+        reply.queries.is_empty(),
+        "a reply must not carry QDCOUNT > 1"
+    );
+}
+
+#[test]
 fn a_query_with_exactly_one_question_goes_on_to_the_pipeline() {
     let mut query = Message::query();
     query.add_query(question("example.com."));

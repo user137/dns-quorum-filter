@@ -77,7 +77,11 @@ pub fn precheck_query(query: &Message) -> QueryPrecheck {
         return QueryPrecheck::Reply(build_error_response(query, ResponseCode::NotImp));
     }
     let [question] = query.queries.as_slice() else {
-        return QueryPrecheck::Reply(build_error_response(query, ResponseCode::FormErr));
+        // The reply carries no question: echoing several would itself break
+        // RFC 9619, and on UDP it would reflect a large query back in full.
+        let mut reply = build_error_response(query, ResponseCode::FormErr);
+        reply.queries.clear();
+        return QueryPrecheck::Reply(reply);
     };
     if question.query_class() != DNSClass::IN {
         return QueryPrecheck::Reply(build_error_response(query, ResponseCode::Refused));
